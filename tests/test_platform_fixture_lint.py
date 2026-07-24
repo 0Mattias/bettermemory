@@ -61,6 +61,20 @@ Suppressed on purpose, because they are the FIXED shapes
   assertion is the repair 1c8b10f made, not the defect.
 * The probe-then-skip idiom — bind the path, test it, ``pytest.skip``
   when absent. The ``/etc/hosts`` symlink fixture does this today.
+  Direction decides here exactly as it does for the platform gate. The
+  condition has to be provably true when the path is MISSING, which
+  means a NEGATED presence probe (``not target.exists()``,
+  ``not os.path.isfile(...)``) naming the flagged path, composed only
+  through ``and``/``or``/``not``; and the skip has to sit in the branch
+  that condition selects. A gate that skips when the path is PRESENT,
+  a skip parked in the ``else``, a double negation that lands back on
+  presence, and a bare truthiness test (``not target`` where ``target``
+  is a ``Path`` — always truthy, so the skip is dead code) all leave
+  the unit running on a windows-latest that has no ``/etc/hosts``, so
+  none of them suppresses anything. Nor does a path named only in
+  ``reason=`` prose, or a gate on a longer literal that merely contains
+  the flagged one: prose gates nothing, and ``/etc/hostsX`` is a
+  different file.
 * Anything inside a unit (or module, via ``pytestmark``) whose skip
   provably excludes the windows-latest leg: a ``skipif`` condition, or
   the test of an in-body ``if ...: pytest.skip(...)``, that statically
@@ -116,17 +130,43 @@ condition it cannot decide counts as NOT gated, so the unit is checked.
 It reads three probes (``sys.platform``, ``os.name``,
 ``platform.system()``) compared against string literals — ``==``,
 ``!=``, ``in``/``not in`` over a literal collection,
-``startswith``/``endswith``, and ``and``/``or``/``not`` over those. It
-does NOT resolve a condition through a name (``skipif(_IS_WINDOWS,
-...)``) or through a mark alias (``@_needs_posix_modes`` — a bare Name
-decorator is not a ``skipif`` call to begin with); it does not read
-direction out of ``reason=`` prose, which cannot prove which leg is
+``startswith``/``endswith``, and ``and``/``or``/``not`` over those. A
+bare ``@_needs_posix_modes`` decorator resolves ONE hop through the
+module's own bindings — assigned at module level, and bound exactly
+once counting every binding form anywhere in the file — so the alias
+spelling ``tests/test_doctor.py`` uses gates exactly like the
+``pytest.mark.skipif(...)`` it was bound to, on both the platform and
+the probe axis.
+
+Where the parser stops, each costing a false positive at worst and
+never a silent miss: a name INSIDE a condition (``skipif(_IS_WINDOWS,
+...)``) stays unresolved, and so does a second alias hop; ``reason=``
+prose is never read for direction, since it cannot prove which leg is
 skipped even when it says "Windows" (the ratchet base accepted exactly
-that, which is the hole this parser closes); it only honours a
-decorator whose own top-level call is ``skipif``, so a per-case
-``pytest.param(marks=pytest.mark.skipif(...))`` exempts nothing; and it
-only sees a ``pytest.skip`` in an ``if`` body, never in its ``else``.
-Each of those costs a false positive at worst, never a silent miss.
+that, which is the hole this parser closes); only a decorator whose own
+top-level call is ``skipif`` is honoured, so a per-case
+``pytest.param(marks=pytest.mark.skipif(...))`` exempts nothing; the
+skip call itself has to be spelled with a final segment of exactly
+``skip``, which admits ``pytest.skip`` and a bare ``skip`` but not a
+wrapper helper and not ``pytest.importorskip`` (that one skips on a
+missing import, not on a platform, so crediting it would exempt units
+outright); and a skip counts only where the branch its gate selected
+reaches it as a statement — never in an ``else``, never behind a
+further ``if`` the same gate cannot also decide, and never inside a
+loop, ``with``, ``try`` or nested ``def``, whose execution this parser
+does not model.
+
+Where it is generous rather than strict, each taking a gate at face
+value and each pinned by a self-test below, so a later tightening has
+to come here and rewrite this:
+
+* a gate anywhere in the unit's statement chain suppresses, including
+  one written BELOW the shape it excuses — source position is never
+  compared, so a probe-then-skip that would run after the flagged call
+  still exempts it (the same holds for the platform gate);
+* a needle matches a ``Name`` or an equal string constant anywhere in
+  the gate's condition, without proving that occurrence is the same
+  binding or an argument the probe actually consults.
 
 How the ratchet works
 ---------------------
@@ -142,6 +182,15 @@ Entries are keyed by (source, rule, subject) where the subject carries
 the enclosing function name and the flagged shape — never a line
 number, so edits elsewhere in a file do not rot the list.
 
+What those two guards cannot currently catch: as of this commit
+``_ALLOWLIST`` is empty and the corpus yields no findings at all, so
+both pass vacuously and neither would notice a rule that quietly
+stopped firing or an exemption that grew too broad. Until a real
+finding lands, the self-tests at the bottom of this file are the ONLY
+live check on the rules — which makes every suppression they assert
+load-bearing. Widen an exemption and the negative direction has to
+land in the same change, or nothing in the suite is watching.
+
 Corollary for anyone editing this file: these rules scan full test
 ASTs, including this module's own. Keep synthetic offender code inside
 plain string constants fed to ``scan_source`` (as the self-tests do)
@@ -152,9 +201,9 @@ from __future__ import annotations
 
 import ast
 import os
-import re
 import subprocess
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -245,6 +294,26 @@ _WINDOWS_PROBE_VALUES: dict[str, str] = {
     "os.name": "nt",
     "platform.system()": "Windows",
 }
+
+# Filesystem predicates that answer False for a path which is not there. Their
+# NEGATION is the only condition shape that proves "this unit skips itself when
+# the path is missing" — the direction the probe-then-skip exemption needs.
+_PATHLIB_PRESENCE_PROBES = frozenset(
+    {
+        "exists",
+        "is_file",
+        "is_dir",
+        "is_symlink",
+        "is_mount",
+        "is_socket",
+        "is_fifo",
+        "is_block_device",
+        "is_char_device",
+    }
+)
+_OSPATH_PRESENCE_PROBES = frozenset(
+    {"exists", "lexists", "isfile", "isdir", "islink", "ismount"}
+)
 
 
 # ---------------------------------------------------------------------------
@@ -386,12 +455,13 @@ def _parent_map(unit: ast.AST) -> dict[ast.AST, ast.AST]:
     }
 
 
-def _once_bound_strings(unit: ast.AST) -> dict[str, str]:
-    """Names bound exactly once in the unit, to a string constant.
+def _binding_counts(unit: ast.AST) -> Counter[str]:
+    """How often each name is bound in the subtree, over every binding form.
 
-    Exactly-once is the precision guard: a rebound name (loop targets,
-    with-as, walrus and augmented bindings all count) may hold anything by
-    the time it is used, so it resolves to nothing rather than to a guess.
+    Exactly-once is the precision guard shared by both one-hop resolutions
+    below: a rebound name (loop targets, with-as, walrus and augmented
+    bindings all count) may hold anything by the time it is used, so it
+    resolves to nothing rather than to a guess.
     """
 
     def _names_in(target: ast.AST | None) -> list[str]:
@@ -400,27 +470,11 @@ def _once_bound_strings(unit: ast.AST) -> dict[str, str]:
         return [n.id for n in ast.walk(target) if isinstance(n, ast.Name)]
 
     binds: Counter[str] = Counter()
-    values: dict[str, str] = {}
     for node in ast.walk(unit):
         if isinstance(node, ast.Assign):
             for target in node.targets:
                 binds.update(_names_in(target))
-            if (
-                len(node.targets) == 1
-                and isinstance(node.targets[0], ast.Name)
-                and isinstance(node.value, ast.Constant)
-                and isinstance(node.value.value, str)
-            ):
-                values[node.targets[0].id] = node.value.value
-        elif isinstance(node, ast.AnnAssign):
-            binds.update(_names_in(node.target))
-            if (
-                isinstance(node.target, ast.Name)
-                and isinstance(node.value, ast.Constant)
-                and isinstance(node.value.value, str)
-            ):
-                values[node.target.id] = node.value.value
-        elif isinstance(node, ast.AugAssign):
+        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
             binds.update(_names_in(node.target))
         elif isinstance(node, (ast.For, ast.AsyncFor)):
             binds.update(_names_in(node.target))
@@ -430,7 +484,59 @@ def _once_bound_strings(unit: ast.AST) -> dict[str, str]:
             binds.update(_names_in(node.target))
         elif isinstance(node, ast.NamedExpr):
             binds.update(_names_in(node.target))
+    return binds
+
+
+def _once_bound_strings(unit: ast.AST) -> dict[str, str]:
+    """Names bound exactly once in the unit, to a string constant."""
+    binds = _binding_counts(unit)
+    values: dict[str, str] = {}
+    for node in ast.walk(unit):
+        if isinstance(node, ast.Assign):
+            if (
+                len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and isinstance(node.value, ast.Constant)
+                and isinstance(node.value.value, str)
+            ):
+                values[node.targets[0].id] = node.value.value
+        elif isinstance(node, ast.AnnAssign):
+            if (
+                isinstance(node.target, ast.Name)
+                and isinstance(node.value, ast.Constant)
+                and isinstance(node.value.value, str)
+            ):
+                values[node.target.id] = node.value.value
     return {name: text for name, text in values.items() if binds[name] == 1}
+
+
+def _module_bindings(tree: ast.Module) -> dict[str, ast.expr]:
+    """Names assigned at module level, mapped to the expression bound.
+
+    The exactly-once count is taken over the WHOLE file, not just module
+    level, so a name a function also rebinds drops out rather than resolving
+    to whichever value happened to be written at the top.
+
+    ``_needs_posix_modes = pytest.mark.skipif(sys.platform == "win32", ...)``
+    applied as a bare ``@_needs_posix_modes`` is the shape the doctor tests
+    use; without this hop the condition parser sees an ``ast.Name``, decides
+    it is not a ``skipif`` call, and checks a unit windows-latest never runs.
+
+    The map is deliberately NOT filtered to marks — ``_skipif_condition`` is
+    what insists on a resolved top-level ``skipif`` call, so a name bound to
+    anything else resolves to nothing that gates. Same discipline as the
+    string resolution above: module level, exactly once, and ONE hop, so an
+    alias bound to another alias stays unresolved rather than chased.
+    """
+    binds = _binding_counts(tree)
+    bindings: dict[str, ast.expr] = {}
+    for stmt in tree.body:
+        if not isinstance(stmt, ast.Assign) or len(stmt.targets) != 1:
+            continue
+        target = stmt.targets[0]
+        if isinstance(target, ast.Name) and binds[target.id] == 1:
+            bindings[target.id] = stmt.value
+    return bindings
 
 
 def _resolve_str(node: ast.AST, bound: dict[str, str]) -> str | None:
@@ -459,38 +565,6 @@ def _inside_gate_condition(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> bo
         if isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef)):
             return False
         prev, cur = cur, parents.get(cur)
-    return False
-
-
-def _has_probe_skip_for(unit: ast.AST, needles: set[str]) -> bool:
-    """An ``if <mentions needle>: ... skip(...)`` (or skipif) in the unit.
-
-    The probe-then-skip idiom: bind the path, test it, skip when absent.
-    Identifier needles match on word boundaries so a one-letter name cannot
-    excuse an unrelated gate; literal needles match as substrings.
-    """
-
-    def _mentions(text: str) -> bool:
-        for needle in needles:
-            if needle.isidentifier():
-                if re.search(rf"\b{re.escape(needle)}\b", text):
-                    return True
-            elif needle in text:
-                return True
-        return False
-
-    for deco in getattr(unit, "decorator_list", []):
-        src = ast.unparse(deco)
-        if "skipif" in src and _mentions(src):
-            return True
-    for node in ast.walk(unit):
-        if not isinstance(node, ast.If):
-            continue
-        if not _mentions(ast.unparse(node.test)):
-            continue
-        for inner in ast.walk(node):
-            if isinstance(inner, ast.Call) and ast.unparse(inner.func).endswith("skip"):
-                return True
     return False
 
 
@@ -608,12 +682,22 @@ def _truth_on_windows(node: ast.expr) -> bool | None:
     return None
 
 
-def _skipif_condition(node: ast.expr) -> ast.expr | None:
+def _skipif_condition(node: ast.expr, bindings: dict[str, ast.expr]) -> ast.expr | None:
     """The condition of a ``skipif`` call, or ``None`` if this is not one.
+
+    A bare ``ast.Name`` is resolved one hop through the module's bindings
+    first, so ``@_needs_posix_modes`` reads exactly like the
+    ``pytest.mark.skipif(...)`` it was bound to. A name that is unbound,
+    rebound, or bound to another name stays unresolved and gates nothing.
 
     Only the node's OWN top-level call counts: a ``skipif`` nested inside a
     ``pytest.param(marks=...)`` skips one parametrised case, not the unit.
     """
+    if isinstance(node, ast.Name):
+        alias = bindings.get(node.id)
+        if alias is None or isinstance(alias, ast.Name):
+            return None
+        node = alias
     if not isinstance(node, ast.Call) or not ast.unparse(node.func).endswith("skipif"):
         return None
     condition = next(
@@ -632,40 +716,86 @@ def _skipif_condition(node: ast.expr) -> ast.expr | None:
         return None
 
 
-def _excludes_windows(marks: list[ast.expr]) -> bool:
+def _excludes_windows(marks: list[ast.expr], bindings: dict[str, ast.expr]) -> bool:
     """Does any of these marks provably skip the unit on windows-latest?
 
     Several ``skipif`` marks skip when ANY of their conditions holds, so one
     Windows-true condition is enough.
     """
     for mark in marks:
-        condition = _skipif_condition(mark)
+        condition = _skipif_condition(mark, bindings)
         if condition is not None and _truth_on_windows(condition) is True:
             return True
     return False
 
 
-def _platform_gated(unit: ast.AST) -> bool:
+def _is_skip_call(node: ast.expr) -> bool:
+    """A call whose final name segment is exactly ``skip``.
+
+    ``pytest.skip(...)`` and a bare ``skip(...)`` count. Two near-misses do
+    not, and both matter: ``skipif`` is a mark, not something a body calls;
+    and ``pytest.importorskip(...)`` skips only when an import fails, so on a
+    windows-latest that HAS the module it skips nothing — reading it as an
+    unconditional skip would exempt units this file exists to check.
+    """
+    if not isinstance(node, ast.Call):
+        return False
+    return ast.unparse(node.func).rsplit(".", 1)[-1] == "skip"
+
+
+def _reaches_skip(body: list[ast.stmt], proven: Callable[[ast.expr], bool]) -> bool:
+    """Does entering this branch reach a ``skip`` call?
+
+    Only the statement chain counts, plus a nested ``if`` whose own test
+    ``proven`` also decides — two conditions that hold together do reach the
+    skip beneath them. Everything else is execution this file does not model:
+    an ``else`` branch (the condition selected the other one), a loop, a
+    ``with``, a ``try``, or a nested ``def``, none of which is guaranteed to
+    run the skip.
+    """
+    for stmt in body:
+        if isinstance(stmt, ast.Expr) and _is_skip_call(stmt.value):
+            return True
+        if (
+            isinstance(stmt, ast.If)
+            and proven(stmt.test)
+            and _reaches_skip(stmt.body, proven)
+        ):
+            return True
+    return False
+
+
+def _gated_skip(unit: ast.AST, proven: Callable[[ast.expr], bool]) -> bool:
+    """Is there an ``if <proven>:`` in this unit that reaches a skip?
+
+    The skip must sit under a gate ``proven`` decides — a bare ``skip(...)``
+    in the unit body is not read as an exemption here, and the search starts
+    at the unit's own statement chain rather than walking every ``if`` in the
+    subtree, so a gate buried inside a loop, a ``with``, or a nested ``def``
+    proves nothing about what runs. Shared by both gates so the two read one
+    shape.
+    """
+    body: list[ast.stmt] = getattr(unit, "body", [])
+    return any(
+        isinstance(stmt, ast.If)
+        and proven(stmt.test)
+        and _reaches_skip(stmt.body, proven)
+        for stmt in body
+    )
+
+
+def _platform_gated(unit: ast.AST, bindings: dict[str, ast.expr]) -> bool:
     """Provably skipped on windows-latest: skipif marker or in-body skip.
 
     Direction-aware on purpose: a ``skipif`` that skips some other platform
     still runs here, so it exempts nothing (see the module docstring).
     """
-    if _excludes_windows(list(getattr(unit, "decorator_list", []))):
+    if _excludes_windows(list(getattr(unit, "decorator_list", [])), bindings):
         return True
-    for node in ast.walk(unit):
-        if not isinstance(node, ast.If) or _truth_on_windows(node.test) is not True:
-            continue
-        for stmt in node.body:
-            for inner in ast.walk(stmt):
-                if isinstance(inner, ast.Call) and ast.unparse(inner.func).endswith(
-                    "skip"
-                ):
-                    return True
-    return False
+    return _gated_skip(unit, lambda test: _truth_on_windows(test) is True)
 
 
-def _module_platform_gated(tree: ast.Module) -> bool:
+def _module_platform_gated(tree: ast.Module, bindings: dict[str, ast.expr]) -> bool:
     """A module-level ``pytestmark`` skipif that excludes Windows exempts the file."""
     for stmt in tree.body:
         if not isinstance(stmt, ast.Assign):
@@ -678,9 +808,104 @@ def _module_platform_gated(tree: ast.Module) -> bool:
         marks = (
             list(value.elts) if isinstance(value, (ast.List, ast.Tuple)) else [value]
         )
-        if _excludes_windows(marks):
+        if _excludes_windows(marks, bindings):
             return True
     return False
+
+
+def _names_a_needle(node: ast.AST, needles: set[str]) -> bool:
+    """Does this expression name one of the needles?
+
+    Matching is on AST identity, never on unparsed text: an identifier needle
+    has to appear as a ``Name``, a literal needle as an EQUAL string constant.
+    Substring matching would let a gate on ``"/etc/hostsX"`` excuse a use of
+    ``"/etc/hosts"``, and a text search would find either inside ``reason=``
+    prose, which gates nothing.
+    """
+    for inner in ast.walk(node):
+        if isinstance(inner, ast.Name) and inner.id in needles:
+            return True
+        if (
+            isinstance(inner, ast.Constant)
+            and isinstance(inner.value, str)
+            and inner.value in needles
+        ):
+            return True
+    return False
+
+
+def _is_presence_probe(node: ast.expr, needles: set[str]) -> bool:
+    """A call that is FALSE when the probed path is absent, naming a needle.
+
+    ``target.exists()``, ``os.path.isfile("/etc/hosts")``, ``os.access(...)``:
+    each answers False for a path that is not there, so its negation is what a
+    skip has to be gated on. A bare name is not one of these — ``not target``
+    where ``target`` is a ``Path`` never fires, because a ``Path`` is always
+    truthy whether or not the file exists.
+    """
+    if not isinstance(node, ast.Call):
+        return False
+    callee = ast.unparse(node.func)
+    base = callee.rsplit(".", 1)[-1]
+    if callee.startswith("os.path."):
+        recognised = base in _OSPATH_PRESENCE_PROBES
+    elif callee.startswith("os."):
+        recognised = base == "access"
+    else:
+        recognised = base in _PATHLIB_PRESENCE_PROBES
+    return recognised and _names_a_needle(node, needles)
+
+
+def _true_when_absent(node: ast.expr, needles: set[str]) -> bool:
+    """Is this condition provably TRUE when the probed path is MISSING?
+
+    Direction carries the whole content of the probe-then-skip idiom, just as
+    it does for the platform gate: the un-negated probe skips where the path
+    is THERE and leaves the POSIX-shaped body running on the leg it was never
+    portable on. ``or`` needs one absence-proving piece, ``and`` needs all of
+    them, and ``not`` hands off to the companion below — which is what makes
+    ``not (not target.exists())`` land back on presence, and ``not (A or B)``
+    read exactly like the ``not A and not B`` it is equivalent to.
+    """
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+        return _false_when_absent(node.operand, needles)
+    if isinstance(node, ast.BoolOp):
+        parts = [_true_when_absent(value, needles) for value in node.values]
+        return any(parts) if isinstance(node.op, ast.Or) else all(parts)
+    return False
+
+
+def _false_when_absent(node: ast.expr, needles: set[str]) -> bool:
+    """The companion question: provably FALSE when the probed path is MISSING.
+
+    A presence probe is the base case; the boolean operators mirror
+    ``_true_when_absent`` under De Morgan, so the two spellings of one
+    condition cannot disagree about direction.
+    """
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+        return _true_when_absent(node.operand, needles)
+    if isinstance(node, ast.BoolOp):
+        parts = [_false_when_absent(value, needles) for value in node.values]
+        return all(parts) if isinstance(node.op, ast.Or) else any(parts)
+    return _is_presence_probe(node, needles)
+
+
+def _has_probe_skip_for(
+    unit: ast.AST, needles: set[str], bindings: dict[str, ast.expr]
+) -> bool:
+    """Does this unit skip itself when the probed path is absent?
+
+    The probe-then-skip idiom: bind the path, test it, skip when it is not
+    there. Three narrowings, each the same shape as the platform gate's: only
+    a real ``skipif`` CONDITION counts (``reason=`` prose can name a path
+    without gating on it), only an absence-proving condition counts, and only
+    a skip the selected branch actually reaches counts.
+    """
+    for deco in getattr(unit, "decorator_list", []):
+        condition = _skipif_condition(deco, bindings)
+        if condition is not None and _true_when_absent(condition, needles):
+            return True
+    return _gated_skip(unit, lambda test: _true_when_absent(test, needles))
 
 
 # ---------------------------------------------------------------------------
@@ -714,7 +939,9 @@ def _fs_category(callee: str) -> str | None:
     return None
 
 
-def _scan_posix_literals(source: str, unit_name: str, unit: ast.AST) -> list[Finding]:
+def _scan_posix_literals(
+    source: str, unit_name: str, unit: ast.AST, bindings: dict[str, ast.expr]
+) -> list[Finding]:
     """Rule ``posix-literal``: absolute POSIX constants used as paths."""
     findings: list[Finding] = []
     parents = _parent_map(unit)
@@ -786,7 +1013,9 @@ def _scan_posix_literals(source: str, unit_name: str, unit: ast.AST) -> list[Fin
             and isinstance(holder.targets[0], ast.Name)
         ):
             needles.add(holder.targets[0].id)
-        if category in ("read", "ctor") and _has_probe_skip_for(unit, needles):
+        if category in ("read", "ctor") and _has_probe_skip_for(
+            unit, needles, bindings
+        ):
             continue
         findings.append(
             Finding(
@@ -895,13 +1124,14 @@ def _scan_chmod_unlink(source: str, unit_name: str, unit: ast.AST) -> list[Findi
 def scan_source(source: str, text: str) -> list[Finding]:
     """Run all three rules over one test source. Self-tests feed this."""
     tree = ast.parse(text)
-    if _module_platform_gated(tree):
+    bindings = _module_bindings(tree)
+    if _module_platform_gated(tree, bindings):
         return []
     findings: list[Finding] = []
     for unit_name, unit in _analysis_units(tree):
-        if _platform_gated(unit):
+        if _platform_gated(unit, bindings):
             continue
-        findings.extend(_scan_posix_literals(source, unit_name, unit))
+        findings.extend(_scan_posix_literals(source, unit_name, unit, bindings))
         findings.extend(_scan_slash_concat(source, unit_name, unit))
         findings.extend(_scan_chmod_unlink(source, unit_name, unit))
     return findings
@@ -1081,6 +1311,177 @@ def test_probe_then_skip_idiom_is_not_flagged() -> None:
     assert fired == []
 
 
+def test_absence_shaped_probe_gates_still_suppress() -> None:
+    """The directions that DO prove the unit skips when the path is gone.
+
+    An ``or`` of negations skips if any piece is missing, an ``and`` of them
+    skips only when every piece is (both hold once the path is absent), and
+    the same idiom spelled as a ``skipif`` condition gates the whole unit.
+    All three are the fixed shape; if they stopped being quiet the narrowing
+    below would just be a way to turn the rule off.
+    """
+    or_composed = """
+        def test_symlink_to_host_file(source_root):
+            target = Path("/etc/hosts")
+            if not target.exists() or not target.is_file():
+                pytest.skip("requires a real /etc/hosts")
+            os.symlink(target, source_root / "bad.md")
+        """
+    and_composed = """
+        def test_symlink_to_host_file(source_root):
+            target = Path("/etc/hosts")
+            if not target.exists() and not target.is_symlink():
+                pytest.skip("requires a real /etc/hosts")
+            os.symlink(target, source_root / "bad.md")
+        """
+    decorator_probe = """
+        @pytest.mark.skipif(
+            not os.path.exists("/etc/hosts"), reason="host file absent"
+        )
+        def test_reads_the_host_file():
+            assert os.path.isfile("/etc/hosts")
+        """
+    for label, snippet in (
+        ("or of negations", or_composed),
+        ("and of negations", and_composed),
+        ("skipif decorator probe", decorator_probe),
+    ):
+        assert _rules_fired(snippet) == [], label
+
+
+def test_probe_skips_pointed_away_from_absence_do_not_suppress() -> None:
+    """The probe suppression is direction-aware for the same reason the
+    platform gate is: every snippet here names the path in something that
+    looks like a gate, and every one of them still RUNS on a windows-latest
+    that has no ``/etc/hosts``, so the literal has to fire.
+
+    ``inverted probe`` skips where the path is PRESENT; the ``skip in else``
+    pair puts the skip on the branch its condition did not select, once per
+    direction of the test; ``double negation`` spells presence the long way
+    round and must not survive one nesting level; ``path truthiness`` tests a
+    ``Path``, which is truthy whether or not the file exists, so the skip is
+    unreachable; ``not (A or B)`` and ``not A and not B`` are the same
+    condition and both need the second piece to hold, which absence alone
+    does not prove; and ``reason prose only`` names the path in prose a
+    ``skipif`` never evaluates.
+    """
+    inverted_probe = """
+        def test_symlink_to_host_file(source_root):
+            target = Path("/etc/hosts")
+            if target.exists():
+                pytest.skip("requires /etc/hosts")
+            os.symlink(target, source_root / "bad.md")
+        """
+    presence_test_skip_in_else = """
+        def test_symlink_to_host_file(source_root):
+            target = Path("/etc/hosts")
+            if target.exists():
+                pass
+            else:
+                pytest.skip("requires /etc/hosts")
+            os.symlink(target, source_root / "bad.md")
+        """
+    absence_test_skip_in_else = """
+        def test_symlink_to_host_file(source_root):
+            target = Path("/etc/hosts")
+            if not target.exists():
+                pass
+            else:
+                pytest.skip("requires /etc/hosts")
+            os.symlink(target, source_root / "bad.md")
+        """
+    double_negation = """
+        def test_symlink_to_host_file(source_root):
+            target = Path("/etc/hosts")
+            if not (not target.exists()):
+                pytest.skip("requires /etc/hosts")
+            os.symlink(target, source_root / "bad.md")
+        """
+    path_truthiness = """
+        def test_symlink_to_host_file(source_root):
+            target = Path("/etc/hosts")
+            if not target:
+                pytest.skip("requires /etc/hosts")
+            os.symlink(target, source_root / "bad.md")
+        """
+    negated_or = """
+        def test_reads_the_host_file():
+            if not (os.path.exists("/etc/hosts") or shutil.which("git")):
+                pytest.skip("requires /etc/hosts")
+            assert os.path.isfile("/etc/hosts")
+        """
+    equivalent_and = """
+        def test_reads_the_host_file():
+            if not os.path.exists("/etc/hosts") and not shutil.which("git"):
+                pytest.skip("requires /etc/hosts")
+            assert os.path.isfile("/etc/hosts")
+        """
+    reason_prose_only = """
+        @pytest.mark.skipif(sys.platform == "darwin", reason="needs /etc/hosts")
+        def test_reads_the_host_file():
+            assert os.path.isfile("/etc/hosts")
+        """
+    for label, snippet in (
+        ("inverted probe", inverted_probe),
+        ("presence test, skip in else", presence_test_skip_in_else),
+        ("absence test, skip in else", absence_test_skip_in_else),
+        ("double negation", double_negation),
+        ("path truthiness", path_truthiness),
+        ("not (A or B)", negated_or),
+        ("not A and not B", equivalent_and),
+        ("reason prose only", reason_prose_only),
+    ):
+        assert [rule for rule, _ in _rules_fired(snippet)] == ["posix-literal"], label
+
+
+def test_equivalent_condition_spellings_get_the_same_verdict() -> None:
+    """``not (A or B)`` and ``not A and not B`` are one condition.
+
+    The two are De Morgan twins, so a parser that reads one as
+    absence-proving and flags the other is reading spelling, not direction.
+    Both suppress when every piece is an absence probe, and neither does when
+    one piece is something absence cannot decide.
+    """
+    both_probes_or = """
+        def test_reads_the_host_file():
+            if not (os.path.exists("/etc/hosts") or os.path.isfile("/etc/hosts")):
+                pytest.skip("requires /etc/hosts")
+            assert os.path.isdir("/etc/hosts")
+        """
+    both_probes_and = """
+        def test_reads_the_host_file():
+            if not os.path.exists("/etc/hosts") and not os.path.isfile("/etc/hosts"):
+                pytest.skip("requires /etc/hosts")
+            assert os.path.isdir("/etc/hosts")
+        """
+    assert _rules_fired(both_probes_or) == []
+    assert _rules_fired(both_probes_and) == []
+
+
+def test_needle_matching_is_exact_not_a_substring_of_the_gate() -> None:
+    """A gate on a DIFFERENT path may not excuse this one.
+
+    ``/etc/hostsX`` contains ``/etc/hosts`` as a substring and is a different
+    file; a text-matching needle check took the longer literal as a gate on
+    the shorter one. The exact spelling still suppresses, so this is a
+    tightening rather than a switch-off.
+    """
+    different_literal = """
+        def test_reads_the_host_file():
+            if not os.path.exists("/etc/hostsX"):
+                pytest.skip("requires /etc/hostsX")
+            assert os.path.isfile("/etc/hosts")
+        """
+    same_literal = """
+        def test_reads_the_host_file():
+            if not os.path.exists("/etc/hosts"):
+                pytest.skip("requires /etc/hosts")
+            assert os.path.isfile("/etc/hosts")
+        """
+    assert [rule for rule, _ in _rules_fired(different_literal)] == ["posix-literal"]
+    assert _rules_fired(same_literal) == []
+
+
 def test_setenv_posix_constant_flagged_portable_spelling_not() -> None:
     fired = _rules_fired(
         """
@@ -1219,12 +1620,179 @@ def test_string_form_skipif_condition_is_parsed_not_taken_as_truthy() -> None:
     assert [rule for rule, _ in _rules_fired(not_excluded)] == ["posix-literal"]
 
 
+def test_mark_alias_decorators_resolve_one_hop() -> None:
+    """The ``tests/test_doctor.py`` spelling: a module-level alias bound to a
+    ``skipif``, then applied bare. The decorator is an ``ast.Name``, not a
+    call, so without the hop the parser gives up and checks a unit
+    windows-latest never runs. Both axes read the alias: the per-unit
+    decorator and a ``pytestmark`` that names it."""
+    aliased_decorator = """
+        _needs_posix_modes = pytest.mark.skipif(
+            sys.platform == "win32", reason="POSIX mode bits are not meaningful"
+        )
+
+        @_needs_posix_modes
+        def test_posix_only():
+            open("/etc/passwd").close()
+        """
+    aliased_module_mark = """
+        _needs_posix_modes = pytest.mark.skipif(os.name == "nt", reason="POSIX")
+        pytestmark = _needs_posix_modes
+
+        def test_posix_only():
+            open("/etc/passwd").close()
+        """
+    aliased_probe_gate = """
+        _needs_host_file = pytest.mark.skipif(
+            not os.path.exists("/etc/hosts"), reason="host file absent"
+        )
+
+        @_needs_host_file
+        def test_reads_the_host_file():
+            assert os.path.isfile("/etc/hosts")
+        """
+    for label, snippet in (
+        ("aliased decorator", aliased_decorator),
+        ("aliased pytestmark", aliased_module_mark),
+        ("aliased probe gate", aliased_probe_gate),
+    ):
+        assert _rules_fired(snippet) == [], label
+
+
+def test_mark_alias_resolution_stops_where_it_cannot_prove_direction() -> None:
+    """One hop, bound exactly once, and still pointed at Windows.
+
+    Resolving the alias buys nothing if it then exempts on the strength of a
+    name: a mac-directed alias, a rebound one (which may hold either mark by
+    the time the decorator applies), a hop through a second alias, and a name
+    that arrives from another module all leave the unit running here.
+    """
+    darwin_alias = """
+        _flaky_on_mac = pytest.mark.skipif(sys.platform == "darwin", reason="mac")
+
+        @_flaky_on_mac
+        def test_runs_on_windows():
+            open("/etc/passwd").close()
+        """
+    rebound_alias = """
+        _gate = pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only")
+        _gate = pytest.mark.skipif(shutil.which("git") is None, reason="git")
+
+        @_gate
+        def test_runs_on_windows():
+            open("/etc/passwd").close()
+        """
+    second_hop = """
+        _base = pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only")
+        _alias = _base
+
+        @_alias
+        def test_runs_on_windows():
+            open("/etc/passwd").close()
+        """
+    imported_alias = """
+        @_needs_posix_modes
+        def test_runs_on_windows():
+            open("/etc/passwd").close()
+        """
+    for label, snippet in (
+        ("darwin alias", darwin_alias),
+        ("rebound alias", rebound_alias),
+        ("second hop", second_hop),
+        ("alias bound in another module", imported_alias),
+    ):
+        assert [rule for rule, _ in _rules_fired(snippet)] == ["posix-literal"], label
+
+
+def test_a_skip_the_gate_does_not_reach_is_not_an_exemption() -> None:
+    """A gate exempts only what its own condition decides.
+
+    ``skip behind a flag`` and ``proven behind a flag`` are the two nesting
+    orders of one hole: windows-latest skips only when the OTHER condition
+    also holds, so the unit runs there some of the time and the literal has
+    to fire. ``importorskip`` skips on a missing module, never on a platform
+    — reading it as a skip would exempt the unit outright. ``skip in a loop``
+    sits in execution this parser does not model.
+    """
+    skip_behind_a_flag = """
+        def test_maybe_skipped(some_flag):
+            if sys.platform == "win32":
+                if some_flag:
+                    pytest.skip("sometimes")
+            open("/etc/passwd").close()
+        """
+    proven_behind_a_flag = """
+        def test_maybe_skipped(some_flag):
+            if some_flag:
+                if sys.platform == "win32":
+                    pytest.skip("sometimes")
+            open("/etc/passwd").close()
+        """
+    import_or_skip = """
+        def test_needs_a_module():
+            pytest.importorskip("pwd")
+            open("/etc/passwd").close()
+        """
+    skip_in_a_loop = """
+        def test_looped(cases):
+            for case in cases:
+                if sys.platform == "win32":
+                    pytest.skip("POSIX-only")
+            open("/etc/passwd").close()
+        """
+    for label, snippet in (
+        ("skip behind a flag", skip_behind_a_flag),
+        ("proven behind a flag", proven_behind_a_flag),
+        ("importorskip", import_or_skip),
+        ("skip in a loop", skip_in_a_loop),
+    ):
+        assert [rule for rule, _ in _rules_fired(snippet)] == ["posix-literal"], label
+    # The other direction: when BOTH nested conditions are provably true on
+    # windows-latest, the skip really is reached and the unit is exempt.
+    both_proven = """
+        def test_posix_only():
+            if sys.platform == "win32":
+                if os.name == "nt":
+                    pytest.skip("POSIX-only")
+            open("/etc/passwd").close()
+        """
+    assert _rules_fired(both_proven) == []
+
+
+def test_documented_generosities_of_the_exemption() -> None:
+    """Pins the two spots the module docstring calls generous rather than
+    strict, so the prose cannot drift from the code: a gate is credited
+    wherever it sits in the unit (source position is never compared, so one
+    written BELOW the shape still excuses it), and a needle matched anywhere
+    in the condition counts even where the probe does not consult it. If
+    either is tightened later, this test fails and the docstring has to be
+    rewritten in the same change."""
+    gate_below_the_shape = """
+        def test_reads_the_host_file():
+            assert os.path.isfile("/etc/hosts")
+            if not os.path.exists("/etc/hosts"):
+                pytest.skip("requires /etc/hosts")
+        """
+    needle_in_an_unconsulted_position = """
+        def test_reads_the_host_file():
+            if not os.path.exists(os.environ.get("HOSTS", "/etc/hosts")):
+                pytest.skip("requires a host file")
+            assert os.path.isfile("/etc/hosts")
+        """
+    assert _rules_fired(gate_below_the_shape) == []
+    assert _rules_fired(needle_in_an_unconsulted_position) == []
+
+
 def test_undecidable_gates_fall_through_to_being_checked() -> None:
     """The disclosed narrowing: what the condition parser cannot read is not
-    an exemption. A name it cannot resolve, a ``reason`` that merely says
-    "Windows", a ``skipif`` that gates one parametrised case, and a skip in an
-    ``else`` branch all cost a false positive rather than a silent miss."""
-    opaque_name = """
+    an exemption. A name INSIDE a condition — the alias hop reaches a bare
+    decorator, never a name the condition itself is built from — a ``reason``
+    that merely says "Windows", a ``skipif`` that gates one parametrised case,
+    and a skip in an ``else`` branch all cost a false positive rather than a
+    silent miss."""
+    opaque_condition_name = """
+        _IS_WINDOWS = sys.platform == "win32"
+
         @pytest.mark.skipif(_IS_WINDOWS, reason="POSIX-only")
         def test_maybe_gated():
             open("/etc/passwd").close()
@@ -1253,7 +1821,7 @@ def test_undecidable_gates_fall_through_to_being_checked() -> None:
             open("/etc/passwd").close()
         """
     for label, snippet in (
-        ("opaque name", opaque_name),
+        ("opaque condition name", opaque_condition_name),
         ("reason prose only", reason_prose_only),
         ("per-case mark", per_case_mark),
         ("skip in else", skip_in_else_branch),
