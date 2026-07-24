@@ -29,7 +29,9 @@ What is checked
    surrounding paragraph attributes to it. Both halves apply to the
    markdown-linked and bare-backticked forms alike. When the paragraph
    names no identifier that exists in the target at all, there is no
-   anchor to judge against and the rule stays quiet.
+   anchor to judge against and the rule stays quiet. A citation the
+   nearby prose marks as non-resolving is quoted evidence rather than
+   an assertion and is skipped — see the deliberately-not-checked list.
 5. ``file-count`` — "N files are named ``x.py``" must match how many files
    the repo scan actually resolves for that name.
 
@@ -126,6 +128,16 @@ What is deliberately NOT checked
 * **Past-tense relocation prose.** "``_register_tools`` lived in
   ``server.py``" is a true statement about history. Tense markers near a
   symbol claim suppress it (``_RELOCATION_PROSE``).
+* **Citations a document quotes to say they do not resolve.** The swarm
+  plan's errata quote their own rotten ``file.py:NNN`` forms as the
+  evidence under analysis, pinning each resolution to a named commit;
+  range- and anchor-checking such a quote against HEAD fails the prose
+  precisely when it is right about the code. A citation with a
+  non-resolving verdict nearby — ``_NONRESOLVING_PROSE`` within
+  ``_NONRESOLVING_WINDOW`` characters, either side, both citation
+  shapes — is quoted evidence, not an assertion. The window bound is
+  what keeps this from becoming a paragraph-wide pass; the self-tests
+  pin both directions.
 * **Ambiguous module references, when any reading satisfies them.**
   Two files are named ``verify.py``. A claim is reported only when it
   fails against *every* candidate — see ``_resolve_modules``.
@@ -272,6 +284,34 @@ _RELOCATION_PROSE = re.compile(
 )
 _RELOCATION_LOOKBACK = 60
 
+# Prose that quotes a `file.py:NNN` citation in order to say it does NOT
+# resolve — an erratum analysing its own rotten line number. "…lands
+# outside every function and class body, nowhere near the shard pick it
+# was cited for" is evidence under discussion, not an assertion that the
+# citation holds, and checking the quote against HEAD fails the prose
+# precisely when it is right. Verdict phrasings only — words that pass
+# judgement on a citation qua citation — so an ordinary wrong citation in
+# live prose stays checked. Multi-word markers use `\s+` because markdown
+# wraps mid-phrase. Proximity is bounded by `_NONRESOLVING_WINDOW` on
+# both sides so a verdict on one citation cannot exempt a paragraph.
+_NONRESOLVING_PROSE = re.compile(
+    r"\b(?:do(?:es)?|did)\s+not\s+(?:point|resolve|land|sit)\b"
+    r"|\bpoints?\s+at\s+prose\b"
+    r"|\blands?\s+outside\b"
+    r"|\bnowhere\s+near\b"
+    r"|\bstraddles\b"
+    r"|\bshort\s+of\s+the\b"
+    r"|\bwrong\s+(?:when\s+written|on\s+arrival)\b"
+    r"|\balready\s+(?:false|wrong|moved)\b"
+    r"|\bnon-resolving\b"
+    r"|\boriginally\s+shipped\b"
+    r"|\bnarrowed\s+it\s+to\b"
+    r"|\ba\s+different\s+(?:function|method|class)\b"
+    r"|\brotted\b",
+    re.I,
+)
+_NONRESOLVING_WINDOW = 120
+
 # `symbol` [one or two plain words] in `module.py`. The interposed words
 # may not contain punctuation — that keeps the match from stepping over a
 # clause boundary and pairing an unrelated symbol with an unrelated file.
@@ -387,44 +427,14 @@ _ALLOWLIST: dict[tuple[str, str, str], str] = {
         "when this entry shipped; the Round-3 wiring extraction moved it "
         "to builder.py. Accurate release note, since-refactored code."
     ),
-    (
-        "docs/swarm-convergence-plan.md",
-        "line-ref",
-        "events.py:237",
-    ): (
-        "Genuinely false and owned elsewhere: the paragraph says this "
-        "citation lands in `redact_query`'s docstring. It does not — the "
-        "cited line is blank, in the gap above `_safe_stem_component`, "
-        "and `redact_query` is defined far enough below it to fall "
-        "outside the proximity window. The doc is outside the file set "
-        "this repair may touch, so it is exempt here rather than fixed "
-        "here. Delete on repair."
-    ),
-    (
-        "docs/swarm-convergence-plan.md",
-        "line-ref",
-        "events.py:235",
-    ): (
-        "NOT a false claim — a FALSE POSITIVE, and the only one in the "
-        "corpus. The paragraph quotes this citation as its SUBJECT: it "
-        "is arguing that the citation does not resolve, and says so in "
-        "the same sentence ('at `60b7553` `events.py:235-245` lands in "
-        "`_safe_stem_component`, a different function'). The extractor "
-        "reads the quoted form as an assertion and checks it, so prose "
-        "that says 'X is wrong' fails for X being wrong. Rewriting the "
-        "paragraph to dodge the rule would destroy the evidence it "
-        "analyses, and this module's own design note says contorting "
-        "shipped prose to appease a linter is worse than the drift. "
-        "The durable fix is an extractor rule that suppresses a "
-        "citation the surrounding prose marks as non-resolving; that is "
-        "queued, and it is a precision change to this checker rather "
-        "than a repair to the doc. Delete this entry when that lands."
-    ),
 }
-# NOTE on the entry directly above, which is the second time it has been
-# written. It sat here once before, was deleted as repaired, and was not
-# repaired. Reconstructed from history rather than from the commit message
-# that removed it:
+# NOTE on two RETIRED entries — the swarm plan's line-ref pair,
+# (docs/swarm-convergence-plan.md, line-ref, events.py:237) and
+# (…, line-ref, events.py:235). Kept because the reverse guard's failure
+# message points here, and because the 235 entry's history is the
+# module's own cautionary tale: it was written twice. It sat here once
+# before, was deleted as repaired, and was not repaired. Reconstructed
+# from history rather than from the commit message that removed it:
 #
 #   * `fa45542` wrote the citation in markdown-LINKED form. That is the
 #     form `check_line_refs` anchor-checked, and it genuinely failed —
@@ -439,14 +449,24 @@ _ALLOWLIST: dict[tuple[str, str, str], str] = {
 #     that commit's tree reproduces it: no line-ref failure at all.
 #   * `704da7c` then deleted the entry — correctly, per the reverse guard
 #     — but recorded the cause as "the repair it was waiting on landed".
-#     No such repair landed; the citation is still in the doc.
+#     No such repair landed; the citation stayed in the doc.
 #
 # `test_allowlist_has_no_stale_entries` had already named both readings in
 # its own failure message. The second was the true one and the first was
 # written down as fact, so that message now spells out that the two causes
-# need opposite responses instead of just saying "delete the entry". And
-# `_anchor_miss` runs on both citation shapes, which is what puts this
-# entry back.
+# need opposite responses instead of just saying "delete the entry".
+#
+# The retirement itself was the resolution the 235 entry queued, not a
+# repair to the doc: `_NONRESOLVING_PROSE` landed, so a citation the
+# surrounding prose marks as non-resolving is quoted evidence rather than
+# an assertion. The doc's errata quote exactly such citations — pinned to
+# named commits, with the verdict in the same sentence — so the failures
+# stopped and the reverse guard forced both entries out. The 237 entry's
+# reason had been written against an earlier revision of the paragraph
+# (one that glossed the citation as `redact_query`'s docstring, a live
+# claim); by retirement the prose marked that citation non-resolving too
+# ("wrong when written", "already false of its own"), so it fell to the
+# same rule.
 
 
 # --------------------------------------------------------------------------
@@ -835,6 +855,17 @@ def _anchor_miss(
     return anchors
 
 
+def _quoted_as_nonresolving(text: str, start: int, end: int) -> bool:
+    """True when prose near a citation passes a non-resolving verdict on it.
+
+    ``start``/``end`` are the citation match's span in ``text``. Such a
+    citation is being discussed as evidence, not asserted, so callers skip
+    both the range check and the anchor check for it.
+    """
+    window = text[max(0, start - _NONRESOLVING_WINDOW) : end + _NONRESOLVING_WINDOW]
+    return bool(_NONRESOLVING_PROSE.search(window))
+
+
 def _anchor_detail(name: str, start: int, missed: set[str]) -> str:
     return (
         f"none of the identifiers the paragraph attributes to this citation "
@@ -851,12 +882,18 @@ def check_line_refs(source: str, text: str) -> list[Failure]:
     to run on linked citations only, and that gap is not hypothetical — it
     is how a wrong citation shipped and how an allowlist entry covering it
     silently stopped matching (see the ``_ALLOWLIST`` note).
+
+    Neither half runs on a citation the surrounding prose marks as
+    non-resolving (``_quoted_as_nonresolving``): an erratum quoting its
+    own rotten citation is not asserting it.
     """
     out: list[Failure] = []
     linked_spans: list[tuple[int, int]] = []
 
     for match in _LINEREF_LINKED.finditer(text):
         linked_spans.append(match.span())
+        if _quoted_as_nonresolving(text, *match.span()):
+            continue
         line = _line_of(text, match.start())
         name = match.group("name")
         subject = f"{name}:{match.group('start')}"
@@ -886,6 +923,8 @@ def check_line_refs(source: str, text: str) -> list[Failure]:
             continue
         candidates = _resolve_modules(name)
         if not candidates:
+            continue
+        if _quoted_as_nonresolving(text, *match.span()):
             continue
         start = int(match.group("start"))
         line = _line_of(text, match.start())
@@ -1328,6 +1367,53 @@ def test_bare_citation_ambiguity_accepts_any_plausible_candidate() -> None:
     )
     text = f"`list_by_swarm(swarm_id)` walks the shard (`episodes.py:{target}`)"
     assert check_line_refs("docs/fake.md", text) == []
+
+
+def test_citation_quoted_as_nonresolving_is_not_checked() -> None:
+    """A quote of a rotten citation, verdict attached, is not an assertion.
+
+    Real corpus shape: the swarm plan's errata quote their own shipped
+    citations precisely to argue they miss. Checking the quote against
+    HEAD failed the prose for being right — the false positive the
+    allowlist carried until this rule landed (see the retired-entries
+    note). Suppression must cover both citation shapes and both halves
+    of the check, the range half included.
+    """
+    decoy = _crc32_shard_line() + 200
+    bare = (
+        f"the doc shipped `events.py:{decoy}` for the `crc32(session_id)` "
+        "shard pick, but it lands outside every function and class body"
+    )
+    assert check_line_refs("docs/fake.md", bare) == []
+    linked = (
+        f"[events.py:{decoy}](../src/bettermemory/events.py) was cited for "
+        "the `crc32(session_id)` shard pick and lands outside every "
+        "function and class body"
+    )
+    assert check_line_refs("docs/fake.md", linked) == []
+    out_of_range = (
+        "the doc originally shipped `events.py:999999` for the "
+        "`crc32(session_id)` shard pick"
+    )
+    assert check_line_refs("docs/fake.md", out_of_range) == []
+
+
+def test_nonresolving_verdict_must_sit_near_the_citation() -> None:
+    """The suppression is marker-plus-proximity, never a paragraph pass.
+
+    The same wrong citation stays red with no verdict phrase in reach,
+    and stays red with the verdict phrase pushed beyond
+    ``_NONRESOLVING_WINDOW`` — the false-negative direction this rule
+    must not have. The middle assertion pins that the far text really
+    does contain a marker, so this test cannot rot into vacuity.
+    """
+    decoy = _crc32_shard_line() + 200
+    plain = f"a recorder picks its shard by `crc32(session_id)` (`events.py:{decoy}`)"
+    assert len(check_line_refs("docs/fake.md", plain)) == 1
+    padding = "the surrounding discussion keeps going for a while. " * 4
+    far = "an earlier citation straddles two functions. " + padding + plain
+    assert _NONRESOLVING_PROSE.search(far) is not None
+    assert len(check_line_refs("docs/fake.md", far)) == 1
 
 
 def test_restrictive_clause_demotes_a_total_marked_count_too() -> None:
