@@ -30,15 +30,22 @@ never haunt every future scan):
   re-trigger anything). Terminal: the link is the durable artifact,
   retrieval surfaces it on both memories, and re-arbitrating it would
   add nothing.
-- ``dismissed``: the model judged the pair compatible. Sticky across
-  scans — UNLESS either member's `updated` later moves past the
-  verdict timestamp, in which case the content the verdict judged no
-  longer exists and the pair resurrects as pending. (The same
+- ``dismissed``: the model judged the pair compatible. Any standing
+  `contradicts` link between the pair is cleared by the handler first
+  (same before-the-stamp ordering as the confirm side), so the queue
+  and the link layer cannot end up disagreeing about the same pair.
+  Sticky across scans — UNLESS either member's `updated` later moves
+  past the verdict timestamp, in which case the content the verdict
+  judged no longer exists and the pair resurrects as pending. (The same
   claim-vs-resolution ordering rule `health._has_unresolved_contradiction`
   and the outcome-demotion tally use.)
 
 Rows whose members stop being active (tombstoned, merged) are dropped
 on the next full-corpus upsert — a conflict with a dead side is moot.
+`upsert_scan` is the ONLY garbage collector, which is why every
+applying consolidate pass calls it unconditionally: a pass that only
+upserted when it had fresh candidates would strand dead rows in the
+`curation_pending.conflicts` count indefinitely.
 
 On-disk: ``<root>/.conflicts.jsonl`` — one JSON object per line,
 0o600, atomically rewritten under a per-file ``flock`` (the

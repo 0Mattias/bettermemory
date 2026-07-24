@@ -1161,24 +1161,35 @@ def consolidate(
     # dry-run contract is "zero side effects", and the report above
     # already SHOWS the pairs either way. Best-effort — queue I/O must
     # never fail a curation pass that is about to mutate the store.
-    if polarity_skipped:
-        try:
-            from .conflicts import ConflictQueue, skip_to_candidate
-            from .models import utcnow as _utcnow
+    #
+    # UNCONDITIONAL, including when this scan produced no skips at all.
+    # `upsert_scan` is not only the merge — it is also the queue's ONLY
+    # garbage collector, dropping rows whose members stopped being
+    # active against the full-corpus liveness map it is handed. Gating
+    # the call on `polarity_skipped` stranded dead rows forever the
+    # moment fresh skips stopped (arbitrate the last pair, tombstone a
+    # member, and the phantom stays pending), and that count is a
+    # model-facing session-start cue via `curation_pending.conflicts` —
+    # a counter that keeps prompting a curation pass which finds nothing
+    # teaches the model to ignore the cue. `upsert_scan([])` merges
+    # nothing and still GCs.
+    try:
+        from .conflicts import ConflictQueue, skip_to_candidate
+        from .models import utcnow as _utcnow
 
-            now_iso = _utcnow().isoformat()
-            # Lift the report rows into queue rows here rather than
-            # re-running detection: same scan, same pairs. Dedup by pair
-            # id — the same pair can be flagged by both detectors.
-            deduped: dict[str, Any] = {}
-            for p in polarity_skipped:
-                cand = skip_to_candidate(p, created=now_iso)
-                deduped.setdefault(cand.id, cand)
-            ConflictQueue(store.root).upsert_scan(
-                list(deduped.values()), {m.id: m for m in memories}
-            )
-        except Exception:  # noqa: BLE001 — telemetry, not curation-critical
-            log.warning("conflict-queue upsert failed", exc_info=True)
+        now_iso = _utcnow().isoformat()
+        # Lift the report rows into queue rows here rather than
+        # re-running detection: same scan, same pairs. Dedup by pair
+        # id — the same pair can be flagged by both detectors.
+        deduped: dict[str, Any] = {}
+        for p in polarity_skipped:
+            cand = skip_to_candidate(p, created=now_iso)
+            deduped.setdefault(cand.id, cand)
+        ConflictQueue(store.root).upsert_scan(
+            list(deduped.values()), {m.id: m for m in memories}
+        )
+    except Exception:  # noqa: BLE001 — telemetry, not curation-critical
+        log.warning("conflict-queue upsert failed", exc_info=True)
 
     # Apply: tombstone duplicates first, then demote.
     #

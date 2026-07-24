@@ -10,13 +10,18 @@ bodies inline, and rules on each pair:
   `contradicts` link is written (a→b, with the note) BEFORE the verdict
   is stamped — ordering matters: the link-write bumps `updated`, and
   stamping the verdict afterwards keeps the resurrect rule quiet. Both
-  memories then surface the link on every retrieval, and resolution
-  happens through the normal verbs at the model's leisure
-  (memory_verify the right one, memory_update or memory_remove the
-  wrong one).
+  members must still be ACTIVE for that to mean anything (see
+  `_load_active_member`). Both memories then surface the link on every
+  retrieval, and resolution happens through the normal verbs at the
+  model's leisure (memory_verify the right one, memory_update or
+  memory_remove the wrong one).
 - verdict="compatible": the detector misfired (incidental negator,
-  added-detail number). The pair is dismissed and stays dismissed —
-  UNLESS either member's content later changes, which resurrects it.
+  added-detail number). Any `contradicts` link between the pair is
+  cleared first — the queue and the link layer are two authorities on
+  the same question and a dismissal that left the edge standing would
+  leave them permanently disagreeing — then the pair is dismissed and
+  stays dismissed UNLESS either member's content later changes, which
+  resurrects it.
 
 Scans are cheap to trigger here (`scan=True`) and also run
 automatically on every APPLYING consolidate pass (memory_curate /
@@ -29,7 +34,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from ..conflicts import ConflictQueue, scan_conflicts
-from ..models import LinkType, MemoryLink
+from ..models import LinkType, Memory, MemoryLink
 from ..store import ConcurrentUpdateError, MemoryNotFoundError, TombstonedError
 from ._shared import Context, _advance_turn
 from .write import _resolve_dedup_thresholds
@@ -53,13 +58,16 @@ DESC_MEMORY_CONFLICTS = (
     "- `resolve=<candidate_id>` + `verdict`: rule on one pair.\n"
     "  - `verdict='contradiction'` — genuinely disagree. Writes a "
     "`contradicts` link (a→b; pass `note` with WHY — future curators "
-    "need it), then marks the candidate confirmed. Follow up with the "
-    "normal verbs: memory_verify the correct side, memory_update / "
-    "memory_remove the wrong one. The link surfaces on both memories "
-    "at retrieval either way.\n"
+    "need it), then marks the candidate confirmed. Refused when either "
+    "member is no longer active (re-scan to GC the row). Follow up "
+    "with the normal verbs: memory_verify the correct side, "
+    "memory_update / memory_remove the wrong one. The link surfaces on "
+    "both memories at retrieval either way.\n"
     "  - `verdict='compatible'` — detector misfire (incidental "
-    "negator, added-detail number). Dismissed and stays dismissed "
-    "unless either body later changes, which re-queues the pair.\n\n"
+    "negator, added-detail number). Clears any `contradicts` link "
+    "between the pair (echoed as `links_cleared`), then dismisses; "
+    "stays dismissed unless either body later changes, which re-queues "
+    "the pair.\n\n"
     "Judging tips: read both bodies, not the summaries. For numeric "
     "pairs, 'compatible' is right when the numbers describe different "
     "things (two ports of two services); 'contradiction' when they "
@@ -148,6 +156,68 @@ async def memory_conflicts(
     return out
 
 
+def _load_active_member(deps: "ToolHandlers", memory_id: str) -> Memory:
+    """Load one conflict member, refusing when it is no longer active.
+
+    The refusal names the remedy (a re-scan GCs rows whose members died)
+    because that is the only way out: the candidate stays pending until
+    a full-corpus `upsert_scan` drops it, and re-issuing the verdict
+    would keep failing the same way.
+    """
+    try:
+        return deps.store.load_one(memory_id)
+    except (MemoryNotFoundError, TombstonedError) as exc:
+        raise ValueError(
+            f"conflict member {memory_id} is no longer active ({exc}); "
+            "re-scan (memory_conflicts(scan=True)) to GC the candidate"
+        ) from exc
+
+
+def _clear_contradicts_links(
+    deps: "ToolHandlers", a_id: str, b_id: str
+) -> list[dict[str, str]]:
+    """Drop `contradicts` edges between the pair, in BOTH directions.
+
+    The confirm path only ever writes a→b, but the relation is symmetric
+    per the `LinkType` contract and retrieval annotates from either
+    direction (`_response.attach_link_annotations`), so a hand-written
+    b→a edge is just as live and has to go too. Mirrors the confirm-side
+    write down to `preserve_verification=True`: dropping a link is a
+    metadata edit, and clobbering a `mark_verified` that landed
+    concurrently would cost an attestation the verdict never judged.
+
+    A member that is already gone is skipped rather than refused — a
+    compatible verdict on a moot pair is harmless and the row is GC'd by
+    the next scan either way. Returns one `{source, target}` row per
+    memory actually rewritten.
+    """
+    cleared: list[dict[str, str]] = []
+    for source_id, target_id in ((a_id, b_id), (b_id, a_id)):
+        try:
+            source = deps.store.load_one(source_id)
+        except (MemoryNotFoundError, TombstonedError):
+            continue
+        remaining = [
+            link
+            for link in source.links
+            if not (link.type == LinkType.CONTRADICTS and link.target_id == target_id)
+        ]
+        if len(remaining) == len(source.links):
+            continue
+        try:
+            deps.store.update(
+                source.model_copy(update={"links": remaining}),
+                preserve_verification=True,
+            )
+        except ConcurrentUpdateError as exc:
+            raise ValueError(
+                f"memory {source_id} changed concurrently; re-fetch via "
+                f"memory_show and retry the verdict ({exc})"
+            ) from exc
+        cleared.append({"source": source_id, "target": target_id})
+    return cleared
+
+
 def _resolve_verdict(
     deps: "ToolHandlers",
     queue: ConflictQueue,
@@ -169,22 +239,42 @@ def _resolve_verdict(
         )
 
     if verdict == "compatible":
+        # Two authorities rule on the same question — this queue and the
+        # `contradicts` link layer retrieval annotates from. A dismissal
+        # that left a standing edge in place (written by an earlier
+        # `contradiction` verdict on the resurrected pair, or by hand via
+        # memory_update) would leave them permanently disagreeing: the
+        # queue calls the pair settled while every retrieval keeps
+        # flagging it, and nothing ever re-raises it for arbitration.
+        # Clear BEFORE stamping, for the same ordering reason the
+        # confirm path writes before stamping: the clear bumps `updated`,
+        # and a bump that postdates `verdict_ts` would resurrect the row
+        # on the very next scan.
+        cleared = _clear_contradicts_links(deps, candidate.a_id, candidate.b_id)
         resolved = queue.resolve(candidate_id, status="dismissed", note=note)
-        return {
+        out: dict[str, Any] = {
             "id": candidate_id,
             "verdict": "compatible",
             "status": "dismissed" if resolved else "already_resolved",
+            "links_cleared": cleared,
         }
+        if cleared:
+            out["hint"] = (
+                "A stale `contradicts` link between the pair was removed, so "
+                "retrieval no longer annotates the two as disagreeing. If that "
+                "was wrong, re-link explicitly via memory_update."
+            )
+        return out
 
     # contradiction: write the link FIRST (its `updated` bump must land
     # before the verdict timestamp — see conflicts.py), then stamp.
-    try:
-        source = deps.store.load_one(candidate.a_id)
-    except (MemoryNotFoundError, TombstonedError) as exc:
-        raise ValueError(
-            f"conflict member {candidate.a_id} is no longer active ({exc}); "
-            "re-scan to GC the candidate"
-        ) from exc
+    # BOTH members must still be active, not just the link's source: a
+    # link whose target is tombstoned resolves to nothing at annotation
+    # time (`_response._resolve` skips missing/tombstoned targets) and
+    # the next full scan GCs the queue row, so the verdict's only
+    # durable artifact would be invisible from the moment it was made.
+    source = _load_active_member(deps, candidate.a_id)
+    _load_active_member(deps, candidate.b_id)
     already = any(
         link.type == LinkType.CONTRADICTS and link.target_id == candidate.b_id
         for link in source.links

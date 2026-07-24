@@ -289,6 +289,119 @@ async def test_e2e_compatible_dismissal_and_errors(memory_dir: Path) -> None:
         )
 
 
+async def test_e2e_contradiction_verdict_refuses_when_target_is_dead(
+    memory_dir: Path,
+) -> None:
+    """A contradiction verdict must check BOTH members, not just the
+    link's source. A link whose target was tombstoned resolves to
+    nothing at annotation time and the next scan GCs the queue row — the
+    arbitration's only durable artifact would be invisible from the
+    moment it was made."""
+    server = _build(memory_dir)
+    await _seed_conflicting_pair(server)
+    res = _unwrap(await _call(server, "memory_conflicts", scan=True))
+    row = res["pending"][0]
+
+    await _call(
+        server,
+        "memory_remove",
+        id=row["b"]["id"],
+        reason="the second port claim turned out to be a typo",
+    )
+
+    with pytest.raises(Exception, match="no longer active"):
+        await _call(
+            server,
+            "memory_conflicts",
+            resolve=row["id"],
+            verdict="contradiction",
+            note="one of these ports is stale",
+        )
+
+    # Refused, not half-applied: no dangling link on the surviving side,
+    # and the row stays pending until the named remedy runs.
+    shown = _unwrap(await _call(server, "memory_show", id=row["a"]["id"]))
+    assert not (shown.get("links") or [])
+    assert conflicts_pending_count(memory_dir) == 1
+    rescan = _unwrap(await _call(server, "memory_conflicts", scan=True))
+    assert rescan["pending_total"] == 0
+    assert conflicts_pending_count(memory_dir) == 0
+
+
+async def test_e2e_compatible_clears_standing_contradicts_links(
+    memory_dir: Path,
+) -> None:
+    """The queue and the link layer are two authorities on one question.
+    A `compatible` verdict that left a standing `contradicts` edge in
+    place would leave them permanently disagreeing: the queue calls the
+    pair settled while every retrieval keeps flagging it."""
+    server = _build(memory_dir)
+    a_id, b_id = await _seed_conflicting_pair(server)
+    # Both directions — the confirm path only ever writes a→b, but the
+    # relation is symmetric and retrieval annotates from either side.
+    await _call(
+        server,
+        "memory_update",
+        id=a_id,
+        links=[{"type": "contradicts", "target_id": b_id}],
+    )
+    await _call(
+        server,
+        "memory_update",
+        id=b_id,
+        links=[{"type": "contradicts", "target_id": a_id}],
+    )
+
+    res = _unwrap(await _call(server, "memory_conflicts", scan=True))
+    cid = res["pending"][0]["id"]
+    out = _unwrap(
+        await _call(
+            server,
+            "memory_conflicts",
+            resolve=cid,
+            verdict="compatible",
+            note="two different services, two different ports",
+        )
+    )
+    assert out["resolved"]["status"] == "dismissed"
+    assert {c["source"] for c in out["resolved"]["links_cleared"]} == {a_id, b_id}
+
+    for mid in (a_id, b_id):
+        shown = _unwrap(await _call(server, "memory_show", id=mid))
+        assert not any(
+            link.get("type") == "contradicts" for link in (shown.get("links") or [])
+        )
+
+    # The clear lands BEFORE the verdict stamp, so its `updated` bump
+    # cannot resurrect the very row it just settled.
+    rescan = _unwrap(await _call(server, "memory_conflicts", scan=True))
+    assert rescan["pending_total"] == 0
+    assert conflicts_pending_count(memory_dir) == 0
+
+
+async def test_e2e_applying_pass_gcs_dead_rows_without_fresh_skips(
+    memory_dir: Path,
+) -> None:
+    """`upsert_scan` is the queue's only garbage collector, so the
+    applying pass has to call it even when the scan found nothing fresh.
+    Gated on fresh skips, a row whose member died stayed pending forever
+    and `curation_pending.conflicts` kept advertising work that a
+    curation pass would find nothing to do about."""
+    server = _build(memory_dir)
+    _a_id, b_id = await _seed_conflicting_pair(server)
+    await _call(server, "memory_curate", dry_run=False)
+    assert conflicts_pending_count(memory_dir) == 1
+
+    await _call(
+        server, "memory_remove", id=b_id, reason="the 5433 claim was plain wrong"
+    )
+    # One member left: this pass detects ZERO conflict-shaped skips.
+    await _call(server, "memory_curate", dry_run=False)
+    assert conflicts_pending_count(memory_dir) == 0
+    overview = _unwrap(await _call(server, "memory_scope_overview"))
+    assert overview["curation_pending"]["conflicts"] == 0
+
+
 async def test_e2e_applying_curate_feeds_queue(memory_dir: Path) -> None:
     """The Stop-hook / memory_curate apply path persists conflict-shaped
     skips automatically; dry-run stays side-effect free."""
