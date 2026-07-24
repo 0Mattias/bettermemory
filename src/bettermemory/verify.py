@@ -383,22 +383,27 @@ class PathDriftReport:
     has some OTHER reason to be emitted; a report whose ONLY non-empty
     bucket is `dropped_as_route` — which is what a body citing nothing
     but suppressed paths produces, the case this bucket was added for —
-    stays invisible to it, because:
+    stays invisible to it, because every surface gates its `path_drift`
+    block on the missing / verified / expected-absent buckets, which a
+    route-only report fails:
 
-      * `memory_show` and `memory_search`'s expanded top hit gate the
-        `path_drift` block on `has_drift or verified or expected_absent`
-        (`handlers/show.py`, `handlers/search.py`). A route-only report
-        fails all three, so no block is emitted. Both gates do call
-        `to_dict()` once they fire, so widening the expression is all
-        those two surfaces need.
+      * `memory_show` and `memory_search`'s expanded top hit gate on
+        `has_drift or verified or expected_absent` (`handlers/show.py`,
+        `handlers/search.py`) and emit `to_dict()` wholesale once the
+        gate fires — a report emitted for any other reason carries the
+        suppressed set with it.
       * per-hit `path_drift` on non-top-ranked search hits is rebuilt
-        from `MemoryHit` fields rather than from `to_dict()`
-        (`_response.py`), and `MemoryHit` has no `dropped_as_route`
-        counterpart to rebuild from — so that surface cannot carry the
-        bucket even after the two gates are widened.
+        from `MemoryHit` fields (`_response.py`), gated on the same
+        three buckets' path lists. The hit carries this bucket as
+        `path_drift_dropped_as_route_paths`, and the response builder
+        folds a non-empty suppressed set into the emitted dict —
+        additively, the key present only when the rule ate something —
+        so a firing per-hit block has value-parity with the other two
+        surfaces.
 
-    Until those are done, the escape hatch for a citation you believe is
-    wrongly suppressed remains
+    Widening those gate expressions is all a route-only-visibility
+    change still needs. Until that is done, the escape hatch for a
+    citation you believe is wrongly suppressed remains
     `memory_verify(verified_absent_paths=[...])`, which routes it to
     `expected_absent` before the route rule is consulted — and which a
     caller must reach for without being shown that the suppression
@@ -478,9 +483,11 @@ def detect_path_drift(
 
     A candidate the route rule suppresses lands in
     `report.dropped_as_route` — not `checked`, not `missing`, but
-    readable off the returned report instead of nowhere at all. That
-    reach stops at this function's return value: see `PathDriftReport`
-    for why the bucket exists and which surfaces do not carry it yet.
+    readable off the returned report instead of nowhere at all. See the
+    reach note on `PathDriftReport` for how far the bucket travels
+    beyond this return value: each MCP surface's `path_drift` block
+    carries a non-empty suppressed set once the block fires, but a
+    route-ONLY report still fires no block anywhere.
     """
     candidates = _extract_candidates(body)
     if not candidates:

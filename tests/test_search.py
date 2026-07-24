@@ -5,10 +5,13 @@ from __future__ import annotations
 import random
 import unicodedata
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any
 
 import pytest
 
-from bettermemory.models import Confidence, Memory, Source, generate_ulid
+from bettermemory._response import ResponseBuilder
+from bettermemory.models import Confidence, Memory, MemoryHit, Source, generate_ulid
 from bettermemory.search import (
     SearchMode,
     find_similar,
@@ -1764,3 +1767,93 @@ def test_search_tokenizes_each_candidate_once(
     assert hits  # the counted run must be a real, scoring search
     # 1 query + per candidate: 1 body + 1 scope (each _memory has one).
     assert calls["n"] == 1 + 2 * len(memories)
+
+
+# ---------------------------------------------------------------------------
+# dropped_as_route parity on the per-hit surface
+# ---------------------------------------------------------------------------
+#
+# `memory_show` and `memory_search`'s expanded top hit ship the route-
+# suppressed set inside the full report whenever their `path_drift`
+# block fires. The per-hit block is rebuilt from `MemoryHit` fields
+# instead, so until the hit carried the bucket, non-top-ranked hits
+# silently dropped it. These pin the whole per-hit chain: search()
+# threads the bucket onto the hit, the response builder folds a
+# non-empty set into the emitted dict, and the emit gate stays
+# unwidened (a route-only report stays invisible, matching memory_show).
+
+
+def _drift_hit(**path_fields: Any) -> MemoryHit:
+    """MemoryHit with fixed identity fields; path-drift lists per test."""
+    now = datetime.now(timezone.utc)
+    return MemoryHit(
+        id=generate_ulid(),
+        scopes=["tools"],
+        confidence=Confidence.MEDIUM,
+        snippet="body snippet",
+        score=1.0,
+        created=now,
+        updated=now,
+        **path_fields,
+    )
+
+
+def test_search_hit_carries_dropped_as_route_bucket(tmp_path: Path) -> None:
+    """search() threads the report's suppressed set onto every hit as
+    `path_drift_dropped_as_route_paths`, alongside the other per-hit
+    drift lists — the field the response builder rebuilds the per-hit
+    `path_drift` dict from."""
+    gone = tmp_path / "deploy-notes.txt"  # never created: genuine drift
+    memory = _memory(
+        f"Deploy notes at `{gone}`; route `/admin/macros` serves the console."
+    )
+    hits = search([memory], "deploy notes console")
+    assert hits and hits[0].id == memory.id
+    assert hits[0].path_drift_missing_paths == [str(gone)]
+    assert hits[0].path_drift_dropped_as_route_paths == ["/admin/macros"]
+
+
+def test_hit_to_dict_folds_dropped_as_route_into_path_drift() -> None:
+    """A firing per-hit `path_drift` block carries the suppressed set —
+    the same values `memory_show` ships inside the full report."""
+    hit = _drift_hit(
+        path_drift_checked=1,
+        path_drift_missing=1,
+        path_drift_checked_paths=["/tmp/bm-gone.txt"],
+        path_drift_missing_paths=["/tmp/bm-gone.txt"],
+        path_drift_dropped_as_route_paths=["/admin/macros"],
+    )
+    now = datetime.now(timezone.utc)
+    out = ResponseBuilder(stale_after_days=30).hit_to_dict(hit, now=now)
+    assert out["path_drift"]["missing"] == ["/tmp/bm-gone.txt"]
+    assert out["path_drift"]["dropped_as_route"] == ["/admin/macros"]
+
+
+def test_hit_to_dict_omits_dropped_as_route_key_when_none_suppressed() -> None:
+    """Additive contract, same as `expected_absent`: a firing block with
+    no suppressed candidates keeps the pre-existing key set, so a
+    consumer pinned to the `{checked, missing, verified}` shape never
+    sees a surprise key."""
+    hit = _drift_hit(
+        path_drift_checked=1,
+        path_drift_missing=1,
+        path_drift_checked_paths=["/tmp/bm-gone.txt"],
+        path_drift_missing_paths=["/tmp/bm-gone.txt"],
+    )
+    now = datetime.now(timezone.utc)
+    out = ResponseBuilder(stale_after_days=30).hit_to_dict(hit, now=now)
+    assert "dropped_as_route" not in out["path_drift"]
+
+
+def test_route_only_hit_still_emits_no_path_drift_block() -> None:
+    """Field parity, not gate widening: a hit whose ONLY non-empty
+    bucket is the suppressed set emits no per-hit `path_drift` block at
+    all — the same route-only invisibility `memory_show`'s gate
+    produces. Pinned so the gate stays a deliberate decision instead of
+    drifting silently in either direction."""
+    hit = _drift_hit(
+        path_drift_dropped_as_route_paths=["/admin/macros"],
+    )
+    now = datetime.now(timezone.utc)
+    out = ResponseBuilder(stale_after_days=30).hit_to_dict(hit, now=now)
+    assert "path_drift" not in out

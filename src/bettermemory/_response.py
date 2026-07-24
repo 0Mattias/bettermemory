@@ -116,6 +116,19 @@ class ResponseBuilder:
         ["src/auth/middleware.py"]` is directly actionable: the model
         memory_updates the rotted bit or memory_verifies the rest, no
         memory_show round-trip required.
+
+        A non-empty route-suppressed set (`PathDriftReport`'s
+        `dropped_as_route` bucket, threaded through
+        `MemoryHit.path_drift_dropped_as_route_paths`) rides along
+        under a `dropped_as_route` key whenever the block fires — the
+        parity `memory_show` and the expanded top hit already get by
+        emitting the report's serialisation wholesale. Additive like
+        `expected_absent`: the key appears only when the rule actually
+        suppressed something. The emit gate itself is unchanged, so a
+        report whose ONLY non-empty bucket is `dropped_as_route` still
+        produces no `path_drift` block here — the same route-only
+        invisibility `memory_show` has (see the reach note on
+        `PathDriftReport`).
         """
         verification = compute_verification_status(
             hit.last_verified_at, now=now, stale_after_days=self._stale_after_days
@@ -158,6 +171,16 @@ class ResponseBuilder:
             if hit.path_drift_expected_absent_paths:
                 out["path_drift"]["expected_absent"] = list(
                     hit.path_drift_expected_absent_paths
+                )
+            # Additive for the same reason: the route-suppressed set
+            # folds in only when the route rule actually ate a
+            # candidate. Value-parity with what `memory_show` and the
+            # expanded top hit ship inside the full report — before
+            # `MemoryHit` carried the bucket, the per-hit dict was the
+            # one surface that silently dropped it.
+            if hit.path_drift_dropped_as_route_paths:
+                out["path_drift"]["dropped_as_route"] = list(
+                    hit.path_drift_dropped_as_route_paths
                 )
         return out
 

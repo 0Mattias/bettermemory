@@ -440,6 +440,16 @@ class MemoryHit(BaseModel):
     triage; the lists are the actionable detail surfaced when the
     response builder folds them in.
 
+    `path_drift_dropped_as_route_paths` mirrors the report's
+    `dropped_as_route` bucket: candidates the route rule suppressed
+    instead of stat-reporting — neither checked nor missing, see
+    `PathDriftReport`. Threaded onto the hit so the response builder
+    can fold a non-empty suppressed set into the per-hit `path_drift`
+    dict, the same signal `memory_show` and the expanded top hit ship
+    via the report's own serialisation. Before this field existed,
+    non-top-ranked search hits were the one MCP surface that could not
+    carry the bucket at all.
+
     `category` mirrors the persisted memory field; surfaced on every hit
     so triage can spot ambient context without expanding.
 
@@ -469,6 +479,7 @@ class MemoryHit(BaseModel):
     path_drift_missing_paths: list[str] = []
     path_drift_verified_paths: list[str] = []
     path_drift_expected_absent_paths: list[str] = []
+    path_drift_dropped_as_route_paths: list[str] = []
     category: Category | None = None
     query_unique: int = 0
 

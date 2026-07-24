@@ -1811,6 +1811,7 @@ def _build_hit(
         path_drift_missing_paths=list(drift.missing),
         path_drift_verified_paths=list(drift.verified),
         path_drift_expected_absent_paths=list(drift.expected_absent),
+        path_drift_dropped_as_route_paths=list(drift.dropped_as_route),
     )
 
 
