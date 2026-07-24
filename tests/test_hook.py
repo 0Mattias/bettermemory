@@ -1216,6 +1216,94 @@ def test_run_audit_no_consolidate_when_telemetry_off(tmp_path: Path) -> None:
     assert not (mem_dir / ".events.jsonl").exists()  # telemetry off → no log
 
 
+def test_run_audit_size_guard_sees_the_store_not_the_probe_pool(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The hook→`run_auto_consolidate` wiring: the bounded-store guard
+    must measure the STORE, never the audit probe's candidate pool.
+
+    `run_auto_consolidate`'s `memories` argument feeds `active =
+    memories if memories is not None else store.load_all()`, and the
+    Bounded safety contract skips the unattended O(N²) dedup when
+    `len(active) > max_memories`. Once the probe started ranking
+    production's pool instead of a full `load_all()`, the only list this
+    hook holds is a `_PREFILTER_CAP`-capped, query-biased slice — so
+    forwarding it would cap the measured size at 50 and run the pass on
+    exactly the oversized stores the guard defers. Shipped defaults make
+    that collision exact: `_INDEX_THRESHOLD_DEFAULT` and
+    `auto_apply_max_memories` are both 500.
+
+    Engage the prefilter for real and assert the guard still fires with
+    the TRUE active count. The two duplicate bodies are the teeth: with
+    the guard defeated, the dedup pass tombstones one and the store
+    shrinks."""
+    from bettermemory import index
+    from bettermemory.config import (
+        Config,
+        ConsolidateConfig,
+        StorageConfig,
+        TelemetryConfig,
+    )
+    from bettermemory.consolidate import AUTO_CONSOLIDATE_EVENT
+
+    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
+    mem_dir = tmp_path / "mem"
+    store = Store(mem_dir)
+    for i in range(58):
+        store.write(
+            content=f"alpha beta gamma delta epsilon zeta filler-{i}",
+            scopes=["tools"],
+        )
+    for _ in range(2):
+        store.write(
+            content="alpha beta gamma delta epsilon zeta duplicate marker",
+            scopes=["tools"],
+        )
+    total = len(store.load_all())
+    assert total == 60
+    index.rebuild(mem_dir, store.iter_active())
+
+    pool_sizes: list[int] = []
+    import bettermemory.handlers.search as search_mod
+
+    real_pool = search_mod.resolve_search_pool
+
+    def pool_spy(*args: object, **kwargs: object) -> object:
+        pool = real_pool(*args, **kwargs)  # type: ignore[arg-type]
+        pool_sizes.append(len(pool.memories))
+        return pool
+
+    monkeypatch.setattr(search_mod, "resolve_search_pool", pool_spy)
+
+    cfg = Config(
+        storage=StorageConfig(directory=str(mem_dir)),
+        telemetry=TelemetryConfig(enabled=True),
+        # Between the prefilter cap (50) and the store (60): a pool-sized
+        # count passes the guard, a store-sized count trips it.
+        consolidate=ConsolidateConfig(auto_apply=True, auto_apply_max_memories=55),
+    )
+    run_audit(
+        user_message="alpha beta",
+        assistant_response="hi",
+        session_id="sess-guard",
+        config=cfg,
+    )
+
+    assert pool_sizes and pool_sizes[0] <= 50 < total, (
+        "sanity: the FTS prefilter must actually have capped the probe's "
+        "pool, or this test is not exercising the divergence"
+    )
+    auto_events = [
+        e for e in iter_events(mem_dir) if e["kind"] == AUTO_CONSOLIDATE_EVENT
+    ]
+    assert len(auto_events) == 1
+    assert auto_events[0]["status"] == "skipped_store_too_large"
+    assert auto_events[0]["active_count"] == total, (
+        "the guard measured the probe's capped pool instead of the store"
+    )
+    assert len(store.load_all()) == total  # nothing tombstoned
+
+
 # ---------------------------------------------------------------------------
 # Write-reflex closure — proposal capture fired from the Stop hook
 # ---------------------------------------------------------------------------
@@ -2118,3 +2206,235 @@ def test_run_audit_endorsement_tally_drops_out_of_window_applies(
     # And the probe window is the shared attribution window, not the
     # old hardcoded 60.
     assert captured["lookback_seconds"] == 600
+
+
+# A two-memory near-tie the bounded `search._demotion_factor` can
+# re-rank. Both memories carry the SAME body, so both clear the v1
+# "high" threshold and only recency separates them before any demotion.
+# What differs is suppression eligibility: the project-scoped memory was
+# written from the caller's repo, so `_caller_in_top_hit_project`
+# explains away the missing search while it holds rank 1; the global one
+# cannot. Mirrors `_demotion_pair` in test_audit.py.
+_DEMOTION_QUERY = "restic replication"
+_DEMOTION_BODY = "restic replication runbook lives in the homelab tree"
+_DEMOTION_REPO = "git@github.com:owner/homelab.git"
+
+
+def _write_demotion_pair(mem_dir: Path, worktree: str) -> tuple[str, str]:
+    """Seed `(project_memory_id, global_memory_id)`.
+
+    The project memory is a day fresher — a real, deterministic score
+    lead under the default half-life, far inside the demotion factor's
+    reach. Both are backdated well past the probe's creation shield, and
+    past the point where a negative outcome recorded "now" would be
+    treated as resolved by a newer `updated`."""
+    from bettermemory.origin import Origin
+
+    store = Store(mem_dir)
+    project = store.write(
+        content=_DEMOTION_BODY,
+        scopes=["projects:homelab"],
+        origin=Origin(cwd=worktree, repo=_DEMOTION_REPO, worktree_root=worktree),
+    )
+    global_memory = store.write(content=_DEMOTION_BODY, scopes=["infrastructure"])
+    now = datetime.now(timezone.utc)
+    ages = {
+        project.id: timedelta(hours=1),
+        global_memory.id: timedelta(days=1, hours=1),
+    }
+    for path, mem in store.iter_active():
+        age = ages.get(mem.id)
+        if age is None:
+            continue
+        stamp = now - age
+        store._write_path(
+            path, mem.model_copy(update={"created": stamp, "updated": stamp})
+        )
+    return project.id, global_memory.id
+
+
+def test_run_audit_demotion_changes_the_probe_verdict(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The Stop hook — the PRIMARY production audit producer — must tally
+    active negative outcomes and feed them to the probe whenever
+    `[behavior] outcome_demotion` is on.
+
+    Pre-fix it tallied only explicit applies, so a memory production
+    retrieval had demoted out of the top slot still held rank 1 in the
+    probe. Since the miss verdict reads ONLY the rank-1 hit, the audit
+    then reported on a ranking the model never performed — in both
+    directions (the demoted memory's suppression masking a real miss
+    here; elsewhere a demotion-promoted top hit the probe never saw).
+
+    Same store, same message, same flag: the only difference between the
+    two runs is one recorded rejection."""
+    from bettermemory.config import (
+        BehaviorConfig,
+        Config,
+        StorageConfig,
+        TelemetryConfig,
+    )
+    from bettermemory.origin import Origin as _Origin
+
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    worktree = str(tmp_path / "homelab-wt")
+    project_id, global_id = _write_demotion_pair(mem_dir, worktree)
+    monkeypatch.setattr(
+        "bettermemory.hook.capture_origin",
+        lambda *a, **k: _Origin(
+            cwd=worktree, repo=_DEMOTION_REPO, worktree_root=worktree
+        ),
+    )
+
+    cfg = Config(
+        storage=StorageConfig(directory=str(mem_dir)),
+        telemetry=TelemetryConfig(enabled=True),
+        # Keyword mode ranks on the raw scorer, where the bounded factor
+        # is directly visible; hybrid's RRF would only show it once a
+        # per-ranker rank actually swapped.
+        behavior=BehaviorConfig(search_mode="keyword", outcome_demotion=True),
+    )
+
+    neutral = run_audit(
+        user_message=_DEMOTION_QUERY,
+        assistant_response=None,
+        session_id="claude-demotion-neutral",
+        config=cfg,
+    )
+    assert neutral["top_hits"][0]["id"] == project_id
+    assert neutral["top_hits"][0]["relevance"] == "high"
+    assert neutral["recent_retrieval_count"] == 0
+    # Rank 1 is the caller's own project memory → "the model has this
+    # repo open" explains the missing search.
+    assert neutral["verdict"] == "ok"
+
+    # One explicit rejection, postdating the memory's `updated` so it is
+    # unresolved and still testifies.
+    Recorder(root=mem_dir, session_id="sess_server").record(
+        "use", ids=[project_id], outcome="contradicted", auto=False
+    )
+
+    demoted = run_audit(
+        user_message=_DEMOTION_QUERY,
+        assistant_response=None,
+        # A fresh session id: the re-audit dedup matches on (session,
+        # message) and would mark the second run a repeat, which
+        # suppresses the companion `search_miss` event.
+        session_id="claude-demotion-rejected",
+        config=cfg,
+    )
+    assert demoted["top_hits"][0]["id"] == global_id
+    assert demoted["top_hits"][0]["relevance"] == "high"
+    assert demoted["verdict"] == "miss"
+    misses = [e for e in iter_events(mem_dir) if e["kind"] == "search_miss"]
+    assert len(misses) == 1, "the flipped verdict must reach the event log"
+
+
+# A store where the FTS5 candidate prefilter is SATURATED and the memory
+# that would win a full-corpus ranking sits past the cap. Above
+# `_INDEX_THRESHOLD_DEFAULT` production ranks that capped slice; a probe
+# ranking an unconditional `store.load_all()` ranks a strict superset.
+# Mirrors `_write_prefilter_starved_store` in test_audit.py.
+_STARVED_QUERY = "alpha beta"
+_STARVED_REPO = "git@github.com:example/repo-a.git"
+
+
+def _write_prefilter_starved_store(mem_dir: Path, worktree: str) -> str:
+    """Seed the starved store and return the past-the-cap target's id.
+
+    60 short bodies repeat both query terms and win the FTS5 BM25
+    ordering, monopolising the `_PREFILTER_CAP` slice. The target
+    mentions each term twice inside a long body — length normalisation
+    drops it past the cap — but the keyword scorer caps per-term TF at
+    2, so over the FULL corpus it ties the decoys and its freshness wins
+    rank 1. It is also the only project-scoped memory written from the
+    caller's repo, so holding rank 1 lets `_caller_in_top_hit_project`
+    suppress the verdict to `ok`."""
+    from bettermemory import index
+    from bettermemory.origin import Origin
+
+    store = Store(mem_dir)
+    dense = "alpha beta " * 6
+    for i in range(60):
+        store.write(
+            content=f"{dense}filler-{i}", scopes=["infrastructure"], origin=None
+        )
+    padding = " ".join(f"pad{j}" for j in range(200))
+    target = store.write(
+        content=f"alpha beta alpha beta {padding} tail",
+        scopes=["projects:repo-a"],
+        origin=Origin(cwd=worktree, repo=_STARVED_REPO, worktree_root=worktree),
+    )
+    now = datetime.now(timezone.utc)
+    for path, mem in store.iter_active():
+        age = timedelta(minutes=30) if mem.id == target.id else timedelta(days=30)
+        stamp = now - age
+        store._write_path(
+            path, mem.model_copy(update={"created": stamp, "updated": stamp})
+        )
+    index.rebuild(mem_dir, store.iter_active())
+    top = {cid for cid, _ in index.query(mem_dir, _STARVED_QUERY, max_results=50)}
+    assert len(top) == 50, "prefilter slice is not saturated — densify the decoys"
+    assert target.id not in top, (
+        "precondition drift: the target landed inside the FTS top-50, so "
+        "production and a load_all probe would see the same pool"
+    )
+    return target.id
+
+
+def test_run_audit_ranks_productions_candidate_pool(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The Stop hook — the PRIMARY production audit producer — must rank
+    production's candidate pool, not an unconditional `load_all()`.
+
+    Pre-fix it loaded the whole store while `memory_search` ranked the
+    `_PREFILTER_CAP`-capped FTS slice. The probe's pool was a strict
+    superset, and the miss verdict reads ONLY the rank-1 hit, so a
+    memory the prefilter would have dropped could take that slot: here
+    the caller's own project memory, which `_caller_in_top_hit_project`
+    suppresses to `ok` while production's real rank-1 is a global memory
+    worth flagging. Asserting the verdict alone would be weak — the
+    rank-1 identity is what the pool decides, so pin both."""
+    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
+    from bettermemory.config import (
+        BehaviorConfig,
+        Config,
+        StorageConfig,
+        TelemetryConfig,
+    )
+    from bettermemory.origin import Origin as _Origin
+
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    worktree = str(tmp_path / "repo-a-wt")
+    target_id = _write_prefilter_starved_store(mem_dir, worktree)
+    monkeypatch.setattr(
+        "bettermemory.hook.capture_origin",
+        lambda *a, **k: _Origin(
+            cwd=worktree, repo=_STARVED_REPO, worktree_root=worktree
+        ),
+    )
+
+    cfg = Config(
+        storage=StorageConfig(directory=str(mem_dir)),
+        telemetry=TelemetryConfig(enabled=True),
+        behavior=BehaviorConfig(search_mode="keyword"),
+    )
+    result = run_audit(
+        user_message=_STARVED_QUERY,
+        assistant_response=None,
+        session_id="claude-starved",
+        config=cfg,
+    )
+    assert result["recent_retrieval_count"] == 0
+    assert result["top_hits"][0]["id"] != target_id, (
+        "the probe ranked the past-the-cap memory production's prefilter "
+        "would never have surfaced"
+    )
+    assert result["top_hits"][0]["scopes"] == ["infrastructure"]
+    assert result["verdict"] == "miss"
+    misses = [e for e in iter_events(mem_dir) if e["kind"] == "search_miss"]
+    assert len(misses) == 1

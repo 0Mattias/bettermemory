@@ -1427,9 +1427,18 @@ def run_auto_consolidate(
       via `memory_restore`) or a retag (reversible via `memory_update`),
       visible in `memory_list_tombstones` and the event log.
 
-    `memories`, when supplied, is reused for the size guard only (the Stop
-    hook already loaded the active set for its audit probe); the actual
-    `consolidate` re-loads a fresh view so it acts on current truth.
+    `memories`, when supplied, is reused for the size guard only; the
+    actual `consolidate` re-loads a fresh view so it acts on current
+    truth. It MUST be the store's whole active set, because the guard
+    reads `len()` as the store's SIZE: a caller that hands over a
+    filtered or capped subset — a `handlers.search.SearchPool`, say —
+    reports a store small enough to pass and disarms the Bounded
+    contract above on precisely the stores it protects. Callers holding
+    anything narrower should pass None and let this function load; the
+    debounce above means that load is paid at most once per
+    `interval_hours`, not per turn. (The Stop hook passes None for
+    exactly this reason — the only list it holds is its probe's search
+    pool.)
     """
     if now is None:
         now = datetime.now(timezone.utc)

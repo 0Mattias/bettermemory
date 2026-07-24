@@ -94,6 +94,235 @@ DESC_MEMORY_WRITE_CONFIRM = _handlers_pkg.DESC_MEMORY_WRITE_CONFIRM
 
 
 # ---------------------------------------------------------------------------
+# FTS candidate prefilter
+# ---------------------------------------------------------------------------
+#
+# Module-level rather than `ToolHandlers` methods: the out-of-process Stop
+# hook (`hook.run_audit`) has only a `Store` — no dependency bundle — and
+# has to build the SAME candidate pool `memory_search` ranks, or the
+# silent-miss probe measures a retrieval production never performed.
+# `ToolHandlers` keeps thin delegating methods so the existing bundle call
+# sites are unchanged.
+
+
+# The store size above which the FTS5 candidate pre-filter is
+# used instead of a full load_all on every search. Calibrated so
+# that small stores (the common case) keep the existing behaviour
+# byte-stable — the candidate path adds a SQLite round-trip per
+# search and a per-id load, which is net cheaper only once the
+# alternative (load every file) dominates the budget. Tunable
+# via the BETTERMEMORY_INDEX_THRESHOLD env var for testing.
+_INDEX_THRESHOLD_DEFAULT = 500
+
+# Candidate cap threaded into `index.query` by
+# `load_search_candidates`. A full cap-sized row set from the
+# index means the FTS prefilter was saturated — the loader reports
+# that via its second return value so `handlers/search.py` can run
+# its cap-starvation guard.
+_PREFILTER_CAP = 50
+
+
+def resolve_index_threshold() -> int:
+    """Resolve the live threshold above which the FTS candidate
+    pre-filter kicks in. Reads from BETTERMEMORY_INDEX_THRESHOLD
+    on every search so tests can flip it without rebuilding the
+    handler. Falls back to the module default."""
+    import os
+
+    raw = os.environ.get("BETTERMEMORY_INDEX_THRESHOLD")
+    if raw is None:
+        return _INDEX_THRESHOLD_DEFAULT
+    try:
+        value = int(raw)
+        return value if value > 0 else _INDEX_THRESHOLD_DEFAULT
+    except ValueError:
+        return _INDEX_THRESHOLD_DEFAULT
+
+
+def load_search_candidates(
+    store: Store, query: str, scopes: list[str] | None = None
+) -> tuple[list[Any], bool, bool]:
+    """Either load all active memories or pre-filter via the FTS5
+    index, depending on store size and index health.
+
+    Returns ``(candidates, prefilter_saturated, prefiltered)``.
+
+    ``prefilter_saturated`` is True only when the FTS prefilter
+    path served the candidates AND the index returned a full
+    cap-sized slice (`_PREFILTER_CAP` rows) — the signal the
+    cap-starvation guard in `handlers/search.py` keys on. It is
+    computed from the INDEX row count, not the loaded list: the
+    per-candidate skips below (filename-lookup misses, id/body
+    drift) can shrink the loaded list under the cap, which would
+    mask saturation from a length check on the returned list.
+    Every `load_all` branch reports False — the full corpus has
+    no cap to be starved by.
+
+    ``prefiltered`` is the weaker, separate claim that the FTS path
+    served these candidates AT ALL, saturated or not. The two are not
+    interchangeable and the difference is load-bearing: a prefilter
+    that returns 30 rows is under the cap — so not saturated — but
+    every one of those rows is present BECAUSE it matched the query,
+    which is exactly the condition that collapses corpus statistics
+    derived from the pool. `handlers/search.py` keys the BM25
+    corpus-IDF lookup on this flag rather than on saturation; see
+    `index.corpus_document_frequencies`.
+
+    When `scopes` is given it is threaded into the FTS pre-filter so
+    the bounded candidate slice is drawn from IN-SCOPE matches. Without
+    it the index returns the 50 globally-highest-BM25 rows and the
+    authoritative scope filter (`search.run_search`) narrows them — so
+    on a large indexed store a scoped query whose in-scope matches all
+    rank #51+ globally would come back empty even though matching
+    memories exist. The index's `scopes_text LIKE '% scope %'` filter
+    is the same exact, space-padded set-membership the authoritative
+    `memory_scope_set & scope_filter` applies, so threading it never
+    drops a candidate the authoritative pass would have kept.
+
+    The current heuristic: walk the index status once. If the
+    on-disk index exists, is not flagged `needs_rebuild` (the
+    post-schema-migration state where only touched memories are
+    indexed), has `indexed_count >= threshold`, and the query is
+    non-empty, we query the index for up to 50 candidate ids and
+    load just those by walking the file store for matches.
+    Otherwise the full `load_all` runs (current behaviour, byte-
+    stable result quality).
+
+    Falls back to load_all when the index returns no candidates —
+    a stale index missing recent writes shouldn't silently hide
+    results. The recovery path is `bettermemory reindex`.
+
+    Also falls back (with a logged warning) when the index reads
+    themselves raise: `status()` above inspects only the
+    meta/sqlite_master pages, so page-level corruption in the
+    data/FTS b-trees passes the gate and first surfaces out of
+    `query()` / `filenames_for_ids()`. Same routing as
+    `needs_rebuild` — full scan, correct results, never a crashed
+    search.
+
+    NOT a substitute for `store.load_all()` in any caller that needs the
+    store's SIZE rather than a query's candidates: every return except
+    the fallbacks is capped and query-biased. `consolidate.
+    run_auto_consolidate`'s bounded-store guard is the standing example
+    — it reads `len()` as the active-set size, so handing it this list
+    would silently disarm it.
+    """
+    import sqlite3
+
+    from . import index as _index
+
+    if not query.strip():
+        return store.load_all(), False, False
+    status = _index.status(store.root)
+    # `needs_rebuild` means a schema-version migration dropped the
+    # data tables and only incrementally-touched memories are back:
+    # `indexed_count` can cross the threshold while every untouched
+    # pre-upgrade memory is missing, so the count is not a coverage
+    # signal until `rebuild()` clears the flag. Treat the index as
+    # unusable outright — same routing as corrupt/absent.
+    if not status.get("exists") or status.get("corrupt") or status.get("needs_rebuild"):
+        return store.load_all(), False, False
+    indexed_count = int(status.get("indexed_count", 0) or 0)
+    if indexed_count < resolve_index_threshold():
+        return store.load_all(), False, False
+
+    # Pre-filter via the index. 50 candidates is generous for a
+    # default max_results of 5 — the downstream ranker reorders
+    # within the candidate pool, so we want enough variety for
+    # recency / scope-boost / coverage to find the best 5.
+    #
+    # Both index reads sit in ONE guard: the `status()` gate above
+    # reads only the meta/sqlite_master pages, so an index whose
+    # data/FTS b-tree pages are corrupt (torn WAL recovery, disk
+    # fault) passes the gate and first fails HERE. The catch set
+    # mirrors `status()`'s never-raises classification (ValueError:
+    # unparseable meta IS corruption; IndexVersionError: a
+    # concurrent migration can land a newer schema between the gate
+    # and these reads). The index is a regenerable cache and the
+    # canonical .md files are intact, so warn once and take the
+    # same `load_all` routing as `needs_rebuild` — degrade, never
+    # crash the tool call. (`filenames_for_ids` resolves inside the
+    # guard because it walks the same data pages; its empty-ids
+    # call is a free short-circuit.)
+    try:
+        candidate_pairs = _index.query(
+            store.root, query, scopes=scopes, max_results=_PREFILTER_CAP
+        )
+        candidate_ids = {cid for cid, _ in candidate_pairs}
+        ids = list(candidate_ids)
+        filenames = _index.filenames_for_ids(store.root, ids)
+    except (
+        OSError,
+        ValueError,
+        sqlite3.DatabaseError,
+        _index.IndexVersionError,
+    ) as exc:
+        log.warning(
+            "index candidate pre-filter failed: %s: %s. Search falls "
+            "back to a full store scan. Run `bettermemory reindex` "
+            "to repair.",
+            type(exc).__name__,
+            exc,
+        )
+        return store.load_all(), False, False
+    if not candidate_pairs:
+        # Stale index or query that genuinely matches nothing —
+        # fall back to load_all so we don't silently miss recent
+        # writes that aren't in the index yet.
+        return store.load_all(), False, False
+    # Pin the saturation signal HERE, before the per-candidate
+    # loading loop can drop rows — see the docstring.
+    prefilter_saturated = len(candidate_pairs) == _PREFILTER_CAP
+
+    # Load just the candidates via the id → filename lookup
+    # resolved above — true O(k) on file IO. Candidates that
+    # aren't in the lookup (a row written by a pre-v2 schema, an
+    # entry that's been removed since the FTS pre-filter ran, etc.)
+    # are skipped per-candidate. If every candidate misses we
+    # fall back to `load_all` below — search must never silently
+    # return empty when the FTS pre-filter actually matched.
+    loaded: list[Any] = []
+    for cid in ids:
+        filename = filenames.get(cid)
+        if not filename:
+            continue
+        file_path = store.root / filename
+        try:
+            memory = store._load_path(file_path)
+        except PARSE_SKIP_EXCEPTIONS:
+            # Stale filename (memory was moved / tombstoned
+            # between the index lookup and the read) or a
+            # malformed frontmatter row — the store's shared
+            # any-parse-failure width, so a file `load_all` would
+            # skip (e.g. hand-edited into a shape that raises
+            # TypeError after it was indexed) can't crash the
+            # prefilter path either. Skip — the fallback below
+            # covers the "every candidate failed" case.
+            continue
+        # Index-drift defense: `sync pull` rewrites files in
+        # place, so the filename column can briefly point at a
+        # path whose body now belongs to a different memory id.
+        # Without this guard, the handler would score the
+        # candidate's FTS hit against a body it isn't paired
+        # with anymore. The post-pull `bettermemory reindex`
+        # is the right long-term fix, but we don't trust the
+        # index unconditionally between pull and reindex.
+        if memory.id != cid:
+            continue
+        loaded.append(memory)
+    if not loaded:
+        # FTS matched, but every candidate's filename lookup
+        # missed (pre-v2 schema rows, every match tombstoned
+        # between pre-filter and read, etc.). Fall back to
+        # `load_all` so the documented contract — "search keeps
+        # working through schema upgrades and stale-index
+        # windows" — actually holds. Hot path is the loaded
+        # branch above; this is the safety net.
+        return store.load_all(), False, False
+    return loaded, prefilter_saturated, True
+
+
+# ---------------------------------------------------------------------------
 # ToolHandlers — the facade
 # ---------------------------------------------------------------------------
 
@@ -136,216 +365,22 @@ class ToolHandlers:
         # returns the model (or None for the Jaccard fallback).
         self._semantic_model_factory = semantic_model_factory
 
-    # The store size above which the FTS5 candidate pre-filter is
-    # used instead of a full load_all on every search. Calibrated so
-    # that small stores (the common case) keep the existing behaviour
-    # byte-stable — the candidate path adds a SQLite round-trip per
-    # search and a per-id load, which is net cheaper only once the
-    # alternative (load every file) dominates the budget. Tunable
-    # via the BETTERMEMORY_INDEX_THRESHOLD env var for testing.
-    _INDEX_THRESHOLD_DEFAULT = 500
-
-    # Candidate cap threaded into `index.query` by
-    # `_load_search_candidates`. A full cap-sized row set from the
-    # index means the FTS prefilter was saturated — the loader reports
-    # that via its second return value so `handlers/search.py` can run
-    # its cap-starvation guard.
-    _PREFILTER_CAP = 50
+    # ---- FTS candidate prefilter ----------------------------------------
+    #
+    # The implementations are module-level (`resolve_index_threshold` /
+    # `load_search_candidates`) so the out-of-process Stop hook can reach
+    # them with only a `Store`; these bound aliases keep the existing
+    # dependency-bundle call sites unchanged.
 
     def _index_threshold(self) -> int:
-        """Resolve the live threshold above which the FTS candidate
-        pre-filter kicks in. Reads from BETTERMEMORY_INDEX_THRESHOLD
-        on every search so tests can flip it without rebuilding the
-        handler. Falls back to the class default."""
-        import os
-
-        raw = os.environ.get("BETTERMEMORY_INDEX_THRESHOLD")
-        if raw is None:
-            return self._INDEX_THRESHOLD_DEFAULT
-        try:
-            value = int(raw)
-            return value if value > 0 else self._INDEX_THRESHOLD_DEFAULT
-        except ValueError:
-            return self._INDEX_THRESHOLD_DEFAULT
+        """Bound alias for `resolve_index_threshold`."""
+        return resolve_index_threshold()
 
     def _load_search_candidates(
         self, query: str, scopes: list[str] | None = None
     ) -> tuple[list[Any], bool, bool]:
-        """Either load all active memories or pre-filter via the FTS5
-        index, depending on store size and index health.
-
-        Returns ``(candidates, prefilter_saturated, prefiltered)``.
-
-        ``prefilter_saturated`` is True only when the FTS prefilter
-        path served the candidates AND the index returned a full
-        cap-sized slice (`_PREFILTER_CAP` rows) — the signal the
-        cap-starvation guard in `handlers/search.py` keys on. It is
-        computed from the INDEX row count, not the loaded list: the
-        per-candidate skips below (filename-lookup misses, id/body
-        drift) can shrink the loaded list under the cap, which would
-        mask saturation from a length check on the returned list.
-        Every `load_all` branch reports False — the full corpus has
-        no cap to be starved by.
-
-        ``prefiltered`` is the weaker, separate claim that the FTS path
-        served these candidates AT ALL, saturated or not. The two are not
-        interchangeable and the difference is load-bearing: a prefilter
-        that returns 30 rows is under the cap — so not saturated — but
-        every one of those rows is present BECAUSE it matched the query,
-        which is exactly the condition that collapses corpus statistics
-        derived from the pool. `handlers/search.py` keys the BM25
-        corpus-IDF lookup on this flag rather than on saturation; see
-        `index.corpus_document_frequencies`.
-
-        When `scopes` is given it is threaded into the FTS pre-filter so
-        the bounded candidate slice is drawn from IN-SCOPE matches. Without
-        it the index returns the 50 globally-highest-BM25 rows and the
-        authoritative scope filter (`search.run_search`) narrows them — so
-        on a large indexed store a scoped query whose in-scope matches all
-        rank #51+ globally would come back empty even though matching
-        memories exist. The index's `scopes_text LIKE '% scope %'` filter
-        is the same exact, space-padded set-membership the authoritative
-        `memory_scope_set & scope_filter` applies, so threading it never
-        drops a candidate the authoritative pass would have kept.
-
-        The current heuristic: walk the index status once. If the
-        on-disk index exists, is not flagged `needs_rebuild` (the
-        post-schema-migration state where only touched memories are
-        indexed), has `indexed_count >= threshold`, and the query is
-        non-empty, we query the index for up to 50 candidate ids and
-        load just those by walking the file store for matches.
-        Otherwise the full `load_all` runs (current behaviour, byte-
-        stable result quality).
-
-        Falls back to load_all when the index returns no candidates —
-        a stale index missing recent writes shouldn't silently hide
-        results. The recovery path is `bettermemory reindex`.
-
-        Also falls back (with a logged warning) when the index reads
-        themselves raise: `status()` above inspects only the
-        meta/sqlite_master pages, so page-level corruption in the
-        data/FTS b-trees passes the gate and first surfaces out of
-        `query()` / `filenames_for_ids()`. Same routing as
-        `needs_rebuild` — full scan, correct results, never a crashed
-        search.
-        """
-        import sqlite3
-
-        from . import index as _index
-
-        if not query.strip():
-            return self.store.load_all(), False, False
-        status = _index.status(self.store.root)
-        # `needs_rebuild` means a schema-version migration dropped the
-        # data tables and only incrementally-touched memories are back:
-        # `indexed_count` can cross the threshold while every untouched
-        # pre-upgrade memory is missing, so the count is not a coverage
-        # signal until `rebuild()` clears the flag. Treat the index as
-        # unusable outright — same routing as corrupt/absent.
-        if (
-            not status.get("exists")
-            or status.get("corrupt")
-            or status.get("needs_rebuild")
-        ):
-            return self.store.load_all(), False, False
-        indexed_count = int(status.get("indexed_count", 0) or 0)
-        if indexed_count < self._index_threshold():
-            return self.store.load_all(), False, False
-
-        # Pre-filter via the index. 50 candidates is generous for a
-        # default max_results of 5 — the downstream ranker reorders
-        # within the candidate pool, so we want enough variety for
-        # recency / scope-boost / coverage to find the best 5.
-        #
-        # Both index reads sit in ONE guard: the `status()` gate above
-        # reads only the meta/sqlite_master pages, so an index whose
-        # data/FTS b-tree pages are corrupt (torn WAL recovery, disk
-        # fault) passes the gate and first fails HERE. The catch set
-        # mirrors `status()`'s never-raises classification (ValueError:
-        # unparseable meta IS corruption; IndexVersionError: a
-        # concurrent migration can land a newer schema between the gate
-        # and these reads). The index is a regenerable cache and the
-        # canonical .md files are intact, so warn once and take the
-        # same `load_all` routing as `needs_rebuild` — degrade, never
-        # crash the tool call. (`filenames_for_ids` resolves inside the
-        # guard because it walks the same data pages; its empty-ids
-        # call is a free short-circuit.)
-        try:
-            candidate_pairs = _index.query(
-                self.store.root, query, scopes=scopes, max_results=self._PREFILTER_CAP
-            )
-            candidate_ids = {cid for cid, _ in candidate_pairs}
-            ids = list(candidate_ids)
-            filenames = _index.filenames_for_ids(self.store.root, ids)
-        except (
-            OSError,
-            ValueError,
-            sqlite3.DatabaseError,
-            _index.IndexVersionError,
-        ) as exc:
-            log.warning(
-                "index candidate pre-filter failed: %s: %s. Search falls "
-                "back to a full store scan. Run `bettermemory reindex` "
-                "to repair.",
-                type(exc).__name__,
-                exc,
-            )
-            return self.store.load_all(), False, False
-        if not candidate_pairs:
-            # Stale index or query that genuinely matches nothing —
-            # fall back to load_all so we don't silently miss recent
-            # writes that aren't in the index yet.
-            return self.store.load_all(), False, False
-        # Pin the saturation signal HERE, before the per-candidate
-        # loading loop can drop rows — see the docstring.
-        prefilter_saturated = len(candidate_pairs) == self._PREFILTER_CAP
-
-        # Load just the candidates via the id → filename lookup
-        # resolved above — true O(k) on file IO. Candidates that
-        # aren't in the lookup (a row written by a pre-v2 schema, an
-        # entry that's been removed since the FTS pre-filter ran, etc.)
-        # are skipped per-candidate. If every candidate misses we
-        # fall back to `load_all` below — search must never silently
-        # return empty when the FTS pre-filter actually matched.
-        loaded: list[Any] = []
-        for cid in ids:
-            filename = filenames.get(cid)
-            if not filename:
-                continue
-            file_path = self.store.root / filename
-            try:
-                memory = self.store._load_path(file_path)
-            except PARSE_SKIP_EXCEPTIONS:
-                # Stale filename (memory was moved / tombstoned
-                # between the index lookup and the read) or a
-                # malformed frontmatter row — the store's shared
-                # any-parse-failure width, so a file `load_all` would
-                # skip (e.g. hand-edited into a shape that raises
-                # TypeError after it was indexed) can't crash the
-                # prefilter path either. Skip — the fallback below
-                # covers the "every candidate failed" case.
-                continue
-            # Index-drift defense: `sync pull` rewrites files in
-            # place, so the filename column can briefly point at a
-            # path whose body now belongs to a different memory id.
-            # Without this guard, the handler would score the
-            # candidate's FTS hit against a body it isn't paired
-            # with anymore. The post-pull `bettermemory reindex`
-            # is the right long-term fix, but we don't trust the
-            # index unconditionally between pull and reindex.
-            if memory.id != cid:
-                continue
-            loaded.append(memory)
-        if not loaded:
-            # FTS matched, but every candidate's filename lookup
-            # missed (pre-v2 schema rows, every match tombstoned
-            # between pre-filter and read, etc.). Fall back to
-            # `load_all` so the documented contract — "search keeps
-            # working through schema upgrades and stale-index
-            # windows" — actually holds. Hot path is the loaded
-            # branch above; this is the safety net.
-            return self.store.load_all(), False, False
-        return loaded, prefilter_saturated, True
+        """Bound alias for `load_search_candidates` over this store."""
+        return load_search_candidates(self.store, query, scopes)
 
     # ---- delegations to per-tool modules --------------------------------
     #

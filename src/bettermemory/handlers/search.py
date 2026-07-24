@@ -18,7 +18,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple, cast
+from typing import TYPE_CHECKING, Any, Callable, NamedTuple, cast
 
 from ..events import _event_id_list
 from ..models import utcnow, validate_scope
@@ -32,7 +32,7 @@ from ..search import (
     _relevance_label_v2,
     search as run_search,
 )
-from ..store import MemoryNotFoundError, TombstonedError
+from ..store import MemoryNotFoundError, Store, TombstonedError
 from ..verify import (
     compute_commit_drift,
     compute_staleness_verdict,
@@ -244,14 +244,22 @@ class RankingInputs(NamedTuple):
     """Every `[behavior]`-driven input `search.search` takes beyond the
     query and the candidate list.
 
-    One shape so the two surfaces that rank memories — this handler and
-    the web UI's `/memories` search — cannot drift apart: a knob lands
-    in `resolve_ranking_inputs` once and both callers thread it. Before
-    this existed the web ran the same ranker with the config inputs
-    dropped, so `endorsement_boost` / `outcome_demotion` /
-    `corroboration_boost` / a tuned `recency_boost_half_life_days`
-    reordered results for the model and did nothing for the human
-    reading the curation page.
+    One shape so the surfaces that rank memories cannot drift apart on
+    THESE inputs: a knob lands in `resolve_ranking_inputs` once and every
+    caller threads it. Three consume it — this handler, the web UI's
+    `/memories` search, and (through both audit producers) the
+    silent-miss probe. Before this existed the web ran the same ranker
+    with the config inputs dropped, so `endorsement_boost` /
+    `outcome_demotion` / `corroboration_boost` / a tuned
+    `recency_boost_half_life_days` reordered results for the model and
+    did nothing for the human reading the curation page.
+
+    Scope note: this covers the `[behavior]` knobs only, NOT the
+    candidate pool or its BM25 corpus statistics — those are a separate
+    decision with a separate helper (`resolve_search_pool`) and a
+    smaller reach. `web.py` deliberately ranks `store.load_all()` with
+    no `corpus_stats_provider` (the full corpus IS its own statistics),
+    so it threads this shape but not that one.
 
     `events` is the raw windowed event read the two tallies shared —
     `None` when neither tally ran. Exposed so a caller that needs the
@@ -267,12 +275,46 @@ class RankingInputs(NamedTuple):
     events: list[dict[str, Any]] | None
 
 
+def ranking_events_window_seconds(behavior: "BehaviorConfig") -> int | None:
+    """How wide an event read `resolve_ranking_inputs` needs under
+    `behavior` — or None when neither usage tally is enabled and no read
+    is needed at all.
+
+    The base is the attribution horizon `_explicit_applied_counts`
+    enforces (`audit.ATTRIBUTION_LOOKBACK_SECONDS`). With
+    `outcome_demotion` on it widens to the full negative window
+    `_active_negative_counts` tallies over (`NEGATIVE_OUTCOME_WINDOW_DAYS`):
+    a 600s request would only rotation-proof 600s of coverage, so older
+    negatives would survive only by luck of the active log's size.
+
+    Widening the READ can never widen a tally — both count-functions
+    enforce their own cutoffs internally, which is exactly why their
+    window arguments are mandatory.
+
+    Split out of `resolve_ranking_inputs` so a caller that must issue the
+    read itself can ask for the width the helper would have used instead
+    of hardcoding one that drifts. Both audit producers do:
+    `hook.run_audit` and `handlers.audit_turn.memory_audit_turn` each keep
+    a module-local `iter_events_window` call — which is also the seam the
+    suite's window-width spies patch — and hand the result back via
+    `resolve_ranking_inputs(events=...)`."""
+    if not (behavior.endorsement_boost or behavior.outcome_demotion):
+        return None
+    from ..audit import ATTRIBUTION_LOOKBACK_SECONDS
+
+    window = ATTRIBUTION_LOOKBACK_SECONDS
+    if behavior.outcome_demotion:
+        window = max(window, NEGATIVE_OUTCOME_WINDOW_DAYS * 86400)
+    return window
+
+
 def resolve_ranking_inputs(
     root: Path,
     memories: Sequence[Any],
     behavior: "BehaviorConfig",
     *,
     now: datetime | None = None,
+    events: list[dict[str, Any]] | None = None,
 ) -> RankingInputs:
     """Build the `RankingInputs` for one search over `memories`.
 
@@ -294,39 +336,45 @@ def resolve_ranking_inputs(
 
     One event read serves up to three consumers (endorsement tally,
     demotion tally, and the caller's `recent_negative_outcomes`
-    annotation). With demotion on, the read widens from the 600s
-    attribution horizon to the full negative window: the demotion tally
-    needs it, and the annotation's 30-day contract becomes guaranteed
-    instead of best-effort (a 600s request only rotation-proofs 600s of
-    coverage; older events survive by luck of the active log's size).
-    The widened feed cannot widen the OTHER tallies — both
-    count-functions enforce their own cutoffs internally, which is
-    exactly why their window arguments are mandatory.
+    annotation). `ranking_events_window_seconds` decides its width —
+    with demotion on it widens from the 600s attribution horizon to the
+    full negative window, which also upgrades the annotation's 30-day
+    contract from best-effort to guaranteed.
+
+    `events` lets a caller supply that read instead of having this helper
+    issue it, for callers whose event access has to stay module-local
+    (both audit producers — see `ranking_events_window_seconds`). Supply
+    it at that function's width; a wider feed cannot widen either tally,
+    since both count-functions re-derive their own cutoffs from `now`. It
+    is ignored — and the returned `events` stays None — whenever no tally
+    runs, so the field keeps meaning "the read the tallies shared".
     """
     applied_by_id: dict[str, int] | None = None
     negative_by_id: dict[str, tuple[int, int]] | None = None
-    events: list[dict[str, Any]] | None = None
+    tally_events: list[dict[str, Any]] | None = None
     demotion_on = behavior.outcome_demotion
-    if (behavior.endorsement_boost or demotion_on) and memories:
+    window_seconds = ranking_events_window_seconds(behavior)
+    if window_seconds is not None and memories:
         from ..audit import ATTRIBUTION_LOOKBACK_SECONDS
         from ..events import iter_events_window
 
-        window_seconds = ATTRIBUTION_LOOKBACK_SECONDS
-        if demotion_on:
-            window_seconds = max(window_seconds, NEGATIVE_OUTCOME_WINDOW_DAYS * 86400)
-        events = list(iter_events_window(root, window_seconds))
+        tally_events = (
+            events
+            if events is not None
+            else list(iter_events_window(root, window_seconds))
+        )
         tally_now = now if now is not None else utcnow()
         candidate_ids = {m.id for m in memories}
         if behavior.endorsement_boost:
             applied_by_id = _explicit_applied_counts(
-                events,
+                tally_events,
                 candidate_ids,
                 now=tally_now,
                 lookback_seconds=ATTRIBUTION_LOOKBACK_SECONDS,
             )
         if demotion_on:
             negative_by_id = _active_negative_counts(
-                events,
+                tally_events,
                 candidate_ids,
                 now=tally_now,
                 window_days=NEGATIVE_OUTCOME_WINDOW_DAYS,
@@ -344,7 +392,153 @@ def resolve_ranking_inputs(
         negative_by_id=negative_by_id,
         corroboration_boost=behavior.corroboration_boost,
         half_life_days=behavior.recency_boost_half_life_days,
-        events=events,
+        events=tally_events,
+    )
+
+
+class SearchPool(NamedTuple):
+    """The candidate list one search ranks, plus the BM25
+    corpus-statistics wiring THAT pool needs.
+
+    The two travel together because they are one decision: a pool served
+    by the FTS prefilter is query-biased and needs corpus-derived
+    document frequencies to keep its IDF honest, while a `load_all` pool
+    IS the corpus and must not pay the lookup. Splitting them let a
+    caller take one without the other — which is exactly how the
+    silent-miss probe came to rank an unconditional `load_all()` with no
+    provider while `memory_search` ranked a capped, corpus-corrected
+    slice.
+
+    `memories` is a SEARCH pool, never a census: above the index
+    threshold it is capped and query-biased. Anything that wants the
+    store's size must call `store.load_all()` itself.
+    """
+
+    memories: list[Any]
+    corpus_stats_provider: Callable[[list[str]], CorpusStats | None] | None
+
+
+def resolve_search_pool(
+    store: Store,
+    query: str,
+    *,
+    scopes: list[str] | None = None,
+    excluded_scopes: set[str] | None = None,
+    repo_filter: str | None = None,
+    worktree_filter: str | None = None,
+    min_survivors: int,
+) -> SearchPool:
+    """Build the candidate pool for `query` exactly as production
+    retrieval does.
+
+    Shared by `memory_search` and BOTH silent-miss audit producers
+    (`hook.run_audit`, `handlers.audit_turn.memory_audit_turn`). The
+    probe exists to measure what production retrieval would have
+    surfaced, so it has to start from production's candidate set: an
+    unconditional `load_all()` is a strict SUPERSET above
+    `_INDEX_THRESHOLD_DEFAULT`, and since the miss verdict reads only the
+    rank-1 hit, a memory the prefilter would have dropped can take that
+    slot and rewrite the verdict.
+
+    Three moving parts, all of them production's:
+
+    - the FTS5 prefilter (`_handlers.load_search_candidates`), capped at
+      `_PREFILTER_CAP` rows by query relevance and engaged only above
+      `_INDEX_THRESHOLD_DEFAULT` indexed memories;
+    - the cap-starvation guard, which dry-runs the authoritative post-cap
+      filter (`_filter_candidates`) on a cap-SATURATED slice and reloads
+      the full corpus when fewer than `min_survivors` candidates survive.
+      The FTS prefilter threads only `scopes` into SQL; the repo/worktree
+      auto-scope filter and session-disabled scopes apply post-cap, so on
+      a saturated slice they can strip every candidate even though
+      in-filter matches exist past the cap. The saturation signal comes
+      from the loader (keyed on the INDEX row count) — NOT from
+      `len(memories)`, which the loader's per-candidate skips can shrink
+      below the cap, masking a saturated slice from the guard;
+    - the BM25 corpus-statistics provider, returned non-None only when
+      the prefilter actually served the pool. On a query-biased slice,
+      document frequencies counted over the pool make the query's own
+      discriminative terms look ubiquitous and collapse their IDF toward
+      zero (measured at 74x on a 600-memory corpus). When the full corpus
+      was loaded — including after a starvation reload — pool statistics
+      ARE corpus statistics and the provider stays None so the shipped
+      ranking is byte-stable.
+
+    `min_survivors` is the starvation threshold. Production passes the
+    REQUEST's `max_results`; an audit producer has no request to read, so
+    it passes `behavior.default_max_results` — production's own default
+    and the closest available stand-in. That is a deliberate residual
+    divergence in the property this helper exists to close: a model that
+    called `memory_search(max_results=25)` starved its prefilter on a
+    slice the probe (at the default 5) would not, and the two would then
+    rank different pools after all. Closing it would need the producers
+    to know a width they cannot observe.
+
+    Pass the same `scopes` / `excluded_scopes` / `repo_filter` /
+    `worktree_filter` that will be handed to `search.search`: the
+    corpus-statistics predicate binds them so document frequencies come
+    from exactly the collection about to be ranked. Under auto-scope that
+    differs sharply from the whole store — a store spanning several
+    projects would otherwise price term rarity against memories the
+    caller cannot retrieve.
+
+    Returns a pool, not a census — see `SearchPool`.
+    """
+    # Function-local to break the package cycle (`_handlers` imports the
+    # `handlers` package, which imports this module), NOT to defer a
+    # cost: importing any `bettermemory` submodule runs the package
+    # `__init__`, which pulls `_handlers` in through `.builder` before
+    # any caller — including the out-of-process Stop hook — reaches this
+    # line, so the statement resolves out of `sys.modules`.
+    from .._handlers import load_search_candidates
+
+    excluded = set(excluded_scopes) if excluded_scopes else set()
+    memories, prefilter_saturated, prefiltered = load_search_candidates(
+        store, query, scopes
+    )
+    post_cap_filter_active = (
+        repo_filter is not None or worktree_filter is not None or bool(excluded)
+    )
+    if post_cap_filter_active and prefilter_saturated:
+        survivors = _filter_candidates(
+            memories,
+            scopes=scopes,
+            excluded_scopes=excluded,
+            repo_filter=repo_filter,
+            worktree_filter=worktree_filter,
+        )
+        if len(survivors) < min_survivors:
+            memories = store.load_all()
+            # The starvation reload replaced the query-biased slice with
+            # the whole corpus, so pool-derived statistics are corpus
+            # statistics again and the BM25 corpus-IDF lookup must not
+            # fire. Clearing the flag here rather than re-deriving it
+            # later keeps the claim tied to the assignment that makes it
+            # true.
+            prefiltered = False
+
+    def _corpus_stats(terms: list[str]) -> CorpusStats | None:
+        from .. import index as _index
+
+        def _admit(memory_scopes: list[str], origin: Any) -> bool:
+            return candidate_admitted(
+                memory_scopes,
+                origin,
+                scope_filter=set(scopes) if scopes else None,
+                excluded=excluded,
+                repo_filter=repo_filter,
+                worktree_filter=worktree_filter,
+            )
+
+        resolved = _index.corpus_document_frequencies(store.root, terms, admit=_admit)
+        if resolved is None:
+            return None
+        size, body_df, scope_df = resolved
+        return CorpusStats(size=size, body_df=body_df, scope_df=scope_df)
+
+    return SearchPool(
+        memories=memories,
+        corpus_stats_provider=_corpus_stats if prefiltered else None,
     )
 
 
@@ -460,18 +654,18 @@ async def memory_search(
     #    The post-boundary slice is bounded by session activity, so
     #    even on a 10k-memory store only a handful of memories will
     #    pass the `updated > prior_boundary` check.
-    # 2. Default: FTS5 candidate prefilter (T3.1 phase B). When the
-    #    index exists and the store is large enough that load_all
-    #    would dominate the budget, query the index for candidate
-    #    ids and load just those. The candidate pool is generous
-    #    (50 candidates for a 5-result return) so the downstream
-    #    rankers see enough variety to score well.
-    # False for every branch that does not go through the FTS prefilter —
-    # including `since_prior_session`, which slices `load_all()` by
-    # timestamp. That slice is narrower than the corpus but it is not
-    # QUERY-biased, so pool-derived document frequencies stay honest and
-    # the corpus lookup would be cost without benefit.
-    prefiltered = False
+    # 2. Default: FTS5 candidate prefilter (T3.1 phase B), plus the
+    #    cap-starvation guard and the BM25 corpus-statistics wiring that
+    #    slice needs — all three resolved by `resolve_search_pool`, the
+    #    one implementation the silent-miss audit producers call too, so
+    #    the probe cannot rank a different candidate set than the model's
+    #    actual retrieval did.
+    # The provider stays None for every branch that does not go through
+    # the FTS prefilter — including `since_prior_session`, which slices
+    # `load_all()` by timestamp. That slice is narrower than the corpus
+    # but it is not QUERY-biased, so pool-derived document frequencies
+    # stay honest and the corpus lookup would be cost without benefit.
+    corpus_stats_provider: Callable[[list[str]], CorpusStats | None] | None = None
     if since_prior_session:
         if prior_boundary is None:
             memories = []
@@ -487,51 +681,23 @@ async def memory_search(
             # session" workflow.
             memories = [m for m in deps.store.load_all() if m.updated > prior_boundary]
     else:
-        memories, prefilter_saturated, prefiltered = deps._load_search_candidates(
-            query, scopes=scopes
+        # The prefilter, the cap-starvation guard and the corpus-stats
+        # wiring are one decision — see `resolve_search_pool`, which the
+        # two audit producers share so the silent-miss probe ranks this
+        # same pool. `min_survivors` is THIS request's `max_results`
+        # (the producers pass `default_max_results`; the docstring names
+        # that residual).
+        pool = resolve_search_pool(
+            deps.store,
+            query,
+            scopes=scopes,
+            excluded_scopes=set(state.disabled_scopes),
+            repo_filter=repo_filter,
+            worktree_filter=worktree_filter,
+            min_survivors=max_results,
         )
-        # Cap-starvation guard. The FTS prefilter threads only `scopes`
-        # into SQL — the repo/worktree auto-scope filter and session-
-        # disabled scopes apply post-cap inside run_search's
-        # `_filter_candidates` pass. On a cap-saturated slice those
-        # post-cap filters can strip every candidate even though
-        # in-filter matches exist past the cap — the failure mode the
-        # `_load_search_candidates` docstring names: on a >50-memory
-        # store, in-repo matches ranked #51+ globally would return
-        # zero hits. The saturation signal comes from the loader
-        # (keyed on the INDEX row count) — NOT from `len(memories)`,
-        # which the loader's per-candidate skips (filename-lookup
-        # misses, id/body drift) can shrink below the cap, silently
-        # masking a saturated slice from the guard. Detect starvation
-        # with a dry-run of the same authoritative filter; when fewer
-        # than `max_results` candidates survive, reload the full
-        # corpus — the same cost as the existing stale-index fallback,
-        # paid only on starved searches. (Threading repo/worktree into
-        # SQL would need origin columns in the index, i.e. a
-        # SCHEMA_VERSION bump — this guard restores correctness
-        # without one.)
-        post_cap_filter_active = (
-            repo_filter is not None
-            or worktree_filter is not None
-            or bool(state.disabled_scopes)
-        )
-        if post_cap_filter_active and prefilter_saturated:
-            survivors = _filter_candidates(
-                memories,
-                scopes=scopes,
-                excluded_scopes=set(state.disabled_scopes),
-                repo_filter=repo_filter,
-                worktree_filter=worktree_filter,
-            )
-            if len(survivors) < max_results:
-                memories = deps.store.load_all()
-                # The starvation reload replaced the query-biased slice
-                # with the whole corpus, so pool-derived statistics are
-                # corpus statistics again and the BM25 corpus-IDF lookup
-                # below must not fire. Clearing the flag here rather than
-                # re-deriving it later keeps the claim tied to the
-                # assignment that makes it true.
-                prefiltered = False
+        memories = pool.memories
+        corpus_stats_provider = pool.corpus_stats_provider
 
     # Config-driven ranking inputs (usage tallies + the boost/half-life
     # knobs), resolved through the shared helper the web UI's /memories
@@ -543,40 +709,6 @@ async def memory_search(
     recent_events: list[dict[str, Any]] | None = ranking.events
     applied_by_id = ranking.applied_by_id
     negative_by_id = ranking.negative_by_id
-
-    # BM25 corpus statistics. Only wired when the FTS prefilter actually
-    # served the candidates: that is the case where `memories` is a
-    # query-biased slice, so document frequencies counted over it make the
-    # query's own discriminative terms look ubiquitous and collapse their
-    # IDF toward zero (measured at 74x on a 600-memory corpus). When the
-    # full corpus was loaded, pool statistics ARE corpus statistics and the
-    # provider stays None so the shipped ranking is byte-stable.
-    def _corpus_stats(terms: list[str]) -> CorpusStats | None:
-        from .. import index as _index
-
-        # Bind THIS request's filters onto the same predicate
-        # `_filter_candidates` runs, so the document frequencies come from
-        # exactly the collection about to be ranked — not from the whole
-        # store. Under auto-scope those differ sharply: a store spanning
-        # several projects would otherwise price term rarity against
-        # memories the caller cannot retrieve.
-        def _admit(memory_scopes: list[str], origin: Any) -> bool:
-            return candidate_admitted(
-                memory_scopes,
-                origin,
-                scope_filter=set(scopes) if scopes else None,
-                excluded=set(state.disabled_scopes),
-                repo_filter=repo_filter,
-                worktree_filter=worktree_filter,
-            )
-
-        resolved = _index.corpus_document_frequencies(
-            deps.store.root, terms, admit=_admit
-        )
-        if resolved is None:
-            return None
-        size, body_df, scope_df = resolved
-        return CorpusStats(size=size, body_df=body_df, scope_df=scope_df)
 
     hits = run_search(
         memories,
@@ -598,7 +730,7 @@ async def memory_search(
         # candidates as hits sorted by `updated` desc instead of
         # short-circuiting to an empty list on the stopword check.
         allow_empty_query=since_prior_session,
-        corpus_stats_provider=_corpus_stats if prefiltered else None,
+        corpus_stats_provider=corpus_stats_provider,
     )
     # Pin one `now` for the whole response so the verification verdict
     # is consistent across hits — the alternative (let each helper
@@ -827,6 +959,9 @@ async def memory_search(
 __all__ = [
     "DESC_MEMORY_SEARCH",
     "RankingInputs",
+    "SearchPool",
     "memory_search",
+    "ranking_events_window_seconds",
     "resolve_ranking_inputs",
+    "resolve_search_pool",
 ]

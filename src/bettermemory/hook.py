@@ -325,7 +325,6 @@ def run_audit(
     cfg = config or load_config(None)
     root = cfg.resolved_directory()
     store = Store(root)
-    memories = store.load_all()
     # Window-aware read: rotation archives the ENTIRE active log at a
     # moment independent of turn boundaries, so a turn that straddles a
     # rotation would lose its own `search` / `scope_disable` events
@@ -339,7 +338,10 @@ def run_audit(
     # `REAUDIT_DEDUP_WINDOW_SECONDS` — which is a coverage request, not
     # a filter: the reader yields the whole active log either way, and
     # every time-scoped consumer (the retrieval shield, the attribution
-    # pass) applies its own narrower cutoff internally.
+    # pass) applies its own narrower cutoff internally. The usage-aware
+    # ranking tallies are deliberately NOT consumers: they issue their
+    # own read at production's width, which under `outcome_demotion` is
+    # wider than this one.
     recent = list(iter_events_window(root, REAUDIT_DEDUP_WINDOW_SECONDS))
     # Capture once; reused for the probe's auto-scope and stamped on the
     # hook's events so episode_handoff can worktree-match this turn's
@@ -368,38 +370,74 @@ def run_audit(
     server_session = _latest_in_process_session(
         recent, worktree_root=caller_origin.worktree_root
     )
-    # Endorsement nudge: mirror the production search handler's opt-in
-    # tally (`handlers/search.py::_explicit_applied_counts`) so the
-    # probe ranks with the same usage signal the model's retrieval
-    # would have seen. It MUST be counted over the same horizon
-    # production uses — `ATTRIBUTION_LOOKBACK_SECONDS` (600s, what
-    # `handlers/search.py` reads) — NOT the dedup-widened `recent`
-    # above (`REAUDIT_DEDUP_WINDOW_SECONDS`, 3600s). `recent` is a
-    # coverage read for the dedup / shield / attribution consumers,
-    # each of which applies its own narrower cutoff; but
-    # `_explicit_applied_counts` applies NO cutoff of its own, so
-    # feeding it the 3600s read would count applies from up to an hour
-    # ago that production's 600s ranker never saw, letting the probe
-    # nudge a near-tie top-1 to "high" and flip a false `search_miss`.
-    # Read a separately-scoped 600s window so the audit ranker matches
-    # production (the same fix `handlers/audit_turn.py` already carries
-    # for the in-process producer). Lazy import, gated on the flag —
-    # default-config users pay nothing.
-    applied_by_id: dict[str, int] | None = None
-    if cfg.behavior.endorsement_boost and memories:
-        from .handlers.search import _explicit_applied_counts
+    from .handlers.search import (
+        ranking_events_window_seconds,
+        resolve_ranking_inputs,
+        resolve_search_pool,
+    )
 
-        endorsement_events = list(
-            iter_events_window(root, ATTRIBUTION_LOOKBACK_SECONDS)
-        )
-        applied_by_id = _explicit_applied_counts(
-            endorsement_events,
-            {m.id for m in memories},
-            now=utcnow(),
-            lookback_seconds=ATTRIBUTION_LOOKBACK_SECONDS,
-        )
+    # Candidate pool: production's, not an unconditional `load_all()`.
+    # `resolve_search_pool` is the same helper `memory_search` builds its
+    # pool with — the FTS prefilter above `_INDEX_THRESHOLD_DEFAULT`, the
+    # cap-starvation guard, and the BM25 corpus-statistics provider that
+    # capped slice needs. Probing the whole corpus instead ranked a
+    # strict SUPERSET of what the model's retrieval could reach, and the
+    # miss verdict reads only the rank-1 hit, so a memory production's
+    # prefilter would have dropped could take that slot and decide the
+    # verdict on its own. The filters handed here are the ones
+    # `probe_for_miss` re-applies inside `run_search` (it derives the
+    # repo/worktree pair from `caller_origin` exactly this way), so the
+    # document frequencies price exactly the collection about to be
+    # ranked. `min_survivors` is PRODUCTION's result width
+    # (`default_max_results`), not the probe's `_TOP_HITS_RETAINED`: the
+    # starvation guard has to fire on the same slices production's would.
+    #
+    # `probe_pool` is deliberately NOT named `memories`: it is a capped,
+    # query-biased SEARCH pool, and anything downstream that wants the
+    # store's size (the auto-consolidate bounded-store guard below) must
+    # load the active set itself.
+    probe_pool = resolve_search_pool(
+        store,
+        user_message,
+        excluded_scopes=excluded_scopes,
+        repo_filter=caller_origin.repo,
+        worktree_filter=caller_origin.worktree_root,
+        min_survivors=cfg.behavior.default_max_results,
+    )
+    # Config-driven ranking inputs: the SAME `RankingInputs` the
+    # production search handler threads
+    # (`handlers.search.resolve_ranking_inputs`), so the probe cannot
+    # rank on a different set of factors than the model's actual
+    # retrieval would have. That covers both usage-aware directions —
+    # `endorsement_boost` nudges applied memories up, `outcome_demotion`
+    # slides recently ignored/contradicted ones down — plus
+    # `corroboration_boost` and the recency half-life. Threading only the
+    # endorsement half was a telemetry-honesty bug in both directions,
+    # because the miss verdict reads ONLY the rank-1 hit: a memory
+    # production had demoted out of the top slot still held rank 1 here
+    # (masked miss), and the hit production's demotion promoted instead
+    # was never the one this probe judged (phantom miss).
+    #
+    # The event read is issued HERE, not inside the helper, and is
+    # separately scoped — NOT the dedup-widened `recent` above
+    # (`REAUDIT_DEDUP_WINDOW_SECONDS`, 3600s). `recent` is a coverage
+    # read for the dedup / shield / attribution consumers, each of which
+    # applies its own narrower cutoff. The tallies enforce their own
+    # cutoffs too, so the width here is about matching production's
+    # ROTATION-PROOFING rather than bounding a count:
+    # `ranking_events_window_seconds` returns 600s with endorsement alone
+    # (narrower than `recent`) and the full 30-day negative window once
+    # demotion is on (wider), and returns None when neither flag is set —
+    # the default-config path, which pays no read at all.
+    tally_window = ranking_events_window_seconds(cfg.behavior)
+    tally_events: list[dict[str, Any]] | None = None
+    if tally_window is not None and probe_pool.memories:
+        tally_events = list(iter_events_window(root, tally_window))
+    ranking = resolve_ranking_inputs(
+        root, probe_pool.memories, cfg.behavior, now=utcnow(), events=tally_events
+    )
     report = probe_for_miss(
-        memories,
+        probe_pool.memories,
         user_message,
         recent_events=recent,
         session_id=session_id,
@@ -427,8 +465,11 @@ def run_audit(
         # instead of crashing before `turn_audited` lands; `hybrid`
         # degrades to keyword+BM25 fusion as documented.
         semantic_model=None,
-        half_life_days=cfg.behavior.recency_boost_half_life_days,
-        applied_by_id=applied_by_id,
+        half_life_days=ranking.half_life_days,
+        applied_by_id=ranking.applied_by_id,
+        negative_by_id=ranking.negative_by_id,
+        corroboration_boost=ranking.corroboration_boost,
+        corpus_stats_provider=probe_pool.corpus_stats_provider,
     )
     # Emit the audit event so cadence is visible even when there's
     # nothing to flag — matches the MCP handler's discipline. Honour
@@ -535,13 +576,22 @@ def run_audit(
         try:
             from .consolidate import run_auto_consolidate
 
+            # No `memories=`: the only list this function holds is
+            # `probe_pool.memories`, a capped query-biased SEARCH pool,
+            # and the argument feeds the BOUNDED safety guard, which
+            # reads `len()` as the store's active-set size. Handing it
+            # the pool would cap the measured size at `_PREFILTER_CAP`
+            # and run the unattended O(N²) dedup on exactly the
+            # oversized stores the guard exists to defer. Passing None
+            # makes `run_auto_consolidate` load the active set itself —
+            # a cost paid only when the debounce says the pass is due,
+            # i.e. at most once per `auto_apply_interval_hours`.
             run_auto_consolidate(
                 store,
                 recorder=recorder,
                 session_id=session_id,
                 interval_hours=cfg.consolidate.auto_apply_interval_hours,
                 max_memories=cfg.consolidate.auto_apply_max_memories,
-                memories=memories,
                 now=utcnow(),
             )
         except Exception as exc:  # noqa: BLE001 — hook must never block turn end

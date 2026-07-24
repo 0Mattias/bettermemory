@@ -24,6 +24,11 @@ from ..audit import (
 from ..events import iter_events_window, redact_query
 from ..models import utcnow
 from ._shared import Context, _advance_turn
+from .search import (
+    ranking_events_window_seconds,
+    resolve_ranking_inputs,
+    resolve_search_pool,
+)
 
 if TYPE_CHECKING:
     from .._handlers import ToolHandlers
@@ -36,8 +41,9 @@ DESC_MEMORY_AUDIT_TURN = (
     "Silent-miss telemetry. Call from a client-side end-of-turn hook "
     "with the user's message (and optionally the assistant's reply) to "
     "detect turns where memory *should* have been retrieved but wasn't. "
-    "Runs a cheap search probe over the active store using the model's "
-    "configured search mode (matches what the model would have done), "
+    "Runs a cheap search probe over the pool and search mode "
+    "`memory_search` would have used (matches what the model would have "
+    "done), "
     "then checks whether a `memory_search`, `memory_show`, or "
     "`memory_list` event fired in the same session within "
     "`lookback_seconds` (default 60). When "
@@ -52,8 +58,8 @@ DESC_MEMORY_AUDIT_TURN = (
     "repo so the probe matches the model's view; honours "
     "session-disabled scopes. Side-effects: emits `turn_audited` "
     "always, plus `search_miss` when the verdict is `miss`. Safe to "
-    "call after every turn; cost is one search sweep over the active "
-    "store."
+    "call after every turn; cost is one `memory_search`-equivalent "
+    "sweep."
 )
 
 
@@ -67,8 +73,10 @@ async def memory_audit_turn(
     """Detect silent retrieval misses for a just-completed turn.
 
     Fires from a client-side hook (Claude Code Stop hook, etc.) with
-    the user's message. Runs a search probe (using the model's
-    configured search mode) over the active store; if a
+    the user's message. Runs a search probe over the pool and ranking
+    inputs `memory_search` would have used for that message — same
+    candidate set (`resolve_search_pool`), same `[behavior]` factors
+    (`resolve_ranking_inputs`), same configured search mode; if a
     high-relevance hit exists AND no retrieval event (`search`,
     `show`, or `list`) fired in the same session within the
     lookback window, emits `search_miss` so curation views can
@@ -131,6 +139,34 @@ async def memory_audit_turn(
     state = deps.sessions.for_request(ctx)
     _advance_turn(state, deps.recorder)
 
+    # Captured before the candidate pool because the pool's filters are
+    # this origin's: the probe auto-scopes to the caller's repo, and the
+    # BM25 corpus statistics must be priced over the same admitted
+    # collection the ranker will score.
+    current_origin = _h.capture_origin()
+    # Candidate pool: production's, not an unconditional `load_all()`.
+    # `resolve_search_pool` is the same helper `memory_search` builds its
+    # pool with — the FTS prefilter above `_INDEX_THRESHOLD_DEFAULT`, the
+    # cap-starvation guard, and the BM25 corpus-statistics provider that
+    # capped slice needs. Probing the whole corpus instead ranked a
+    # strict SUPERSET of what the model's retrieval could reach, and the
+    # miss verdict reads only the rank-1 hit, so a memory production's
+    # prefilter would have dropped could take that slot and decide the
+    # verdict on its own. The filters handed here are the ones
+    # `probe_for_miss` will re-apply inside `run_search`, so the document
+    # frequencies price exactly the collection about to be ranked.
+    # `min_survivors` is PRODUCTION's result width
+    # (`default_max_results`), not the probe's `_TOP_HITS_RETAINED`: the
+    # starvation guard has to fire on the same slices production's would.
+    probe_pool = resolve_search_pool(
+        deps.store,
+        user_message,
+        excluded_scopes=set(state.disabled_scopes),
+        repo_filter=current_origin.repo,
+        worktree_filter=current_origin.worktree_root,
+        min_survivors=deps.config.behavior.default_max_results,
+    )
+
     # Window-aware event read. Rotation triggers on SIZE (`max_bytes`),
     # not time, at a moment independent of turn boundaries — so "the
     # rotation threshold is far larger than the window" (the comment
@@ -139,7 +175,7 @@ async def memory_audit_turn(
     # and emitted a false miss. `iter_events_window` prepends the
     # newest rotated segment when the active log doesn't cover the
     # clamped lookback window.
-    memories = deps.store.load_all()
+    #
     # Read the WIDE dedup window, not the narrow probe `window`. Two
     # consumers walk `recent` with different horizons: `probe_for_miss`
     # applies its own `lookback_seconds=window` cutoff internally
@@ -153,18 +189,19 @@ async def memory_audit_turn(
     # their own narrower cutoff internally — `_count_recent_retrievals`
     # (via `probe_for_miss`, `lookback_seconds=window`) and
     # `is_duplicate_audit` (`REAUDIT_DEDUP_WINDOW_SECONDS`) — so widening
-    # the read can't leak stale events into them. The endorsement tally
-    # (`_explicit_applied_counts`) now enforces its own mandatory
-    # attribution cutoff internally too, so it could safely read this
-    # wide list — it is still fed the separately-scoped read below only
-    # to keep its walk narrow, not for correctness.
+    # the read can't leak stale events into them. The usage-aware ranking
+    # tallies below don't read this list at all: they take production's
+    # own separately-scoped read, which is NARROWER than this one for
+    # endorsement (600s) and WIDER for demotion (the 30-day negative
+    # window). Both tallies enforce their own cutoffs internally either
+    # way, so the choice of feed is about matching production's
+    # rotation-proofing, not about bounding a count.
     # Mirrors the Stop hook (`hook.run_audit`), which reads
     # `REAUDIT_DEDUP_WINDOW_SECONDS`.
     recent = list(
         iter_events_window(deps.store.root, max(window, REAUDIT_DEDUP_WINDOW_SECONDS))
     )
 
-    current_origin = _h.capture_origin()
     # Probe uses the same search mode the model would have used —
     # otherwise we'd be measuring "would a different scorer have
     # hit" rather than "did the model miss what its ranker would
@@ -181,30 +218,40 @@ async def memory_audit_turn(
     semantic_model: Any | None = None
     if probe_mode in ("semantic", "hybrid"):
         semantic_model = deps._semantic_model_factory(deps.config)
-    # Endorsement nudge: same opt-in tally the production search handler
-    # feeds the ranker. It MUST be counted over the same horizon production
-    # uses — `ATTRIBUTION_LOOKBACK_SECONDS` (handlers/search.py) — not the
-    # dedup-widened `recent` above. `_explicit_applied_counts` applies no
-    # cutoff, so feeding it the 3600s read would count applies from up to an
-    # hour ago that production's 600s ranker never saw, letting the audit
-    # probe nudge a near-tie top-1 to "high" and flip a false `search_miss`.
-    # Read a separately-scoped window so the audit ranker matches production.
-    applied_by_id: dict[str, int] | None = None
-    if deps.config.behavior.endorsement_boost and memories:
-        from ..audit import ATTRIBUTION_LOOKBACK_SECONDS
-        from .search import _explicit_applied_counts
-
-        endorsement_events = list(
-            iter_events_window(deps.store.root, ATTRIBUTION_LOOKBACK_SECONDS)
-        )
-        applied_by_id = _explicit_applied_counts(
-            endorsement_events,
-            {m.id for m in memories},
-            now=utcnow(),
-            lookback_seconds=ATTRIBUTION_LOOKBACK_SECONDS,
-        )
+    # Config-driven ranking inputs: the SAME `RankingInputs` the
+    # production search handler threads
+    # (`handlers.search.resolve_ranking_inputs`), so this probe cannot
+    # rank on a different set of factors than `memory_search` would have.
+    # That covers both usage-aware directions — `endorsement_boost`
+    # nudges applied memories up, `outcome_demotion` slides recently
+    # ignored/contradicted ones down — plus `corroboration_boost` and the
+    # recency half-life. Threading only the endorsement half was a
+    # telemetry-honesty bug in both directions, because the miss verdict
+    # reads ONLY the rank-1 hit: a memory production had demoted out of
+    # the top slot still held rank 1 here, and the hit production's
+    # demotion promoted instead was never the one this probe judged.
+    #
+    # The event read is issued HERE, not inside the helper, and is
+    # separately scoped — NOT the dedup-widened `recent` above.
+    # `ranking_events_window_seconds` is production's own width (600s
+    # with endorsement alone, the full 30-day negative window once
+    # demotion is on), so the audit ranker's rotation-proofing matches
+    # production's; it returns None on the default config, which pays no
+    # read at all. Both tallies additionally enforce their own cutoffs
+    # internally, so neither feed could have widened a count either way.
+    tally_window = ranking_events_window_seconds(deps.config.behavior)
+    tally_events: list[dict[str, Any]] | None = None
+    if tally_window is not None and probe_pool.memories:
+        tally_events = list(iter_events_window(deps.store.root, tally_window))
+    ranking = resolve_ranking_inputs(
+        deps.store.root,
+        probe_pool.memories,
+        deps.config.behavior,
+        now=utcnow(),
+        events=tally_events,
+    )
     report = probe_for_miss(
-        memories,
+        probe_pool.memories,
         user_message,
         recent_events=recent,
         session_id=state.session_id,
@@ -214,8 +261,11 @@ async def memory_audit_turn(
         excluded_scopes=set(state.disabled_scopes),
         mode=probe_mode,
         semantic_model=semantic_model,
-        half_life_days=deps.config.behavior.recency_boost_half_life_days,
-        applied_by_id=applied_by_id,
+        half_life_days=ranking.half_life_days,
+        applied_by_id=ranking.applied_by_id,
+        negative_by_id=ranking.negative_by_id,
+        corroboration_boost=ranking.corroboration_boost,
+        corpus_stats_provider=probe_pool.corpus_stats_provider,
     )
 
     # `turn_audited` records that the audit ran at all — distinct

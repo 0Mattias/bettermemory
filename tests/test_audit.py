@@ -1250,10 +1250,17 @@ def test_probe_half_life_days_matches_run_search_ranking() -> None:
 def test_probe_forwards_ranker_config_to_run_search(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Wiring pin for the three threaded ranker knobs: `half_life_days`,
-    `applied_by_id`, and `semantic_model` must reach `run_search`
-    verbatim — the probe-matches-the-ranker rule is only as good as
-    the forwarding."""
+    """Wiring pin for every threaded ranker knob: `half_life_days`,
+    `semantic_model`, and the three usage-aware factors
+    (`applied_by_id`, `negative_by_id`, `corroboration_boost`) must
+    reach `run_search` verbatim — the probe-matches-the-ranker rule is
+    only as good as the forwarding.
+
+    The usage factors travel as a SET on purpose. `negative_by_id` and
+    `corroboration_boost` were absent from this signature while
+    production `memory_search` passed both, so an `outcome_demotion`
+    deployment probed with a strictly different ranker than the model
+    retrieved with."""
     from bettermemory import audit as audit_mod
     from bettermemory.search import search as real_run_search
 
@@ -1266,6 +1273,7 @@ def test_probe_forwards_ranker_config_to_run_search(
 
     monkeypatch.setattr(audit_mod, "run_search", spy)
     sentinel_counts = {m.id: 2}
+    sentinel_negatives = {m.id: (1, 2)}
     probe_for_miss(
         [m],
         "backup strategy",
@@ -1275,10 +1283,109 @@ def test_probe_forwards_ranker_config_to_run_search(
         mode="keyword",
         half_life_days=7.0,
         applied_by_id=sentinel_counts,
+        negative_by_id=sentinel_negatives,
+        corroboration_boost=True,
     )
     assert captured["half_life_days"] == 7.0
     assert captured["applied_by_id"] is sentinel_counts
+    assert captured["negative_by_id"] is sentinel_negatives
+    assert captured["corroboration_boost"] is True
     assert captured["semantic_model"] is None
+
+
+# `_DEMOTION_*`: a two-memory near-tie whose rank-1 slot the bounded
+# `search._demotion_factor` can flip. Used by the probe unit test below;
+# the same construction is rebuilt over a real store in test_hook.py,
+# where it pins the Stop hook producer end to end.
+#
+# Both memories carry the SAME body, so both score identical coverage
+# ("high" relevance — the v1 threshold clears either way) and the only
+# pre-demotion separation is recency. What differs is SUPPRESSION
+# eligibility: the project-scoped memory was written from the caller's
+# own repo, so `_caller_in_top_hit_project` explains away the missing
+# search while it holds rank 1; the global one cannot. A demotion that
+# moves the project memory off rank 1 therefore moves the verdict from
+# `ok` to `miss` — the same rank swap production retrieval performs.
+_DEMOTION_QUERY = "restic replication"
+_DEMOTION_BODY = "restic replication runbook lives in the homelab tree"
+_DEMOTION_REPO = "git@github.com:owner/homelab.git"
+
+
+def _demotion_pair(*, now: datetime, worktree: str) -> tuple[Memory, Memory, Origin]:
+    """`(project_memory, global_memory, caller_origin)` for the near-tie.
+
+    The project memory is one day fresher, which is worth a fraction of
+    a percent of score under the default half-life — a real,
+    deterministic lead (it wins rank 1 regardless of input order) but
+    far inside the demotion factor's reach, so a single active negative
+    outcome flips it."""
+    project = Memory(
+        id=generate_ulid(),
+        created=now - timedelta(hours=1),
+        updated=now - timedelta(hours=1),
+        scopes=["projects:homelab"],
+        confidence=Confidence.MEDIUM,
+        source=Source.EXPLICIT,
+        body=_DEMOTION_BODY,
+        origin=Origin(cwd=worktree, repo=_DEMOTION_REPO, worktree_root=worktree),
+    )
+    global_memory = Memory(
+        id=generate_ulid(),
+        created=now - timedelta(days=1, hours=1),
+        updated=now - timedelta(days=1, hours=1),
+        scopes=["infrastructure"],
+        confidence=Confidence.MEDIUM,
+        source=Source.EXPLICIT,
+        body=_DEMOTION_BODY,
+        origin=None,
+    )
+    caller = Origin(cwd=worktree, repo=_DEMOTION_REPO, worktree_root=worktree)
+    return project, global_memory, caller
+
+
+def test_probe_demotion_changes_the_verdict() -> None:
+    """`negative_by_id` must be able to move the probe's rank-1 hit, and
+    with it the verdict.
+
+    The verdict reads ONLY the rank-1 hit, so a probe that ranks without
+    the demotion factor production applies disagrees with production in
+    both directions: a memory production demoted out of the top slot
+    still holds rank 1 in the probe (masked miss), and the hit
+    production's demotion promoted instead is never the one the probe
+    judged (phantom miss). Same memories, same query, same clock — only
+    the demotion input changes."""
+    now = _utc(2026, 5, 1)
+    project, global_memory, caller = _demotion_pair(now=now, worktree="/tmp/homelab")
+
+    def probe(negative_by_id: dict[str, tuple[int, int]] | None) -> MissReport:
+        return probe_for_miss(
+            [project, global_memory],
+            _DEMOTION_QUERY,
+            recent_events=[],
+            session_id="sess_x",
+            now=now,
+            caller_origin=caller,
+            # Keyword mode ranks on the raw scorer, where the bounded
+            # factor is directly visible; hybrid's RRF would only show
+            # it once a per-ranker rank actually swapped.
+            mode="keyword",
+            negative_by_id=negative_by_id,
+        )
+
+    neutral = probe(None)
+    assert neutral.top_hits[0].id == project.id
+    assert neutral.top_hits[0].relevance == "high"
+    assert neutral.recent_retrieval_count == 0
+    # Rank 1 is the caller's own project memory → the missing search is
+    # explained by "the model has this repo open".
+    assert neutral.verdict == "ok"
+
+    demoted = probe({project.id: (0, 1)})
+    # One active `contradicted` slides the project memory below its
+    # global near-tie; the global hit carries no project suppression.
+    assert demoted.top_hits[0].id == global_memory.id
+    assert demoted.top_hits[0].relevance == "high"
+    assert demoted.verdict == "miss"
 
 
 def test_partial_coverage_query_does_not_clear_threshold() -> None:
@@ -1791,6 +1898,207 @@ async def test_search_endorsement_tally_matches_audit_probe_across_rotation(
         "handler is reading the active log only again"
     )
     assert captured_probe["applied_by_id"] == captured_search["applied_by_id"]
+
+
+async def test_audit_probe_usage_factors_match_production_search(
+    memory_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Parity pin across ALL the usage-aware ranking factors, not just
+    endorsement.
+
+    The audit probe exists to measure what production retrieval would
+    have surfaced, so it has to rank with production's inputs. Pre-fix
+    `probe_for_miss` had no `negative_by_id` / `corroboration_boost`
+    parameters at all and neither producer tallied active negatives, so
+    with `[behavior] outcome_demotion` on the probe ranked one factor
+    short of `memory_search` — and the miss verdict reads only the
+    rank-1 hit, exactly the slot a demotion moves.
+
+    Drive both handlers over one store and assert the probe received the
+    same non-empty demotion tally the production ranker did (non-empty is
+    the load-bearing half: an all-empty comparison would pass pre-fix
+    too, since both sides would be None)."""
+    from bettermemory.audit import probe_for_miss as real_probe
+    from bettermemory.config import BehaviorConfig
+    from bettermemory.search import search as real_search
+
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(outcome_demotion=True, corroboration_boost=True),
+    )
+    state = SessionState()
+    rec = Recorder(root=memory_dir, session_id=state.session_id, enabled=True)
+    server = build_server(
+        config=cfg, store=Store(memory_dir), state=state, recorder=rec
+    )
+    written = Store(memory_dir).write(
+        content="backup strategy uses triangular restic replication",
+        scopes=["infrastructure"],
+    )
+    # Backdate first: `_active_negative_counts` treats a negative at or
+    # before the memory's resolution timestamp (`max(updated,
+    # last_verified_at)`) as settled, so the rejection has to postdate
+    # `updated` to testify at all. Backdating also keeps the probe's
+    # creation shield from dropping the candidate.
+    _backdate_created(memory_dir, written.id)
+    rec.record("use", ids=[written.id], outcome="ignored", auto=False)
+    rec.record("use", ids=[written.id], outcome="contradicted", auto=False)
+
+    captured_search: dict[str, Any] = {}
+    captured_probe: dict[str, Any] = {}
+
+    def search_spy(*args: Any, **kwargs: Any) -> Any:
+        captured_search.update(kwargs)
+        return real_search(*args, **kwargs)
+
+    def probe_spy(*args: Any, **kwargs: Any) -> Any:
+        captured_probe.update(kwargs)
+        return real_probe(*args, **kwargs)
+
+    monkeypatch.setattr("bettermemory.handlers.search.run_search", search_spy)
+    monkeypatch.setattr("bettermemory.handlers.audit_turn.probe_for_miss", probe_spy)
+
+    await _call(server, "memory_search", query="backup strategy")
+    await _call(server, "memory_audit_turn", user_message="backup strategy")
+
+    assert captured_search["negative_by_id"] == {written.id: (1, 1)}, (
+        "sanity: production ranking must see one active ignored and one "
+        "active contradicted for this memory"
+    )
+    assert captured_probe["negative_by_id"] == captured_search["negative_by_id"]
+    assert captured_probe["corroboration_boost"] is True
+    assert (
+        captured_probe["corroboration_boost"] == captured_search["corroboration_boost"]
+    )
+
+
+# `_STARVED_*`: a store where the FTS5 candidate prefilter is SATURATED
+# and the memory that would win the full-corpus ranking sits past the
+# cap. Above `_INDEX_THRESHOLD_DEFAULT` production ranks that capped,
+# query-relevance-ordered slice; a probe that ranked an unconditional
+# `store.load_all()` ranked a strict SUPERSET. The same construction is
+# rebuilt over the Stop hook in test_hook.py.
+_STARVED_QUERY = "alpha beta"
+_STARVED_REPO = "git@github.com:example/repo-a.git"
+
+
+def _write_prefilter_starved_store(
+    memory_dir: Path, worktree: str, *, dense_count: int = 60
+) -> str:
+    """Seed the starved store and return the past-the-cap target's id.
+
+    `dense_count` short bodies repeat both query terms, so they win the
+    FTS5 BM25 ordering and monopolise the `_PREFILTER_CAP` slice. The
+    target mentions each term twice inside a long body — length
+    normalisation drops it past the cap — but the keyword scorer caps
+    per-term TF at 2, so over the FULL corpus it ties the decoys on raw
+    score and its freshness wins rank 1. It is also the only
+    project-scoped memory written from the caller's repo, so holding
+    rank 1 lets `_caller_in_top_hit_project` suppress the verdict."""
+    store = Store(memory_dir)
+    dense = "alpha beta " * 6
+    for i in range(dense_count):
+        store.write(
+            content=f"{dense}filler-{i}", scopes=["infrastructure"], origin=None
+        )
+    padding = " ".join(f"pad{j}" for j in range(200))
+    target = store.write(
+        content=f"alpha beta alpha beta {padding} tail",
+        scopes=["projects:repo-a"],
+        origin=Origin(cwd=worktree, repo=_STARVED_REPO, worktree_root=worktree),
+    )
+    # Backdate everything past the probe's creation shield; the target
+    # stays the freshest so it wins the full-corpus near-tie.
+    now = datetime.now(timezone.utc)
+    for path, mem in store.iter_active():
+        age = timedelta(minutes=30) if mem.id == target.id else timedelta(days=30)
+        stamp = now - age
+        store._write_path(
+            path, mem.model_copy(update={"created": stamp, "updated": stamp})
+        )
+    from bettermemory import index
+
+    index.rebuild(memory_dir, store.iter_active())
+    return target.id
+
+
+def _assert_starved_precondition(memory_dir: Path, target_id: str) -> None:
+    """Self-validating: the target must rank past the FTS cap, or the
+    test isn't exercising a pool divergence at all."""
+    from bettermemory import index
+
+    top = {cid for cid, _ in index.query(memory_dir, _STARVED_QUERY, max_results=50)}
+    assert len(top) == 50, "prefilter slice is not saturated — densify the decoys"
+    assert target_id not in top, (
+        "precondition drift: the target landed inside the FTS top-50, so "
+        "production and a load_all probe would see the same pool"
+    )
+
+
+async def test_audit_probe_ranks_productions_candidate_pool(
+    memory_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The in-process probe must rank PRODUCTION's candidate pool.
+
+    Pre-fix both audit producers handed `probe_for_miss` an
+    unconditional `store.load_all()` while `memory_search` ranked the
+    `_PREFILTER_CAP`-capped FTS slice (engaged above
+    `_INDEX_THRESHOLD_DEFAULT`) with corpus-derived document
+    frequencies. The probe's pool was therefore a strict superset, and
+    since the verdict reads ONLY the rank-1 hit, a memory production's
+    prefilter would have dropped could take that slot and decide the
+    verdict by itself — here by being the caller's own project memory,
+    which `_caller_in_top_hit_project` suppresses to `ok` while
+    production's actual rank-1 is a global memory worth flagging.
+
+    The audit runs BEFORE the search: a `memory_search` in the window
+    would shield the turn regardless of pool, hiding the property."""
+    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
+    import bettermemory._handlers as handlers_module
+    from bettermemory.config import BehaviorConfig
+
+    worktree = str(memory_dir / "repo-a-wt")
+    target_id = _write_prefilter_starved_store(memory_dir, worktree)
+    _assert_starved_precondition(memory_dir, target_id)
+    monkeypatch.setattr(
+        handlers_module,
+        "capture_origin",
+        lambda cwd=None: Origin(
+            cwd=worktree, repo=_STARVED_REPO, worktree_root=worktree
+        ),
+    )
+
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        # Keyword mode ranks on the raw scorer, where the per-term TF cap
+        # that lets the long target tie the dense decoys is directly
+        # visible.
+        behavior=BehaviorConfig(search_mode="keyword"),
+    )
+    state = SessionState()
+    rec = Recorder(root=memory_dir, session_id=state.session_id, enabled=True)
+    server = build_server(
+        config=cfg, store=Store(memory_dir), state=state, recorder=rec
+    )
+
+    report = await _call(server, "memory_audit_turn", user_message=_STARVED_QUERY)
+    hits = await _call(server, "memory_search", query=_STARVED_QUERY)
+    if isinstance(hits, dict) and "result" in hits:
+        hits = hits["result"]
+
+    assert report["recent_retrieval_count"] == 0, (
+        "sanity: the audit must be unshielded, or the verdict is `ok` for "
+        "a reason unrelated to the candidate pool"
+    )
+    assert hits[0]["id"] != target_id, (
+        "sanity: production's prefilter must not surface the past-the-cap "
+        "target at rank 1"
+    )
+    assert report["top_hits"][0]["id"] == hits[0]["id"], (
+        "the probe ranked a different candidate pool than production — its "
+        "rank-1, the only hit the verdict reads, is not the model's"
+    )
+    assert report["verdict"] == "miss"
 
 
 # ---------------------------------------------------------------------------

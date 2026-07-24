@@ -9,8 +9,13 @@ False positives (junk hits) are visible in `dead_weight` and
 because nothing in the event log records a search that didn't happen.
 
 This module closes that loop. `probe_for_miss` runs a cheap search
-sweep over the active store using a completed turn's user message and
-looks for a high-relevance hit. When a hit exists AND no retrieval
+sweep over the candidate list its CALLER supplies, using a completed
+turn's user message, and looks for a high-relevance hit. Both
+production producers supply production's own search pool
+(`handlers.search.resolve_search_pool`) rather than the whole active
+store, so above the FTS index threshold the probe ranks the same capped
+slice the model's retrieval would have; offline tooling that hands over
+a full `load_all()` gets the whole store. When a hit exists AND no retrieval
 event (see `_RETRIEVAL_EVENT_KINDS`: `search`, `show`, or `list`)
 fired in the same session within a configurable lookback window, the
 probe returns a `MissReport` — the explicit signal that the retrieval
@@ -79,11 +84,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Iterable, Literal, cast
+from typing import Any, Callable, Iterable, Literal, cast
 
 from .models import Memory, MemoryHit, generate_ulid
 from .origin import Origin, repos_match
 from .search import (
+    CorpusStats,
     SearchMode,
     _relevance_label_v2,
     _strip_stopwords,
@@ -597,6 +603,9 @@ def probe_for_miss(
     semantic_model: Any | None = None,
     half_life_days: float = 30.0,
     applied_by_id: dict[str, int] | None = None,
+    negative_by_id: dict[str, tuple[int, int]] | None = None,
+    corroboration_boost: bool = False,
+    corpus_stats_provider: Callable[[list[str]], CorpusStats | None] | None = None,
 ) -> MissReport:
     """Decide whether the just-completed turn was a silent retrieval miss.
 
@@ -631,14 +640,54 @@ def probe_for_miss(
     those signals matter for *consuming* a hit, not for deciding
     whether a search should have happened.
 
-    `semantic_model`, `half_life_days`, and `applied_by_id` are
-    forwarded verbatim to `search` so the probe ranks with the same
-    scorer configuration production retrieval uses — the same
-    probe-matches-the-ranker rule the `mode` parameter exists for.
-    Production callers thread `config.behavior.recency_boost_half_life_days`
-    and (when `endorsement_boost` is on) the explicit-applied tally the
-    search handler computes; offline callers can leave the defaults,
-    which match the package-default ranker. `mode="semantic"` with no
+    `semantic_model`, `half_life_days`, `applied_by_id`,
+    `negative_by_id`, and `corroboration_boost` are forwarded verbatim
+    to `search` so the probe ranks with the same scorer configuration
+    production retrieval uses — the same probe-matches-the-ranker rule
+    the `mode` parameter exists for. The three usage-aware factors
+    travel as a SET, matching the `RankingInputs` shape
+    `handlers.search.resolve_ranking_inputs` hands the production
+    ranker: `applied_by_id` (under `endorsement_boost`) nudges up,
+    `negative_by_id` (under `outcome_demotion`) slides down, and
+    `corroboration_boost` reads the persisted per-memory rollup.
+    Threading a subset would leave the probe ranking with different
+    inputs than production, and since the verdict reads only the rank-1
+    hit the disagreement runs both ways: a memory production demoted out
+    of the top slot can still hold rank 1 in the probe (masked miss),
+    and the hit a demotion promoted in production is never the one the
+    probe judged (phantom miss). Production callers thread
+    `config.behavior.recency_boost_half_life_days` plus the rest of the
+    `RankingInputs` the search handler computes; offline callers can
+    leave the defaults, which match the package-default ranker.
+
+    `corpus_stats_provider` is forwarded for the same reason and belongs
+    with the CANDIDATE POOL the caller built: `memories` must be
+    production's pool, not an unconditional `store.load_all()`. Above
+    `_INDEX_THRESHOLD_DEFAULT` production ranks a `_PREFILTER_CAP`-capped,
+    query-relevance-ordered slice and corrects its collapsed IDF with
+    corpus document frequencies, so a probe fed the whole corpus with no
+    provider ranks a strict SUPERSET under different statistics — and the
+    verdict, which reads only the rank-1 hit, can land on a memory
+    production would never have surfaced. Both production producers build
+    the pair together via `handlers.search.resolve_search_pool`; offline
+    callers that pass a full `load_all()` correctly leave this None,
+    because for them pool statistics ARE corpus statistics.
+
+    Two honest residuals in that pool parity, neither closed here:
+
+    - The producers build the pool from the RAW USER MESSAGE, because
+      that is the only query text a turn-end audit has. The model would
+      have typed a distilled query, so above the index threshold the FTS
+      prefilter draws a different capped slice than the model's own
+      search would have — the pool is production's *mechanism*, not
+      necessarily production's *rows*.
+    - `corpus_stats_provider` prices document frequencies over the
+      admitted collection, which still contains the memories the
+      creation shield below then drops from `memories`. Only the df
+      DENOMINATORS see them — no shielded memory can be ranked or
+      returned — so the effect is a small IDF drift, not a leak.
+
+    `mode="semantic"` with no
     `semantic_model` returns a `no_signal` report with
     `no_signal_reason="semantic_model_unavailable"` instead of raising:
     silently probing with a different scorer would measure the wrong
@@ -811,6 +860,9 @@ def probe_for_miss(
         mode=cast(SearchMode, mode),
         semantic_model=semantic_model,
         applied_by_id=applied_by_id,
+        negative_by_id=negative_by_id,
+        corroboration_boost=corroboration_boost,
+        corpus_stats_provider=corpus_stats_provider,
     )
     if not hits:
         return MissReport(
