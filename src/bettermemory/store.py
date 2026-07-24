@@ -371,10 +371,14 @@ class Store:
                 return memory
 
         # If it's tombstoned, give a clearer error so the model can say so.
-        # Match the discipline `load_tombstones` (store.py:583) uses for the
-        # bulk reader: one corrupt/truncated tombstone or a race with
+        # Match the discipline `load_tombstones` uses for the bulk read:
+        # one corrupt/truncated tombstone or a race with
         # `prune_tombstones` (FileNotFoundError) must not crash the whole
-        # callsite. `yaml.YAMLError` is redundant after the `_frontmatter`
+        # callsite. Same skip-don't-crash discipline, narrower catch here:
+        # that reader skips its full `_load_tombstone_path` parse on the
+        # blanket `PARSE_SKIP_EXCEPTIONS`, while this raw
+        # `frontmatter.load` probe enumerates its catch tuple.
+        # `yaml.YAMLError` is redundant after the `_frontmatter`
         # boundary fix translates it to ValueError, but we list it
         # explicitly as defense-in-depth + signal to future readers.
         for path in self._iter_tombstone_paths():
@@ -639,8 +643,11 @@ class Store:
         """
         existing_path = self._find_path_for_id(memory_id)
         if existing_path is None:
-            # Tombstone scan must tolerate corrupt/racing entries — same
-            # defensive pattern as `load_tombstones` (store.py:583).
+            # Tombstone scan must tolerate corrupt/racing entries — the
+            # same skip-don't-crash discipline as the `load_tombstones`
+            # bulk reader, with a narrower catch: that reader skips on
+            # the blanket `PARSE_SKIP_EXCEPTIONS`, while this raw
+            # `frontmatter.load` probe enumerates its catch tuple.
             # See `load_one` for the rationale on the explicit
             # `yaml.YAMLError` + `FileNotFoundError` in the catch tuple.
             for tpath in self._iter_tombstone_paths():
@@ -909,8 +916,11 @@ class Store:
         path = self._find_path_for_id(memory_id)
         if path is None:
             # Maybe it's already tombstoned — bubble up a clearer error.
-            # Tombstone scan must tolerate corrupt/racing entries — same
-            # defensive pattern as `load_tombstones` (store.py:583).
+            # Tombstone scan must tolerate corrupt/racing entries — the
+            # same skip-don't-crash discipline as the `load_tombstones`
+            # bulk reader, with a narrower catch: that reader skips on
+            # the blanket `PARSE_SKIP_EXCEPTIONS`, while this raw
+            # `frontmatter.load` probe enumerates its catch tuple.
             # See `load_one` for the rationale on the explicit
             # `yaml.YAMLError` + `FileNotFoundError` in the catch tuple.
             for tpath in self._iter_tombstone_paths():
