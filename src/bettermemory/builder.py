@@ -314,9 +314,24 @@ def _register_tools(
         )
 
     # Curation / power-user tools — gated out of the lean default surface.
-    # Each had 0-8 organic calls across 190 dogfood sessions and is reachable
-    # via the `bettermemory` CLI. The curate-loop skill drives memory_health /
-    # memory_acknowledge_miss / memory_restore as MCP tools, so it requires
+    # Membership rule, stated so additions don't have to re-derive it: the
+    # tool serves a deliberate curation pass rather than a conversational
+    # turn, so the typical client shouldn't pay its (long) description in
+    # context every turn. BehaviorConfig.full_tool_surface records the
+    # dogfood call-volume measurement behind the original cut and names the
+    # tools that census covered; anything gated since — memory_curate, and
+    # the 3.28.0 pair below — qualifies under the rule, not under that
+    # measurement, which predates them.
+    #
+    # A `bettermemory` CLI counterpart is the usual escape hatch for a
+    # client left on the lean surface, but it is neither uniform across
+    # this block nor a condition of membership: memory_acknowledge_miss
+    # exposes a bulk cutoff there rather than a per-event equivalent, and
+    # the 3.28.0 pair has no CLI counterpart at all. docs/api.md carries
+    # the per-tool mapping.
+    #
+    # The curate-loop skill drives memory_health / memory_acknowledge_miss
+    # / memory_restore as MCP tools, so it requires
     # `full_tool_surface = true`.
     if config.behavior.full_tool_surface:
         mcp.tool(name="memory_restore", description=DESC_MEMORY_RESTORE)(
@@ -342,6 +357,12 @@ def _register_tools(
         # episode patterns mechanically; these tools are where the model
         # arbitrates. Curation-tier by nature — same gate as
         # memory_curate, and the curate-loop skill is their main driver.
+        # Both are MCP-only — arbitration and pattern promotion need the
+        # model in the loop, so neither has a `bettermemory` subcommand.
+        # The conflict *scan* that fills the queue is the exception: it
+        # runs on every applying memory_curate / auto-consolidate pass,
+        # so `bettermemory consolidate --apply` keeps the queue current
+        # even though only memory_conflicts can rule on a pair.
         mcp.tool(name="memory_conflicts", description=DESC_MEMORY_CONFLICTS)(
             handlers.memory_conflicts
         )
