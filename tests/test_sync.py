@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import fnmatch
+import json
 import logging
 import shutil
 import subprocess
@@ -22,6 +23,7 @@ import pytest
 
 from bettermemory import sync
 from bettermemory._fsutil import flock_excl
+from bettermemory.cli import main as cli_main
 from bettermemory.doctor import DOCTOR_PROBE_FILENAME
 from bettermemory.episodes import EPISODES_DIR
 from bettermemory.events import EVENT_LOG_FILENAME, _SEGMENT_TEMPLATE
@@ -2552,6 +2554,45 @@ def test_push_commits_the_snapshot_the_scan_approved(
     )
 
 
+def _arm_a_commit_that_lands_mid_sync(
+    monkeypatch: pytest.MonkeyPatch,
+) -> dict[str, str]:
+    """Advance the branch by hand in the instant between `commit-tree` and
+    `update-ref`, and report the sha that landed there.
+
+    That instant is the whole window the compare-and-swap in
+    `_commit_snapshot_tree` exists to close: the parent has already been
+    read and baked into the new commit object, and the ref has not been
+    written yet. The fake wraps `sync._run_git`, so every caller inside
+    `sync.py` sees it.
+
+    Returns the dict the fake records into. It holds `"tip"` — the
+    interloper's sha — only if `commit-tree` actually ran, so a caller that
+    asserts on the key cannot pass vacuously against a `push` that refused
+    earlier for some unrelated reason.
+    """
+    original_run_git = sync._run_git
+    interloper: dict[str, str] = {}
+
+    def fake_run_git(
+        root: Path, args: list[str], *, check: bool = True
+    ) -> subprocess.CompletedProcess[str]:
+        result = original_run_git(root, args, check=check)
+        if args and args[0] == "commit-tree" and "tip" not in interloper:
+            # THE WINDOW: a hand-run commit advances the branch after the
+            # sync read its parent.
+            (root / "hand-written.md").write_text("by hand\n", encoding="utf-8")
+            original_run_git(root, ["add", "--", "hand-written.md"])
+            original_run_git(root, ["commit", "-m", "hand-run commit"])
+            interloper["tip"] = original_run_git(
+                root, ["rev-parse", "HEAD"]
+            ).stdout.strip()
+        return result
+
+    monkeypatch.setattr(sync, "_run_git", fake_run_git)
+    return interloper
+
+
 def test_push_refuses_rather_than_orphaning_a_commit_that_lands_mid_sync(
     memory_dir: Path, bare_remote: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2579,25 +2620,7 @@ def test_push_refuses_rather_than_orphaning_a_commit_that_lands_mid_sync(
     sync.push(memory_dir)
     store.write(content="a second clean fact", scopes=["tools"])
 
-    original_run_git = sync._run_git
-    interloper: dict[str, str] = {}
-
-    def fake_run_git(
-        root: Path, args: list[str], *, check: bool = True
-    ) -> subprocess.CompletedProcess[str]:
-        result = original_run_git(root, args, check=check)
-        if args and args[0] == "commit-tree" and "tip" not in interloper:
-            # THE WINDOW: a hand-run commit advances the branch after the
-            # sync read its parent.
-            (root / "hand-written.md").write_text("by hand\n", encoding="utf-8")
-            original_run_git(root, ["add", "--", "hand-written.md"])
-            original_run_git(root, ["commit", "-m", "hand-run commit"])
-            interloper["tip"] = original_run_git(
-                root, ["rev-parse", "HEAD"]
-            ).stdout.strip()
-        return result
-
-    monkeypatch.setattr(sync, "_run_git", fake_run_git)
+    interloper = _arm_a_commit_that_lands_mid_sync(monkeypatch)
 
     with pytest.raises(sync.SyncError):
         sync.push(memory_dir)
@@ -2610,6 +2633,37 @@ def test_push_refuses_rather_than_orphaning_a_commit_that_lands_mid_sync(
         "the sync overwrote a commit that landed mid-sync; that commit is "
         "now unreachable from any branch"
     )
+
+
+def _wedge_a_resolved_but_unconcluded_merge(
+    memory_dir: Path, bare_remote: Path, tmp_path: Path
+) -> Path:
+    """Leave a clone mid-merge with every conflict already RESOLVED.
+
+    The state `_require_no_sequencer_state` exists for, and the reason it
+    could not be folded into the porcelain conflict guard: resolving and
+    `git add`ing the conflicted files clears every `UU` code, and a merge
+    leaves no rebase sentinel, so `_unmerged_paths` and
+    `_rebase_in_progress` both come back empty. Only `MERGE_HEAD` still
+    marks it. Returns the wedged clone.
+    """
+    other = _wedge_a_conflicted_merge(memory_dir, bare_remote, tmp_path)
+
+    for line in _git(other, "status", "--porcelain").splitlines():
+        if line.startswith("UU"):
+            name = line[3:]
+            (other / name).write_text("resolved by hand\n", encoding="utf-8")
+            _git(other, "add", "--", name)
+
+    porcelain = _git(other, "status", "--porcelain")
+    assert not any(line.startswith("UU") for line in porcelain.splitlines()), (
+        f"fixture did not resolve the conflict; porcelain: {porcelain!r}"
+    )
+    assert sync._git_path_exists(other, "MERGE_HEAD"), (
+        "fixture left no MERGE_HEAD — the state under test is a RESOLVED "
+        "but unconcluded merge"
+    )
+    return other
 
 
 def test_push_refuses_to_conclude_a_half_finished_merge(
@@ -2630,22 +2684,7 @@ def test_push_refuses_to_conclude_a_half_finished_merge(
     change: before the snapshot rework, `sync push` would silently
     conclude this merge with a "bettermemory: sync" message.
     """
-    other = _wedge_a_conflicted_merge(memory_dir, bare_remote, tmp_path)
-
-    for line in _git(other, "status", "--porcelain").splitlines():
-        if line.startswith("UU"):
-            name = line[3:]
-            (other / name).write_text("resolved by hand\n", encoding="utf-8")
-            _git(other, "add", "--", name)
-
-    porcelain = _git(other, "status", "--porcelain")
-    assert not any(line.startswith("UU") for line in porcelain.splitlines()), (
-        f"fixture did not resolve the conflict; porcelain: {porcelain!r}"
-    )
-    assert sync._git_path_exists(other, "MERGE_HEAD"), (
-        "fixture left no MERGE_HEAD — the state under test is a RESOLVED "
-        "but unconcluded merge"
-    )
+    other = _wedge_a_resolved_but_unconcluded_merge(memory_dir, bare_remote, tmp_path)
     before = _git(other, "rev-parse", "main").strip()
 
     with pytest.raises(sync.SyncError) as excinfo:
@@ -3286,3 +3325,561 @@ def test_gitignore_lines_include_canonical_filename_constants() -> None:
         "atomic_write_bytes temp files (which carry raw memory / proposal "
         "payloads) would be staged, committed, and pushed by `sync push`"
     )
+
+
+# ---------------------------------------------------------------------------
+# The CLI command bodies (`bettermemory sync …`)
+#
+# Everything above exercises `sync.py`'s public functions directly. These pin
+# the layer the user actually reaches: the five `_cli_sync_*` bodies in
+# `bettermemory/cli/sync.py`, each carrying its own `SyncError` catch and its
+# own exit-code mapping. Every refusal raised above travels to the user
+# through exactly one of them, so a refusal that exits 0, or whose message
+# never leaves the process, is invisible to every test above — the wrapper
+# would report success while the store was never synced.
+#
+# Driven in-process through the real `bettermemory.cli.main`, so the argparse
+# definitions and the `run()` dispatch arms are on the path too, with
+# `BETTERMEMORY_DIR` pointed at the fixture store. Same shape as
+# `tests/test_cli_smoke.py`, which is the house convention for CLI tests.
+# ---------------------------------------------------------------------------
+
+
+def _run_cli(
+    argv: list[str], *, monkeypatch: pytest.MonkeyPatch, directory: Path
+) -> None:
+    """Invoke `bettermemory <argv>` in-process against `directory`."""
+    monkeypatch.setattr(sys, "argv", ["bettermemory", *argv])
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(directory))
+    cli_main()
+
+
+def _run_cli_expecting_exit(
+    argv: list[str],
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    directory: Path,
+    command: str,
+) -> str:
+    """Run a `sync` subcommand that must refuse; return its stderr.
+
+    Asserts BOTH halves of the mapping every `_cli_sync_*` body owns, because
+    each fails independently and each fails silently:
+
+    * the exit code is 2 — a refusal that printed correctly but exited 0
+      leaves a cron job or shell alias treating an unsynced store as synced;
+    * stderr carries the `sync <command> failed: ` prefix — a refusal routed
+      to stdout, or swallowed, leaves the user with a command that did
+      nothing and said nothing about why.
+
+    `stderr` is returned rather than asserted whole so callers can pin the
+    specific diagnosis. It is matched with `in`, not `startswith`: the first
+    run in a fresh environment also emits `load_config`'s default-config
+    notice there.
+    """
+    with pytest.raises(SystemExit) as excinfo:
+        _run_cli(argv, monkeypatch=monkeypatch, directory=directory)
+    assert excinfo.value.code == 2, (
+        f"`bettermemory {' '.join(argv)}` exited {excinfo.value.code!r}, not 2"
+    )
+    captured = capsys.readouterr()
+    assert f"sync {command} failed: " in captured.err, (
+        f"the refusal never reached stderr; stderr was {captured.err!r} and "
+        f"stdout was {captured.out!r}"
+    )
+    return captured.err
+
+
+def test_cli_sync_init_reports_its_actions_and_emits_json(
+    memory_dir: Path,
+    bare_remote: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`sync init` renders the action list, then the same result as JSON.
+
+    The `--json` arm is what a script reads, and it carries
+    `gitignore_error` — the machine-readable twin of the action line that
+    distinguishes "gitignore is canonical" from "the gitignore could not be
+    reconciled". A `None` there is the CLI asserting the store is safe, so
+    it is worth pinning that the field is actually emitted.
+    """
+    _run_cli(
+        ["sync", "init", "--remote", str(bare_remote)],
+        monkeypatch=monkeypatch,
+        directory=memory_dir,
+    )
+    out = capsys.readouterr().out
+    assert f"Initialised sync in {memory_dir.resolve()}." in out
+    assert "initialised git repo on branch 'main'" in out
+    assert ".gitignore written" in out
+    assert f"added origin → {bare_remote}" in out
+
+    _run_cli(["sync", "init", "--json"], monkeypatch=monkeypatch, directory=memory_dir)
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["already_repo"] is True
+    assert payload["gitignore_error"] is None
+    assert ".gitignore already in canonical shape" in payload["actions"]
+
+
+def test_cli_sync_init_maps_a_rejected_branch_name_to_exit_2(
+    memory_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`init`'s pre-existing `SyncError` path, end to end.
+
+    `_require_git_name` is what stops a `--default-branch` value from being
+    handed to `git init --initial-branch` as something git could read as a
+    flag. It raises before anything is created, and the CLI has to turn that
+    into a non-zero exit — otherwise a provisioning script reads exit 0 and
+    moves on believing the store is a repo.
+    """
+    err = _run_cli_expecting_exit(
+        ["sync", "init", "--default-branch=not a branch"],
+        monkeypatch=monkeypatch,
+        capsys=capsys,
+        directory=memory_dir,
+        command="init",
+    )
+    assert "not a branch" in err, (
+        f"the refusal does not name the value it rejected: {err!r}"
+    )
+    assert not (memory_dir / ".git").exists(), (
+        "init rejected the branch name but had already created the repo"
+    )
+
+
+def test_cli_sync_status_on_a_non_repo_points_at_init(
+    memory_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`status` never raises, so its non-repo branch is the whole error
+    surface: a store that was never `sync init`-ed has to be told so, and
+    told which command fixes it, on a zero exit."""
+    _run_cli(["sync", "status"], monkeypatch=monkeypatch, directory=memory_dir)
+    out = capsys.readouterr().out
+    assert "is not a git repo" in out
+    assert "bettermemory sync init" in out
+
+
+def test_cli_sync_status_renders_the_repo_and_truncates_the_file_list(
+    memory_dir: Path,
+    bare_remote: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The text rendering, including the cap on the modified-file list.
+
+    Twelve edited memories, so the `[:10]` slice and the `... and N more`
+    tail are both exercised — an off-by-one there either hides a file from
+    a user auditing what a sync is about to ship, or reports a count that
+    does not match the list printed above it.
+    """
+    sync.init(memory_dir, remote=str(bare_remote))
+    store = Store(memory_dir)
+    memories = [
+        store.write(content=f"tracked fact number {i}", scopes=["tools"])
+        for i in range(12)
+    ]
+    sync.push(memory_dir)
+    for memory in memories:
+        _edit_tracked_memory(memory_dir, store, memory.id)
+
+    _run_cli(["sync", "status"], monkeypatch=monkeypatch, directory=memory_dir)
+    out = capsys.readouterr().out
+
+    assert f"Memory directory: {memory_dir.resolve()}" in out
+    assert "branch: main" in out
+    assert f"remote: {bare_remote}" in out
+    assert "ahead: 0  behind: 0" in out
+    assert "untracked: 0  modified: 12" in out
+    assert "modified files:" in out
+    listed = [line.strip() for line in out.splitlines() if line.startswith("    ")]
+    assert len(listed) == 11, (
+        f"expected 10 filenames plus the truncation line, got {listed}"
+    )
+    assert listed[-1] == "... and 2 more", listed
+
+
+def test_cli_sync_status_on_a_remoteless_repo_omits_the_tracking_line(
+    memory_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The other side of every conditional in the text rendering.
+
+    A store that was `sync init`-ed without a remote is a supported shape —
+    `init`'s `--remote` is optional — and it must not be shown an
+    `ahead/behind` line, because there is nothing to be ahead OF. Run
+    clean first (no `modified files:` block at all), then with two edits,
+    which is below the ten-file cap: the `... and N more` tail must be
+    absent rather than reading `... and -8 more`.
+    """
+    sync.init(memory_dir)
+    store = Store(memory_dir)
+    memories = [
+        store.write(content=f"a local-only fact {i}", scopes=["tools"])
+        for i in range(2)
+    ]
+    _git(memory_dir, "add", "-A")
+    _git(memory_dir, "commit", "-m", "seed the local-only store")
+
+    _run_cli(["sync", "status"], monkeypatch=monkeypatch, directory=memory_dir)
+    clean = capsys.readouterr().out
+    assert "remote: <none>" in clean
+    assert "ahead:" not in clean, (
+        f"a repo with no remote was shown a tracking position: {clean!r}"
+    )
+    assert "untracked: 0  modified: 0" in clean
+    assert "modified files:" not in clean
+
+    edited = [_edit_tracked_memory(memory_dir, store, m.id) for m in memories]
+    _run_cli(["sync", "status"], monkeypatch=monkeypatch, directory=memory_dir)
+    dirty = capsys.readouterr().out
+    assert "untracked: 0  modified: 2" in dirty
+    assert "modified files:" in dirty
+    for name in edited:
+        assert name in dirty
+    assert "more" not in dirty, (
+        f"a two-file list was given a truncation tail: {dirty!r}"
+    )
+
+
+def test_cli_sync_status_json_carries_the_status_dict(
+    memory_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`--json` emits `SyncStatus.to_dict()` and nothing else on stdout —
+    the contract a script piping `sync status --json` into `jq` depends
+    on."""
+    sync.init(memory_dir)
+    Store(memory_dir).write(content="an uncommitted fact", scopes=["tools"])
+
+    _run_cli(
+        ["sync", "status", "--json"], monkeypatch=monkeypatch, directory=memory_dir
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["is_repo"] is True
+    assert payload["branch"] == "main"
+    assert payload["remote_url"] is None
+    assert payload["has_changes"] is True
+    assert payload["untracked_count"] >= 1
+    assert payload["modified_count"] == 0
+
+
+def test_cli_sync_push_reports_the_commit_then_the_no_op(
+    memory_dir: Path,
+    bare_remote: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The two success renderings, which say materially different things.
+
+    `sync.push` returns `committed=False` when there was nothing to commit
+    but still pushes prior commits; the CLI has to distinguish that from a
+    real commit, or a user who edited nothing reads "Committed" and
+    believes an edit was picked up.
+    """
+    sync.init(memory_dir, remote=str(bare_remote))
+    Store(memory_dir).write(content="a fact worth syncing", scopes=["tools"])
+
+    _run_cli(["sync", "push"], monkeypatch=monkeypatch, directory=memory_dir)
+    assert "Committed and pushed to origin." in capsys.readouterr().out
+
+    _run_cli(["sync", "push"], monkeypatch=monkeypatch, directory=memory_dir)
+    out = capsys.readouterr().out
+    assert "No local changes to commit; pushed prior commits to origin." in out
+
+    _run_cli(["sync", "push", "--json"], monkeypatch=monkeypatch, directory=memory_dir)
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["committed"] is False
+    assert payload["pushed"] is True
+    assert payload["remote"] == "origin"
+
+
+def test_cli_sync_push_maps_a_missing_remote_to_exit_2(
+    memory_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`push`'s pre-existing `SyncError` path: a repo with no `origin`.
+
+    The commit is made before the remote is consulted, so the failure has
+    to be loud — the local half succeeded and the distributing half did
+    not, which is exactly the state a silent exit 0 would misreport.
+    """
+    sync.init(memory_dir)
+    Store(memory_dir).write(content="a fact with nowhere to go", scopes=["tools"])
+
+    err = _run_cli_expecting_exit(
+        ["sync", "push"],
+        monkeypatch=monkeypatch,
+        capsys=capsys,
+        directory=memory_dir,
+        command="push",
+    )
+    assert "no remote named 'origin'" in err
+    assert "bettermemory sync init --remote" in err
+
+
+def test_cli_sync_push_maps_the_blank_message_refusal_to_exit_2(
+    memory_dir: Path,
+    bare_remote: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """NEW REFUSAL, and the one the CLI could most easily have hidden.
+
+    `_cli_sync_push` resolves the message as `message or
+    DEFAULT_COMMIT_MESSAGE`. A whitespace-only `--message` is truthy, so it
+    reaches `_commit_snapshot_tree` and is refused there for parity with
+    `git commit -m "   "` — which aborts, where `commit-tree` would have
+    recorded the blank message. Pinned at the CLI boundary because the
+    alternative reading of that `or` (treat blank as absent, silently
+    substitute the default) is a one-character change away and would commit
+    under a message the user never asked for.
+
+    Nothing may be committed: the refusal fires after `git add -A`, so
+    "refused" and "refused without leaving a commit behind" are separate
+    claims.
+    """
+    sync.init(memory_dir, remote=str(bare_remote))
+    Store(memory_dir).write(content="a fact that must not ship blank", scopes=["tools"])
+
+    err = _run_cli_expecting_exit(
+        ["sync", "push", "--message", "   \n  "],
+        monkeypatch=monkeypatch,
+        capsys=capsys,
+        directory=memory_dir,
+        command="push",
+    )
+    assert "empty after whitespace cleanup" in err
+    assert "non-blank `--message`" in err
+    assert not _git(memory_dir, "rev-list", "--all").strip(), (
+        "a commit was recorded despite the blank --message"
+    )
+
+
+def test_cli_sync_push_maps_the_unconcluded_merge_refusal_to_exit_2(
+    memory_dir: Path,
+    bare_remote: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """NEW REFUSAL: a resolved-but-unconcluded merge, seen from the CLI.
+
+    `_require_no_sequencer_state` refuses rather than approximating a merge
+    commit the plumbing path cannot write. The user's route out is entirely
+    in the message — `git commit` to conclude, or `git merge --abort` to
+    back out — so a refusal that exits non-zero but drops the text leaves
+    them with a store parked mid-merge and no stated way forward.
+    """
+    other = _wedge_a_resolved_but_unconcluded_merge(memory_dir, bare_remote, tmp_path)
+    before = _git(other, "rev-parse", "main").strip()
+
+    err = _run_cli_expecting_exit(
+        ["sync", "push"],
+        monkeypatch=monkeypatch,
+        capsys=capsys,
+        directory=other,
+        command="push",
+    )
+    assert "MERGE_HEAD" in err, (
+        f"the refusal does not name the state that blocked it: {err!r}"
+    )
+    assert "git commit" in err
+    assert "git merge --abort" in err
+    assert _git(other, "rev-parse", "main").strip() == before, (
+        "the CLI push wrote a single-parent commit over an unconcluded merge"
+    )
+
+
+def test_cli_sync_push_maps_the_lost_ref_race_to_exit_2(
+    memory_dir: Path,
+    bare_remote: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """NEW REFUSAL: the compare-and-swap losing to a commit that lands
+    mid-sync.
+
+    Unlike the other two, this one is not raised by a purpose-built guard —
+    it is `git update-ref`'s own failure surfacing through `_run_git`'s
+    default `check=True`. That makes the CLI mapping the only thing
+    standing between "another actor's commit was preserved" and a user who
+    believes their memories were pushed: the sync did not commit and did
+    not push, and exit 0 here would say otherwise.
+    """
+    sync.init(memory_dir, remote=str(bare_remote))
+    store = Store(memory_dir)
+    store.write(content="clean baseline", scopes=["tools"])
+    sync.push(memory_dir)
+    store.write(content="a second clean fact", scopes=["tools"])
+
+    interloper = _arm_a_commit_that_lands_mid_sync(monkeypatch)
+
+    err = _run_cli_expecting_exit(
+        ["sync", "push"],
+        monkeypatch=monkeypatch,
+        capsys=capsys,
+        directory=memory_dir,
+        command="push",
+    )
+
+    assert "tip" in interloper, (
+        "`commit-tree` never ran — this test no longer covers the window it "
+        "was written for"
+    )
+    assert "update-ref" in err, (
+        f"the refusal does not name the git operation that failed: {err!r}"
+    )
+    assert _git(memory_dir, "rev-parse", "main").strip() == interloper["tip"], (
+        "the sync overwrote a commit that landed mid-sync"
+    )
+
+
+def test_cli_sync_pull_reports_the_reindex_and_the_skip(
+    memory_dir: Path,
+    bare_remote: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Both `pull` renderings. The reindex count is the user's only signal
+    that the FTS5 index caught up with the files the rebase landed, and
+    `--no-reindex` has to say plainly that it did not — otherwise a
+    deferred rebuild is indistinguishable from a completed one."""
+    sync.init(memory_dir, remote=str(bare_remote))
+    Store(memory_dir).write(content="a fact from the first host", scopes=["tools"])
+    sync.push(memory_dir)
+
+    _run_cli(["sync", "pull"], monkeypatch=monkeypatch, directory=memory_dir)
+    out = capsys.readouterr().out
+    assert "Pulled from origin." in out
+    assert "reindexed 1 memories" in out
+
+    _run_cli(
+        ["sync", "pull", "--no-reindex"], monkeypatch=monkeypatch, directory=memory_dir
+    )
+    out = capsys.readouterr().out
+    assert "--no-reindex passed: run `bettermemory reindex` when ready" in out
+
+    _run_cli(["sync", "pull", "--json"], monkeypatch=monkeypatch, directory=memory_dir)
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["pulled"] is True
+    assert payload["reindexed"] is True
+    assert payload["indexed_count"] == 1
+
+
+def test_cli_sync_pull_maps_the_dirty_worktree_refusal_to_exit_2(
+    memory_dir: Path,
+    bare_remote: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`pull`'s pre-existing `SyncError` path: uncommitted tracked edits.
+
+    The normal state of a live store, so this is the refusal a user meets
+    most often. Its value is entirely in the detail it carries — which file
+    is in the way and which command clears it — and none of that survives
+    if the CLI drops the message or exits 0.
+    """
+    sync.init(memory_dir, remote=str(bare_remote))
+    store = Store(memory_dir)
+    memory = store.write(content="a fact I am still editing", scopes=["tools"])
+    sync.push(memory_dir)
+    edited = _edit_tracked_memory(memory_dir, store, memory.id)
+
+    err = _run_cli_expecting_exit(
+        ["sync", "pull"],
+        monkeypatch=monkeypatch,
+        capsys=capsys,
+        directory=memory_dir,
+        command="pull",
+    )
+    assert edited in err, f"the refusal does not name the dirty file: {err!r}"
+    assert "bettermemory sync push" in err
+    assert "rebase.autoStash" in err
+
+
+def test_cli_sync_auto_reports_completion_and_emits_json(
+    memory_dir: Path,
+    bare_remote: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`auto`'s success rendering, plus the JSON a cron job would read.
+
+    The text arm deliberately says very little; the JSON arm is where the
+    three sub-results live, so that is what has to carry whether the push
+    half actually happened.
+    """
+    sync.init(memory_dir, remote=str(bare_remote))
+    Store(memory_dir).write(content="a fact for the one-shot", scopes=["tools"])
+    # `auto` pulls, and a pull needs an upstream — establish one first, the
+    # same way `test_auto_pulls_then_pushes` does.
+    sync.push(memory_dir)
+    Store(memory_dir).write(content="a fact the one-shot must ship", scopes=["tools"])
+
+    _run_cli(["sync", "auto"], monkeypatch=monkeypatch, directory=memory_dir)
+    assert "Auto-sync complete (remote=origin)." in capsys.readouterr().out
+
+    _run_cli(["sync", "auto", "--json"], monkeypatch=monkeypatch, directory=memory_dir)
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["remote"] == "origin"
+    assert payload["committed_before_pull"] is False
+    assert payload["pull"]["pulled"] is True
+    assert payload["push"]["pushed"] is True
+
+
+def test_cli_sync_auto_maps_the_conflict_refusal_to_exit_2(
+    memory_dir: Path,
+    bare_remote: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`auto`'s pre-existing `SyncError` path: an unresolved conflict.
+
+    `auto` is the command people wire into cron and shell aliases, so it is
+    the one whose exit code is most likely to be the only thing anyone
+    reads. It must refuse before committing anything, and say so — the
+    message is what keeps the user from reaching for `sync push`, which
+    would `git add -A` the markers into their memories.
+    """
+    other = _wedge_a_conflicted_merge(memory_dir, bare_remote, tmp_path)
+    before = _git(other, "rev-parse", "main").strip()
+
+    err = _run_cli_expecting_exit(
+        ["sync", "auto"],
+        monkeypatch=monkeypatch,
+        capsys=capsys,
+        directory=other,
+        command="auto",
+    )
+    assert "Do NOT run `bettermemory sync push`" in err, (
+        f"the refusal does not warn against the destructive command: {err!r}"
+    )
+    assert _git(other, "rev-parse", "main").strip() == before, (
+        "auto committed onto main with unmerged files present"
+    )
+    _assert_no_commit_carries_conflict_markers(other)
+
+
+def test_cli_sync_without_a_subcommand_prints_help(
+    memory_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A bare `bettermemory sync` falls through `run()`'s dispatch arms to
+    `sub_parser.print_help()` — it must list the sub-subcommands rather
+    than exiting silently or, worse, defaulting to one of them."""
+    _run_cli(["sync"], monkeypatch=monkeypatch, directory=memory_dir)
+    out = capsys.readouterr().out
+    for name in ("init", "status", "push", "pull", "auto"):
+        assert name in out, f"`sync` help does not mention the {name!r} subcommand"
