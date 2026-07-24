@@ -86,6 +86,15 @@ def _cli_health(
         heavily_used_top_k=top_k,
         heavily_used_min_applied=threshold,
         verification_stale_days=ctx.config.behavior.verification_stale_days,
+        # Thread the same knob `memory_health` (and the web routes)
+        # thread. Dropping it here pinned the CLI's
+        # `cold_endorsement_memories` bucket to the strict
+        # `explicit == 0` semantics regardless of the configured
+        # ratio, so `bettermemory health` reported a different bucket
+        # than the model reads from `memory_health` on the same store.
+        cold_endorsement_ratio_threshold=(
+            ctx.config.behavior.cold_endorsement_ratio_threshold
+        ),
         # Capture caller origin so the CLI rendering picks up the
         # commit-drift bucket when run from inside a project whose
         # memories live in this store.

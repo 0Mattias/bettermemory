@@ -351,6 +351,101 @@ def test_health_json_subcommand_emits_machine_readable_output(
     assert "verification_debt" in payload
 
 
+def _seed_weakly_endorsed_memory(store: Store) -> str:
+    """Seed one memory that only the RATIO half of the cold-endorsement
+    predicate can catch, and return its id.
+
+    Shape: 5 retrievals (the `_COLD_ENDORSEMENT_MIN_RETRIEVALS` floor)
+    and 10 applied events split 1 explicit / 9 auto. `explicit == 0` is
+    False, so the always-on binary check never fires; the ratio 0.1 is
+    below a 0.25 threshold, so the bucket lights up if and only if the
+    caller actually threaded `cold_endorsement_ratio_threshold`.
+    """
+    from bettermemory.events import Recorder
+
+    memory = store.write(content="deploy with uv, never pip", scopes=["tools"])
+    rec = Recorder(root=store.root, session_id="sess-cold-endorse")
+    for _ in range(5):
+        rec.record("search", returned=[memory.id], relevance=["high"])
+    rec.record("use", ids=[memory.id], outcome="applied", auto=False)
+    for _ in range(9):
+        rec.record("use", ids=[memory.id], outcome="applied", auto=True)
+    return memory.id
+
+
+def _config_with_ratio_threshold(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    """Point `default_config_path` at a temp config.toml whose
+    `cold_endorsement_ratio_threshold` is `value`. Real file, real
+    `load_config()` — the CLI reaches the knob the way a user's install
+    does, so a regression that stops reading config is caught too."""
+    from bettermemory.config import DEFAULT_CONFIG
+
+    cfg_dir = tmp_path / "bm-config"
+    cfg_dir.mkdir(exist_ok=True)
+    cfg_path = cfg_dir / "config.toml"
+    original = "cold_endorsement_ratio_threshold = 0.0"
+    assert original in DEFAULT_CONFIG, "DEFAULT_CONFIG key drifted"
+    cfg_path.write_text(
+        DEFAULT_CONFIG.replace(original, f"cold_endorsement_ratio_threshold = {value}"),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("bettermemory.config.default_config_path", lambda: cfg_path)
+
+
+def test_health_honours_configured_cold_endorsement_ratio_threshold(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """`bettermemory health` must compute the same
+    `cold_endorsement_memories` bucket `memory_health` computes on the
+    same store. The CLI dropped `cold_endorsement_ratio_threshold`,
+    pinning its bucket to the strict `explicit == 0` semantics — so a
+    user reading the CLI got a different answer than the model read
+    from the MCP tool whenever the knob was set.
+
+    Both renderers are pinned because both are user-facing surfaces
+    fed by the single `report_for_directory` call.
+    """
+    storage = tmp_path / "store"
+    storage.mkdir()
+    _config_with_ratio_threshold(tmp_path, monkeypatch, "0.25")
+    store = _seeded_store(storage, monkeypatch)
+    memory_id = _seed_weakly_endorsed_memory(store)
+
+    _run_main(["health", "--json"], monkeypatch=monkeypatch, storage=storage)
+    payload = json.loads(capsys.readouterr().out)
+    bucket = payload["cold_endorsement_memories"]
+    assert bucket["total"] == 1, "ratio-only row missing — threshold was dropped"
+    assert [row["id"] for row in bucket["rows"]] == [memory_id]
+
+    _run_main(["health"], monkeypatch=monkeypatch, storage=storage)
+    assert "Cold-endorsement memories (1)" in capsys.readouterr().out
+
+
+def test_health_default_ratio_threshold_keeps_strict_bucket(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Control for the test above: the same store under the default
+    `0.0` threshold must NOT surface the row. Without this the ratio
+    assertion would still pass if the bucket started flagging
+    everything, and the threading fix would be indistinguishable from
+    a broken predicate."""
+    storage = tmp_path / "store"
+    storage.mkdir()
+    _config_with_ratio_threshold(tmp_path, monkeypatch, "0.0")
+    store = _seeded_store(storage, monkeypatch)
+    _seed_weakly_endorsed_memory(store)
+
+    _run_main(["health", "--json"], monkeypatch=monkeypatch, storage=storage)
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["cold_endorsement_memories"]["total"] == 0
+
+
 def test_doctor_subcommand_runs_against_empty_store(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
