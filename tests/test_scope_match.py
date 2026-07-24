@@ -639,6 +639,111 @@ def test_forward_slash_root_matches_tilde_citation_under_ntpath(
 
 
 # ---------------------------------------------------------------------------
+# Separator folding in the NOISE direction — the raw-comparison siblings of
+# the `_home_alias` fold above. `_home_alias`'s raw comparison failed toward
+# silent misses; these failed toward false positives: the shared-root
+# identity check (`root in declared_roots`) and `_declared_root_covers`'s
+# prefix check + body probe all compared spellings byte-for-byte, so a store
+# mixing separator families for one directory lost the monorepo and
+# nested-root suppressions and bounced correctly-tagged writes. Windows
+# semantics exercised from any platform via `_simulate_windows_home`
+# (identity writes on a real Windows runner).
+# ---------------------------------------------------------------------------
+
+
+def test_shared_root_other_separator_family_quiet_when_declared(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The monorepo/shared-root suppression must survive the two scopes
+    recording the SAME directory in different separator families (a
+    hand-edited or cross-machine-synced store; `origin.capture` records
+    cwd as ``str(Path.cwd().resolve())``, i.e. OS-native). Byte-equality
+    membership missed the collision and bounced the correctly-tagged
+    write demanding the foreign scope."""
+    _simulate_windows_home(monkeypatch, r"C:\Users\bm-user")
+    out = detect_scope_mismatch(
+        body=(
+            "The webapp dev server config is "
+            "C:/Users/bm-user/code/webapp/vite.config.ts; HMR needs port 5174."
+        ),
+        declared_scopes=["projects:webapp"],
+        project_scopes={"projects:homelab", "projects:webapp"},
+        project_roots={
+            "projects:homelab": "C:/Users/bm-user/code/webapp",
+            "projects:webapp": r"C:\Users\bm-user\code\webapp",
+        },
+    )
+    assert out.has_mismatch is False
+
+
+def test_nested_roots_other_separator_family_child_declared_quiet(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Root-pass shape in isolation, mixed spellings: the declared child
+    root (forward-slash family) extends the parent root (backslash
+    family) at the same match index, so the parent hit is suppressed.
+    Raw `startswith` on both the stored-roots prefix check and the body
+    probe read the child as unrelated and flagged the parent on a
+    correctly-tagged child write."""
+    _simulate_windows_home(monkeypatch, r"C:\Users\bm-user")
+    out = detect_scope_mismatch(
+        body=(
+            r"Auth middleware lives at C:\Users\bm-user\work\mono\services\api\auth.go"
+            " now."
+        ),
+        declared_scopes=["projects:mono-api"],
+        project_scopes=set(),
+        project_roots={
+            "projects:mono": r"C:\Users\bm-user\work\mono",
+            "projects:mono-api": "C:/Users/bm-user/work/mono/services/api",
+        },
+    )
+    assert out.has_mismatch is False
+
+
+def test_nested_roots_tilde_citation_other_family_child_declared_quiet(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The contracted leg of the covers probe: the body cites the child
+    path via the parent root's tilde alias (which keeps the parent's
+    backslash tail spelling), while the declared child root is stored
+    in the forward-slash family. The folded probe recognises the
+    citation as the declared child and stays quiet."""
+    _simulate_windows_home(monkeypatch, r"C:\Users\bm-user")
+    out = detect_scope_mismatch(
+        body=r"Auth middleware lives at ~\work\mono\services\api\auth.go now.",
+        declared_scopes=["projects:mono-api"],
+        project_scopes=set(),
+        project_roots={
+            "projects:mono": r"C:\Users\bm-user\work\mono",
+            "projects:mono-api": "C:/Users/bm-user/work/mono/services/api",
+        },
+    )
+    assert out.has_mismatch is False
+
+
+def test_nested_roots_other_family_parent_path_outside_child_still_flags(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Control: folding must not over-suppress. A path under the parent
+    but *outside* the declared child's subtree is genuinely about the
+    parent project, whatever the separator families involved."""
+    _simulate_windows_home(monkeypatch, r"C:\Users\bm-user")
+    out = detect_scope_mismatch(
+        body=r"The CI config lives at C:\Users\bm-user\work\mono\ci\pipeline.yml today.",
+        declared_scopes=["projects:mono-api"],
+        project_scopes=set(),
+        project_roots={
+            "projects:mono": r"C:\Users\bm-user\work\mono",
+            "projects:mono-api": "C:/Users/bm-user/work/mono/services/api",
+        },
+    )
+    assert out.has_mismatch is True
+    assert out.matches[0].kind == "project_root"
+    assert "projects:mono" in out.suggested_scopes
+
+
+# ---------------------------------------------------------------------------
 # collect_project_scopes / collect_project_roots
 # ---------------------------------------------------------------------------
 
@@ -680,6 +785,47 @@ def test_collect_project_roots_skips_degenerate_roots() -> None:
     d = _memory(scopes=["projects:foo"], cwd="/Users/me/projects/foo")
     out = collect_project_roots([a, b, c, d])
     assert out == {"projects:foo": "/Users/me/projects/foo"}
+
+
+def test_collect_project_roots_drops_altsep_spelled_windows_home(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The degenerate-root guard is the fail-open sibling: byte equality
+    against the backslash-canonical `Path.home()` let a forward-slash or
+    mixed Windows spelling of the home cwd through as a regular root —
+    which then prefix-matches essentially every path the user cites,
+    the store-wide cascade the guard exists to stop. Both comparands
+    now fold; kept roots keep the store's original spelling."""
+    _simulate_windows_home(monkeypatch, r"C:\Users\bm-user")
+    fwd_home = _memory(scopes=["projects:dotfiles"], cwd="C:/Users/bm-user")
+    mixed_home = _memory(scopes=["projects:dotfiles-mixed"], cwd="C:\\Users/bm-user")
+    canonical_home = _memory(
+        scopes=["projects:dotfiles-canonical"], cwd=r"C:\Users\bm-user"
+    )
+    posix_marker = _memory(scopes=["projects:rootfs"], cwd="/")
+    sep_marker = _memory(scopes=["projects:driveless"], cwd="\\")
+    kept = _memory(
+        scopes=["projects:bettermemory"], cwd="C:/Users/bm-user/work/bm-server"
+    )
+    out = collect_project_roots(
+        [fwd_home, mixed_home, canonical_home, posix_marker, sep_marker, kept]
+    )
+    # Every home/root spelling is dropped; the real project root
+    # survives IN ITS ORIGINAL forward-slash spelling.
+    assert out == {"projects:bettermemory": "C:/Users/bm-user/work/bm-server"}
+
+
+def test_collect_project_roots_posix_backslash_stays_a_filename_character() -> None:
+    """On POSIX `os.altsep` is None and the fold must be the identity: a
+    root of literally ``\\`` is an (odd) relative name, NOT a spelling
+    of the filesystem root, so the degenerate guard must keep it.
+    Gated on the live `os.altsep` because under ntpath semantics the
+    same spelling really is the root marker (pinned above)."""
+    if os.altsep is not None:
+        pytest.skip("this platform has an altsep; the fold is MEANT to fire here")
+    a = _memory(scopes=["projects:oddly-named"], cwd="\\")
+    out = collect_project_roots([a])
+    assert out == {"projects:oddly-named": "\\"}
 
 
 def test_collect_project_roots_empty_when_no_origin() -> None:

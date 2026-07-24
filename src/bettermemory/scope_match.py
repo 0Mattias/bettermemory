@@ -218,18 +218,32 @@ def detect_scope_mismatch(
     # `projects:*` scopes for the inference to converge).
     if len(matches) < _MAX_MATCHES and project_roots:
         declared_roots = {project_roots[s] for s in declared if project_roots.get(s)}
+        # Folded twin of `declared_roots` for the identity check below
+        # only. The raw set keeps each declared root's ORIGINAL spelling
+        # because `_declared_root_covers` probes the body verbatim with
+        # it (and via `_home_alias`, whose tail is spelling-preserving).
+        folded_declared_roots = {
+            _fold_altsep(dr, os.sep, os.altsep) for dr in declared_roots
+        }
         for scope, root in sorted(project_roots.items()):
             if scope in declared or scope in suggested:
                 continue
             if not root:
                 continue
-            if root in declared_roots:
-                # The candidate's inferred root is string-identical to a
-                # declared scope's root — monorepo sub-projects sharing
-                # one checkout, or a foreign scope whose memories were
-                # written from the declared project's cwd. The declared
-                # tag already explains any path under that root; the
-                # colliding scope carries zero discriminating signal.
+            if _fold_altsep(root, os.sep, os.altsep) in folded_declared_roots:
+                # The candidate's inferred root names the same directory
+                # as a declared scope's root — byte-identical, or (on
+                # Windows) the same path in the other separator family,
+                # which a hand-edited or cross-machine-synced store can
+                # carry. Monorepo sub-projects sharing one checkout, or
+                # a foreign scope whose memories were written from the
+                # declared project's cwd. The declared tag already
+                # explains any path under that root; the colliding
+                # scope carries zero discriminating signal. Byte
+                # equality here lost the suppression whenever the two
+                # spellings diverged — the same raw-comparison class
+                # `_home_alias` shed, failing toward noise instead of
+                # silence.
                 continue
             # Substring match — if the body contains the project root as
             # a literal substring (absolute, or tilde-contracted when the
@@ -299,6 +313,18 @@ def collect_project_roots(memories: Iterable[Memory]) -> dict[str, str]:
     cwd anyway), and a stray write from inside a subdirectory
     shouldn't shrink the root. A scope with no origin info anywhere
     is omitted — we have no signal to populate the value.
+
+    SEPARATORS: the degenerate-root guard folds both comparands
+    through `verify._fold_altsep` (alternate separator → primary,
+    identity on POSIX), so on Windows a home cwd spelled with the
+    forward slashes the OS accepts (``C:/Users/me``, or a mixed
+    spelling) is dropped exactly like the backslash-canonical form
+    `Path.home()` renders. Byte equality let such a spelling — a
+    hand-edited or cross-machine-synced store; `origin.capture`
+    itself records ``str(Path.cwd().resolve())``, which is OS-native
+    — through as a store-wide prefix-matching root: the exact
+    fail-open cascade the guard exists to stop. Kept roots stay in
+    the store's ORIGINAL spelling; only the guard comparison folds.
     """
     by_scope: dict[str, Counter[str]] = {}
     for m in memories:
@@ -310,17 +336,21 @@ def collect_project_roots(memories: Iterable[Memory]) -> dict[str, str]:
                 continue
             by_scope.setdefault(scope, Counter())[cwd] += 1
     out: dict[str, str] = {}
-    home = str(Path.home())
+    home = _fold_altsep(str(Path.home()), os.sep, os.altsep)
     for scope, counter in by_scope.items():
         # `most_common(1)` returns [(value, count)]; pick the value.
         root = counter.most_common(1)[0][0]
-        if root == home or root == "/":
+        folded = _fold_altsep(root, os.sep, os.altsep)
+        if folded == home or folded == os.sep:
             # Degenerate root: a dotfiles-style project worked from
             # `$HOME` (or a stray session at the filesystem root) would
             # prefix-match essentially every path the user ever cites,
             # bouncing unrelated writes store-wide. Dropping it trades a
             # quiet false negative for that cascade — the same
             # "quieter signal" bias the root pass already documents.
+            # (`folded == os.sep` is the old `root == "/"` with both
+            # sides folded: byte-identical on POSIX, and on Windows it
+            # also catches the ``\`` spelling of the root marker.)
             continue
         out[scope] = root
     return out
@@ -456,15 +486,35 @@ def _declared_root_covers(
     spelling, in which case the declared root is contracted the same
     way before comparing. The control case stays intact: a path under
     the parent but *outside* the declared child's root fails the
-    `startswith` check and still flags the parent.
+    prefix check (or the body probe) and still flags the parent.
+
+    SEPARATORS: both comparisons fold through `verify._fold_altsep`
+    (alternate separator → primary, identity on POSIX). The
+    store-vs-store prefix check (`dr` extends `root`) folds both
+    stored spellings, so on Windows a declared child root recorded in
+    the other separator family from the candidate parent still reads
+    as nested. The body probe folds the cited slice and `spelled`
+    alike — on Windows the two families spell one path, so a body
+    citing the child in either family is covered. Raw `startswith` on
+    both lost the nested-root suppression whenever spellings mixed,
+    flagging the parent on a correctly-tagged child write — the noise
+    twin of the silent-miss class `_home_alias` shed. The fold is
+    length-preserving, so `idx`/`len` arithmetic and the
+    `_boundary_after` check keep running against the RAW body, and
+    `spelled` keeps its original spelling throughout.
     """
+    folded_root = _fold_altsep(root, os.sep, os.altsep)
     for dr in sorted(declared_roots):
-        if len(dr) <= len(root) or not dr.startswith(root):
+        folded_dr = _fold_altsep(dr, os.sep, os.altsep)
+        if len(folded_dr) <= len(folded_root) or not folded_dr.startswith(folded_root):
             continue
         spelled = _home_alias(dr) if contracted else dr
         if spelled is None:
             continue
-        if body.startswith(spelled, idx) and _boundary_after(body, idx + len(spelled)):
+        cited = body[idx : idx + len(spelled)]
+        if _fold_altsep(cited, os.sep, os.altsep) == _fold_altsep(
+            spelled, os.sep, os.altsep
+        ) and _boundary_after(body, idx + len(spelled)):
             return True
     return False
 
