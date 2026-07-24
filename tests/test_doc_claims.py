@@ -313,10 +313,11 @@ _RELOCATION_LOOKBACK = 60
 # precisely when it is right.
 #
 # What belongs here: a verdict on how a citation resolves, or a
-# provenance construction that takes a citation as its *object* — which
-# is why "originally shipped" carries a trailing `file.py:NNN` shape
-# rather than sitting here as two bare words. What does not: vocabulary
-# that merely turns up near a citation. A bare `\brotted\b` alternative
+# construction that *names what it judges* — the citation itself, or the
+# code the citation missed or hit instead — which is why "originally
+# shipped" carries a trailing `file.py:NNN` shape rather than sitting
+# here as two bare words. What does not: vocabulary that merely turns up
+# near a citation. A bare `\brotted\b` alternative
 # used to sit here and was exactly that — `rotted` is this project's own
 # word for a stale memory, live in ordinary living-document prose
 # (README.md's opening paragraph, when this was written) — so a wrong
@@ -342,24 +343,44 @@ _RELOCATION_LOOKBACK = 60
 # `test_bare_phrase_markers_must_name_what_they_judge` pins both
 # directions for each.
 #
+# Two more have now followed: `straddles` and `a different
+# function|method|class`. Neither is even verdict vocabulary — they are
+# neutral description that only a citation turns into a judgement. This
+# repo's own prose has turns that straddle a log rotation and citations
+# that straddle the body-scan cap, and "we moved that to a different
+# function" is unremarkable engineering English. `straddles` now takes
+# a `file.py:NNN` as its grammatical *subject*, a citation being the
+# only thing that straddles in the erratum sense; the appositive has to
+# be predicated on the backticked identifier naming what the citation
+# hit instead. In the documents this rule actually runs against, both
+# occurred only inside the swarm-plan errata when this landed, on
+# citations whose paragraphs are independently commit-pinned — deleting
+# the two alternatives outright changed no verdict in that corpus — so
+# no suppression was orphaned and the exposure closed was again
+# prospective.
+# `test_straddles_and_different_function_must_name_what_they_judge`
+# pins both directions for each.
+#
 # The honest residual: this tightening is per-alternative, and not every
 # alternative has had it. Which ones have is legible in the pattern
-# itself — an alternative ending in a `file.py:NNN` shape or a
-# backticked identifier takes the citation, or the code it missed, as
-# its object; the rest match on wording alone and rely on that wording
-# being rare outside a verdict. The guarantee against a paragraph-wide
-# pass is the window bound below, not the phrasing. Multi-word markers
-# use `\s+` because markdown wraps mid-phrase; proximity is bounded by
-# `_NONRESOLVING_WINDOW` on both sides.
+# itself — an alternative carrying a `file.py:NNN` shape or a backticked
+# identifier next to the marker, before it or after it, names the
+# citation or the code it judges; the rest match on wording alone and
+# rely on that wording being rare outside a verdict, which is only ever
+# as strong as the plainest English reading of the phrase. The guarantee
+# against a paragraph-wide pass is the window bound below, not the
+# phrasing. Multi-word markers use `\s+` because markdown wraps
+# mid-phrase; proximity is bounded by `_NONRESOLVING_WINDOW` on both
+# sides.
 _NONRESOLVING_PROSE = re.compile(
     r"\b(?:do(?:es)?|did)\s+not\s+(?:point|resolve|land|sit)\b"
     r"|\bpoints?\s+at\s+prose\b"
     r"|\blands?\s+outside\b"
-    # Landing verdicts, but only over the code the citation missed: the
-    # marker must name it, as a backticked identifier.
+    # Landing verdicts, but only over the code the citation missed — or
+    # hit instead: the marker must name it, as a backticked identifier.
     r"|\bnowhere\s+near\s+(?:the\s+)?`{1,2}[A-Za-z_][\w.]*`"
-    r"|\bstraddles\b"
     r"|\bshort\s+of\s+the\s+`{1,2}[A-Za-z_][\w.]*`"
+    r"|`{1,2}[A-Za-z_][\w.]*`{1,2},\s+a\s+different\s+(?:function|method|class)\b"
     r"|\bwrong\s+(?:when\s+written|on\s+arrival)\b"
     r"|\balready\s+(?:false|wrong|moved)\b"
     r"|\bnon-resolving\b"
@@ -368,7 +389,9 @@ _NONRESOLVING_PROSE = re.compile(
     # as its object.
     r"|\boriginally\s+shipped\s+\[?`{0,2}[\w/]+\.py:\d+"
     r"|\bnarrowed\s+it\s+to\s+\[?`{0,2}[\w/]+\.py:\d+"
-    r"|\ba\s+different\s+(?:function|method|class)\b",
+    # Geometry verdict, over the citation as its subject — the same
+    # `file.py:NNN` shapes, plus the tail of a markdown link.
+    r"|[\w/]+\.py:\d+(?:-\d+)?`{0,2}(?:\]\([^)]*\))?\s+straddles\b",
     re.I,
 )
 _NONRESOLVING_WINDOW = 120
@@ -1679,7 +1702,10 @@ def test_nonresolving_verdict_must_sit_near_the_citation() -> None:
     plain = f"a recorder picks its shard by `crc32(session_id)` (`events.py:{decoy}`)"
     assert len(check_line_refs("docs/fake.md", plain)) == 1
     padding = "the surrounding discussion keeps going for a while. " * 4
-    far = "an earlier citation straddles two functions. " + padding + plain
+    far = (
+        "an earlier citation was given as `Recorder.__post_init__`, a "
+        "different function from the one it lands in. " + padding + plain
+    )
     assert _NONRESOLVING_PROSE.search(far) is not None
     assert len(check_line_refs("docs/fake.md", far)) == 1
 
@@ -1765,6 +1791,58 @@ def test_bare_phrase_markers_must_name_what_they_judge() -> None:
     # suppressing rather than the citation never having been checked.
     unmarked = tight_narrowed.replace("narrowed it to", "cites")
     assert len(check_line_refs("docs/fake.md", unmarked)) == 1
+
+
+def test_straddles_and_different_function_must_name_what_they_judge() -> None:
+    """Two markers that were neutral description before they were verdicts.
+
+    ``straddles`` is house geometry vocabulary here — a turn straddles a
+    log rotation, a citation straddles the body-scan cap — and "a
+    different function" is unremarkable engineering English ("we moved
+    that helper to a different function"). Neither reads as a judgement
+    on a citation on its own, yet while each sat in
+    ``_NONRESOLVING_PROSE`` as a bare phrase, a wrong citation within
+    ``_NONRESOLVING_WINDOW`` of any such sentence was exempt from both
+    halves of the check, with no CI signal saying so.
+
+    ``straddles`` now takes the citation as its grammatical subject, and
+    the appositive has to be predicated on the backticked identifier
+    naming what the citation hit instead. Both directions are pinned per
+    marker: the ordinary sentence must leave the citation checked, and
+    the erratum construction — the shape the swarm plan's errata
+    actually use — must still suppress it. Each erratum fixture is
+    re-asserted with only its marker words removed, so a fixture that
+    had quietly stopped being checkable at all could not pass for a
+    working suppression.
+    """
+    decoy = _crc32_shard_line() + 200
+    cited = f"a recorder picks its shard by `crc32(session_id)` (`events.py:{decoy}`)"
+    assert len(check_line_refs("docs/fake.md", cited)) == 1
+
+    loose_straddle = "a turn that straddles a rotation keeps its event; " + cited
+    assert re.search(r"\bstraddles\b", loose_straddle), "fixture lost the phrase"
+    assert len(check_line_refs("docs/fake.md", loose_straddle)) == 1
+    tight_straddle = (
+        f"`events.py:{decoy}-{decoy + 20}` straddles two functions, opening "
+        "past the `crc32(session_id)` shard pick it was cited for"
+    )
+    assert check_line_refs("docs/fake.md", tight_straddle) == []
+    unmarked_straddle = tight_straddle.replace(
+        " straddles two functions, opening", " covers the region opening"
+    )
+    assert len(check_line_refs("docs/fake.md", unmarked_straddle)) == 1
+
+    loose_different = "we moved that helper to a different function, and " + cited
+    assert re.search(r"\ba\s+different\s+function\b", loose_different), "lost it"
+    assert len(check_line_refs("docs/fake.md", loose_different)) == 1
+    tight_different = (
+        f"the doc cited `events.py:{decoy}` for the `crc32(session_id)` shard "
+        "pick, but it lands in `Recorder._next_rotation_paths`, a different "
+        "function"
+    )
+    assert check_line_refs("docs/fake.md", tight_different) == []
+    unmarked_different = tight_different.replace(", a different function", " instead")
+    assert len(check_line_refs("docs/fake.md", unmarked_different)) == 1
 
 
 def test_citation_pinned_to_a_named_commit_is_not_checked() -> None:
