@@ -35,7 +35,7 @@ Skip it for generic factual questions, self-contained technical questions, and f
 
 ### Session-start hint
 
-One call to `memory_scope_overview` returns per-scope counts plus a `curation_pending` rollup (`{stale, never_verified, drifted, cold, dead, silent_misses, unique_silent_miss_memories, cold_endorsement_memories}`: integer counts only). If `total=0`, skip `memory_search` for the rest of the session unless asked. Non-zero `dead` or `drifted` is the cue to suggest a curation pass when the conversation has time. Use this once per conversation; it's a yes/no signal, not something to poll.
+One call to `memory_scope_overview` returns per-scope counts plus a `curation_pending` rollup (`{stale, never_verified, drifted, cold, dead, silent_misses, unique_silent_miss_memories, cold_endorsement_memories, conflicts}`: integer counts only). If `total=0`, skip `memory_search` for the rest of the session unless asked. Non-zero `dead`, `drifted`, or `conflicts` is the cue to suggest a curation pass when the conversation has time (`conflicts` = memory-vs-memory contradiction pairs awaiting a `memory_conflicts` verdict). Use this once per conversation; it's a yes/no signal, not something to poll.
 
 ### Auto-scoping
 
@@ -60,6 +60,8 @@ Call `memory_record_use(memory_ids=[…], outcome=…)` explicitly only to overr
 - `"corrected"`: memory had drifted and you fixed it inline (same turn `memory_update` and/or `memory_verify`). Audit-only; does NOT raise the contradiction flag. Use this instead of `contradicted` when the resolution is already done.
 
 The explicit override wins via override semantics — the server purges the pending token before recording.
+
+Outcomes are not just audit rows. Under the usage-aware ranking flags (`[behavior] endorsement_boost` / `outcome_demotion`, both opt-in), an explicit `applied` nudges the memory up on later searches and an active `ignored`/`contradicted` slides it down — all bounded near-tie breakers, cleared by a later genuine `applied` or by `memory_update`/`memory_verify`. Record honestly; the ranker learns from it.
 
 ### Claim-level provenance
 
@@ -136,6 +138,17 @@ When a parent agent spawns a subagent, pass the parent's `session_id` along; the
 ## Negative-results suppression
 
 A `memory_search` hit whose memory was `ignored` or `contradicted` in the last 30 days AND not since `applied` carries `recent_negative_outcomes`. The user already rejected this recently. Don't re-surface unless you have new reason to think the rejection no longer applies. The `claim_excerpt` field (when present) lets you rephrase or skip just the offending sentence rather than the whole body.
+
+## Duplicates are evidence, not waste
+
+A `memory_write` that comes back `status="duplicate"` credits the matched memory a **corroboration** (`corroboration_recorded: true`, once per session): the claim re-entered a conversation, which is evidence it still holds. The rollup keeps corroborated memories out of dead-weight curation and (under `[behavior] corroboration_boost`) nudges them up near-ties. So don't force-write around dedup out of capture anxiety — the rejection already landed the signal. `force=True` remains for claims that are genuinely different.
+
+## Corpus curation: conflicts and cross-session patterns
+
+Two full-surface tools drain what no single conversation can see:
+
+- `memory_conflicts` — the server mechanically flags pairs of stored memories that likely disagree (near-identical bodies with a negation flip or a numeric divergence like "port 5432" vs "5433"); you judge each pair. `verdict="contradiction"` writes a `contradicts` link both sides surface at retrieval; follow up with `memory_verify` on the correct side and `memory_update`/`memory_remove` on the wrong one. `verdict="compatible"` dismisses (sticky until either body changes). Scans run automatically on applying curation passes; `scan=True` forces one.
+- `episode_patterns` — themes recurring across ≥3 distinct sessions' episodes, the consolidation `episode_promote` can't see. YOU author the promoted body (the listed `terms` are evidence pointers, not a synthesis); the write runs the full `memory_write` gate stack and a `duplicate` outcome still corroborates the existing memory. Dismiss patterns that are vocabulary coincidence — a new member episode legitimately reopens them.
 
 ## Scopes
 
