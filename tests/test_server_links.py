@@ -461,13 +461,23 @@ async def test_no_inbound_show_opens_index_twice(
 
 
 async def test_links_omitted_when_empty(server: Any) -> None:
-    """A memory with no links must not carry the `links` field in the
-    response — same absence-as-signal contract as `path_drift` and
-    `commit_drift`. Keeps the wire shape compact for the common case."""
+    """A memory with no links carries neither `links` nor
+    `reverse_links` — absence-as-signal, so the consumer branches on key
+    presence and the wire shape stays compact for the common case. Same
+    shape as the `corroborations` / `last_corroborated` pair, and the
+    OPPOSITE of what `path_drift` / `commit_drift` do: memory_show emits
+    those two keys unconditionally, using `null` as the no-signal value.
+    Both halves are asserted below, so the contrast is pinned by the
+    test rather than only described here."""
     mid = await _seed(server, "lone memory")
     shown = await _call(server, "memory_show", id=mid)
     assert "links" not in shown
     assert "reverse_links" not in shown
+    # The contrasting half. A freshly-written memory is unverified and
+    # cites no paths, so neither drift signal applies — and memory_show
+    # still emits both keys, null rather than absent.
+    assert shown["path_drift"] is None
+    assert shown["commit_drift"] is None
 
 
 async def test_self_link_rejected(server: Any) -> None:
