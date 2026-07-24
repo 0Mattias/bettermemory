@@ -599,6 +599,36 @@ it covers. Stated now as the bullets the release should have carried:
   added for — reached no MCP surface at all, documented as the
   residual defect instead of as shipped observability.
 
+Separately, two sentences in the frozen bullets above do not survive
+checking against this same window's commits — already false when the
+tag was cut, not rotted after it:
+
+- **"does not yet reach the MCP response surface" was false at the
+  cut.** `c1ede35` — the in-window commit that created the bucket —
+  also serialised it, so `to_dict()` has carried a `dropped_as_route`
+  key from the bucket's first commit; and the real emit gates in
+  `memory_show` and `memory_search`'s expanded top hit, which predate
+  the bucket and are unchanged at the tag, emit that dict wholesale
+  once any of `missing`, `verified` or `expected_absent` fires them.
+  So at 3.26.0 the bucket reached the MCP response surface whenever a
+  report was emitted for another reason; the sentence's true part is
+  the narrower residual the `211b68f` bullet above states as
+  measured — a route-ONLY report, the bucket with nothing else to
+  fire the gate, reached no MCP surface at all.
+
+- **"ordered among themselves by mtime" was stale at the cut.**
+  `7f76801` — also in-window, before the tag — moved
+  `_archive_sort_key` off mtime to the rotation timestamp stamped in
+  the filename, and rewrote `iter_all_events`' docstring the same way
+  ("ordered by their filename rotation timestamp"). As v3.26.0
+  shipped, mtime survived only as the same-second tiebreak evidence
+  `_segments_in_write_order` collects (`f6659b8`). The same-second
+  bullet above already records the move ("`_archive_sort_key` moved
+  off `mtime_ns`"), so the entry contradicted itself as it shipped;
+  the untagged-chain sentence is the half that never got updated. Its
+  best-effort qualifier still holds — the mechanism it names is what
+  was wrong.
+
 ## 3.25.2 - 2026-07-19
 
 A path-drift false positive that made healthy web-app memories look stale.
