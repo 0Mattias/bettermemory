@@ -1,11 +1,13 @@
 """The lean default tool surface and the `full_tool_surface` gate.
 
-The shipped MCP server hides seven curation / power-user tools by default
-(measured dead-or-rare in the dogfood event log, plus memory_curate which
-executes the consolidate engine). They register only under
-`full_tool_surface`, except `memory_proposals`, which also surfaces whenever
-the opt-in `[proposals]` feature is on (it is that feature's UI). See
-`builder._register_tools` and `BehaviorConfig.full_tool_surface`.
+The shipped MCP server hides the curation / power-user tools in `_GATED`
+below by default — most of them measured dead-or-rare in the dogfood event
+log, the rest curation-tier by nature (memory_curate executes the
+consolidate engine; the 3.28.0 corpus-inference pair is driven by the
+curate-loop skill). They register only under `full_tool_surface`, except
+`memory_proposals`, which also surfaces whenever the opt-in `[proposals]`
+feature is on (it is that feature's UI). See `builder._register_tools` and
+`BehaviorConfig.full_tool_surface`.
 """
 
 from __future__ import annotations
@@ -24,7 +26,10 @@ from bettermemory.session import SessionState
 from bettermemory.store import Store
 
 
-# The seven tools gated out of the lean default surface.
+# The tools gated out of the lean default surface. Membership is what the
+# assertions below pin: every name here is absent under the shipped lean
+# default and present under the full surface. `memory_proposals` is the one
+# name that can also escape the gate on its own — see the auto_propose test.
 _GATED = {
     "memory_health",
     "memory_curate",
@@ -55,6 +60,9 @@ _ALWAYS = {
     "episode_handoff",
 }
 
+# Pinned against `builder._register_tools`: the unconditional registrations,
+# and those plus every member of `_GATED` under the full surface. Both move
+# together with that function — update them there and here in one step.
 _LEAN_COUNT = 18
 _FULL_COUNT = 27
 
@@ -74,8 +82,8 @@ async def _registered(
 
 
 async def test_lean_surface_omits_curation_tools(tmp_path: Path) -> None:
-    """full_tool_surface=False (the shipped default): none of the six gated
-    tools register, the core surface stays intact, total is 18."""
+    """full_tool_surface=False (the shipped default): no member of `_GATED`
+    registers, the core surface stays intact, total is `_LEAN_COUNT`."""
     names = await _registered(tmp_path, BehaviorConfig(full_tool_surface=False))
     assert names.isdisjoint(_GATED)
     assert _ALWAYS <= names
@@ -83,7 +91,8 @@ async def test_lean_surface_omits_curation_tools(tmp_path: Path) -> None:
 
 
 async def test_full_surface_registers_everything(tmp_path: Path) -> None:
-    """full_tool_surface=True: every gated tool is back; total is 25."""
+    """full_tool_surface=True: every gated tool is back; total is
+    `_FULL_COUNT`."""
     names = await _registered(tmp_path, BehaviorConfig(full_tool_surface=True))
     assert _GATED <= names
     assert len(names) == _FULL_COUNT
@@ -91,7 +100,8 @@ async def test_full_surface_registers_everything(tmp_path: Path) -> None:
 
 async def test_proposals_autosurfaces_when_feature_enabled(tmp_path: Path) -> None:
     """Lean surface, but [proposals] auto_propose is on — memory_proposals
-    registers (it's that feature's review UI); the other five stay gated."""
+    registers (it's that feature's review UI); the rest of `_GATED` stays
+    out, so the total is one past `_LEAN_COUNT`."""
     names = await _registered(
         tmp_path,
         BehaviorConfig(full_tool_surface=False),
