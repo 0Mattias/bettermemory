@@ -77,7 +77,7 @@ if it exists, else `~/.claude-memory/`.
 
 ## Tools
 
-25 MCP tools; 18 register by default. Seven curation/power-user tools
+27 MCP tools; 18 register by default. Nine curation/power-user tools
 sit behind `[behavior] full_tool_surface = true`, and most of those
 have a CLI counterpart, so the default per-turn tool context stays
 small. Grouped: retrieval, writing (with a staged-confirm flow),

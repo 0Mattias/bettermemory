@@ -9,7 +9,7 @@ is measured rather than assumed.
 The plugin bundles three things:
 
 1. **MCP server registration** ([`.mcp.json`](.mcp.json)) — spawns
-   `uvx bettermemory` as a stdio MCP server. 18 of the 25 tools
+   `uvx bettermemory` as a stdio MCP server. 18 of the 27 tools
    register by default; the curation/power-user tools sit behind
    `[behavior] full_tool_surface = true` (see
    [docs/api.md](../docs/api.md)).

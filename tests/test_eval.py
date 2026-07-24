@@ -12,6 +12,7 @@ from __future__ import annotations
 import ast
 import json
 import os
+import re
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -1590,12 +1591,13 @@ class TestComputeToolUsage:
 # ---------------------------------------------------------------------------
 
 
-# The canonical tool count surfaced in prose ("25 MCP tools" — 21
-# `memory_*` + 4 `episode_*` — in README / api.md / marketplace / plugin
-# README). Pinned here as the single source of truth so a regression in
-# either the runtime registrations or the eval-side enumeration trips
-# one assertion instead of leaving the prose silently out of sync.
-# Prose authors verify against this constant.
+# The canonical tool count surfaced in prose ("27 MCP tools" — 22
+# `memory_*` + 5 `episode_*` — in api.md / internals.md / CONTRIBUTING /
+# marketplace / plugin README). Pinned here as the single source of
+# truth so a regression in either the runtime registrations or the
+# eval-side enumeration trips one assertion instead of leaving the
+# prose silently out of sync. The prose surfaces themselves are scanned
+# by test_tool_count_prose_tracks_expected_count below.
 _EXPECTED_TOOL_COUNT = 27
 
 
@@ -1620,7 +1622,7 @@ async def test_tool_count_matches_registered_count(tmp_path: Path) -> None:
       row that never moves.
 
     This test pins the set-equality, and pins the count to
-    ``_EXPECTED_TOOL_COUNT`` so prose claims of "25 MCP tools" have
+    ``_EXPECTED_TOOL_COUNT`` so prose claims of the tool count have
     something to track against.
     """
     from bettermemory.config import Config, StorageConfig
@@ -1645,9 +1647,52 @@ async def test_tool_count_matches_registered_count(tmp_path: Path) -> None:
     assert len(registered) == _EXPECTED_TOOL_COUNT, (
         f"Runtime tool count is {len(registered)} but _EXPECTED_TOOL_COUNT "
         f"is {_EXPECTED_TOOL_COUNT}. Either a tool was added/removed and "
-        "the constant + prose ('25 MCP tools' in docs/internals.md / "
-        "api.md / marketplace / plugin README) needs to track it, or the "
+        "the constant needs to track it (the prose surfaces are checked "
+        "by test_tool_count_prose_tracks_expected_count), or the "
         "registration list grew without the docs catching up."
+    )
+
+
+# Every non-historical prose surface that states the tool count. The
+# historical docs (docs/v1.6-plan.md, CHANGELOG.md) are deliberately not
+# scanned — their counts describe past releases.
+_TOOL_COUNT_PROSE_FILES = (
+    "README.md",
+    "docs/api.md",
+    "docs/internals.md",
+    "CONTRIBUTING.md",
+    "plugin/README.md",
+    ".claude-plugin/marketplace.json",
+)
+
+
+def test_tool_count_prose_tracks_expected_count() -> None:
+    """Every prose surface that states a tool count states the current one.
+
+    ``test_tool_count_matches_registered_count`` pins the CODE count to
+    ``_EXPECTED_TOOL_COUNT`` and its failure message tells the author to
+    update the prose — but nothing scanned the prose, so the 3.28.0 tool
+    additions bumped the constant to 27 while every doc kept claiming
+    25. This closes the other half: any "N tools" / "N MCP tools" claim
+    in the prose surfaces must equal ``_EXPECTED_TOOL_COUNT``. Counts of
+    subsets phrased differently ("18 register by default", "5 episode_*
+    tools") deliberately don't match the pattern.
+    """
+    root = Path(__file__).resolve().parents[1]
+    claim = re.compile(r"\b(\d+)\s+(?:MCP\s+)?tools\b")
+    offenders: list[str] = []
+    for rel in _TOOL_COUNT_PROSE_FILES:
+        text = (root / rel).read_text(encoding="utf-8")
+        offenders.extend(
+            f"{rel}: claims {m.group(0)!r}"
+            for m in claim.finditer(text)
+            if int(m.group(1)) != _EXPECTED_TOOL_COUNT
+        )
+    assert not offenders, (
+        f"Prose tool-count claims out of sync with _EXPECTED_TOOL_COUNT "
+        f"({_EXPECTED_TOOL_COUNT}): {offenders}. Update the docs to the "
+        "current count (and keep them updated in the same commit that "
+        "adds or removes a tool)."
     )
 
 

@@ -1,14 +1,14 @@
 # API surface (3.x)
 
-The contractual list of MCP tools bettermemory exposes. Signatures, defaults, and return shapes are stable within the 3.x line per the rules in [`CONTRIBUTING.md`](../CONTRIBUTING.md). There are 25 tools, but only **18 register by default**: the seven curation / power-user tools (`memory_health`, `memory_curate`, `memory_acknowledge_miss`, `memory_rename_scope`, `memory_restore`, `memory_list_tombstones`, `memory_proposals`) register only when `full_tool_surface = true` under `[behavior]` (`memory_proposals` also surfaces when `[proposals]` is enabled); six have a direct `bettermemory` CLI counterpart (`health`, `tombstones list` / `tombstones restore`, `rename-scope`, `proposals`, and `consolidate` which `memory_curate` wraps), while `memory_acknowledge_miss`'s per-event ack stays MCP-only (the CLI offers the bulk `consolidate --acknowledge-misses-before` cutoff instead). The 25 group naturally:
+The contractual list of MCP tools bettermemory exposes. Signatures, defaults, and return shapes are stable within the 3.x line per the rules in [`CONTRIBUTING.md`](../CONTRIBUTING.md). There are 27 tools, but only **18 register by default**: the nine curation / power-user tools (`memory_health`, `memory_curate`, `memory_conflicts`, `memory_acknowledge_miss`, `memory_rename_scope`, `memory_restore`, `memory_list_tombstones`, `memory_proposals`, `episode_patterns`) register only when `full_tool_surface = true` under `[behavior]` (`memory_proposals` also surfaces when `[proposals]` is enabled); six have a direct `bettermemory` CLI counterpart (`health`, `tombstones list` / `tombstones restore`, `rename-scope`, `proposals`, and `consolidate` which `memory_curate` wraps), while `memory_acknowledge_miss`'s per-event ack stays MCP-only (the CLI offers the bulk `consolidate --acknowledge-misses-before` cutoff instead) and the 3.28.0 pair (`memory_conflicts`, `episode_patterns`) is MCP-only as well — arbitration verdicts and pattern promotion need the model in the loop, though the conflict *scan* also fires on every applying `memory_curate` / auto-consolidate pass. The 27 group naturally:
 
 - **Retrieval** — `memory_search` (now with `since_prior_session` filter), `memory_show`, `memory_list`, `memory_scope_overview`
 - **Writing** — `memory_write` (plus `memory_write_confirm` / `memory_write_cancel` for the staged-write flow), `memory_update`
 - **Lifecycle** — `memory_remove`, `memory_restore`, `memory_list_tombstones`
 - **Verification** — `memory_verify`
-- **Curation** — `memory_record_use`, `memory_health`, `memory_curate`, `memory_audit_turn`, `memory_acknowledge_miss`, `memory_rename_scope`, `memory_proposals`
+- **Curation** — `memory_record_use`, `memory_health`, `memory_curate`, `memory_conflicts`, `memory_audit_turn`, `memory_acknowledge_miss`, `memory_rename_scope`, `memory_proposals`
 - **Session-local** — `memory_scope_disable`, `memory_scope_enable`
-- **Episodes** (sibling tier for journal-shaped run-state) — `episode_write`, `episode_handoff`, `episode_search`, `episode_promote`
+- **Episodes** (sibling tier for journal-shaped run-state) — `episode_write`, `episode_handoff`, `episode_search`, `episode_promote`, `episode_patterns`
 
 ## Retrieval
 
@@ -201,6 +201,16 @@ Execute the curation `memory_health` only describes — its `recommendations` po
 
 Returns the consolidate report dict plus `dry_run`: `dedup_candidates`, `demotion_candidates`, `cold_scope_suggestions`, `scope_typo_pairs`, `actions_taken`, `failures`, `dedup_method`, `applied`. On `dry_run=False` the two reversible actions are applied — near-duplicate memories are tombstoned (undo via `memory_restore`) and dead-weight facts (last touched — created/updated/verified — before the window, retrieved at least once with the earliest retrieval ≥ 2 days old, never applied, no unresolved contradiction) are demoted to the `ambient` category (undo via `memory_update`); `actions_taken` lists each with a `.kind` of `"tombstoned"` or `"demoted_to_ambient"`. Cold-scope and scope-typo findings are **suggest-only** regardless of `dry_run` — act on them via `memory_rename_scope`. Dedup uses Jaccard overlap (no embedding model is loaded). Nothing is hard-deleted; an apply records one `curate` event for the tool-usage rollup.
 
+### `memory_conflicts(scan?, resolve?, verdict?, note?, max_results?)`
+
+List and arbitrate memory-vs-memory contradiction candidates flagged by the corpus scan — near-identical pairs with a negation flip or a numeric divergence ("port 5432" vs "port 5433"). Detection is mechanical; the verdict is the model's. Modes are mutually exclusive:
+
+- Default (no args) — list pending candidates, strongest similarity first, both bodies inlined. `max_results: int = 10`.
+- `scan: bool = False` — run detection over the active set now and merge new candidates into the queue (the same scan also fires on every applying `memory_curate` / auto-consolidate pass); returns the merge counters under `scan` plus the pending list.
+- `resolve: str` + `verdict: str` — rule on one candidate. `verdict="contradiction"` (the pair genuinely disagrees) writes a `contradicts` link a→b (pass `note` with the why — future curators need it) and marks the candidate confirmed; follow up with the normal verbs (`memory_verify` the correct side, `memory_update` / `memory_remove` the wrong one). `verdict="compatible"` (detector misfire — incidental negator, added-detail number) dismisses the pair; the dismissal is sticky unless either body later changes, which re-queues it under the same id.
+
+Returns `{pending, pending_total}` — each pending row is `{id, a, b, similarity, method, detector}` with `a` / `b` as `{id, body, scopes, updated}` — plus the `scan` counters key in scan mode and a `resolved` echo (`status` of `"confirmed"` / `"dismissed"` / `"already_resolved"`) in resolve mode.
+
 ### `memory_audit_turn(user_message, assistant_response?, lookback_seconds?)`
 
 Silent-miss telemetry. Fires from a client-side end-of-turn hook with the user's message. Runs a search probe over the active store using the configured ranker and asks whether a `search`, `show`, or `list` event landed in the same session within `lookback_seconds` (default 60s, clamped to [1, 600]).
@@ -304,6 +314,14 @@ Distill a journal takeaway into a durable memory. Routes through `memory_write` 
 - `use_body: bool = False`. When False (default), the episode's `takeaway` becomes the memory body; when True, the full body. An episode without a takeaway requires `use_body=True`.
 
 Returns the `memory_write` response shape with one extra field: `promoted_from_episode_id: str` so the caller can correlate. On `status="committed"` the source episode is deleted (the durable memory is the authoritative artifact). On `status="pending"` (user-inference promotion or `require_write_confirmation`), the episode is held; `memory_write_confirm(pending_id)` deletes the source episode on commit, and `memory_write_cancel(pending_id)` preserves the episode so the caller can rephrase and re-promote. On any other non-committed status (duplicate, previously_removed, transient_warning, scope_mismatch, ungrounded) the episode is left intact.
+
+### `episode_patterns(promote?, dismiss?, body?, scopes?, category?, confidence?, source?, min_sessions?, max_patterns?)`
+
+The cross-session half of consolidation: where `episode_promote` distills one journal entry, this surfaces themes recurring across many sessions' episodes — clusters sharing distinctive terms across at least `min_sessions: int = 3` distinct sessions (ubiquitous project vocabulary excluded), capped at `max_patterns: int = 5` candidates. Candidates recompute on every call (episodes churn constantly); ids are content-stable hashes of the member set, so a listed id stays valid while the members live. Modes are mutually exclusive:
+
+- Default (no args) — list candidates: `{id, terms, episode_ids, distinct_sessions, snippets}` per pattern, one snippet per member episode so it is judgeable in place. An empty list usually just means the journal is young or already consolidated.
+- `promote: str` + `body` + `scopes` — write the durable memory. The model authors `body` itself (the terms are evidence pointers, not a synthesis); `category: str = "fact"`, `confidence: str = "medium"`, `source: str = "inferred"` are accepted as on `memory_write`, and the write routes through the full `memory_write` gate stack. On `status="committed"` the member episodes are deleted (distilled); a `duplicate` rejection records a corroboration on the existing memory (recurrence landing where it belongs); on `status="pending"` (user-inference) the member episodes stay in place until their TTL. On any other non-committed status they are untouched so the caller can adjust and retry.
+- `dismiss: str` — not worth consolidating (incidental vocabulary overlap). Sticky for that exact episode set; a new episode joining the theme legitimately reopens it under a fresh id.
 
 ## Naming conventions
 
