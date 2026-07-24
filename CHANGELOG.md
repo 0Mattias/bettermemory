@@ -386,17 +386,26 @@ possible. The window is short but not zero.
 
 The entry above is left as it shipped. It is incomplete: tag
 `v3.26.0`'s window (`v3.25.2..v3.26.0`) carries ten substantive fix
-commits that received no entry anywhere in this file — the same
-omission class as v3.24.0's `096218e` and the two commits the v3.28.0
-erratum repairs. The release-window coverage check in
-`tests/test_changelog.py` judges only the newest tag's window by
-design — older entries are a frozen record it deliberately does not
-re-litigate — so nothing in CI forces this repair: the ten surfaced by
-retro-running that check against this window (the adjacent
-`v3.26.0..v3.27.0` window retro-runs clean), and the repair is
-editorial. The entry summarized four Fixed themes and dropped the rest
-of the round wholesale — several of the ten touch the very subsystems
-it covers. Stated now as the bullets the release should have carried:
+commits the entry left unrepresented — which is what the
+release-window coverage check in `tests/test_changelog.py` measures:
+representation inside one release's own section, not presence
+somewhere in the file. Nine of the ten are mentioned nowhere else in
+this file either — the same omission class as v3.24.0's `096218e`
+and the two commits the v3.28.0 erratum repairs. `b3cc470` is the
+exception, and the reason this claim is scoped to the entry rather
+than to the file: the 3.25.1 erratum already names that SHA as the
+follow-up that routed the missed fourth rename site through
+`replace_atomic`, and did so in the file as `v3.26.0` shipped and as
+this erratum was written. What `b3cc470` never got was a bullet in
+the notes of the release that carried it. The coverage check judges
+only the newest tag's window by design — older entries are a frozen
+record it deliberately does not re-litigate — so nothing in CI forces
+this repair: the ten surfaced by retro-running that check against
+this window (the adjacent `v3.26.0..v3.27.0` window retro-runs
+clean), and the repair is editorial. The entry summarized four Fixed
+themes and dropped the rest of the round wholesale — several of the
+ten touch the very subsystems it covers. Stated now as the bullets
+the release should have carried:
 
 - **A 3.24.x/3.25.x store's rotated history went invisible to
   windowed reads (`7f76801`).** The shard-partitioned rotation
