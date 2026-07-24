@@ -36,14 +36,14 @@ Hits also carry `superseded_by` and/or `contradicts` when the hit's memory parti
 
 Full body plus `verification` block, `path_drift` report (`null` when no drift), `staleness_verdict`, `use_token`, `commit_drift` block (`null` when not applicable — caller outside the memory's repo, memory never verified, or, since 3.17.0, the memory carries no claim anchors in this repo; non-null shape is `{status, commits_since_verify, recommendation}` — `recommendation` is the actionable string to surface when `status == "drift"`, `null` on `"clean"`), and typed inter-memory edges as `links` (forward) and `reverse_links` (entries from the target side carry `source_id` instead of `target_id`).
 
-Full return shape: `{id, scopes, confidence, source, category, created, updated, last_verified_at, verification, staleness_verdict, body, origin, path_drift, commit_drift, use_token, verified_paths, verified_commits, verified_versions, verified_absent_paths}` plus `corroborations` and `last_corroborated` (emitted as a pair, and only once the count is non-zero) plus `links` and `reverse_links` (each omitted entirely when the underlying list is empty — absence-as-signal, matching `path_drift` / `commit_drift`). The non-null `path_drift` report carries `{checked, missing, verified, expected_absent}` since 3.9.0, plus `dropped_as_route` (route-shaped candidates the scanner suppressed — empty when none) since 3.26.0.
+Full return shape: `{id, scopes, confidence, source, category, created, updated, last_verified_at, verification, staleness_verdict, body, origin, path_drift, commit_drift, use_token, verified_paths, verified_commits, verified_versions, verified_absent_paths}` plus `corroborations` and `last_corroborated` (emitted as a pair, and only once the count is non-zero) plus `links` and `reverse_links` (each omitted entirely when the underlying list is empty — absence-as-signal, so branch on key presence; `path_drift` / `commit_drift` take the opposite convention, always emitted with `null` as the no-signal value). The non-null `path_drift` report carries `{checked, missing, verified, expected_absent}` since 3.9.0, plus `dropped_as_route` (route-shaped candidates the scanner suppressed — empty when none) since 3.26.0.
 
 ### `memory_list(scopes?, with_bodies?)`
 
 - `scopes: list[str] | None = None`. Filter, same shape as `memory_search`.
 - `with_bodies: bool = False`. Opt in to inlining full bodies; the triage default returns body-stripped summaries.
 
-Each row carries the same `staleness_verdict` rollup as the search and show surfaces.
+Each row carries the same `staleness_verdict` rollup as the search and show surfaces. Under `with_bodies=True` a row also carries `corroborations` and `last_corroborated`, emitted as a pair on the same non-zero gate `memory_show` uses; the body-stripped default row never carries them, so the recurrence signal costs the body load.
 
 ### `memory_scope_overview(auto_scope?)`
 
