@@ -30,8 +30,9 @@ What is checked
    markdown-linked and bare-backticked forms alike. When the paragraph
    names no identifier that exists in the target at all, there is no
    anchor to judge against and the rule stays quiet. A citation the
-   nearby prose marks as non-resolving is quoted evidence rather than
-   an assertion and is skipped — see the deliberately-not-checked list.
+   nearby prose marks as non-resolving, or whose paragraph pins its
+   resolution to a named commit, is quoted evidence rather than an
+   assertion and is skipped — see the deliberately-not-checked list.
 5. ``file-count`` — "N files are named ``x.py``" must match how many files
    the repo scan actually resolves for that name.
 
@@ -138,6 +139,22 @@ What is deliberately NOT checked
   shapes — is quoted evidence, not an assertion. The window bound is
   what keeps this from becoming a paragraph-wide pass; the self-tests
   pin both directions.
+* **Citations a paragraph resolves against a named commit.** The mirror
+  image of the previous bullet, for the citations an erratum quotes as
+  *landing*: those carry no non-resolving verdict — the verdict is that
+  they hold — yet they describe the pinned tree, not HEAD, and
+  HEAD-checking them fails the prose as soon as the cited file drifts.
+  Before this rule, the swarm errata's two landing quotes survived only
+  by accident: one sat inside the previous sentence's verdict window,
+  the other passed because the cited region has not drifted yet. A
+  commit-pin phrase (``_COMMIT_PINNED_PROSE``) anywhere in the
+  citation's paragraph suppresses both halves of the check. Paragraph
+  scope — where the verdict rule is window-bounded — is deliberate: a
+  pin declares the reference frame for a whole analysis, not a
+  judgement on one citation. It is also the honest new blind spot: a
+  present-tense ``file.py:NNN`` assertion added to a pinned paragraph
+  goes unchecked, so keep live claims out of pinned errata paragraphs.
+  The self-tests pin both directions plus the paragraph boundary.
 * **Ambiguous module references, when any reading satisfies them.**
   Two files are named ``verify.py``. A claim is reported only when it
   fails against *every* candidate — see ``_resolve_modules``.
@@ -311,6 +328,25 @@ _NONRESOLVING_PROSE = re.compile(
     re.I,
 )
 _NONRESOLVING_WINDOW = 120
+
+# Prose that pins a citation's RESOLUTION to a named commit — the mirror
+# image of `_NONRESOLVING_PROSE`, covering the citations an erratum quotes
+# as landing. Those carry no non-resolving verdict (the verdict is that
+# they hold), yet they describe the pinned tree, not HEAD, so HEAD-checking
+# them fails the prose whenever the cited file drifts — a false positive
+# by construction, against exactly the prose that was being careful. Two
+# phrasings, deliberately — "resolved against `<sha>`" and the errata's
+# own "pinned to a named commit" — rather than a net for every English way
+# of naming a commit; an unmatched phrasing leaves the citation checked,
+# which fails loudly and teaches the canonical form. The sha must be
+# backticked hex so casual prose ("resolved against the earlier tree")
+# cannot pin anything. Multi-word, so `\s+` throughout: markdown wraps
+# mid-phrase.
+_COMMIT_PINNED_PROSE = re.compile(
+    r"\bresolved\s+against\s+`[0-9a-f]{7,40}`"
+    r"|\bpinned\s+to\s+a\s+named\s+commit\b",
+    re.I,
+)
 
 # `symbol` [one or two plain words] in `module.py`. The interposed words
 # may not contain punctuation — that keeps the match from stepping over a
@@ -866,6 +902,22 @@ def _quoted_as_nonresolving(text: str, start: int, end: int) -> bool:
     return bool(_NONRESOLVING_PROSE.search(window))
 
 
+def _quoted_as_commit_pinned(text: str, line: int) -> bool:
+    """True when the citation's paragraph pins its resolution to a commit.
+
+    Paragraph-scoped where ``_quoted_as_nonresolving`` is window-scoped,
+    deliberately: a non-resolving verdict judges one citation, but a pin
+    ("resolved against ``60b7553``") declares the reference frame for
+    every resolution in its analysis — the swarm errata pin a whole
+    survey of citations with one phrase, sentences away from most of
+    them. Callers skip both the range check and the anchor check for
+    such a citation: it is a statement about the pinned tree, and HEAD
+    is the wrong tree to judge it against. The cost of paragraph scope
+    is disclosed in the module docstring's deliberately-NOT-checked list.
+    """
+    return bool(_COMMIT_PINNED_PROSE.search(_paragraph_around(text, line)))
+
+
 def _anchor_detail(name: str, start: int, missed: set[str]) -> str:
     return (
         f"none of the identifiers the paragraph attributes to this citation "
@@ -885,7 +937,11 @@ def check_line_refs(source: str, text: str) -> list[Failure]:
 
     Neither half runs on a citation the surrounding prose marks as
     non-resolving (``_quoted_as_nonresolving``): an erratum quoting its
-    own rotten citation is not asserting it.
+    own rotten citation is not asserting it. Nor on one whose paragraph
+    pins its resolution to a named commit (``_quoted_as_commit_pinned``):
+    an erratum resolving its quoted citations against a fixed tree is not
+    asserting them against HEAD — that covers the citations an erratum
+    quotes as *landing*, which no non-resolving verdict can.
     """
     out: list[Failure] = []
     linked_spans: list[tuple[int, int]] = []
@@ -895,6 +951,8 @@ def check_line_refs(source: str, text: str) -> list[Failure]:
         if _quoted_as_nonresolving(text, *match.span()):
             continue
         line = _line_of(text, match.start())
+        if _quoted_as_commit_pinned(text, line):
+            continue
         name = match.group("name")
         subject = f"{name}:{match.group('start')}"
         target = ((_REPO_ROOT / source).parent / match.group("target")).resolve()
@@ -928,6 +986,8 @@ def check_line_refs(source: str, text: str) -> list[Failure]:
             continue
         start = int(match.group("start"))
         line = _line_of(text, match.start())
+        if _quoted_as_commit_pinned(text, line):
+            continue
         claim = Claim(source, line, "line-ref", f"{name}:{start}")
 
         lengths = {rel: len(_module_lines(rel)) for rel in candidates}
@@ -1414,6 +1474,86 @@ def test_nonresolving_verdict_must_sit_near_the_citation() -> None:
     far = "an earlier citation straddles two functions. " + padding + plain
     assert _NONRESOLVING_PROSE.search(far) is not None
     assert len(check_line_refs("docs/fake.md", far)) == 1
+
+
+def test_citation_pinned_to_a_named_commit_is_not_checked() -> None:
+    """A citation resolved against a named commit is not a HEAD claim.
+
+    Real corpus shape: the swarm errata quote shipped citations as
+    *landing* — resolved against a named commit, with no non-resolving
+    verdict anywhere near, because the verdict is that they hold — and
+    drift in the cited file would fail the check on prose that is true
+    about the pinned tree. The unpinned mutation of each fixture must
+    stay red: that is what proves the pin is doing the suppressing,
+    rather than the citation never having been checked at all.
+    """
+    decoy = _crc32_shard_line() + 200
+    pinned = (
+        "resolved against `0123abc` with an AST walk, two land: "
+        f"`events.py:{decoy}` is exactly the `crc32(session_id)` shard pick"
+    )
+    assert check_line_refs("docs/fake.md", pinned) == []
+    unpinned = (
+        f"two land: `events.py:{decoy}` is exactly the `crc32(session_id)` shard pick"
+    )
+    assert len(check_line_refs("docs/fake.md", unpinned)) == 1
+    linked = (
+        "resolved against `0123abc` with an AST walk, two land: "
+        f"[events.py:{decoy}](../src/bettermemory/events.py) is exactly the "
+        "`crc32(session_id)` shard pick"
+    )
+    assert check_line_refs("docs/fake.md", linked) == []
+    linked_unpinned = (
+        "two land: "
+        f"[events.py:{decoy}](../src/bettermemory/events.py) is exactly the "
+        "`crc32(session_id)` shard pick"
+    )
+    assert len(check_line_refs("docs/fake.md", linked_unpinned)) == 1
+    # A file can shrink between the pinned commit and HEAD, so the range
+    # half is suppressed too — same contract as the non-resolving rule.
+    out_of_range = (
+        "resolved against `0123abc`, `events.py:999999` was exactly the "
+        "`crc32(session_id)` shard pick"
+    )
+    assert check_line_refs("docs/fake.md", out_of_range) == []
+    # The errata's other phrasing must pin on its own as well.
+    alt = (
+        "every resolution above is pinned to a named commit; two land: "
+        f"`events.py:{decoy}` is exactly the `crc32(session_id)` shard pick"
+    )
+    assert check_line_refs("docs/fake.md", alt) == []
+
+
+def test_commit_pin_does_not_cross_a_paragraph_boundary() -> None:
+    """The pin is paragraph-scoped, never a document-wide pass.
+
+    A pin declares the reference frame for its own analysis, and a blank
+    line ends that analysis: the same wrong citation one paragraph below
+    the pin stays red — the false-negative direction this rule must not
+    have. The middle assertion pins that the far text really does carry
+    a pin phrase, so this test cannot rot into vacuity.
+    """
+    decoy = _crc32_shard_line() + 200
+    plain = f"a recorder picks its shard by `crc32(session_id)` (`events.py:{decoy}`)"
+    text = "the survey was resolved against `0123abc` in full.\n\n" + plain
+    assert _COMMIT_PINNED_PROSE.search(text) is not None
+    assert len(check_line_refs("docs/fake.md", text)) == 1
+
+
+def test_commit_pin_requires_a_backticked_sha() -> None:
+    """ "resolved against the earlier tree" pins nothing.
+
+    The backticked-hex form is load-bearing: without it, any sentence
+    about resolving one thing against another would quietly turn its
+    whole paragraph into unchecked prose.
+    """
+    decoy = _crc32_shard_line() + 200
+    text = (
+        "resolved against the earlier tree, two land: "
+        f"`events.py:{decoy}` is exactly the `crc32(session_id)` shard pick"
+    )
+    assert _COMMIT_PINNED_PROSE.search(text) is None
+    assert len(check_line_refs("docs/fake.md", text)) == 1
 
 
 def test_restrictive_clause_demotes_a_total_marked_count_too() -> None:
