@@ -473,7 +473,12 @@ class Store:
         `force=True` is a low-level escape hatch for callers who legitimately
         want to overwrite without the CAS — e.g. migration tooling that has
         already reconciled concurrent edits out-of-band. Not exposed through
-        the MCP handler boundary; reach for it from in-process code only.
+        the MCP handler boundary; reach for it from in-process code only. It
+        skips the CAS comparison, not the under-lock re-load: the current
+        record is read on every path (see the corroboration note below), so
+        a file whose frontmatter parses but no longer validates as a
+        `Memory` raises out of that load instead of being force-overwritten
+        — the same outcome the default CAS path has always had.
 
         `preserve_verification=True` keeps the on-disk `last_verified_at` and
         `verified_*` lists instead of the caller's snapshot copy. The
@@ -482,6 +487,21 @@ class Store:
         `last_verified_at` but NOT `updated`, so the `updated` CAS alone
         wouldn't catch it. Content edits leave it False — they reset
         verification on purpose (the attested body no longer exists).
+
+        The corroboration rollup (`corroborations` / `last_corroborated`) is
+        NOT caller-editable through this method: it is store-owned lifecycle
+        state like `updated`, so the on-disk values are re-copied onto the
+        write on EVERY path — with or without `preserve_verification`, with
+        or without `force`. Same cross-axis race as verification, one axis
+        over: `record_corroboration` deliberately never bumps `updated`
+        (a recurrence is not a rewrite), so a bump landing between the
+        caller's snapshot read and this lock sails through the `updated`
+        CAS, and writing the snapshot's stale counter back would silently
+        erase it. Unlike verification there is no opt-out — a content edit
+        does not invalidate the recurrence evidence the way it invalidates
+        an attestation, and the counter is monotonic, so re-copying is
+        always the correct merge. Callers that want to move the rollup go
+        through `record_corroboration`.
 
         Raises:
             MemoryNotFoundError: no active record with that id, or the file
@@ -537,16 +557,30 @@ class Store:
             # the comparison is between two aware datetimes in the same
             # tz; equality compares to the microsecond, which is the
             # resolution `utcnow()` writes.
-            # Load the current on-disk record when needed: for the CAS
-            # (not force) and/or to preserve verification fields below.
-            current = (
-                self._load_path(existing_path)
-                if (not force or preserve_verification)
-                else None
-            )
-            if not force and current is not None and current.updated != memory.updated:
+            # Load the current on-disk record UNCONDITIONALLY. The CAS
+            # (not force) and the preserve_verification block below both
+            # need it, and so does the store-owned corroboration re-copy,
+            # which runs on every path including `force=True` — the force
+            # hatch opts out of the CAS, not out of the store's own
+            # lifecycle bookkeeping (it doesn't opt out of the `updated`
+            # stamp either).
+            current = self._load_path(existing_path)
+            if not force and current.updated != memory.updated:
                 raise ConcurrentUpdateError(memory.id, current.updated)
-            if preserve_verification and current is not None:
+            # Fields the store owns rather than the caller, re-copied from
+            # disk so this write can't revert them. `corroborations` /
+            # `last_corroborated` move only through `record_corroboration`,
+            # which — like `mark_verified` — deliberately leaves `updated`
+            # alone, so a bump landing between the caller's snapshot read
+            # and this lock passes the CAS above; writing the snapshot's
+            # pre-bump counter back would silently erase the recurrence
+            # signal. Monotonic counter, so taking the on-disk value is
+            # always the correct merge.
+            carried_over: dict[str, object] = {
+                "corroborations": current.corroborations,
+                "last_corroborated": current.last_corroborated,
+            }
+            if preserve_verification:
                 # Cross-axis race: `mark_verified` bumps `last_verified_at`
                 # (and the verified_* lists) but NOT `updated`, so a verify
                 # that lands between the caller's snapshot read and this lock
@@ -556,8 +590,8 @@ class Store:
                 # Metadata-only updates pass preserve_verification=True to
                 # keep the freshest on-disk verification instead of the
                 # caller's snapshot.
-                new_memory = new_memory.model_copy(
-                    update={
+                carried_over.update(
+                    {
                         "last_verified_at": current.last_verified_at,
                         "verified_paths": list(current.verified_paths),
                         "verified_commits": list(current.verified_commits),
@@ -565,6 +599,7 @@ class Store:
                         "verified_absent_paths": list(current.verified_absent_paths),
                     }
                 )
+            new_memory = new_memory.model_copy(update=carried_over)
             self._write_path(existing_path, new_memory)
             # perf: index upsert under lock is intentional — see audit H1.
             _index_upsert_quietly(self.root, new_memory, filename=existing_path.name)

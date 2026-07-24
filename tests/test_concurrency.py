@@ -1166,6 +1166,90 @@ def test_metadata_update_preserves_concurrent_verification(tmp_path: Path) -> No
     assert list(reloaded.verified_paths) == ["/etc/restic/policy"]
 
 
+def test_update_preserves_concurrent_corroboration(tmp_path: Path) -> None:
+    """Sibling of the verification race, one axis over: an `update` must not
+    revert a `record_corroboration` that landed after the caller's snapshot
+    read.
+
+    `record_corroboration` bumps `corroborations` / `last_corroborated` but
+    deliberately leaves `updated` alone (a recurrence is not a rewrite), so
+    the `updated` CAS cannot see it — writing the snapshot's pre-bump counter
+    back would pass the CAS and silently erase the recurrence signal that a
+    dedup-rejected `memory_write` just reported as recorded. Unlike
+    verification there is no opt-out flag: the rollup is store-owned on every
+    `update` path.
+    """
+    store = Store(tmp_path)
+    original = store.write(content="postgres listens on 5432", scopes=["infra"])
+    assert original.corroborations == 0
+
+    # Caller A reads its snapshot (corroborations still 0).
+    snapshot = store.load_one(original.id)
+    assert snapshot.corroborations == 0
+    assert snapshot.last_corroborated is None
+
+    # A duplicate write lands concurrently and credits the recurrence.
+    bumped = store.record_corroboration(original.id)
+    assert bumped.corroborations == 1
+    assert bumped.last_corroborated is not None
+    assert bumped.updated == snapshot.updated, (
+        "sanity: a corroboration must not move `updated` — that's what makes "
+        "the CAS blind to it"
+    )
+
+    # A's content edit on the now-stale snapshot. The CAS passes (its
+    # `updated` still matches), and the bump must survive the write.
+    result = store.update(snapshot.model_copy(update={"body": "refined body\n"}))
+    assert "refined body" in result.body  # the edit applied
+    assert result.corroborations == 1
+    assert result.last_corroborated == bumped.last_corroborated
+
+    reloaded = store.load_one(original.id)
+    assert reloaded.corroborations == 1, "the counter was reverted on disk"
+    assert reloaded.last_corroborated == bumped.last_corroborated
+
+    # Same contract on the metadata-only path, and the counter composes
+    # across a second interleaved bump rather than resetting.
+    snapshot2 = store.load_one(original.id)
+    bumped2 = store.record_corroboration(original.id)
+    assert bumped2.corroborations == 2
+    meta_result = store.update(
+        snapshot2.model_copy(update={"scopes": ["infra", "tools"]}),
+        preserve_verification=True,
+    )
+    assert meta_result.scopes == ["infra", "tools"]
+    assert meta_result.corroborations == 2
+    assert store.load_one(original.id).corroborations == 2
+
+
+def test_force_update_preserves_concurrent_corroboration(tmp_path: Path) -> None:
+    """`force=True` opts out of the CAS, not out of the store-owned rollup.
+
+    The escape hatch exists for callers that reconciled a concurrent *content*
+    edit out-of-band (the consolidate merge rollback); it was never a licence
+    to roll the recurrence counter backwards, any more than it licences
+    reverting `updated`.
+    """
+    store = Store(tmp_path)
+    original = store.write(content="redis caches sessions", scopes=["infra"])
+    snapshot = store.load_one(original.id)
+
+    # Move `updated` forward so the stale snapshot would fail the CAS, and
+    # credit a recurrence that the CAS could not have caught either way.
+    store.update(snapshot.model_copy(update={"body": "intermediate edit\n"}))
+    bumped = store.record_corroboration(original.id)
+    assert bumped.corroborations == 1
+
+    forced = store.update(
+        snapshot.model_copy(update={"body": "forced overwrite\n"}),
+        force=True,
+    )
+    assert "forced overwrite" in forced.body
+    assert forced.corroborations == 1
+    assert forced.last_corroborated == bumped.last_corroborated
+    assert store.load_one(original.id).corroborations == 1
+
+
 def test_content_update_still_resets_verification(tmp_path: Path) -> None:
     """Companion contract: a CONTENT edit (preserve_verification=False) still
     resets verification — the body the attestation described no longer
