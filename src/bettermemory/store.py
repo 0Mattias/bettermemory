@@ -1320,7 +1320,7 @@ class Store:
 
             # Mirror `_path_for`'s always-suffix discipline so the restore
             # lands at the same shape a fresh `write()` would produce —
-            # date-prefixed slug + short-id suffix, no `.tombstone.md`.
+            # date-prefixed slug + full-ULID suffix, no `.tombstone.md`.
             # Pre-fix this used the legacy `bare.exists()` gate that
             # `bc47593` killed in `_path_for`: two concurrent restores of
             # differently-tombstoned memories whose bodies slugify
@@ -1775,8 +1775,8 @@ class Store:
         # bits of randomness) makes a same-path collision astronomically
         # unlikely: two writers can never realistically pick the same
         # path even if their bodies slugify identically. Matches the
-        # discipline `tombstone()` adopted in 2.6.4 (see
-        # store.py:474-485) for the same reason.
+        # always-suffix discipline `tombstone()` adopted in 2.6.4 for
+        # its `.tombstone.md` target names, for the same reason.
         #
         # Existing short-suffixed / unsuffixed memories on disk
         # continue to load — the reader keys off the `id` field, not

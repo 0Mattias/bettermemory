@@ -553,7 +553,8 @@ def _slug_collision_restore_worker(args: tuple[str, str]) -> str | None:
     lock a DIFFERENT tombstone path (so the lock doesn't help) and
     both write to the same `active_path`. The second `_atomic_write_post`
     would clobber the first. After the Round-3 fix, both restores end
-    up at distinct `{date}-{slug}-{shortid}.md` filenames.
+    up at distinct `{date}-{slug}-{ulid}.md` filenames (a short-id
+    suffix when the fix landed; the full lowercased ULID since 3.14.1).
     """
     root, memory_id = args
     s = Store(Path(root))
@@ -632,7 +633,8 @@ def test_multi_process_concurrent_slug_collision_restores_do_not_clobber(
     `active_path.exists() == False`, and both write — second silently
     clobbering the first. The lock is on the tombstone, not on the
     destination, so it can't help. The fix mirrors `_path_for`:
-    unconditionally suffix with the short-id, so two distinct
+    unconditionally suffix with the id — `id[-6:]` when the fix landed,
+    the full lowercased ULID since 3.14.1 — so two distinct
     memory_ids can never produce the same active_path.
 
     Setup: write N memories with identical bodies (different ids, so
