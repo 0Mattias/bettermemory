@@ -511,11 +511,12 @@ def test_locked_serializes_two_spawned_processes(tmp_path: Path) -> None:
 # C1 regression — slug-collision silent data loss
 # ---------------------------------------------------------------------------
 #
-# Pre-2.7 the active-side `_path_for` used `candidate.exists()` as the
-# only collision guard. Two concurrent writes whose bodies slugified to
-# the same value both saw `exists() == False`, both picked the bare
-# candidate, serialized on `_locked(<same path>)` — and the second
-# `_atomic_write_post` clobbered the first memory entirely.
+# Before `bc47593` (first shipped in 3.0.0) the active-side `_path_for`
+# used `candidate.exists()` as the only collision guard. Two concurrent
+# writes whose bodies slugified to the same value both saw
+# `exists() == False`, both picked the bare candidate, serialized on
+# `_locked(<same path>)` — and the second `_atomic_write_post`
+# clobbered the first memory entirely.
 # `tombstone()` already closed this race in 2.6.4 by unconditionally
 # embedding the ULID in the filename; the fix mirrors that on the
 # active side.
@@ -548,7 +549,7 @@ def _slug_collision_restore_worker(args: tuple[str, str]) -> str | None:
     The store has N pre-tombstoned memories whose bodies slugify
     identically. Each worker process restores one of them. Pre-Round-3
     `Store.restore` used the same `active_path.exists()` gate that
-    `_path_for` used pre-2.7 — so two concurrent restores would each
+    `_path_for` used before `bc47593` — so two concurrent restores would each
     lock a DIFFERENT tombstone path (so the lock doesn't help) and
     both write to the same `active_path`. The second `_atomic_write_post`
     would clobber the first. After the Round-3 fix, both restores end
@@ -819,7 +820,7 @@ def test_property_concurrent_slug_collision_preserves_all_writes(
 # resurrect a tombstoned memory
 # ---------------------------------------------------------------------------
 #
-# Pre-2.7 the locked-write sequence was:
+# Before `bc47593` (first shipped in 3.0.0) the locked-write sequence was:
 #   1. `_find_path_for_id(id)` walks the directory unlocked.
 #   2. We acquire `_locked(path)`.
 #   3. Inside the lock, `_write_path(path, memory)`.

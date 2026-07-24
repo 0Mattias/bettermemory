@@ -1751,9 +1751,10 @@ class Store:
         slug = make_slug(memory.body)
 
         # Unconditionally embed the FULL ULID in the filename so the
-        # name is unique by construction. Pre-2.7 the code picked the
-        # bare `<date>-<slug>.md` when the file didn't yet exist and
-        # added the ULID only on collision — a TOCTOU silent-data-loss
+        # name is unique by construction. Before `bc47593` (first
+        # shipped in 3.0.0) the code picked the bare `<date>-<slug>.md`
+        # when the file didn't yet exist and added a short id tail
+        # only on collision — a TOCTOU silent-data-loss
         # bug: two concurrent `write()`s whose bodies slugify to the
         # same value both observed `bare.exists() == False`, both
         # picked the bare candidate, serialized on `_locked(<same
