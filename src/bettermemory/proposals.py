@@ -270,7 +270,22 @@ class ProposalQueue:
     def load(self) -> list[Proposal]:
         """All queued proposals, oldest first. Skips malformed lines
         defensively — one bad row shouldn't blind the rest of the queue
-        (same discipline as `Store.load_all` / `iter_events`)."""
+        (same discipline as `Store.load_all` / `iter_events`).
+
+        Unlike those two, the skip here is DESTRUCTIVE, and the analogy
+        hides it: `Store.load_all` and `iter_events` are readers, while
+        every mutation path on this class is a read-modify-write —
+        `append`, `append_within_cap` and `remove` all call this and
+        then hand the survivors to `_write_all_locked`, which rewrites
+        the file. An unparseable line therefore disappears at the next
+        append rather than being tolerated.
+
+        `ConflictQueue.load` carries the identical coupling and the
+        reasoning for leaving both alone, which is about blast radius:
+        the queue holds unreviewed write SUGGESTIONS, the file is only
+        ever written by `atomic_write_bytes` under `flock_excl`, and
+        anything lost here was never a durable memory.
+        """
         path = self.path
         if not path.exists():
             return []

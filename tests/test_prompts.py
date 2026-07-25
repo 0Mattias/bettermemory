@@ -298,6 +298,85 @@ def test_handler_descs_enumerate_episode_tier_fields() -> None:
     )
 
 
+def test_episode_worktree_descs_match_the_filter_each_handler_calls() -> None:
+    """The two episode read surfaces filter by worktree with DIFFERENT
+    functions, and each DESC has to describe its own.
+
+    `episode_handoff` calls `_worktrees_equal_strict`; `episode_search`
+    calls `origin.worktrees_match`, which is permissive — either side
+    `None`, a caller in a LINKED worktree of the recorded checkout, or a
+    recorded worktree positively gone from disk all pass through. So
+    "the same isolation" is not a thing that can be said about both, and
+    `DESC_EPISODE_SEARCH` said it anyway: it advertised "WORKTREE
+    ISOLATION ... mirroring the isolation episode_handoff enforces" and
+    enumerated two of the four pass-through cases, omitting exactly the
+    two a reader cannot guess. The linked-worktree case is the one that
+    bites, because agent fan-out runs in linked worktrees — under it the
+    primary checkout's episodes stay fully visible, which is the
+    opposite of what the word "isolation" promised.
+
+    The handler's own inline comments were correct the whole time. Only
+    the model-facing copy was wrong, which is the recurring shape: a
+    DESC is the highest-leverage prose in the system and the least
+    re-read. So this asserts against the SOURCE rather than against a
+    remembered fact — swap either handler's filter and the test names
+    the DESC that now lies.
+    """
+    import importlib
+    import inspect
+
+    # `importlib` and not `from ... import episode_search`: the package
+    # `__init__` binds each handler's NAME to the coroutine it re-exports,
+    # which shadows the submodule of the same name, and the attribute
+    # access below would then read a function.
+    search_mod = importlib.import_module("bettermemory.handlers.episode_search")
+    handoff_mod = importlib.import_module("bettermemory.handlers.episode_handoff")
+
+    search_src = inspect.getsource(search_mod)
+    handoff_src = inspect.getsource(handoff_mod)
+
+    assert "worktrees_match" in search_src, (
+        "episode_search no longer calls the permissive `worktrees_match`. "
+        "If it moved to strict equality, DESC_EPISODE_SEARCH's "
+        "'PERMISSIVE, not a boundary' paragraph is now false — rewrite it."
+    )
+    assert "_worktrees_equal_strict" in handoff_src, (
+        "episode_handoff no longer calls `_worktrees_equal_strict`. "
+        "DESC_EPISODE_HANDOFF advertises 'strict equality' and "
+        "DESC_EPISODE_SEARCH contrasts itself against it — both are now "
+        "stale."
+    )
+
+    desc = search_mod.DESC_EPISODE_SEARCH
+    assert "PERMISSIVE" in desc, (
+        "DESC_EPISODE_SEARCH stopped calling its worktree filter "
+        "permissive. It runs `worktrees_match`, which lets four distinct "
+        "cases through; describing that as isolation tells the model it "
+        "has a boundary it does not have."
+    )
+    for cue, why in (
+        (
+            "LINKED",
+            "the linked-worktree pass-through — agent fan-out runs in "
+            "linked worktrees, so this is the case most likely to "
+            "surprise a caller that trusted the filter",
+        ),
+        (
+            "gone from disk",
+            "the dead-worktree degrade, which reopens episodes from "
+            "checkouts that no longer exist",
+        ),
+    ):
+        assert cue in desc, f"DESC_EPISODE_SEARCH no longer documents {cue!r}: {why}."
+
+    assert "strict" in desc, (
+        "DESC_EPISODE_SEARCH no longer contrasts itself with "
+        "episode_handoff's strict filter. The two surfaces answer "
+        "'same worktree?' differently and a caller reading only one "
+        "DESC will assume they agree."
+    )
+
+
 def test_audit_turn_desc_enumerates_retrieval_event_kinds() -> None:
     """DESC_MEMORY_AUDIT_TURN names every event kind that shields the
     miss probe.

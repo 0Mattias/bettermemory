@@ -281,7 +281,27 @@ class ConflictQueue:
 
     def load(self) -> list[ConflictCandidate]:
         """All rows, file order. Malformed lines are skipped defensively
-        (same discipline as `ProposalQueue.load`)."""
+        (same discipline as `ProposalQueue.load`).
+
+        "Skipped" UNDERSTATES it, and the reader should know before
+        relying on this: every mutation path is a read-modify-write —
+        `upsert_scan` and `record_verdict` both call this and then hand
+        the result to `_write_all_locked`, which rewrites the whole file
+        from the survivors. So a line this cannot parse is not skipped
+        for the duration of one read, it is DELETED on the next write.
+
+        Left as-is deliberately rather than fixed in passing. Repairing
+        it means `load` reporting its own lossiness so a writer can
+        refuse or quarantine, which is a signature change here and in
+        `ProposalQueue`, and the damage does not justify that on a
+        release window: this file is only ever written by
+        `atomic_write_bytes` under `flock_excl`, so a torn line needs
+        outside editing or genuine corruption to appear, and a lost
+        PENDING row is re-derived by the next full scan. What does not
+        come back is a recorded verdict — `confirmed` is terminal and
+        `dismissed` resurrects only on a body change — so the user is
+        silently re-asked a question they already answered.
+        """
         if not self.path.exists():
             return []
         try:

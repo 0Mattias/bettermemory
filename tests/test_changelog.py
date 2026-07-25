@@ -73,6 +73,14 @@ _HEADING_RE = re.compile(
     r"^## (?P<version>\d+\.\d+\.\d+(?:[-+][\w.]+)?) - (?P<date>\d{4}-\d{2}-\d{2})$"
 )
 
+# What COUNTS as a version heading for the well-formedness check, as
+# opposed to what a well-formed one looks like (`_HEADING_RE`). Kept
+# deliberately loose — tolerant of the missing/extra space and the `v`
+# prefix the tag names invite — because anything this misses is not
+# reported as malformed, it is not examined at all. See
+# `test_all_version_headings_well_formed`.
+_VERSION_LIKE_HEADING = re.compile(r"^##\s*v?\d+\.\d+")
+
 
 def _changelog_headings() -> list[tuple[str, str, int]]:
     """Return ``(version, date, line_number)`` for every ``## ...`` heading.
@@ -122,9 +130,27 @@ def test_all_version_headings_well_formed() -> None:
     ``## 2.6.3-2026-05-21`` (no spaces around the dash), ``## 2.6.3``
     (missing date), ``## 2.6.3 — 2026-05-21`` (em-dash not hyphen).
     Each of these renders differently and breaks downstream parsers.
+
+    The prefilter deciding what "looks like a version line" has to be
+    WIDER than the canonical shape, or the check passes vacuously on
+    exactly the headings it is for: a line the prefilter skips is never
+    compared to `_HEADING_RE` at all, so the more mangled a heading is,
+    the likelier it was to escape. `^## \\d+\\.\\d+` required the single
+    space and a leading digit, which let three shapes through — measured,
+    and pinned in `test_version_heading_prefilter_is_wider_than_canonical`
+    below. The one that matters is `## v3.29.0 - ...`: every tag in this
+    repo is named `vX.Y.Z`, so an author writing the heading beside
+    `git tag -a v3.29.0` is one keystroke from a heading no guard reads.
+
+    Only the CURRENT version is covered elsewhere (a mangled heading
+    makes `_entry_text` return None and
+    `test_changelog_has_entry_for_current_version` fail). Historical
+    headings have this test and nothing else — and rotting historical
+    headings are the documented 1.3.0 / 1.2.1 / 2.6.0 class, bodies
+    intact with the `##` line silently gone.
     """
     bad: list[tuple[int, str]] = []
-    version_like = re.compile(r"^## \d+\.\d+")
+    version_like = _VERSION_LIKE_HEADING
     for i, line in enumerate(_CHANGELOG.read_text(encoding="utf-8").splitlines(), 1):
         if not version_like.match(line):
             continue
@@ -135,6 +161,49 @@ def test_all_version_headings_well_formed() -> None:
         pytest.fail(
             f"CHANGELOG.md has version-like headings that don't match the "
             f"canonical `## X.Y.Z - YYYY-MM-DD` shape:\n{msg}"
+        )
+
+
+def test_version_heading_prefilter_is_wider_than_canonical() -> None:
+    """The guard above can only fail on a line its prefilter admits, so
+    the prefilter is load-bearing and is pinned separately here.
+
+    Every malformation listed is rejected by `_HEADING_RE`, so each one
+    MUST be admitted by the prefilter — otherwise
+    `test_all_version_headings_well_formed` returns green without ever
+    having looked at it. The last three are the shapes the original
+    `^## \\d+\\.\\d+` let through.
+
+    The negative cases matter as much: widening the prefilter until it
+    swallows the sub-headings that structure every entry would turn the
+    guard from vacuous into permanently red.
+    """
+    malformed = [
+        "## 2.6.3",  # missing date
+        "## 2.6.3-2026-05-21",  # no spaces around the dash
+        "## 2.6.3 — 2026-05-21",  # em-dash, not hyphen
+        "## v3.29.0 - 2026-07-30",  # `v` prefix, as the tags are named
+        "##3.29.0 - 2026-07-30",  # no space after the hashes
+        "##  3.29.0 - 2026-07-30",  # two spaces after the hashes
+    ]
+    for line in malformed:
+        assert not _HEADING_RE.match(line), f"{line!r} should not be canonical"
+        assert _VERSION_LIKE_HEADING.match(line), (
+            f"{line!r} is malformed but the prefilter skips it, so "
+            f"test_all_version_headings_well_formed never examines it and "
+            f"passes vacuously. Widen `_VERSION_LIKE_HEADING`."
+        )
+
+    assert _VERSION_LIKE_HEADING.match("## 3.29.0 - 2026-07-30")
+    for line in (
+        "### Fixed — `sync` could destroy uncommitted work",
+        "### Added — machinery that re-derives instead of restating",
+        "## Changelog",
+        "#### 3.29.0",
+    ):
+        assert not _VERSION_LIKE_HEADING.match(line), (
+            f"the prefilter admits {line!r}, which is not a version heading; "
+            f"every one of these would be reported as malformed forever"
         )
 
 
