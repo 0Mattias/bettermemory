@@ -101,8 +101,9 @@ DESC_MEMORY_WRITE_CONFIRM = _handlers_pkg.DESC_MEMORY_WRITE_CONFIRM
 # hook (`hook.run_audit`) has only a `Store` — no dependency bundle — and
 # has to build the SAME candidate pool `memory_search` ranks, or the
 # silent-miss probe measures a retrieval production never performed.
-# `ToolHandlers` keeps thin delegating methods so the existing bundle call
-# sites are unchanged.
+# The extraction also rewrote the one consumer to call them directly with
+# an explicit `Store`, so `ToolHandlers` no longer routes anything through
+# them — see the surviving alias below for what that leaves behind.
 
 
 # The store size above which the FTS5 candidate pre-filter is
@@ -367,14 +368,25 @@ class ToolHandlers:
 
     # ---- FTS candidate prefilter ----------------------------------------
     #
-    # The implementations are module-level (`resolve_index_threshold` /
-    # `load_search_candidates`) so the out-of-process Stop hook can reach
-    # them with only a `Store`; these bound aliases keep the existing
-    # dependency-bundle call sites unchanged.
-
-    def _index_threshold(self) -> int:
-        """Bound alias for `resolve_index_threshold`."""
-        return resolve_index_threshold()
+    # The implementation is module-level (`load_search_candidates`) so the
+    # out-of-process Stop hook can reach it with only a `Store`, and the
+    # extraction rewrote the sole consumer
+    # (`handlers.search.resolve_search_pool`) to call it directly. So the
+    # alias below has NO caller anywhere in src/, tests/, bench/,
+    # examples/ or plugin/ — it is kept for one reason only: prose spread
+    # across the package still names `_load_search_candidates` as the
+    # routing implementation, and dropping the binding strands every one
+    # of those citations. Which ones is measurable rather than guessable —
+    # delete this method and tests/test_symbol_citations.py names them,
+    # one finding apiece, most in modules another change owns right now.
+    # Retargeting them at `load_search_candidates` and then deleting this
+    # alias is one sweep, deliberately not spliced into an unrelated fix;
+    # when that lint comes back clean without this method, the alias has
+    # nothing left to hold up. The sibling alias removed in this same
+    # change, `_index_threshold`, was cited by nothing at all.
+    #
+    # Nothing new should call this: a caller holding a bundle is a caller
+    # that could take the module function and its explicit `Store`.
 
     def _load_search_candidates(
         self, query: str, scopes: list[str] | None = None

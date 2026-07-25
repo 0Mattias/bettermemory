@@ -418,6 +418,62 @@ class SearchPool(NamedTuple):
     corpus_stats_provider: Callable[[list[str]], CorpusStats | None] | None
 
 
+# The ceiling on how many hits one search serves; with the floor of 1 it
+# is the whole range a result width — request or config — can take.
+# `memory_search` narrows a REQUEST to it and `default_search_width`
+# narrows the CONFIG knob to it, both through `clamp_search_width`, so the
+# request path and the audit path cannot disagree about the range.
+#
+# NOT `_handlers._PREFILTER_CAP`, which is also 50 today: that one bounds
+# the INDEX ROWS the FTS prefilter returns, this one bounds the HITS a
+# search serves. `resolve_search_pool`'s starvation guard compares a count
+# bounded by the first against a width bounded by the second, so folding
+# them into one constant would turn a measurement into an artifact of the
+# spelling.
+MAX_SEARCH_RESULTS = 50
+
+
+def clamp_search_width(value: int) -> int:
+    """Narrow a result width to the range a search can actually serve —
+    `[1, MAX_SEARCH_RESULTS]`.
+
+    The single arithmetic site for that range, read by all three widths
+    that reach `resolve_search_pool`: `memory_search`'s request and both
+    silent-miss producers' `min_survivors` (the latter two via
+    `default_search_width`). Hoisted here because the producers used to
+    read `behavior.default_max_results` RAW while `memory_search` clamped
+    the same number before handing it to the same parameter — so an
+    out-of-range knob desynchronised the audit's starvation guard from
+    production's while a pin using an in-range value stayed green.
+    """
+    return max(1, min(int(value), MAX_SEARCH_RESULTS))
+
+
+def default_search_width(behavior: "BehaviorConfig") -> int:
+    """The width of a DEFAULT `memory_search` under `behavior` — what both
+    silent-miss producers size their starvation guard for.
+
+    `config.py` coerces `default_max_results` to an int at load and range-
+    checks nothing, so the knob arrives here as any integer whatsoever.
+    Clamping it through `clamp_search_width` is what keeps "the width of a
+    default search" a width the request path can also produce, and outside
+    that range the two ends of the guard come apart in opposite
+    directions:
+
+    - above `MAX_SEARCH_RESULTS` no survivor count can reach the threshold
+      at all (the prefilter serves at most `_handlers._PREFILTER_CAP`
+      rows), so `resolve_search_pool`'s `<` holds unconditionally on every
+      saturated slice and the probe is handed the whole corpus with no
+      corpus-statistics provider — the strict-superset-under-different-
+      statistics pool that helper exists to eliminate;
+    - at `<= 0` the comparison can never hold, so the probe keeps a
+      starved slice that production (clamped to 1) reloads. That one
+      reaches the verdict: measured on a fully starved slice, the probe
+      returns `no_signal` at width 0 where width 1 returns `miss`.
+    """
+    return clamp_search_width(behavior.default_max_results)
+
+
 def resolve_search_pool(
     store: Store,
     query: str,
@@ -475,10 +531,15 @@ def resolve_search_pool(
       failure this guard exists for. Pinning production to the config
       default instead would re-open that failure for every above-default
       request, so the divergence must not be closed from this end.
-    - Both audit producers pass `behavior.default_max_results`. The search
-      they describe is the one the model did NOT make: a counterfactual
-      carrying no `max_results` of its own, i.e. a default search. There
-      is no request to read on that path — the miss verdict's own
+    - Both audit producers pass `default_search_width(behavior)`. The
+      search they describe is the one the model did NOT make: a
+      counterfactual carrying no `max_results` of its own, so its width is
+      the config default — put through the SAME `clamp_search_width` a
+      request goes through, which is what makes it a width production
+      could actually have produced. Passing the raw knob instead put the
+      guard outside the range production can reach, in either direction;
+      `default_search_width` carries which failure lives at which end.
+      There is no request to read on that path — the miss verdict's own
       precondition is that no retrieval happened.
 
     The widths are not interchangeable, and the difference reaches the
@@ -587,9 +648,13 @@ async def memory_search(
 
     state = deps.sessions.for_request(ctx)
     _advance_turn(state, deps.recorder)
+    # The request clamp. Same helper — so the same range — the audit
+    # producers reach through `default_search_width`; when the request
+    # omits `max_results` the two paths are then reading one expression
+    # over one value.
     if max_results is None:
         max_results = deps.config.behavior.default_max_results
-    max_results = max(1, min(int(max_results), 50))
+    max_results = clamp_search_width(max_results)
 
     # Resolve search mode: per-call override > config default > "hybrid".
     # Validation happens via the Literal narrowing in search() — any
@@ -708,11 +773,13 @@ async def memory_search(
         # The prefilter, the cap-starvation guard and the corpus-stats
         # wiring are one decision — see `resolve_search_pool`, which the
         # two audit producers share so the silent-miss probe ranks this
-        # same pool. `min_survivors` is THIS request's `max_results` —
-        # the audit producers pass `default_max_results` instead, which
+        # same pool. `min_survivors` is THIS request's `max_results`,
+        # already clamped above — the audit producers pass
+        # `default_search_width(behavior)` instead, which
         # `resolve_search_pool` records as a deliberate difference (each
         # caller sizes the guard for the search it describes), not a
-        # drift to close.
+        # drift to close. Deliberate about the VALUE, never about the
+        # RANGE: both sides go through `clamp_search_width`.
         pool = resolve_search_pool(
             deps.store,
             query,
@@ -984,8 +1051,11 @@ async def memory_search(
 
 __all__ = [
     "DESC_MEMORY_SEARCH",
+    "MAX_SEARCH_RESULTS",
     "RankingInputs",
     "SearchPool",
+    "clamp_search_width",
+    "default_search_width",
     "memory_search",
     "ranking_events_window_seconds",
     "resolve_ranking_inputs",

@@ -47,7 +47,10 @@ DEFAULT_CONFIG = """\
 # call memory_write_confirm to commit. MVP defaults to false for solo use.
 require_write_confirmation = false
 
-# Default cap on memory_search results.
+# Default cap on memory_search results. Clamped to 1..50 where it is read
+# (the same range an explicit max_results is clamped to), not rejected
+# here: a value outside the range is a harmless typo, and erroring at load
+# would take the whole server down over one knob.
 default_max_results = 5
 
 # Recency boost decay. Larger = older memories get a meaningful bump.
@@ -320,6 +323,10 @@ class StorageConfig:
 @dataclass
 class BehaviorConfig:
     require_write_confirmation: bool = False
+    # Coerced to an int at load and NOT range-checked. Every consumer
+    # narrows it through `handlers.search.clamp_search_width` instead —
+    # one clamp for the request width and the audit probe's guard width,
+    # so an out-of-range knob cannot move one without the other.
     default_max_results: int = 5
     recency_boost_half_life_days: float = 30.0
     # Retrieval ranker for `memory_search`. One of `keyword` (the

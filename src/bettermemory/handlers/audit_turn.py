@@ -25,6 +25,7 @@ from ..events import iter_events_window, redact_query
 from ..models import utcnow
 from ._shared import Context, _advance_turn
 from .search import (
+    default_search_width,
     ranking_events_window_seconds,
     resolve_ranking_inputs,
     resolve_search_pool,
@@ -156,18 +157,20 @@ async def memory_audit_turn(
     # `probe_for_miss` will re-apply inside `run_search`, so the document
     # frequencies price exactly the collection about to be ranked.
     # `min_survivors` is the width of a DEFAULT `memory_search`
-    # (`default_max_results`), not the probe's `_TOP_HITS_RETAINED`: the
-    # starvation guard has to fire on the same slices a default-width
-    # retrieval's would. It does NOT track a wider or narrower REQUEST —
-    # there is no request on this path, and `resolve_search_pool` records
-    # what that leaves open.
+    # (`default_search_width` — the config knob under the same clamp a
+    # request goes through, NOT the raw knob, which `config.py` never
+    # range-checks), not the probe's `_TOP_HITS_RETAINED`: the starvation
+    # guard has to fire on the same slices a default-width retrieval's
+    # would. It does NOT track a wider or narrower REQUEST — there is no
+    # request on this path, and `resolve_search_pool` records what that
+    # leaves open.
     probe_pool = resolve_search_pool(
         deps.store,
         user_message,
         excluded_scopes=set(state.disabled_scopes),
         repo_filter=current_origin.repo,
         worktree_filter=current_origin.worktree_root,
-        min_survivors=deps.config.behavior.default_max_results,
+        min_survivors=default_search_width(deps.config.behavior),
     )
 
     # Window-aware event read. Rotation triggers on SIZE (`max_bytes`),

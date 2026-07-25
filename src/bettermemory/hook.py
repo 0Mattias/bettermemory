@@ -371,6 +371,7 @@ def run_audit(
         recent, worktree_root=caller_origin.worktree_root
     )
     from .handlers.search import (
+        default_search_width,
         ranking_events_window_seconds,
         resolve_ranking_inputs,
         resolve_search_pool,
@@ -389,11 +390,13 @@ def run_audit(
     # repo/worktree pair from `caller_origin` exactly this way), so the
     # document frequencies price exactly the collection about to be
     # ranked. `min_survivors` is the width of a DEFAULT `memory_search`
-    # (`default_max_results`), not the probe's `_TOP_HITS_RETAINED`: the
-    # starvation guard has to fire on the same slices a default-width
-    # retrieval's would. It does NOT track a wider or narrower REQUEST —
-    # there is no request on this path, and `resolve_search_pool` records
-    # what that leaves open.
+    # (`default_search_width` — the config knob under the same clamp a
+    # request goes through, NOT the raw knob, which `config.py` never
+    # range-checks), not the probe's `_TOP_HITS_RETAINED`: the starvation
+    # guard has to fire on the same slices a default-width retrieval's
+    # would. It does NOT track a wider or narrower REQUEST — there is no
+    # request on this path, and `resolve_search_pool` records what that
+    # leaves open.
     #
     # `probe_pool` is deliberately NOT named `memories`: it is a capped,
     # query-biased SEARCH pool, and anything downstream that wants the
@@ -405,7 +408,7 @@ def run_audit(
         excluded_scopes=excluded_scopes,
         repo_filter=caller_origin.repo,
         worktree_filter=caller_origin.worktree_root,
-        min_survivors=cfg.behavior.default_max_results,
+        min_survivors=default_search_width(cfg.behavior),
     )
     # Config-driven ranking inputs: the SAME `RankingInputs` the
     # production search handler threads

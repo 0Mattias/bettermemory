@@ -676,7 +676,8 @@ def probe_for_miss(
     Honest residuals in that pool parity, none of them closed here:
 
     - The producers size the pool's cap-starvation guard for a DEFAULT
-      search (`behavior.default_max_results`), since the search they
+      search (`handlers.search.default_search_width` — the config knob
+      under the same clamp a request goes through), since the search they
       describe is the one that did not happen and carries no width of its
       own. A model habitually passing a wider `max_results` is therefore
       measured against a narrower counterfactual than its own habit;

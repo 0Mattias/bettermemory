@@ -1,17 +1,19 @@
 """Regression tests for the FTS prefilter cap-starvation guard (round 85).
 
-`_handlers._load_search_candidates` threads only `scopes` into the FTS5
+`_handlers.load_search_candidates` threads only `scopes` into the FTS5
 top-50 prefilter; the repo/worktree auto-scope filter and session-disabled
 scopes apply post-cap in `search._filter_candidates`. Without the guard in
 `handlers/search.py`, a store with >50 memories where the caller's
 in-filter matches all rank #51+ globally returns ZERO hits on the
 prefilter path even though matching memories exist — the cap-starvation
-failure mode the `_load_search_candidates` docstring itself names. The
+failure mode the `load_search_candidates` docstring itself names. The
 guard dry-runs the authoritative filter on a cap-saturated slice and
 reloads the full corpus when fewer than the caller's `min_survivors`
 candidates survive — `max_results` for a `memory_search` request,
-`behavior.default_max_results` for the silent-miss audit producers, which
-describe a search that never happened and so carry no request width.
+`default_search_width(behavior)` for the silent-miss audit producers,
+which describe a search that never happened and so carry no request
+width. The two widths differ on purpose; their RANGE does not, because
+all of them go through `clamp_search_width`.
 
 Lives in its own file (not test_search*.py — those belong to another
 batch this round) and exercises the guard through the MCP tool surface,
@@ -197,7 +199,7 @@ async def test_masked_saturation_still_triggers_reload(
 ) -> None:
     """A cap-saturated INDEX slice can arrive at the guard with fewer
     than 50 loaded candidates: the per-candidate skips in
-    `_load_search_candidates` (filename-lookup misses, id/body drift —
+    `load_search_candidates` (filename-lookup misses, id/body drift —
     here a backing file deleted after the index was built) shrink the
     loaded list below the cap. The old `len(memories) == 50` check
     never fired on such a slice, so the post-cap repo filter starved
@@ -443,17 +445,43 @@ def test_min_survivors_width_can_flip_the_probe_verdict(
     assert rank1[25] in full_ids
 
 
-async def test_both_audit_producers_size_the_guard_for_a_default_search(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    [
+        # In range: the width IS the knob, and a hardcoded 5 (or the
+        # probe's own `_TOP_HITS_RETAINED`) cannot pass by coincidence.
+        (7, 7),
+        # Above the served cap. `config.py` range-checks nothing, so this
+        # loads fine; unclamped it made the probe's guard unsatisfiable
+        # (survivors are bounded by the 50-row prefilter slice, so
+        # `len(survivors) < 100` always held) and every probe ranked the
+        # whole corpus with no corpus-statistics provider.
+        (100, 50),
+        # At/below zero. Unclamped the guard could never fire, so the
+        # probe kept a starved slice production reloads at width 1.
+        (0, 1),
+    ],
+)
+async def test_all_three_search_widths_come_from_one_clamp(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    configured: int,
+    expected: int,
 ) -> None:
-    """Both silent-miss producers pass `behavior.default_max_results` as
-    `min_survivors` — the width of the default search their counterfactual
-    describes.
+    """Every `min_survivors` that reaches `resolve_search_pool` is the
+    config knob narrowed by ONE expression — `clamp_search_width`, via
+    `default_search_width` on the two silent-miss producers and via the
+    request clamp on a `memory_search` that carries no `max_results`.
 
-    Pinned against a NON-default config value so a hardcoded 5 (or the
-    probe's own `_TOP_HITS_RETAINED`) cannot pass by coincidence. The two
-    producers are separate code paths that have drifted before, and the
-    previous test shows the width reaching the verdict.
+    The three used to disagree outside `[1, 50]`: `memory_search` clamped
+    its request, the producers passed the raw knob to the identical
+    parameter, and nothing validated the knob at load. So the audit's
+    starvation guard could sit at a width production can never reach —
+    measured at `default_max_results=100` as widths `[100, 100, 50]` and
+    at `0` as `[0, 0, 1]`, with the latter flipping a probe verdict
+    (`no_signal` where production's width 1 reports `miss`). The previous
+    test shows how far a width difference travels; this one pins that the
+    three cannot differ by RANGE at all.
     """
     monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
     store = Store(tmp_path)
@@ -463,7 +491,7 @@ async def test_both_audit_producers_size_the_guard_for_a_default_search(
 
     cfg = Config(
         storage=StorageConfig(directory=str(tmp_path)),
-        behavior=BehaviorConfig(default_max_results=7),
+        behavior=BehaviorConfig(default_max_results=configured),
     )
 
     import bettermemory.handlers.audit_turn as audit_turn_mod
@@ -487,8 +515,13 @@ async def test_both_audit_producers_size_the_guard_for_a_default_search(
     )
     server = build_server(config=cfg, store=Store(tmp_path), state=SessionState())
     await _call(server, "memory_audit_turn", user_message="alpha beta")
+    # Production's own default-width search — the thing the two probes
+    # claim to describe. Omitting `max_results` is what makes it the
+    # comparable width.
+    await _call(server, "memory_search", query="alpha beta")
 
-    assert widths == [7, 7], (
-        "both producers must size the starvation guard for a default "
-        f"search (default_max_results=7), got {widths}"
+    assert widths == [expected, expected, expected], (
+        "the Stop hook, the MCP audit tool and a default-width "
+        f"memory_search must all size the starvation guard at {expected} "
+        f"for default_max_results={configured}, got {widths}"
     )
