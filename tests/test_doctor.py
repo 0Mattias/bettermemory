@@ -45,6 +45,7 @@ from bettermemory.doctor import (
     _check_mcp_client_configs,
     _check_memory_parse_health,
     _check_python_version,
+    _check_attestation_anchors,
     _check_retrieval_discrimination,
     _DISCRIMINATION_WARN_AT,
     _check_stale_config_lockfiles,
@@ -5372,3 +5373,140 @@ def test_cli_doctor_subparser_wires_fix_flag(
         cli_doctor_mod.run(args)
     assert excinfo.value.code == 0
     assert seen == {"json_out": True, "fix": True}
+
+
+# ---------------------------------------------------------------------------
+# attestation_anchors
+# ---------------------------------------------------------------------------
+
+
+def _anchored_store(tmp_path: Path, body: str, anchors: list[str]) -> Path:
+    """A store holding one memory attested to `anchors`, inside a real git
+    worktree so the check can resolve relative paths."""
+    import subprocess
+
+    from bettermemory.store import Store
+
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    store_dir = repo / "store"
+    store_dir.mkdir()
+    store = Store(store_dir)
+    memory = store.write(content=body, scopes=["proj"])
+    store.mark_verified(memory.id, verified_paths=anchors)
+    return repo
+
+
+def test_attestation_anchors_flags_an_anchor_that_carries_none_of_the_claim(
+    tmp_path: Path,
+) -> None:
+    """THE motivating instance, reconstructed. A memory claimed things
+    about `ScriptedAgent` / `run_driver` and attested `eval.py`, where
+    those symbols had never lived — so `path_drift` stayed green (the
+    file exists) and `commit_drift` counted `eval.py`'s commits against a
+    claim none of them could affect.
+
+    `path_drift` cannot see this: it only asks whether the anchor exists.
+    That is the whole reason this check exists, so the reconstruction is
+    the test rather than a synthetic pair of nonsense strings."""
+    repo = _anchored_store(
+        tmp_path,
+        "The `ScriptedAgent` harness and `run_driver` survived the LiveAgent removal.",
+        ["src/eval.py"],
+    )
+    (repo / "src" / "eval.py").write_text(
+        "def compute_threshold_sweep():\n    return {}\n", encoding="utf-8"
+    )
+
+    diag = _check_attestation_anchors(repo / "store", repo)
+
+    assert diag.status == "warn"
+    assert diag.details["checked"] == 1
+    assert len(diag.details["findings"]) == 1
+    assert "ScriptedAgent" in diag.details["findings"][0]["symbols"]
+    assert diag.fix_hint and "memory_verify" in diag.fix_hint
+
+
+def test_attestation_anchors_passes_when_the_anchor_carries_the_symbol(
+    tmp_path: Path,
+) -> None:
+    """The same memory, correctly anchored — the file defining the symbol."""
+    repo = _anchored_store(
+        tmp_path,
+        "The `ScriptedAgent` harness and `run_driver` survived the LiveAgent removal.",
+        ["src/driver.py"],
+    )
+    (repo / "src" / "driver.py").write_text(
+        "class ScriptedAgent:\n    pass\n", encoding="utf-8"
+    )
+
+    diag = _check_attestation_anchors(repo / "store", repo)
+
+    assert diag.status == "ok"
+    assert diag.details["checked"] == 1
+
+
+def test_attestation_anchors_exempts_prose_only_memories(tmp_path: Path) -> None:
+    """Preferences, directives and decisions legitimately have no code
+    anchor. Counting them would bury every real finding, which is the
+    failure mode this check was designed around rather than into."""
+    repo = _anchored_store(
+        tmp_path,
+        "The user prefers short commit messages and dislikes em dashes.",
+        ["src/eval.py"],
+    )
+    (repo / "src" / "eval.py").write_text("x = 1\n", encoding="utf-8")
+
+    diag = _check_attestation_anchors(repo / "store", repo)
+
+    assert diag.status == "ok"
+    assert diag.details["checked"] == 0
+
+
+def test_attestation_anchors_exempts_unreadable_anchors(tmp_path: Path) -> None:
+    """ "I cannot judge this" must not render as "this is wrong".
+
+    The store legitimately attests directories and virtualenvs — a memory
+    about what a venv contains has its ground truth exactly there. A
+    grep-based check cannot read those, so they are exempt; treating them
+    as findings is how a diagnostic stops being read."""
+    repo = _anchored_store(
+        tmp_path,
+        "The venv holds `sse_starlette` and `pydantic_settings`.",
+        ["src"],  # a directory
+    )
+
+    diag = _check_attestation_anchors(repo / "store", repo)
+
+    assert diag.status == "ok"
+    assert diag.details["checked"] == 0
+
+
+def test_attestation_anchors_reads_fenced_blocks_for_evidence(tmp_path: Path) -> None:
+    """REGRESSION. Mining only backticked spans made the check fire on a
+    memory whose load-bearing claim is a command chain mirrored in
+    `ci.yml`: the anchor was doing real attestation work and the
+    extractor could not see it.
+
+    The body here carries a backticked symbol whose file genuinely does
+    NOT hold it — pre-fix, that alone decided the verdict — beside a
+    fenced flag the anchor does carry. Reading fences is what turns this
+    from a finding into a pass, so the assertion is `checked == 1` and
+    not merely `ok`: an exempt memory would also be `ok`, and would prove
+    nothing about where the evidence came from."""
+    repo = _anchored_store(
+        tmp_path,
+        "Run the exact gate CI runs, and mind `no_implicit_reexport`:\n\n"
+        "```\nuv run pytest --cov-fail-under=80 -q\n```\n",
+        ["ci.yml"],
+    )
+    (repo / "ci.yml").write_text(
+        "jobs:\n  test:\n    run: uv run pytest --cov-fail-under=80 -q\n",
+        encoding="utf-8",
+    )
+
+    diag = _check_attestation_anchors(repo / "store", repo)
+
+    assert diag.status == "ok", diag.details
+    assert diag.details["checked"] == 1

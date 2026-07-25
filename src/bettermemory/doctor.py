@@ -1968,6 +1968,207 @@ def _discrimination_probe(
     return counted, rare_first / counted, topical_first / counted
 
 
+#: Backticked spans that could be a symbol. Bounded so a backticked
+#: paragraph can't become a token.
+_ANCHOR_BACKTICKED = re.compile(r"`([^`\n]{2,80})`")
+#: A fenced block's contents — commands and config are claims too, and a
+#: memory whose evidence is a command line carries no backticked symbol.
+_ANCHOR_FENCE = re.compile(r"```[a-zA-Z0-9]*\n(.*?)```", re.DOTALL)
+#: Identifier-ish words inside a fence.
+_ANCHOR_WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_.\-]{3,}")
+#: Anchors this method can actually read. Everything else — a directory,
+#: a venv, a binary, a path outside the repo — is EXEMPT, not a finding.
+_ANCHOR_TEXT_SUFFIXES = frozenset(
+    {".py", ".md", ".toml", ".json", ".yml", ".yaml", ".cfg", ".ini", ".txt"}
+)
+
+
+def _anchor_tokens(body: str) -> set[str]:
+    """Distinctive strings a file supporting this body would contain.
+
+    Deliberately narrow on ONE axis and wide on another, and both
+    directions were measured rather than guessed.
+
+    Narrow: a token must look like an identifier, not like English. A
+    lowercase word with no underscore is prose that happened to be
+    backticked (`my_env`, `node_modules` in a memory about macOS hiding
+    dotfiles) and matching on it produces findings about nothing.
+
+    Wide: fenced blocks count. Restricting to backticked spans made the
+    check fire on a memory whose load-bearing claim is a shell command
+    chain mirrored in `ci.yml` — its anchor was doing real work, and the
+    extractor simply could not see the evidence. Reading fences removed
+    that false positive without costing a true one.
+    """
+    out: set[str] = set()
+
+    def _keep(raw: str) -> None:
+        leaf = raw.strip().rstrip("()").split(".")[-1]
+        if len(leaf) < 4:
+            return
+        if "_" in leaf or "-" in leaf or (leaf[:1].isupper() and leaf.lower() != leaf):
+            out.add(leaf)
+
+    for span in _ANCHOR_BACKTICKED.findall(body):
+        token = span.strip().rstrip("()")
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*(?:[._][A-Za-z0-9_]+)*", token):
+            _keep(token)
+    for block in _ANCHOR_FENCE.findall(body):
+        for word in _ANCHOR_WORD.findall(block):
+            _keep(word)
+    return out
+
+
+def _readable_anchor(raw: str, root: Path) -> Path | None:
+    """The attested path as an in-`root`, text-like FILE, or None.
+
+    None means "this method cannot judge it", never "it is wrong". The
+    store legitimately attests directories, virtualenvs and absolute
+    paths on other machines; treating any of those as a finding is how a
+    diagnostic earns a reputation for noise and stops being read.
+    """
+    path = Path(raw)
+    if not path.is_absolute():
+        path = root / path
+    try:
+        resolved = path.resolve()
+        if not resolved.is_relative_to(root):
+            return None
+    except (OSError, ValueError):  # pragma: no cover - defensive
+        return None
+    if not resolved.is_file() or resolved.suffix not in _ANCHOR_TEXT_SUFFIXES:
+        return None
+    return resolved
+
+
+def _check_attestation_anchors(directory: Path, cwd: Path) -> Diagnosis:
+    """Do a memory's attested paths carry the claims they attest?
+
+    `memory_verify(id, verified_paths=[...])` records the files someone
+    read to confirm a memory. Everything downstream trusts that list:
+    `path_drift` watches those paths, and `commit_drift` counts commits
+    against them to decide whether a calendar-fresh memory has gone
+    stale. All of it assumes the list points at the right files.
+
+    `path_drift` only catches an anchor whose file is MISSING. An anchor
+    that EXISTS but is irrelevant is invisible to every current signal —
+    and it is the worse failure, because the memory then reads green
+    forever while its real ground truth moves unwatched. The live
+    instance that motivated this: a memory attesting a 3,166-line
+    `eval.py` for a claim about symbols that had never been under `src/`
+    at all, its drift detector pointed at an unrelated file for months.
+
+    The test is deliberately weak and one-directional: extract the
+    body's distinctive symbols, and require at least ONE attested file
+    to contain at least ONE of them. That cannot prove an anchor
+    supports a claim — only that it mentions the vocabulary. It is a
+    smoke alarm, not a proof, and it is tuned so that everything it
+    cannot judge is silent:
+
+    * no attestation at all -> nothing to check
+    * no identifier-shaped tokens in the body -> exempt, because
+      preferences, directives and decisions legitimately have no code
+      anchor and flagging them would drown the real findings
+    * no attested path this can read -> exempt (see `_readable_anchor`)
+    * memories from another repo -> skipped, since their anchors resolve
+      against a worktree this process is not in
+
+    Measured on a 189-memory store: 63 unanchored, 65 exempt for tokens,
+    25 exempt for unreadable anchors, 36 checked, 1 finding — which was
+    a genuine mis-anchor. Reported, never auto-fixed: only a reader can
+    say which file actually backs a claim.
+    """
+    from .origin import _git_worktree_root
+
+    raw_root = _git_worktree_root(cwd)
+    root = Path(raw_root).resolve() if raw_root else None
+    if root is None:
+        return Diagnosis(
+            name="attestation_anchors",
+            status="ok",
+            message="not inside a git worktree; attested paths can't be resolved.",
+        )
+    try:
+        memories = Store(directory).load_all()
+    except Exception as exc:  # pragma: no cover - defensive
+        return Diagnosis(
+            name="attestation_anchors",
+            status="ok",
+            message=f"could not load memories to check attestations ({exc}).",
+        )
+
+    checked = 0
+    offenders: list[dict[str, Any]] = []
+    for memory in memories:
+        anchors = list(getattr(memory, "verified_paths", None) or [])
+        if not anchors:
+            continue
+        tokens = _anchor_tokens(memory.body)
+        if not tokens:
+            continue
+        readable = [p for raw in anchors if (p := _readable_anchor(raw, root))]
+        if not readable:
+            continue
+        checked += 1
+        if any(
+            token in text
+            for path in readable
+            if (text := _read_text_or_none(path)) is not None
+            for token in tokens
+        ):
+            continue
+        offenders.append(
+            {
+                "id": memory.id,
+                "symbols": sorted(tokens)[:8],
+                "attested": [str(p.relative_to(root)) for p in readable],
+            }
+        )
+
+    details = {"checked": checked, "findings": offenders}
+    if not offenders:
+        return Diagnosis(
+            name="attestation_anchors",
+            status="ok",
+            message=(
+                f"{checked} attested memory/-ies checked; each names at least "
+                "one symbol its attested files carry. This is a smoke alarm, "
+                "not proof the anchors support the claims."
+            ),
+            details=details,
+        )
+    return Diagnosis(
+        name="attestation_anchors",
+        status="warn",
+        message=(
+            f"{len(offenders)} of {checked} attested memory/-ies name symbols "
+            "that appear in NONE of their attested files. Those attestations "
+            "may be watching the wrong ground truth — path_drift stays green "
+            "on a file that exists, and commit_drift counts commits against "
+            f"it. First: {offenders[0]['id']} -> {offenders[0]['attested']}."
+        ),
+        fix_hint=(
+            "Re-read each flagged memory and call memory_verify(id, "
+            "verified_paths=[...]) with the files you ACTUALLY read to "
+            "confirm it — never the files the body happens to mention, and "
+            "never the previous attestation copied forward. If the claim is "
+            "genuinely about something outside this repo (a venv, another "
+            "machine), the anchor list should say so rather than naming an "
+            "in-repo file that carries none of it."
+        ),
+        details=details,
+    )
+
+
+def _read_text_or_none(path: Path) -> str | None:
+    """File contents, or None when unreadable — an unreadable anchor is
+    not evidence of a bad anchor."""
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:  # pragma: no cover - defensive
+        return None
+
+
 def _check_retrieval_discrimination(directory: Path, cfg: Config) -> Diagnosis:
     """Can this store still be found by the questions a model asks?
 
@@ -2750,6 +2951,12 @@ def run_diagnostics() -> DoctorReport:
             _safe(
                 "retrieval_discrimination",
                 lambda: _check_retrieval_discrimination(directory, cfg),
+            )
+        )
+        checks.append(
+            _safe(
+                "attestation_anchors",
+                lambda: _check_attestation_anchors(directory, Path.cwd()),
             )
         )
 

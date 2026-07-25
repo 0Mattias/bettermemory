@@ -41,6 +41,16 @@ Reading it honestly:
   roughly two to one — because the attestation tooling matured
   mid-history: early events couldn't carry signals that now exist.
   Read the trend, not either column alone.
+- **The `silent_miss_rate` figures are a floor, and the low value is
+  substantially an artifact of message length.** The v1 verdict fires on
+  a coverage fraction whose denominator grows with the user's message,
+  so on the same 195-turn sample the label's `high` rate runs 45% → 32%
+  → 0% → 3% across increasing message length: a long turn is close to
+  unflaggable, and long turns are the ones most likely to have needed
+  memory. Read a rise as signal; do not read 0.01 as evidence the store
+  is being retrieved well. The full measurement, and why the shadow
+  `relevance_v2` label makes it worse rather than better, are in
+  [eval.md](eval.md#silent_miss_rate).
 - The log has now recorded its **first silent misses**: 2 all-time,
   both inside the 30-day window — one each on `claude-sonnet-5` and
   `claude-opus-4-8`; see the per-model table. A third probe flag was

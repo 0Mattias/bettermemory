@@ -17,15 +17,17 @@ but the durable output is machinery. Four times a manual sweep for false
 prose was replaced by a test that re-derives the claim, and three times
 that machinery was then audited and found weaker than its own docstring.
 
-The one genuinely new capability is the last of those ratchets pointed at
-retrieval itself: `doctor` can now measure whether a store can still be
-*found* by the questions a model asks, which nothing here previously
-checked.
+The genuinely new capability is two ratchets pointed at the store's own
+honesty: `doctor` can now measure whether a store can still be *found* by
+the questions a model asks, and whether the attestations underneath its
+freshness signals point at files that carry the claims they attest.
+Neither was checked by anything before.
 
 Minor rather than patch: `patterns.clusterable_episodes` is new public
 API, three response shapes gain keys (`episodes_clustered`,
-`gc_deferred`, `pending_rows_on_disk`), and `doctor` reports one new
-check name (`retrieval_discrimination`) in its text and `--json` output.
+`gc_deferred`, `pending_rows_on_disk`), and `doctor` reports two new
+check names (`retrieval_discrimination`, `attestation_anchors`) in its
+text and `--json` output.
 `SCHEMA_VERSION` is unchanged, no tool gains or loses a parameter, and
 the shipped default ranking is byte-stable — the new check only reads.
 
@@ -354,6 +356,37 @@ ranked sixth.
   document's own words. It is a floor — a low score proves a problem, a
   high score proves only that this particular failure is absent — and it
   is explicitly not a helpfulness metric.
+
+### Added — `doctor` checks whether an attestation points at the claim
+
+`memory_verify(id, verified_paths=[...])` records the files someone read to
+confirm a memory, and everything downstream trusts that list: `path_drift`
+watches those paths, `commit_drift` counts commits against them to decide
+whether a calendar-fresh memory has gone stale.
+
+- `path_drift` only catches an anchor whose file is **missing**. An anchor
+  that exists but is **irrelevant** was invisible to every signal — and it is
+  the worse failure, because the memory reads green forever while its real
+  ground truth moves unwatched. The instance that prompted this: a memory
+  attesting a 3,166-line `eval.py` for a claim about symbols that had never
+  been under `src/` at all.
+- **`attestation_anchors`** extracts the body's identifier-shaped tokens and
+  requires at least one attested file to contain at least one of them. That
+  proves only that an anchor mentions the vocabulary, never that it supports
+  the claim — it is a smoke alarm, and says so.
+- Tuned so everything it cannot judge stays silent, because a diagnostic that
+  fires on the unjudgeable stops being read. Exempt: memories with no
+  attestation, memories with no identifier-shaped tokens (preferences and
+  directives legitimately have no code anchor), and memories whose anchors
+  this method cannot read — directories, virtualenvs, paths outside the repo.
+  Fenced blocks count as evidence, which removed the one measured false
+  positive: a memory whose load-bearing claim was a command chain mirrored in
+  `ci.yml`, where the anchor was doing real work the extractor couldn't see.
+- Measured on a 189-memory store: 63 unanchored, 65 exempt for tokens, 25
+  exempt for unreadable anchors, 36 checked, **1 finding** — a memory about
+  virtualenv contents attesting `src/bettermemory/builder.py`, so its
+  commit-drift tracked a file unrelated to every claim it made. Re-anchored;
+  the check now reports clean.
 
 ### Changed — `memory_search` documents how to word a query
 

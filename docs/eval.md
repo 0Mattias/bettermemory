@@ -79,6 +79,32 @@ have surfaced a high-relevance hit and the model made no
 The threshold rule is versioned (`THRESHOLD_RULE_V1 = "v1_top1_high"`)
 and recorded on every event.
 
+**Read this rate as a floor, not a health score.** The v1 verdict fires
+on a *coverage* label — the top hit matched ≥75% of the query's
+distinctive tokens — and that denominator grows with the user's message.
+Measured over 195 audited turns on a 185-memory store, the label's
+"high" rate by message length:
+
+| user message chars | 0–40 | 40–80 | 80–150 | 150+ |
+|---|---|---|---|---|
+| v1 `high` | 45% | 32% | **0%** | 3% |
+
+So a long turn is close to unflaggable, and long turns are the ones most
+likely to have needed memory. A low `silent_miss_rate` is therefore
+substantially a statement about message length, not about retrieval: it
+can't distinguish "the model rarely misses" from "this user writes long
+prompts." A **rising** rate is still meaningful; a low one is not
+evidence of health.
+
+The shadow `relevance_v2` label was built to close exactly this blind
+spot and does not: adding an absolute matched-token floor takes the same
+buckets to 47% / 63% / 83% / **100%**, trading a length-blind rule for a
+length-credulous one. Both are pinned in `_relevance_label_v2`'s
+docstring with the reasoning, and the conjunctive form
+(`coverage ≥ 0.75 AND matched ≥ 4`) is the candidate a successor rule
+should be calibrated from — against labelled turns, since length
+independence can rank candidates but never confirm one.
+
 ### Invalidation
 
 All rate surfaces (`memory_health`, `memory_scope_overview`,
@@ -96,8 +122,11 @@ All rate surfaces (`memory_health`, `memory_scope_overview`,
 
 ## Reading the three together
 
-The healthy regime is high `memory_helped_rate`, high
-`endorsement_rate`, low `silent_miss_rate`. Common failure signatures:
+The healthy regime is high `memory_helped_rate` and high
+`endorsement_rate`. `silent_miss_rate` does **not** belong in that
+sentence in the obvious direction — see the caveat under its own heading:
+low is the default whatever the store is doing, so it earns attention
+when it *rises*, not when it sits near zero. Common failure signatures:
 
 - High retrieval count, low `memory_helped_rate`: ranker over-firing;
   prune the store or tune thresholds.
