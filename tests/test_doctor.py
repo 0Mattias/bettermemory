@@ -1264,10 +1264,11 @@ def test_embeddings_extra_fails_when_enabled_but_missing(
 def _force_no_embeddings(monkeypatch: pytest.MonkeyPatch) -> None:
     """Pin the probe's "is there a non-lexical signal?" short-circuit to
     False, so these tests measure the lexical path on every machine —
-    including one where an extra happens to be installed."""
+    including one where an extra happens to be installed AND routed into
+    ranking."""
     monkeypatch.setattr(
-        "bettermemory.doctor._semantic_importable",
-        lambda: False,
+        "bettermemory.doctor._semantic_rank_leg_active",
+        lambda _cfg: False,
     )
 
 
@@ -1389,6 +1390,48 @@ def test_retrieval_discrimination_skips_scopes_too_small_to_measure(
     assert diag.details.get("scopes") is None
 
 
+def test_retrieval_discrimination_does_not_skip_on_a_merely_installed_extra(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """REGRESSION. The first shipped version of this check skipped whenever
+    an embeddings extra was importable, which is not the same question.
+
+    Under the DEFAULT `search_mode = "hybrid"` with `semantic_dedup =
+    false`, `_semantic_model_configured` never opens, so the factory
+    returns None and ranking is purely lexical NO MATTER what is
+    installed. Skipping there reported `ok` for precisely the config that
+    most needs the warning. The skip now runs through
+    `_semantic_rank_leg_active`, which also requires the config to route
+    the model into ranking — so an installed-but-unrouted extra must
+    still be probed and still warn.
+    """
+    # Both extras importable, yet the default config routes neither.
+    monkeypatch.setattr(
+        "bettermemory.semantic_setup._embeddings_extra_importable",
+        lambda: True,
+    )
+    from bettermemory.store import Store
+
+    store = Store(tmp_path)
+    shared = (
+        "deployment pipeline release rollout staging cluster service "
+        "container registry manifest revision"
+    )
+    _seed_scope(
+        store,
+        "ops",
+        [f"{shared} sentinel{i:02d}kryptonite zzq{i:02d}plutonium" for i in range(20)],
+    )
+    cfg = _config_for(tmp_path, search_mode="hybrid", semantic_dedup=False)
+    diag = _check_retrieval_discrimination(tmp_path, cfg)
+    assert diag.status == "warn", (
+        "an importable-but-unrouted extra must not silence the check — "
+        "ranking is still lexical-only in this configuration"
+    )
+    assert diag.details["scopes"], "the probe must actually have run"
+
+
 def test_retrieval_discrimination_short_circuits_when_semantic_available(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1396,8 +1439,8 @@ def test_retrieval_discrimination_short_circuits_when_semantic_available(
     """With a non-lexical signal in play the lexical ceiling does not
     bind, so the probe must not run — and must not spend its searches."""
     monkeypatch.setattr(
-        "bettermemory.doctor._semantic_importable",
-        lambda: True,
+        "bettermemory.doctor._semantic_rank_leg_active",
+        lambda _cfg: True,
     )
 
     def explode(*_args: Any, **_kwargs: Any) -> Any:  # pragma: no cover

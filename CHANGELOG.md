@@ -336,10 +336,19 @@ ranked sixth.
   (`c58c836`) and deliberately kept; the consequence is that the ceiling
   falls as a scope grows more coherent, and coherent scopes are exactly
   what good scope hygiene produces.
-- Reported, never auto-fixed, and it short-circuits to `ok` when an
-  embeddings extra is importable. The lever is a non-term-frequency
-  ranking signal, which is an install-weight decision for the operator;
-  `fix_hint` names it and nothing acts on it.
+- Reported, never auto-fixed. It skips only when a semantic leg would
+  *actually score a search* — the new shared predicate
+  `semantic_setup._semantic_rank_leg_active`, which requires an importable
+  extra AND a config that routes it into ranking. Importability alone is
+  not that: under the default `search_mode = "hybrid"` with
+  `semantic_dedup = false` the model never resolves, so ranking stays
+  lexical no matter what is installed, and skipping there would report
+  `ok` for exactly the configuration that most needs the warning. The
+  `fix_hint` therefore names both halves, and notes that the one flag
+  which routes the model also switches write-time dedup from Jaccard to
+  cosine — a coupling `_search_mode_needs_model` documents and which
+  decoupling would require the write path to stop reading the shared
+  factory.
 - The docstring states what the probe cannot see: a high score does not
   mean retrieval is good, because real queries are not bags of a
   document's own words. It is a floor — a low score proves a problem, a

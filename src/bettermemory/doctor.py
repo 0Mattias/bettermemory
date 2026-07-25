@@ -58,6 +58,7 @@ from .config import Config, TelemetryConfig, load_config
 from .eval import is_admin_recorded_event
 from .events import EVENT_LOG_FILENAME, iter_all_events
 from .init import KNOWN_CLIENTS, command_launches_bettermemory, find_binary
+from .semantic_setup import _semantic_rank_leg_active
 from .store import Store, count_active_memory_files, count_unparseable_memory_files
 
 
@@ -1990,18 +1991,30 @@ def _check_retrieval_discrimination(directory: Path, cfg: Config) -> Diagnosis:
     coherent, and coherent scopes are what good scope hygiene produces.
 
     Reported, never auto-fixed. The lever is a ranking signal that is not
-    term-frequency based — an embeddings extra plus `search_mode` — and
-    that is an install-weight decision for the operator, not something a
-    diagnostic should make. `fix_hint` names it; nothing acts on it.
+    term-frequency based — an embeddings extra AND a config that actually
+    routes it into ranking — and that is an install-weight decision for
+    the operator, not something a diagnostic should make. `fix_hint`
+    names it; nothing acts on it.
+
+    The skip condition is `_semantic_rank_leg_active`, which is stricter
+    than "an extra is installed" ON PURPOSE. An importable extra is not a
+    semantic leg: with the DEFAULT `search_mode = "hybrid"` and
+    `semantic_dedup = false`, `_semantic_model_configured` never opens, so
+    the factory returns None and ranking stays purely lexical no matter
+    what is installed. Skipping on importability alone would report `ok`
+    for exactly the configuration that most needs the warning — a
+    green light computed over the wrong input, which is the failure this
+    check exists to expose.
     """
-    if cfg.behavior.search_mode in ("semantic", "hybrid") and _semantic_importable():
+    if _semantic_rank_leg_active(cfg):
         return Diagnosis(
             name="retrieval_discrimination",
             status="ok",
             message=(
                 f"search_mode = {cfg.behavior.search_mode} with an embeddings "
-                "extra importable; ranking has a non-lexical signal, so the "
-                "lexical vocabulary ceiling this check probes does not bind."
+                "extra importable and a config that routes it into ranking; "
+                "a non-lexical signal scores every search, so the lexical "
+                "vocabulary ceiling this check probes does not bind."
             ),
         )
     try:
@@ -2072,34 +2085,20 @@ def _check_retrieval_discrimination(directory: Path, cfg: Config) -> Diagnosis:
             "little signal for a lexical query to single a memory out."
         ),
         fix_hint=(
-            "Add a non-lexical ranking signal: install an embeddings extra "
-            "(`bettermemory[embeddings-fast]` is the lighter ONNX path) and "
-            'set `[behavior] search_mode = "hybrid"`. Weigh the install '
-            "size first — this is reported, never auto-applied."
+            "Add a non-lexical ranking signal — BOTH halves are needed. "
+            "Install an embeddings extra (`bettermemory[embeddings-fast]` "
+            "is the lighter ONNX path), AND route it into ranking: the "
+            'default `search_mode = "hybrid"` does NOT on its own, because '
+            "the model only resolves when `[behavior] semantic_dedup = "
+            'true` or `search_mode = "semantic"`. Prefer hybrid + '
+            "semantic_dedup = true, which keeps the two lexical legs (they "
+            "score 100% on rare-term queries) and fuses a third; note it "
+            "also switches write-time dedup from Jaccard to cosine, since "
+            "one flag gates both consumers. Weigh the install size first — "
+            "this is reported, never auto-applied."
         ),
         details=details,
     )
-
-
-def _semantic_importable() -> bool:
-    """True when either embeddings extra can be imported.
-
-    Mirrors what `semantic.get_model` will find at runtime rather than
-    asking the config what it wants, because the whole failure this
-    guards is a config that asks for a model no install can supply.
-    """
-    try:
-        import sentence_transformers  # noqa: F401  # pyright: ignore[reportMissingImports]
-
-        return True
-    except ImportError:
-        pass
-    try:
-        import fastembed  # noqa: F401  # pyright: ignore[reportMissingImports]
-
-        return True
-    except ImportError:
-        return False
 
 
 def _check_embeddings_extra(cfg: Config) -> Diagnosis:

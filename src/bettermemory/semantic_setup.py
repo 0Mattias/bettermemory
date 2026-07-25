@@ -111,6 +111,66 @@ def _semantic_model_configured(config: Config) -> bool:
     return bool(config.behavior.semantic_dedup) or _search_mode_needs_model(config)
 
 
+def _semantic_rank_leg_active(config: Config) -> bool:
+    """True only when a semantic leg would ACTUALLY score a search.
+
+    Three conditions, and all of them are load-bearing — this is the
+    predicate to reach for whenever the question is "does ranking have a
+    non-lexical signal right now", because each condition alone is a
+    false positive waiting to happen:
+
+    1. ``_semantic_model_configured`` — the config asks some consumer for
+       a model. Necessary, not sufficient: it opens on
+       ``semantic_dedup`` under EVERY mode, including the ones the
+       search handler never hands a model to.
+    2. the mode ``handlers.search.memory_search`` resolves is one it
+       resolves a model FOR (``hybrid`` / ``semantic``). Under
+       ``keyword`` / ``bm25`` the handler passes ``semantic_model=None``
+       no matter what the dedup flag says.
+    3. an embeddings extra imports. Without one the factory returns
+       ``None``, ``hybrid`` degrades to keyword+bm25 and ``semantic``
+       raises — neither is a semantic leg.
+
+    Deliberately NOT normalised: the mode comparison mirrors the handler,
+    which does no normalising, so a differently-cased ``"Hybrid"``
+    correctly reads as "no semantic leg" here because it gets no model
+    there either.
+
+    **Not a clone of ``web._lexical_only_note``'s gate, and must not be
+    merged with it.** That one deliberately omits condition 3: it asks
+    whether ``memory_search``'s ranking could differ from the web page's,
+    and answers the no-extra case in prose (naming both branches) rather
+    than by suppressing the caveat. Same two first conditions, different
+    question, different correct answer.
+    """
+    if not _semantic_model_configured(config):
+        return False
+    if (config.behavior.search_mode or "hybrid") not in ("semantic", "hybrid"):
+        return False
+    return _embeddings_extra_importable()
+
+
+def _embeddings_extra_importable() -> bool:
+    """True when either embeddings extra can be imported.
+
+    Mirrors what ``get_model`` will find at runtime rather than asking
+    the config what it wants — the failure this exists to catch is a
+    config that asks for a model no install can supply.
+    """
+    try:
+        import sentence_transformers  # noqa: F401  # pyright: ignore[reportMissingImports]
+
+        return True
+    except ImportError:
+        pass
+    try:
+        import fastembed  # noqa: F401  # pyright: ignore[reportMissingImports]
+
+        return True
+    except ImportError:
+        return False
+
+
 def _semantic_model_or_none(config: Config) -> Any:
     """Lazy load the embedding model when a configured consumer needs
     it: write-dedup (``semantic_dedup = true``) or retrieval
