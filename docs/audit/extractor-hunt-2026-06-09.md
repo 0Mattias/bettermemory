@@ -30,21 +30,49 @@ file-disjoint parallel batches, and adversarially verified:
 - **The rest parked as feature-class work** (see below) — proportionate
   fixes need new architecture, not heuristic tweaks.
 
-One JSON entry was **listed in error and never open**: *"worktree_root
-strict equality hides ALL memories for a repo after the checkout moves,
-is re-cloned, or the store syncs to another machine"*
-(`src/bettermemory/origin.py`). It is the medium-rated twin of the HIGH
-that b0ab779 — the parking commit itself — fixed, shipped in v3.9.0:
-`worktrees_match` gained the linked-worktree and dead-worktree
-relaxations, so a memory whose recorded `worktree_root` no longer exists
-degrades to repo-level matching. Re-measured at 3.28.0 against the
-surface rather than the helper: a memory written in one checkout still
-comes back from `memory_search`/`memory_scope_overview` after the
-directory is renamed, and after arriving over `sync` carrying another
-machine's absolute path; a second checkout that is still live on disk
-stays isolated, which is the boundary of the degrade. Those three are
-pinned end-to-end in `tests/test_server_origin.py` — read them rather
-than the JSON entry for the current behaviour.
+One JSON entry was **filed and fixed by the same commit**, so it should
+not have been in the parked 146: *"worktree_root strict equality hides
+ALL memories for a repo after the checkout moves, is re-cloned, or the
+store syncs to another machine"* (`src/bettermemory/origin.py`, severity
+`medium`). Not "never open", as an earlier revision of this section
+said: at the hunt's base 874b0b0 — the commit v3.8.0 tags —
+`worktrees_match` was plain string equality, and the reported blackout
+reproduces against that core. b0ab779, the commit that
+wrote this queue, gave the same helper its linked-worktree and
+dead-worktree relaxations in that one change, shipped in v3.9.0 as the
+"Auto-scope (HIGH): linked-worktree blackout" entry; the dead-worktree
+leg is what reaches this finding, degrading to repo-level matching once
+the recorded `worktree_root` no longer exists on disk. The HIGH it
+shares that helper with is named in b0ab779's message and in the v3.9.0
+changelog, not in the JSON — the parked file carries no HIGH entries at
+all (124 medium, 22 low).
+
+Re-measured at 3.28.0 (in 5a960a3) against the surface rather than the
+helper: a memory written in one checkout still comes back from
+`memory_search`, and still counts in `memory_scope_overview`'s `total`,
+after the directory is renamed and after arriving over `sync` carrying
+another machine's absolute path; put the pre-3.9.0 equality core back and
+the same probe's search comes back empty with `total` at 0. A second checkout still live on disk stays isolated —
+the boundary of the degrade, not a hole in it. Those three cases are
+pinned end-to-end in the checkout-path-lifecycle section of
+`tests/test_server_origin.py`
+(`test_project_memories_survive_a_checkout_move`,
+`test_synced_memory_from_another_machine_surfaces_locally`,
+`test_second_live_checkout_of_one_repo_stays_isolated`), with
+`test_dead_worktree_memory_degrades_to_repo_match` in
+`tests/test_origin.py` as the unit-level twin.
+
+One site the entry named does NOT inherit that degrade:
+`_count_recent_tombstones`
+(`src/bettermemory/handlers/scope_overview.py`) still compares the
+recorded and caller `worktree_root` with raw `!=`. Measured on the same
+rename, `memory_scope_overview`'s `recently_removed_in_worktree` goes
+1 → 0 while `total` stays 1, and `auto_scope=False` counts it again.
+That field is worktree-scoped by name and by its own docstring, so
+whether it should follow the relaxation is an open question rather than
+a filed defect. Which splits how to read the entry: on retrieval it
+describes v3.8.0's helper and the tests above are the record of current
+behaviour; on the tombstone window its description still holds.
 
 Per-finding dispositions are journaled in the audit-loop episodes
 (scope `projects:bettermemory`, 2026-06-10) and the queue memory

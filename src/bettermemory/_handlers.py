@@ -100,10 +100,10 @@ DESC_MEMORY_WRITE_CONFIRM = _handlers_pkg.DESC_MEMORY_WRITE_CONFIRM
 # Module-level rather than `ToolHandlers` methods: the out-of-process Stop
 # hook (`hook.run_audit`) has only a `Store` — no dependency bundle — and
 # has to build the SAME candidate pool `memory_search` ranks, or the
-# silent-miss probe measures a retrieval production never performed.
-# The extraction also rewrote the one consumer to call them directly with
-# an explicit `Store`, so `ToolHandlers` no longer routes anything through
-# them — see the surviving alias below for what that leaves behind.
+# silent-miss probe measures a retrieval production never performed. The
+# one consumer, `handlers.search.resolve_search_pool`, takes that `Store`
+# as its first argument and calls `load_search_candidates` with it, so
+# nothing here is reached through the dependency bundle.
 
 
 # The store size above which the FTS5 candidate pre-filter is
