@@ -299,18 +299,22 @@ _ILLUSTRATIVE_CUE = re.compile(
 # lookback, since the tense marker often sits ahead of the symbol
 # ("Pre-Round-3 `build_server` and `_register_tools` lived in ...").
 #
-# Two consumers now, reading this differently, so editing it has both as
-# its blast radius. `check_symbols` below searches the whole lookback for
-# any alternative, which is affordable because the claim it guards is
-# already narrowed to the two-token `sym` in `mod.py` shape. The ratchet in
-# `tests/test_symbol_citations.py` imports the same pattern for a far wider
-# surface — every backticked token in every docstring and comment — and
-# there the marker must ATTACH to the citation it excuses, because `was`,
-# `were`, `before`, `until`, `once`, `old`, `moved`, `dropped` and
-# `renamed` are ordinary English before they are tense markers, and a
-# blanket search exempted any citation that merely shared a sentence with
-# one. That module's seam test fails loudly if an alternative here
-# disappears, and equally if one grows until it matches everything.
+# One consumer of the pattern as a suppressor: `check_symbols` below, which
+# searches the whole lookback for any alternative. That is affordable here
+# because the claim it guards is already narrowed to the two-token `sym` in
+# `mod.py` shape, which is what these alternatives were tuned for.
+#
+# The ratchet in `tests/test_symbol_citations.py` reads it for a second,
+# weaker purpose. That module runs over a far wider surface — every
+# backticked token in every docstring and comment — where these
+# alternatives are ordinary English before they are tense markers: `was`,
+# `were`, `before`, `until`, `once`, `old`, `moved`, `dropped`, `renamed`.
+# It therefore keeps its OWN narrower list of attributive markers and
+# imports this one only as an outer bound, asserting that every marker of
+# its own is recognised here too. So a marker deleted from this pattern
+# fails that module's subset guard if it is one the module also uses, and a
+# marker widened here cannot widen that module's exemption at all.
+# `_RELOCATION_LOOKBACK` below is a real shared input to it, though.
 _RELOCATION_PROSE = re.compile(
     r"\b(lived|moved|used to|previously|formerly|no longer|was|were|removed"
     r"|dropped|renamed|once|before|pre-\w+|until|old|former)\b",
