@@ -68,7 +68,11 @@ DESC_MEMORY_CONFLICTS = (
     "- `scan=True`: run detection over the active set now and merge "
     "new candidates into the queue (also happens automatically on "
     "every applying memory_curate / auto-consolidate pass). Returns "
-    "the merge counters plus the pending list.\n"
+    "the merge counters plus the pending list. One counter there — "
+    "`pending_rows_on_disk` — counts rows in the queue FILE, not "
+    "judgeable work, so it can exceed the `pending_total` beside it; "
+    "when a row's dead member is what put it above, `hint` says how "
+    "many and why the scan left them there.\n"
     "- `resolve=<candidate_id>` + `verdict`: rule on one pair.\n"
     "  - `verdict='contradiction'` — genuinely disagree. Writes a "
     "`contradicts` link (a→b; pass `note` with WHY — future curators "
@@ -121,6 +125,7 @@ async def memory_conflicts(
 
     queue = ConflictQueue(deps.store.root)
     out: dict[str, Any] = {}
+    counters: dict[str, int] | None = None
 
     if resolve is not None:
         out["resolved"] = _resolve_verdict(
@@ -142,35 +147,92 @@ async def memory_conflicts(
     rows, listable, omitted = _render_pending(deps, pending, max_results=max_results)
     out["pending"] = rows
     out["pending_total"] = listable
-    if resolve is None and not scan:
-        if omitted:
-            # Say it once, in the one place that knows the number. The
-            # row is NOT dropped here (see `_render_pending`), so the
-            # remedy has to name the scan. No counter contradicts this
-            # hint any more: the session-start rollup filters the same
-            # rows out through the same `split_judgeable`, so the only
-            # number that still sees them is the on-disk row count,
-            # which no tool response reports.
-            out["hint"] = (
-                f"{omitted} queued candidate(s) name a memory that is no "
-                "longer active, so they are omitted from `pending` and "
-                "`pending_total` — a one-sided pair cannot be judged. The "
-                "rows sit in the queue until a full scan collects them: "
-                "memory_conflicts(scan=True), or the automatic scan every "
-                "applying curation pass runs (a scan reports `gc_deferred` "
-                "instead when the store holds a file it could not read — "
-                "collecting on that evidence would delete settled verdicts). "
-                "Nothing advertises them "
-                "meanwhile — memory_scope_overview's "
-                "curation_pending.conflicts leaves them out too."
-            )
-        elif not rows:
-            out["hint"] = (
-                "No pending conflict candidates. Run memory_conflicts(scan=True) "
-                "after bulk writes, or rely on the automatic scan every applying "
-                "curation pass performs."
-            )
+    if resolve is None:
+        hint = _pending_hint(omitted, listed=bool(rows), scan_counters=counters)
+        if hint is not None:
+            out["hint"] = hint
     return out
+
+
+# The two numbers a `hint` has to hold apart, and the remedies for the
+# gap between them. Assembled rather than inlined per branch: the
+# omitted-row explanation is one fact and the mode only changes what to
+# do about it, so the modes cannot drift into two accounts of the same
+# state.
+_UNJUDGEABLE_ROWS = (
+    "{n} queued candidate(s) name a memory that is no longer active, so "
+    "they are omitted from `pending` and `pending_total` — a one-sided pair "
+    "cannot be judged. No count of arbitration work advertises them: "
+    "memory_scope_overview's curation_pending.conflicts runs the same rows "
+    "through the same filter. A scan's `pending_rows_on_disk` is the counter "
+    "that does include them, because it counts the queue FILE rather than "
+    "judgeable work."
+)
+_COLLECT_BY_SCANNING = (
+    "The rows sit in the queue until a full scan collects them: "
+    "memory_conflicts(scan=True), or the automatic scan every applying "
+    "curation pass runs. A scan collects nothing and reports "
+    "`gc_deferred=1` instead whenever it cannot prove its snapshot "
+    "accounted for every `.md` file under the store root — a file it could "
+    "not read must not look like a dead conflict member and take a settled "
+    "verdict with it."
+)
+_GC_WAS_DEFERRED = (
+    "The scan just run reported `gc_deferred=1`: it could not prove its "
+    "snapshot accounted for every `.md` file under the store root, so it "
+    "collected nothing rather than delete a settled verdict on the evidence "
+    "of a bad read. These rows are what it left behind; the next pass that "
+    "reads the store completely collects the ones whose member is really "
+    "gone."
+)
+_GC_RAN_ANYWAY = (
+    "The scan just run did collect (`gc_deferred=0`), so these rows turned "
+    "one-sided only after its snapshot — a member removed, or a file that "
+    "stopped reading, in the moment since. The next scan collects them or "
+    "lists them again, depending on which it was."
+)
+_NOTHING_PENDING = (
+    "No pending conflict candidates. Run memory_conflicts(scan=True) "
+    "after bulk writes, or rely on the automatic scan every applying "
+    "curation pass performs."
+)
+
+
+def _pending_hint(
+    omitted: int,
+    *,
+    listed: bool,
+    scan_counters: dict[str, int] | None,
+) -> str | None:
+    """The prose beside the counts — `None` when the numbers stand alone.
+
+    Said once, in the one place that knows how many rows the listing had
+    to leave out. `scan_counters` is the merge result when this call ran
+    a scan and `None` when it only listed, which decides the remedy: a
+    scan cannot be prescribed as the fix by the response of a scan that
+    just ran.
+
+    Scan mode gets this hint at all because it is the only mode whose
+    payload carries the raw queue-file count (`pending_rows_on_disk`)
+    beside the judgeable `pending_total`, and a scan that deferred
+    collection is exactly the pass that leaves those two apart. Silence
+    there left one payload holding two different numbers for two
+    different questions with nothing naming which was which.
+
+    The empty-queue nudge stays list-only: prescribing a scan in the
+    response of the scan that just ran is noise.
+    """
+    if omitted:
+        if scan_counters is None:
+            remedy = _COLLECT_BY_SCANNING
+        elif scan_counters.get("gc_deferred"):
+            remedy = _GC_WAS_DEFERRED
+        else:
+            remedy = _GC_RAN_ANYWAY
+        return f"{_UNJUDGEABLE_ROWS.format(n=omitted)} {remedy}"
+    if not listed and scan_counters is None:
+        return _NOTHING_PENDING
+    return None
 
 
 def _render_pending(

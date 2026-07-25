@@ -131,12 +131,12 @@ def test_queue_upsert_resolve_and_resurrect(tmp_path: Path) -> None:
     )
 
     first = scan_conflicts(root, [a, b])
-    assert first["added"] == 1 and first["pending_total"] == 1
+    assert first["added"] == 1 and first["pending_rows_on_disk"] == 1
 
     # Idempotent re-scan: refreshed, not duplicated.
     second = scan_conflicts(root, [a, b])
     assert second["added"] == 0 and second["refreshed"] == 1
-    assert second["pending_total"] == 1
+    assert second["pending_rows_on_disk"] == 1
 
     queue = ConflictQueue(root)
     cand = queue.pending()[0]
@@ -159,7 +159,7 @@ def test_queue_upsert_resolve_and_resurrect(tmp_path: Path) -> None:
     third = ConflictQueue(root).upsert_scan(
         find_conflict_candidates(touched), {m.id: m for m in touched}
     )
-    assert third["resurrected"] == 0 and third["pending_total"] == 0
+    assert third["resurrected"] == 0 and third["pending_rows_on_disk"] == 0
 
     # ...but edited BODY resurrects the pair: the judged content is gone.
     a2 = a.model_copy(
@@ -451,7 +451,10 @@ async def test_e2e_dead_member_row_is_not_counted_as_pending(
 
     # Deliberate: listing is a read path and does not GC. The row lives
     # on disk until a scan — which is why the hint names the remedy —
-    # but no tool response advertises it.
+    # and no count of arbitration work advertises it. (The raw row count
+    # a scan reports, `pending_rows_on_disk`, does include it; this
+    # listing carries no such counter, and the scan that does carries the
+    # gap in its own `hint` — see the deferred-GC test below.)
     assert conflicts_pending_count(memory_dir) == 1
     overview = _unwrap(await _call(server, "memory_scope_overview"))
     assert overview["curation_pending"]["conflicts"] == 0
@@ -694,6 +697,81 @@ async def test_e2e_unreadable_member_file_does_not_destroy_a_settled_verdict(
     assert healthy["scan"]["resurrected"] == 0
     assert healthy["pending_total"] == 0
     assert [c.status for c in ConflictQueue(memory_dir).load()] == ["dismissed"]
+
+
+async def test_e2e_deferred_gc_scan_payload_is_self_consistent(
+    memory_dir: Path,
+) -> None:
+    """A scan that DEFERS GC is the payload that reports a raw
+    queue-file count and a judgeable count while the two disagree —
+    leaving rows the tool cannot offer sitting in the file is exactly
+    what deferring means. Those two numbers must not share a name.
+
+    `upsert_scan`'s counter is the RAW on-disk row count; the top-level
+    `pending_total` counts judgeable rows. Both shipped as
+    `pending_total`, so a deferred scan answered "how many pending?"
+    twice, 1 and 0, in one response and explained neither. The previous
+    round made `pending_total` and `curation_pending.conflicts` agree for
+    exactly this reason: a count that disagrees with what the tool can
+    act on erodes the count.
+    """
+    server = _build(memory_dir)
+    _a_id, b_id = await _seed_conflicting_pair(server)
+    # A third memory to break below: deferral needs the snapshot to
+    # under-count the root's `.md` files, and the pair's own two files
+    # have to keep parsing for the row to stay judgeable-shaped.
+    third = _unwrap(
+        await _call(
+            server,
+            "memory_write",
+            content="the nightly restic snapshot job uploads to the offsite bucket",
+            scopes=["infrastructure"],
+        )
+    )
+    scanned = _unwrap(await _call(server, "memory_conflicts", scan=True))
+    # Healthy pass: the two counts answer the same way, which is why the
+    # collision needed the deferred pass below to surface at all.
+    assert scanned["scan"]["pending_rows_on_disk"] == scanned["pending_total"] == 1
+    assert "hint" not in scanned
+
+    # One member dies, so its row is on disk and unjudgeable...
+    await _call(
+        server, "memory_remove", id=b_id, reason="the 5433 claim was plain wrong"
+    )
+    # ...and an unreadable third file makes the next scan defer
+    # collection, so the row survives the pass that normally collects it.
+    path = _member_file(memory_dir, third["id"])
+    original = path.read_text(encoding="utf-8")
+    path.write_text("---\nid: [unterminated\n---\nbroken\n", encoding="utf-8")
+
+    degraded = _unwrap(await _call(server, "memory_conflicts", scan=True))
+    assert degraded["scan"]["gc_deferred"] == 1
+    assert conflicts_pending_count(memory_dir) == 1
+
+    # Both numbers are reported, both are true, and each name says which
+    # question it answers.
+    assert degraded["scan"]["pending_rows_on_disk"] == 1
+    assert degraded["pending_total"] == len(degraded["pending"]) == 0
+    assert "pending_total" not in degraded["scan"]
+    # Structural: no key name occurs twice in one payload, so no future
+    # counter can reintroduce the collision under a different pair of
+    # meanings.
+    assert not set(degraded["scan"]) & set(degraded), degraded
+
+    # And the gap is named, with its cause, in the payload that has one.
+    assert "pending_rows_on_disk" in degraded["hint"]
+    assert "gc_deferred=1" in degraded["hint"]
+    assert "no longer active" in degraded["hint"]
+
+    # Control: once the file parses again the pass collects, the counts
+    # re-converge, and there is no gap left to explain.
+    path.write_text(original, encoding="utf-8")
+    healthy = _unwrap(await _call(server, "memory_conflicts", scan=True))
+    assert healthy["scan"]["gc_deferred"] == 0
+    assert healthy["scan"]["dropped"] == 1
+    assert healthy["scan"]["pending_rows_on_disk"] == healthy["pending_total"] == 0
+    assert "hint" not in healthy
+    assert conflicts_pending_count(memory_dir) == 0
 
 
 async def _seed_triangle(server: Any) -> list[str]:

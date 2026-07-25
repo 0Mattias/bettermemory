@@ -58,11 +58,15 @@ on the next full-corpus upsert — a conflict with a dead side is moot.
 `upsert_scan` is the ONLY garbage collector, which is why every
 applying consolidate pass calls it unconditionally: a pass that only
 upserted when it had fresh candidates would strand those rows in the
-file indefinitely. Until a scan collects one, no reporting surface
-advertises it — `split_judgeable` is the shared filter both the
-`memory_conflicts` listing and `memory_scope_overview`'s
+file indefinitely. Until a scan collects one, no surface that counts
+arbitration WORK advertises it — `split_judgeable` is the shared filter
+both the `memory_conflicts` listing and `memory_scope_overview`'s
 `curation_pending.conflicts` count run their rows through — but each of
-them re-pays a liveness check on it every time they report.
+them re-pays a liveness check on it every time they report. The counts
+that DO still see such a row say so in their names — `upsert_scan`'s
+`pending_rows_on_disk` and `conflicts_pending_count` — because both
+count the file, and a name shared with a judgeable count would make one
+response answer "how many pending?" two ways.
 
 Collecting needs the caller's snapshot to be COMPLETE, not merely
 full-corpus. `Store.load_all` skips any file it cannot parse
@@ -326,8 +330,22 @@ class ConflictQueue:
         incomplete against the store root — see `_snapshot_is_complete`
         and the module docstring. Returns integer counters for
         telemetry: `{added, resurrected, refreshed, dropped, gc_deferred,
-        pending_total}`, where `gc_deferred` is 1 on exactly the pass
-        that declined to collect.
+        pending_rows_on_disk}`, where `gc_deferred` is 1 on exactly the
+        pass that declined to collect.
+
+        `pending_rows_on_disk` is the raw file count — the `pending` rows
+        this merge left in the queue, the same quantity
+        `conflicts_pending_count` reads back — and deliberately NOT the
+        judgeable count the model-facing surfaces report. The two part
+        company exactly on a deferred pass, which by definition leaves
+        rows with a dead member sitting in the file while
+        `split_judgeable` keeps them out of `memory_conflicts`'s
+        `pending_total` and `memory_scope_overview`'s
+        `curation_pending.conflicts`. The name carries the distinction
+        because one `memory_conflicts` response embeds these counters
+        beside that `pending_total`, and two keys sharing a name while
+        carrying different numbers erodes the count worse than either
+        number alone.
         """
         with flock_excl(self.path):
             current = self.load()
@@ -374,7 +392,7 @@ class ConflictQueue:
                 "refreshed": refreshed,
                 "dropped": dropped,
                 "gc_deferred": 0 if collectable else 1,
-                "pending_total": sum(1 for c in kept if c.status == "pending"),
+                "pending_rows_on_disk": sum(1 for c in kept if c.status == "pending"),
             }
 
     def _snapshot_is_complete(self, memories_by_id: dict[str, Memory]) -> bool:
@@ -610,7 +628,8 @@ def conflicts_pending_count(root: Path) -> int:
     and `memory_scope_overview`'s `curation_pending.conflicts` filter it
     out through `split_judgeable`. This counts the file — the probe for
     "has a scan collected that row yet?", not for "is there arbitration
-    work?".
+    work?". `upsert_scan` reports the same quantity under the name that
+    says so, `pending_rows_on_disk`.
     """
     try:
         return len(ConflictQueue(root).pending())
