@@ -9,7 +9,7 @@ spells out exactly what's stable.
 
 ## 3.29.0 - 2026-07-30
 
-No new feature. Sixty-eight commits of one thing: making the project's
+Almost no new feature. This window is one thing: making the project's
 claims about itself checkable, and repairing what that check found. The
 headline is a data-loss regression this same window introduced and then
 caught — `sync` refusals that fired *after* mutating the user's index —
@@ -17,11 +17,17 @@ but the durable output is machinery. Four times a manual sweep for false
 prose was replaced by a test that re-derives the claim, and three times
 that machinery was then audited and found weaker than its own docstring.
 
+The one genuinely new capability is the last of those ratchets pointed at
+retrieval itself: `doctor` can now measure whether a store can still be
+*found* by the questions a model asks, which nothing here previously
+checked.
+
 Minor rather than patch: `patterns.clusterable_episodes` is new public
-API and three response shapes gain keys (`episodes_clustered`,
-`gc_deferred`, `pending_rows_on_disk`). `SCHEMA_VERSION` is unchanged, no
-tool gains or loses a parameter, and the shipped default ranking is
-byte-stable.
+API, three response shapes gain keys (`episodes_clustered`,
+`gc_deferred`, `pending_rows_on_disk`), and `doctor` reports one new
+check name (`retrieval_discrimination`) in its text and `--json` output.
+`SCHEMA_VERSION` is unchanged, no tool gains or loses a parameter, and
+the shipped default ranking is byte-stable — the new check only reads.
 
 ### Fixed — `sync` could destroy uncommitted work
 
@@ -305,6 +311,40 @@ root's trailing separator is now spelled `os.sep` rather than hardcoded
 (`aeb9135`). On POSIX `os.altsep` is `None` and every fold is the
 identity. Tests drive Windows semantics from any platform via explicit
 `ntpath` separators with monkeypatched `HOME`/`USERPROFILE`.
+
+### Added — `doctor` can see whether retrieval still works
+
+Every other check asks whether memory is stored, parsed, synced or fresh.
+None asked whether it can be **retrieved**, and a store passes all of
+them while the ranker cannot surface the right memory for a plainly
+worded question. The failure is silent from both ends: the caller gets
+five confident-looking hits and never learns that the one it needed
+ranked sixth.
+
+- **`retrieval_discrimination`** samples each scope and queries every
+  sampled memory twice using terms from its own body — once with its
+  rarest, once with its most topical. The rare arm is a control: when it
+  is high, the ranker, the index and the fusion are all working, so a low
+  topical arm isolates query-document vocabulary mismatch rather than
+  blaming a component. On this project's own store the control arm scored
+  100% in all seven scopes while the topical arm ranged 0%–50%.
+- The cause is a ceiling, not a bug. Lexical retrieval needs the query to
+  share rare terms with the target, and inside a topically coherent scope
+  the shared vocabulary carries almost no information — the subject words
+  appear in nearly every member, so their IDF is near zero. Pricing IDF
+  over the collection the caller can actually retrieve is *correct*
+  (`c58c836`) and deliberately kept; the consequence is that the ceiling
+  falls as a scope grows more coherent, and coherent scopes are exactly
+  what good scope hygiene produces.
+- Reported, never auto-fixed, and it short-circuits to `ok` when an
+  embeddings extra is importable. The lever is a non-term-frequency
+  ranking signal, which is an install-weight decision for the operator;
+  `fix_hint` names it and nothing acts on it.
+- The docstring states what the probe cannot see: a high score does not
+  mean retrieval is good, because real queries are not bags of a
+  document's own words. It is a floor — a low score proves a problem, a
+  high score proves only that this particular failure is absent — and it
+  is explicitly not a helpfulness metric.
 
 ### Added — machinery that re-derives instead of restating
 

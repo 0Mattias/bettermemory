@@ -53,6 +53,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
+from . import search
 from .config import Config, TelemetryConfig, load_config
 from .eval import is_admin_recorded_event
 from .events import EVENT_LOG_FILENAME, iter_all_events
@@ -1837,6 +1838,270 @@ def _check_store_nested_in_parent_repo(directory: Path) -> Diagnosis:
     )
 
 
+#: Memories sampled per scope by the retrieval-discrimination probe. The
+#: probe runs one search per sampled memory per query shape, so cost is
+#: `2 * _DISCRIMINATION_SAMPLE` searches against a scope-sized pool — the
+#: reason this is a fixed sample and not a full sweep. Raising it buys
+#: precision at O(sample x pool).
+_DISCRIMINATION_SAMPLE = 20
+
+#: Scopes smaller than this are skipped: with a handful of memories almost
+#: any query retrieves almost everything, so a ratio computed there says
+#: more about the pool size than about discrimination.
+_DISCRIMINATION_MIN_POOL = 15
+
+#: Topical-query recall@1 at or below this warns. Set from the measured
+#: spread across real scopes rather than picked: a heterogeneous scope
+#: measured ~0.71-0.81 and a highly coherent one ~0.31, so the threshold
+#: sits below the former and above the latter. It is a floor for "this
+#: scope has a retrieval problem you cannot see", not a quality target.
+_DISCRIMINATION_WARN_AT = 0.55
+
+#: Terms per probe query. A memory needs twice this many scorable terms to
+#: be sampled, so that its rare slice and its topical slice cannot overlap
+#: — an overlap would blur the very contrast the probe measures.
+_DISCRIMINATION_QUERY_TERMS = 6
+
+
+def _discrimination_probe(
+    memories: list[Any], scope: str
+) -> tuple[int, float, float] | None:
+    """`(sampled, rare_recall_at_1, topical_recall_at_1)` for one scope.
+
+    Each sampled memory is queried for TWICE, using terms taken from its
+    own body, and we record whether it comes back ranked first:
+
+    * **rare** — its highest-IDF body terms. The most favourable query a
+      lexical ranker can be handed, so this arm is a *control*: when it
+      is high the ranker, the index and the fusion are all working, and a
+      low topical arm cannot be blamed on them.
+    * **topical** — its lowest-IDF body terms, i.e. the vocabulary the
+      scope shares. This approximates how a natural-language question
+      actually addresses a store ("how do I cut a release"), which
+      carries a topic and almost never carries a document's rare tokens.
+
+    The GAP between the two arms is the measurement. It isolates
+    query-document vocabulary mismatch from every other cause of a bad
+    result, because both arms run against the same pool, ranker, mode and
+    corpus statistics — only the query's term rarity differs.
+
+    Returns None when the scope holds fewer than
+    `_DISCRIMINATION_MIN_POOL` memories, and also when no sampled memory
+    cleared the term guard below — in both cases there is nothing to
+    report rather than a zero to misread.
+
+    A memory is only sampled if it has at least
+    `2 * _DISCRIMINATION_QUERY_TERMS` scorable terms, so its rare slice
+    and topical slice are disjoint; both arms skip the same memories, so
+    the returned count describes each of them.
+
+    **What this deliberately does NOT measure.** A high topical arm does
+    not mean retrieval is good — real queries are not bags of a
+    document's own words, and this probe never sees a paraphrase, a
+    synonym or a question the store has no wording for. It is a floor:
+    a low score proves a problem, a high score proves only that this
+    particular failure is absent. It is not `memory_helped_rate` and must
+    never be reported as a helpfulness or quality number.
+
+    The sample is the first `_DISCRIMINATION_SAMPLE` memories by id.
+    ULIDs sort by creation time, so this is the OLDEST slice. Chosen so
+    the SAMPLE is reproducible where a random one would not be, and
+    disclosed because it is a real bias: a scope whose recent memories are
+    worded differently from its old ones is measured on the old ones.
+
+    Reproducible sample is not a reproducible number, and the difference
+    matters when reading a report. `search.search` applies recency decay
+    against a `now` it defaults to the current time, so among memories a
+    topical query cannot separate — the exact case this arm provokes —
+    which one lands first can change between runs, moving a scope by a
+    sample-quantised step (1/`counted`) and occasionally across the warn
+    threshold. Read the arms as coarse levels, not as a trend line, and
+    do not diff two runs for a small delta.
+    """
+    pool = [m for m in memories if scope in m.scopes]
+    if len(pool) < _DISCRIMINATION_MIN_POOL:
+        return None
+    body_idf = search.compute_idf(pool)[0]
+    sample = sorted(pool, key=lambda m: m.id)[:_DISCRIMINATION_SAMPLE]
+    # One clock for every search in this probe. The arms are only
+    # comparable if the recency component is identical across them —
+    # letting each call default `now` to its own utcnow() would let the
+    # two arms be scored against slightly different decay.
+    now = datetime.now(timezone.utc)
+
+    counted = 0
+    rare_first = 0
+    topical_first = 0
+    for mem in sample:
+        # `search.tokenize` and not a `.split()`: the IDF map is keyed by
+        # the same normalised, stemmed token stream the ranker indexes, so
+        # a raw split silently matches only the words whose surface form
+        # already equals their stem — an arbitrary subset, which would
+        # bias every query this probe builds.
+        scored = {
+            term: body_idf[term]
+            for term in set(search.tokenize(mem.body))
+            if term in body_idf
+        }
+        # Too few scorable terms to build two meaningfully different
+        # queries from — skipping keeps both arms over the same memories,
+        # so `counted` describes each of them.
+        if len(scored) < _DISCRIMINATION_QUERY_TERMS * 2:
+            continue
+        counted += 1
+        ordered = sorted(scored, key=lambda t: scored[t], reverse=True)
+        for terms, is_rare in (
+            (ordered[:_DISCRIMINATION_QUERY_TERMS], True),
+            (ordered[-_DISCRIMINATION_QUERY_TERMS:], False),
+        ):
+            hits = search.search(
+                pool, " ".join(terms), scopes=[scope], max_results=1, now=now
+            )
+            if hits and hits[0].id == mem.id:
+                if is_rare:
+                    rare_first += 1
+                else:
+                    topical_first += 1
+    if not counted:
+        return None
+    return counted, rare_first / counted, topical_first / counted
+
+
+def _check_retrieval_discrimination(directory: Path, cfg: Config) -> Diagnosis:
+    """Can this store still be found by the questions a model asks?
+
+    Every other check here asks whether memory is stored, parsed, synced
+    or fresh. None of them ask whether it can be RETRIEVED, and a store
+    can pass all of them while the ranker cannot surface the right memory
+    for a plainly-worded question — the failure is silent from both ends,
+    because the caller gets five confident-looking hits and never learns
+    the one it needed ranked sixth.
+
+    This probes that directly (see `_discrimination_probe`) and warns on
+    the topical arm, per scope. A low topical arm beside a high rare arm
+    means query-document vocabulary mismatch: lexical retrieval needs the
+    query to share rare terms with the target, and inside a topically
+    coherent scope the shared vocabulary carries almost no information —
+    the scope's own subject words appear in nearly every member, so their
+    IDF is near zero. That narrowing is CORRECT (`CorpusStats` prices IDF
+    over the collection the caller can actually retrieve, deliberately;
+    see c58c836), which is why this is a ceiling to be reported rather
+    than a bug to be tuned away: it gets lower as a scope gets more
+    coherent, and coherent scopes are what good scope hygiene produces.
+
+    Reported, never auto-fixed. The lever is a ranking signal that is not
+    term-frequency based — an embeddings extra plus `search_mode` — and
+    that is an install-weight decision for the operator, not something a
+    diagnostic should make. `fix_hint` names it; nothing acts on it.
+    """
+    if cfg.behavior.search_mode in ("semantic", "hybrid") and _semantic_importable():
+        return Diagnosis(
+            name="retrieval_discrimination",
+            status="ok",
+            message=(
+                f"search_mode = {cfg.behavior.search_mode} with an embeddings "
+                "extra importable; ranking has a non-lexical signal, so the "
+                "lexical vocabulary ceiling this check probes does not bind."
+            ),
+        )
+    try:
+        memories = Store(directory).load_all()
+    except Exception as exc:  # pragma: no cover - defensive
+        return Diagnosis(
+            name="retrieval_discrimination",
+            status="ok",
+            message=f"could not load memories to probe retrieval ({exc}).",
+        )
+
+    scopes = sorted({s for m in memories for s in m.scopes})
+    measured: list[tuple[str, int, float, float]] = []
+    for scope in scopes:
+        probed = _discrimination_probe(memories, scope)
+        if probed is not None:
+            measured.append((scope, *probed))
+    if not measured:
+        return Diagnosis(
+            name="retrieval_discrimination",
+            status="ok",
+            message=(
+                f"no scope holds {_DISCRIMINATION_MIN_POOL}+ memories yet; "
+                "too small to measure retrieval discrimination meaningfully."
+            ),
+        )
+
+    details = {
+        "sample_per_scope": _DISCRIMINATION_SAMPLE,
+        "warn_at_topical_recall": _DISCRIMINATION_WARN_AT,
+        "scopes": [
+            {
+                "scope": scope,
+                "sampled": sampled,
+                "rare_term_recall_at_1": round(rare, 3),
+                "topical_recall_at_1": round(topical, 3),
+                "gap": round(rare - topical, 3),
+            }
+            for scope, sampled, rare, topical in measured
+        ],
+    }
+    degraded = [
+        (scope, rare, topical)
+        for scope, _n, rare, topical in measured
+        if topical <= _DISCRIMINATION_WARN_AT
+    ]
+    if not degraded:
+        worst = min(measured, key=lambda row: row[3])
+        return Diagnosis(
+            name="retrieval_discrimination",
+            status="ok",
+            message=(
+                "topical-query retrieval holds in every measured scope "
+                f"(worst: {worst[0]} at {worst[3]:.0%} recall@1). Note this "
+                "is a floor, not a quality score — see the probe docstring."
+            ),
+            details=details,
+        )
+    worst_scope, worst_rare, worst_topical = min(degraded, key=lambda row: row[2])
+    return Diagnosis(
+        name="retrieval_discrimination",
+        status="warn",
+        message=(
+            f"{len(degraded)} scope(s) retrieve poorly from topically-worded "
+            f"queries; worst is {worst_scope} at {worst_topical:.0%} recall@1 "
+            f"against {worst_rare:.0%} for rare-term queries. The ranker is "
+            "working — the shared vocabulary in a coherent scope carries too "
+            "little signal for a lexical query to single a memory out."
+        ),
+        fix_hint=(
+            "Add a non-lexical ranking signal: install an embeddings extra "
+            "(`bettermemory[embeddings-fast]` is the lighter ONNX path) and "
+            'set `[behavior] search_mode = "hybrid"`. Weigh the install '
+            "size first — this is reported, never auto-applied."
+        ),
+        details=details,
+    )
+
+
+def _semantic_importable() -> bool:
+    """True when either embeddings extra can be imported.
+
+    Mirrors what `semantic.get_model` will find at runtime rather than
+    asking the config what it wants, because the whole failure this
+    guards is a config that asks for a model no install can supply.
+    """
+    try:
+        import sentence_transformers  # noqa: F401  # pyright: ignore[reportMissingImports]
+
+        return True
+    except ImportError:
+        pass
+    try:
+        import fastembed  # noqa: F401  # pyright: ignore[reportMissingImports]
+
+        return True
+    except ImportError:
+        return False
+
+
 def _check_embeddings_extra(cfg: Config) -> Diagnosis:
     """If `behavior.semantic_dedup = true`, the embeddings extra has to
     be installed or write-time dedup silently falls back to Jaccard.
@@ -2480,6 +2745,12 @@ def run_diagnostics() -> DoctorReport:
             _safe(
                 "store_nested_in_parent_repo",
                 lambda: _check_store_nested_in_parent_repo(directory),
+            )
+        )
+        checks.append(
+            _safe(
+                "retrieval_discrimination",
+                lambda: _check_retrieval_discrimination(directory, cfg),
             )
         )
 

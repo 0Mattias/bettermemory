@@ -20,7 +20,7 @@ import subprocess
 import sys
 import typing
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -45,6 +45,8 @@ from bettermemory.doctor import (
     _check_mcp_client_configs,
     _check_memory_parse_health,
     _check_python_version,
+    _check_retrieval_discrimination,
+    _DISCRIMINATION_WARN_AT,
     _check_stale_config_lockfiles,
     _check_storage_directory,
     _check_store_nested_in_parent_repo,
@@ -64,6 +66,10 @@ from bettermemory.doctor import (
     run_fixes,
 )
 from bettermemory.init import ClientPaths
+
+if TYPE_CHECKING:  # annotation-only: the tests below import Store locally,
+    # matching this file's idiom, so there is no runtime module-level name.
+    from bettermemory.store import Store
 from bettermemory.proposals import PROPOSALS_FILENAME
 
 
@@ -1248,6 +1254,160 @@ def test_embeddings_extra_fails_when_enabled_but_missing(
     diag = _check_embeddings_extra(cfg)
     assert diag.status == "fail"
     assert "embeddings" in (diag.fix_hint or "")
+
+
+# ---------------------------------------------------------------------------
+# retrieval_discrimination
+# ---------------------------------------------------------------------------
+
+
+def _force_no_embeddings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the probe's "is there a non-lexical signal?" short-circuit to
+    False, so these tests measure the lexical path on every machine —
+    including one where an extra happens to be installed."""
+    monkeypatch.setattr(
+        "bettermemory.doctor._semantic_importable",
+        lambda: False,
+    )
+
+
+def _seed_scope(store: Store, scope: str, bodies: list[str]) -> None:
+    for body in bodies:
+        store.write(content=body, scopes=[scope])
+
+
+def test_retrieval_discrimination_warns_on_a_homogeneous_scope(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every memory repeats the same topical vocabulary and carries one
+    rare token. Rare-term queries should single each out; topical ones
+    cannot, because the shared words are in every member."""
+    _force_no_embeddings(monkeypatch)
+    from bettermemory.store import Store
+
+    store = Store(tmp_path)
+    shared = (
+        "deployment pipeline release rollout staging cluster service "
+        "container registry manifest revision"
+    )
+    _seed_scope(
+        store,
+        "ops",
+        [f"{shared} sentinel{i:02d}kryptonite zzq{i:02d}plutonium" for i in range(20)],
+    )
+    diag = _check_retrieval_discrimination(tmp_path, _config_for(tmp_path))
+    assert diag.status == "warn"
+    row = next(r for r in diag.details["scopes"] if r["scope"] == "ops")
+    # The control arm must stay high — otherwise a low topical arm proves
+    # nothing about vocabulary mismatch, only that retrieval is broken.
+    assert row["rare_term_recall_at_1"] >= 0.9
+    assert row["topical_recall_at_1"] <= _DISCRIMINATION_WARN_AT
+    assert "embeddings" in (diag.fix_hint or "")
+
+
+def test_retrieval_discrimination_ok_on_a_heterogeneous_scope(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """NEGATIVE CONTROL. Same check, same scope size, same code path — but
+    each memory has its own vocabulary, so even a topical query lands on
+    exactly one member. A check that simply warned whenever it found a
+    big-enough scope would pass the test above and fail this one."""
+    _force_no_embeddings(monkeypatch)
+    from bettermemory.store import Store
+
+    store = Store(tmp_path)
+    # Each body needs at least 2 * _DISCRIMINATION_QUERY_TERMS scorable
+    # tokens to be sampled at all, and no two bodies may share vocabulary —
+    # that disjointness is what makes this a control rather than a second
+    # copy of the test above.
+    topics = [
+        "sourdough hydration levain autolyse banneton crumb oven spring "
+        "retard bulk shaping scoring baker percentage",
+        "kayak paddle eskimo cockpit spraydeck coaming bulkhead skeg "
+        "feathering ferrule bracing sweep edging chine",
+        "trombone embouchure glissando brass mouthpiece slide positions "
+        "legato tonguing bore taper mute plunger register",
+        "orchid phalaenopsis repotting sphagnum aerial keiki pseudobulb "
+        "spike velamen bark medium humidity tray",
+        "telescope collimation eyepiece barlow aperture focal ratio "
+        "diagonal finder dew shield tracking mount tripod",
+        "cyanotype ferric ammonium citrate coating brush exposure "
+        "washing toning tannin bleach paper sizing negative",
+        "kombucha jun scoby fermentation vessel bottling burping "
+        "carbonation acidity tea sugar ratio vinegar batch",
+        "falconry jesses creance austringer quarry hood swivel leash "
+        "mews weathering block bating mantling manning",
+        "mycology chanterelle spore duff hyphae mycelium gills cap "
+        "stipe volva annulus substrate flush",
+        "lockpicking rake tension wrench binder shear spool serrated "
+        "warding raking single pin picking bitting",
+        "letterpress chase furniture quoin platen galley composing "
+        "stick leading kerning ink brayer impression",
+        "bouldering crimp heelhook mantle sloper dyno campus board "
+        "beta topout highball spotter chalk pocket",
+        "beekeeping brood smoker excluder supers foundation nuc swarm "
+        "requeening varroa propolis capping extractor",
+        "watchmaking mainspring escapement jewel balance hairspring "
+        "pallet fork barrel mesh amplitude beat rate",
+        "geocaching muggle travelbug coordinates waypoint logbook "
+        "cache container hide difficulty terrain rating trackable",
+        "taxidermy tanning borax armature mount fleshing pickling "
+        "degreasing mannikin glass eyes groom sculpt",
+        "bonsai jin shari nebari wiring styling ramification defoliation "
+        "candle pruning jinning deadwood taper trunk",
+        "archery fletching nock riser limb tiller brace height "
+        "clicker plunger spine draw weight anchor",
+        "cheesemaking rennet curd whey brine affinage mesophilic "
+        "thermophilic cheddaring pressing rind washing cave humidity",
+        "astronomy occultation ephemeris transit albedo declination "
+        "sidereal culmination magnitude parallax perihelion elongation zenith",
+    ]
+    _seed_scope(store, "hobbies", topics)
+    diag = _check_retrieval_discrimination(tmp_path, _config_for(tmp_path))
+    row = next(r for r in diag.details["scopes"] if r["scope"] == "hobbies")
+    assert row["topical_recall_at_1"] > _DISCRIMINATION_WARN_AT
+    assert diag.status == "ok"
+
+
+def test_retrieval_discrimination_skips_scopes_too_small_to_measure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Under the pool floor a ratio describes the pool size, not
+    discrimination, so the check declines to report rather than emitting
+    a number that reads like evidence."""
+    _force_no_embeddings(monkeypatch)
+    from bettermemory.store import Store
+
+    store = Store(tmp_path)
+    _seed_scope(store, "tiny", [f"body number {i} about widgets" for i in range(5)])
+    diag = _check_retrieval_discrimination(tmp_path, _config_for(tmp_path))
+    assert diag.status == "ok"
+    assert "too small" in diag.message
+    assert diag.details.get("scopes") is None
+
+
+def test_retrieval_discrimination_short_circuits_when_semantic_available(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With a non-lexical signal in play the lexical ceiling does not
+    bind, so the probe must not run — and must not spend its searches."""
+    monkeypatch.setattr(
+        "bettermemory.doctor._semantic_importable",
+        lambda: True,
+    )
+
+    def explode(*_args: Any, **_kwargs: Any) -> Any:  # pragma: no cover
+        raise AssertionError("probe ran despite an importable embeddings extra")
+
+    monkeypatch.setattr("bettermemory.doctor._discrimination_probe", explode)
+    cfg = _config_for(tmp_path, search_mode="hybrid")
+    diag = _check_retrieval_discrimination(tmp_path, cfg)
+    assert diag.status == "ok"
+    assert "non-lexical" in diag.message
 
 
 # ---------------------------------------------------------------------------
