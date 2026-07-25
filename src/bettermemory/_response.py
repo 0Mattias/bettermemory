@@ -447,9 +447,28 @@ class ResponseBuilder:
         to expand without a memory_show round-trip — but NOT in coverage:
         those two are unconditional in `hit_to_dict`'s return literal and
         ride every hit, whereas this one is gated (the omission list
-        below). Cost is bounded — one `commit_author_timestamps` call for
-        the whole search, then a per-hit `bisect_right` against the sorted
-        timestamp list. Independent of result count.
+        below).
+
+        COST scales with the result count — do NOT add per-hit work here
+        believing the loop is free. Paid once per search regardless of how
+        many hits there are: `commit_author_timestamps` (``git log
+        --format=%aI HEAD``) and `repo_toplevel` (``git rev-parse
+        --show-toplevel``). Paid per hit: a `bisect_right` against the
+        sorted timestamp list and `commit_drift_anchor_paths` (both pure
+        CPU) — plus, for every hit that reaches
+        `resolve_commit_drift_count` (unfiltered count > 0 AND at least one
+        claim anchor), one more git fork+exec, the path-filtered
+        `commit_author_timestamps_touching_pathspecs` log. The git-process
+        count is therefore ``2 + <drifting anchored hits>``, bounded above
+        by ``2 + len(hits)`` (`max_results` caps that at 50 on the MCP
+        surface, 30 on the web's). That third call buys the SAME
+        claim-anchored narrowing `memory_show` and the health rollups run —
+        a cheaper per-surface shortcut here is precisely how the four
+        surfaces used to disagree — and the two gates keep the ordinary
+        shapes at zero extra forks: a caught-up memory (count == 0) and an
+        untethered one (no anchors) never reach it.
+        ``tests/test_server_commit_drift.py::test_commit_drift_count_git_cost_shape``
+        pins that arithmetic.
 
         Omitted (key absent from the dict, not set to null) when:
 

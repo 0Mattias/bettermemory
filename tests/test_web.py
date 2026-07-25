@@ -789,6 +789,100 @@ def test_search_threads_every_ranking_input_the_handler_threads(
     assert captured["negative_by_id"] == {}
 
 
+def test_every_ranker_input_is_classified_shared_or_divergent() -> None:
+    """The ledger behind the page's ranking claim, enforced.
+
+    `RankingInputs` covers only the `[behavior]` knobs, so the test above
+    can see a NEW knob landing there — and is blind to a new `search.search`
+    keyword that never travels through the helper. `semantic_model` is the
+    proof: it is a ranker input the MCP surface resolves and this page does
+    not, and no parity test could see it. The two frozensets must partition
+    the ranker's keyword-only signature, so the next such input has to be
+    threaded or filed with a reason before it can ship.
+    """
+    import inspect
+
+    from bettermemory.search import search as real_search
+    from bettermemory.web import _RANKER_INPUTS_DIVERGENT, _RANKER_INPUTS_SHARED
+
+    kwargs = {
+        name
+        for name, param in inspect.signature(real_search).parameters.items()
+        if param.kind is inspect.Parameter.KEYWORD_ONLY
+    }
+    assert not (_RANKER_INPUTS_SHARED & _RANKER_INPUTS_DIVERGENT)
+    assert _RANKER_INPUTS_SHARED | _RANKER_INPUTS_DIVERGENT == kwargs, (
+        "unclassified search.search inputs: "
+        f"{sorted(kwargs - _RANKER_INPUTS_SHARED - _RANKER_INPUTS_DIVERGENT)}"
+    )
+    # The two ledgers agree: every `[behavior]` knob the handler threads is
+    # on the SHARED side, so a knob cannot be classified divergent here
+    # while the test above proves the route passes it.
+    from bettermemory.handlers.search import RankingInputs
+
+    assert set(RankingInputs._fields) - {"events"} <= _RANKER_INPUTS_SHARED
+    # And the one divergence the page has to disclose out loud.
+    assert "semantic_model" in _RANKER_INPUTS_DIVERGENT
+
+
+def test_search_stays_lexical_and_says_so_under_a_semantic_config(
+    memory_dir: Path, store: Store, monkeypatch: Any
+) -> None:
+    """The divergence `_RANKER_INPUTS_DIVERGENT` files, pinned end to end.
+
+    With `search_mode = "semantic"` and a resolvable model, `memory_search`
+    ranks by cosine; this route resolves no model, downgrades the mode to
+    `hybrid`, and fuses keyword + BM25 — so the two surfaces can return
+    different rows for the same query (reproduced: a paraphrase-only memory
+    that memory_search ranks FIRST never appears here at all). The contract
+    is not that they agree; it is that the page does not pass the lexical
+    order off as the model's.
+    """
+    import html
+
+    from bettermemory.config import BehaviorConfig
+    from bettermemory.search import search as real_search
+    from bettermemory.semantic_setup import _semantic_model_or_none
+    from bettermemory.web import _LEXICAL_ONLY_NOTE
+
+    captured: dict[str, Any] = {}
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        captured.update(kwargs)
+        return real_search(*args, **kwargs)
+
+    monkeypatch.setattr("bettermemory.web.run_search", spy)
+    # Make a model resolvable in this process, so the premise is real
+    # rather than assumed: the factory the MCP handler calls returns one
+    # for both configs below, and this route still must not reach for it.
+    monkeypatch.setattr("bettermemory.semantic.get_model", lambda *a, **k: object())
+
+    store.write(content="theta rollout runbook", scopes=["tools"])
+    for behavior in (
+        BehaviorConfig(search_mode="semantic"),
+        BehaviorConfig(search_mode="hybrid", semantic_dedup=True),
+    ):
+        cfg = Config(
+            storage=StorageConfig(directory=str(memory_dir)), behavior=behavior
+        )
+        assert _semantic_model_or_none(cfg) is not None, "premise: MCP has a model"
+        captured.clear()
+        client = _app_with(memory_dir, store, behavior)
+        r = client.get("/memories", params={"q": "theta runbook"})
+        assert r.status_code == 200
+        assert captured.get("semantic_model") is None
+        assert captured["mode"] == "hybrid"
+        # The caveat is on the page, escaped like every other rendered
+        # string, so a reader knows this order is not memory_search's.
+        assert html.escape(_LEXICAL_ONLY_NOTE) in r.text
+
+    # And it stays OFF for the default config, where the two surfaces do
+    # rank identically — a permanent caveat would be noise.
+    client = _app_with(memory_dir, store, BehaviorConfig())
+    r = client.get("/memories", params={"q": "theta runbook"})
+    assert "never loads an embedding model" not in r.text
+
+
 def test_search_hits_carry_recent_negative_outcomes(
     memory_dir: Path, store: Store
 ) -> None:

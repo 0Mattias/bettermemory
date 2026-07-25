@@ -581,6 +581,103 @@ async def test_memory_search_hits_omit_commit_drift_count_when_never_verified(
     assert "commit_drift_count" not in target
 
 
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_commit_drift_count_git_cost_shape(
+    memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The COST paragraph on `attach_commit_drift_counts`, made checkable.
+
+    The docstring used to promise "one `commit_author_timestamps` call for
+    the whole search … independent of result count", which was false: every
+    hit with drift to narrow forks a second, path-filtered `git log` inside
+    `resolve_commit_drift_count`. That mattered because a cost contract
+    nobody can check invites the next author to add per-hit work believing
+    the loop is free. So the real arithmetic is pinned here instead:
+    `2 + <drifting anchored hits>` git processes, with the two gates
+    (count > 0, anchors present) holding the ordinary shapes at 2.
+    """
+    from bettermemory import origin as origin_module
+    from bettermemory._response import ResponseBuilder
+    from bettermemory.search import search as run_search
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    anchors = [repo / f"notes{i}.md" for i in range(3)]
+    for path in anchors:
+        path.write_text("anchor\n", encoding="utf-8")
+        subprocess.run(
+            ["git", "add", path.name], cwd=repo, check=True, capture_output=True
+        )
+    _commit_at(repo, "seed", when=datetime(2025, 1, 1, tzinfo=timezone.utc))
+
+    origin = Origin(cwd=str(repo), repo=_REMOTE, branch="main")
+    store = Store(memory_dir)
+    for i, path in enumerate(anchors):
+        memory = store.write(
+            content=f"widget rule number {i} lives in {path}",
+            scopes=["tools"],
+            origin=origin,
+        )
+        store.mark_verified(memory.id)
+    # One post-verify commit touching every anchor, so all three hits have
+    # drift to narrow and each reaches `resolve_commit_drift_count`.
+    for path in anchors:
+        path.write_text("changed\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True)
+    _commit_touching(
+        repo,
+        "post",
+        when=datetime(2099, 1, 1, tzinfo=timezone.utc),
+        filename="extra.md",
+    )
+
+    def count_git_calls(bodies_cite_paths: bool) -> tuple[int, int]:
+        memories = store.load_all()
+        if not bodies_cite_paths:
+            # Strip the citations in memory only: same hits, same repo, same
+            # verify timestamps — but no claim anchors, so the untethered
+            # gate short-circuits before any per-hit git work.
+            memories = [
+                m.model_copy(update={"body": f"widget rule number {i} lives here"})
+                for i, m in enumerate(memories)
+            ]
+        hits = run_search(memories, "widget rule", max_results=50)
+        builder = ResponseBuilder(stale_after_days=30)
+        now = datetime.now(timezone.utc)
+        out = [builder.hit_to_dict(h, now=now) for h in hits]
+        calls: list[tuple[str, ...]] = []
+        real_git = origin_module._git
+
+        def spy(cwd: Path, *args: str, **kwargs: Any) -> Any:
+            calls.append(args)
+            return real_git(cwd, *args, **kwargs)
+
+        monkeypatch.setattr(origin_module, "_git", spy)
+        try:
+            builder.attach_commit_drift_counts(
+                out, hits, memories, caller_origin=origin
+            )
+        finally:
+            monkeypatch.setattr(origin_module, "_git", real_git)
+        annotated = sum(1 for hit in out if "commit_drift_count" in hit)
+        # The two per-search calls, in order: the unfiltered author-date log
+        # and the one repo-root resolution the per-hit narrowing reuses.
+        assert calls[0][:2] == ("log", "--format=%aI")
+        assert calls[1][:2] == ("rev-parse", "--show-toplevel")
+        return len(calls), annotated
+
+    forks, annotated = count_git_calls(bodies_cite_paths=True)
+    assert annotated == 3, "fixture must produce three drifting anchored hits"
+    assert forks == 2 + annotated
+
+    # Same three hits, no claim anchors: the gate keeps the per-hit path
+    # closed, so the cost falls back to the two per-search calls.
+    forks, annotated = count_git_calls(bodies_cite_paths=False)
+    assert annotated == 0
+    assert forks == 2
+
+
 # ---------------------------------------------------------------------------
 # memory_health
 # ---------------------------------------------------------------------------

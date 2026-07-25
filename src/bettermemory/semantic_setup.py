@@ -78,6 +78,26 @@ def _search_mode_needs_model(config: Config) -> bool:
     return mode == "semantic"
 
 
+def _semantic_model_configured(config: Config) -> bool:
+    """True when SOME configured consumer wants the embedding model —
+    write-dedup (``semantic_dedup = true``) or retrieval
+    (``search_mode = "semantic"``, via ``_search_mode_needs_model``).
+
+    The gate ``_semantic_model_or_none`` opens on, lifted out so a
+    caller can ask the question WITHOUT triggering the load. The web
+    UI does exactly that: it never loads a model, and uses this to
+    decide whether to tell the reader that its ranking is lexical
+    while ``memory_search``'s may not be. Answering it by restating
+    the two clauses at the call site is how the two would drift, so
+    there is one predicate and ``_semantic_model_or_none`` calls it too.
+
+    Says nothing about whether an embeddings extra is actually
+    installed — that answer costs a load attempt. ``True`` here means
+    "the config asks for a model", not "a model will be returned".
+    """
+    return bool(config.behavior.semantic_dedup) or _search_mode_needs_model(config)
+
+
 def _semantic_model_or_none(config: Config) -> Any:
     """Lazy load the embedding model when a configured consumer needs
     it: write-dedup (``semantic_dedup = true``) or retrieval
@@ -96,7 +116,7 @@ def _semantic_model_or_none(config: Config) -> Any:
     cost (~1-2s); subsequent calls hit ``semantic.get_model``'s
     in-memory cache.
     """
-    if not (config.behavior.semantic_dedup or _search_mode_needs_model(config)):
+    if not _semantic_model_configured(config):
         return None
     from .semantic import Provider, get_model
 
@@ -137,6 +157,7 @@ def _configure_persistent_embeddings(config: Config, store: Store) -> None:
 
 __all__ = [
     "_resolve_semantic_provider_and_model",
+    "_semantic_model_configured",
     "_semantic_model_or_none",
     "_configure_persistent_embeddings",
 ]

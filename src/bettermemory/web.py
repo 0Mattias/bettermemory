@@ -18,14 +18,16 @@ Scope:
   natural human action. Every other surface, including the eval,
   episodes, and curation-preview pages, is strictly read-only.
 - Verdict parity with the MCP surface, by construction: ranked search
-  runs the same `search.search` ranker on the same config inputs
-  (`handlers.search.resolve_ranking_inputs`), then serialises each hit
-  through the same response pipeline `memory_search` runs —
+  calls the same `search.search` ranker threading every
+  `handlers.search.resolve_ranking_inputs` knob, then serialises each
+  hit through the response steps that decide a verdict —
   `ResponseBuilder.hit_to_dict`, then `attach_commit_drift_counts` and
   `attach_recent_negative_outcomes`. A rendered hit's verdict is
   therefore the string `memory_search` returns for that hit in its
   non-expanded form, commit-drift upgrade included; the web computes
-  no verdict arithmetic of its own. The detail page folds in commit
+  no verdict arithmetic of its own. (`attach_depends_on_resolved` and
+  `attach_link_annotations` run on the MCP side only — they add keys,
+  never touch the verdict.) The detail page folds in commit
   drift the way `memory_show` does — which is also where the
   body-level refinement `expand_top` applies to the MCP top hit
   lives, since no list surface loads bodies.
@@ -35,6 +37,19 @@ Scope:
   every memory. Those rows deliberately wear a *verification* chip
   (`compute_verification_status`) and never a staleness verdict, so
   they cannot contradict the verdict-bearing surfaces.
+- RANKING parity is narrower than that verdict parity, and the
+  exceptions are declared rather than described: `_RANKER_INPUTS_SHARED`
+  and `_RANKER_INPUTS_DIVERGENT` partition every keyword-only parameter
+  of `search.search`, so a new ranker input cannot land on the MCP side
+  unnoticed — `test_web.py` fails until it is threaded or filed. The
+  load-bearing entry is `semantic_model`: this process never loads an
+  embedding model, so a store configured for the semantic ranker
+  (`search_mode = "semantic"`, or `semantic_dedup = true`, which is
+  what grows `hybrid` a semantic leg) ranks here on keyword + BM25
+  alone and can order — or entirely omit — hits `memory_search`
+  returns. The page says so via `_LEXICAL_ONLY_NOTE` whenever that
+  config gate is open, rather than letting a lexical order pass for
+  the model's order.
 - No JS framework: server-side rendered HTML, minimal inline CSS,
   no template engine. Each route returns a complete HTML response
   built from the helper functions below. Cheap to maintain, no
@@ -73,6 +88,7 @@ from .health import report_for_directory
 from .models import validate_scope
 from .origin import capture as capture_origin
 from .search import SearchMode, search as run_search
+from .semantic_setup import _semantic_model_configured
 from .store import MemoryNotFoundError, Store, TombstonedError
 from .verify import (
     compute_commit_drift,
@@ -94,6 +110,82 @@ log = logging.getLogger("bettermemory.web")
 # but still bounded, because rendering the whole store under a broad
 # query would bury the ranking this page exists to show off.
 _SEARCH_MAX_RESULTS = 30
+
+
+# The ranking-parity ledger for `/memories`. The two sets partition every
+# keyword-only parameter of `search.search`: `_RANKER_INPUTS_SHARED` is
+# what this route hands the ranker with the value `memory_search` uses
+# (or leaves at the same default), `_RANKER_INPUTS_DIVERGENT` is what it
+# deliberately does not — each with the reason, because "same ranker as
+# memory_search", unqualified, is a claim this page could not keep. A
+# test pins the partition against the live signature, so a ranker input
+# added on the MCP side fails HERE until someone threads it or files it.
+_RANKER_INPUTS_SHARED = frozenset(
+    {
+        # Threaded straight from `resolve_ranking_inputs`, the one helper
+        # the MCP handler reads too — pinned separately by
+        # `test_search_threads_every_ranking_input_the_handler_threads`.
+        "applied_by_id",
+        "negative_by_id",
+        "corroboration_boost",
+        "half_life_days",
+        # The caller's explicit scope filter: the `?scope=` param here,
+        # the `scopes=` tool argument there.
+        "scopes",
+        # Neither surface passes these, so both take `search.search`'s own
+        # defaults — `now` = rank-time utcnow, `rrf_k` = the canonical 60.
+        # The fusion constant matches by construction, not by copying.
+        "now",
+        "rrf_k",
+        # False on both sides: browse mode belongs to
+        # `since_prior_session`, which has no web equivalent, and this
+        # route only ranks a non-empty query anyway.
+        "allow_empty_query",
+    }
+)
+
+_RANKER_INPUTS_DIVERGENT = frozenset(
+    {
+        # `_SEARCH_MAX_RESULTS` (30), not the request's `max_results` —
+        # a page length, not a ranking change.
+        "max_results",
+        # `semantic` ranks as `hybrid` here, and an unrecognised
+        # configured value falls back to `hybrid` where `memory_search`
+        # raises. Decided in the `/memories` route below.
+        "mode",
+        # Never resolved: this process loads no embedding model. The one
+        # divergence that reorders results — see `_LEXICAL_ONLY_NOTE`.
+        "semantic_model",
+        # Session-disabled scopes (`memory_scope_disable`) are an MCP
+        # session concept; a browser tab carries no such session.
+        "excluded_scopes",
+        # `memory_search` auto-scopes to the caller's repo and worktree by
+        # default; this page browses the store it was pointed at, which is
+        # the `auto_scope=False` shape.
+        "repo_filter",
+        "worktree_filter",
+        # None on purpose: the pool here is `store.load_all()`, so pool
+        # statistics ARE corpus statistics and the corpus lookup would
+        # price the same documents twice. `handlers.search.SearchPool`
+        # carries the long form.
+        "corpus_stats_provider",
+    }
+)
+
+
+# Rendered above the ranked hits whenever the store's config opens the
+# embedding-model gate `memory_search` reads (`semantic_dedup = true`, or
+# `search_mode = "semantic"`). This page ranks lexically either way; the
+# note is what keeps that from reading as the model's own order. Same
+# discipline the silent-miss probe settled on for the same shortage — it
+# returns `no_signal_reason="semantic_model_unavailable"` rather than
+# probing with a scorer the model would not have used.
+_LEXICAL_ONLY_NOTE = (
+    "Ranked with keyword + BM25 fusion only. Your config enables the "
+    "semantic ranker, but this page never loads an embedding model — with "
+    "an embeddings extra installed, memory_search fuses a semantic leg on "
+    "top of these two and can order (or include) hits differently."
+)
 
 
 # ---------------------------------------------------------------------------
@@ -568,6 +660,7 @@ def _render_hits(
     *,
     query: str,
     scope_filter: str,
+    ranker_note: str = "",
 ) -> str:
     """Ranked search results, verdict-first.
 
@@ -587,12 +680,19 @@ def _render_hits(
 
     Nothing here derives a verdict; it reads `staleness_verdict` off the
     dict and maps it to a chip.
+
+    `ranker_note`, when non-empty, is a caveat about the RANKING that
+    produced these rows (today: `_LEXICAL_ONLY_NOTE`). It renders above
+    the rows and also on the zero-hit page — a query that finds nothing
+    lexically is exactly where a missing semantic leg matters most.
     """
     parts: list[str] = [_render_search_bar(query, scope_filter)]
     parts.append(
         f'<p class="muted">{len(hits)} ranked hit(s) for '
         f"<strong>{html.escape(query)}</strong></p>"
     )
+    if ranker_note:
+        parts.append(f'<p class="muted">{html.escape(ranker_note)}</p>')
     if not hits:
         parts.append(
             '<p class="muted">No hits. The ranker tokenizes and strips '
@@ -1407,16 +1507,29 @@ def build_app(
         stale_days = config.behavior.verification_stale_days
         if q.strip():
             # The whole point of the 2026-07 overhaul: the web search IS
-            # the product's search. Same ranker, same tokenizer, same
-            # relevance labels as memory_search — a UI that ships a naive
-            # substring filter next to a tuned BM25 engine misrepresents
-            # the product on its own pitch. The full corpus is loaded
-            # (no FTS prefilter), so pool statistics are corpus
-            # statistics and no corpus_stats_provider is needed — the
-            # same reasoning the MCP handler applies on its load_all
-            # branch. `semantic` degrades to `hybrid` here: the web
-            # process never loads an embedding model, and hybrid without
-            # a model is exactly the ranking that leaves.
+            # the product's search — the same `search.search` call, the
+            # same tokenizer, the same relevance labels as memory_search,
+            # instead of the naive substring filter this page used to ship
+            # next to a tuned BM25 engine. What does NOT match is enumerated
+            # in `_RANKER_INPUTS_DIVERGENT`; two of those entries are
+            # decided right here:
+            #
+            # - `corpus_stats_provider` stays None because the full corpus
+            #   is loaded (no FTS prefilter), so pool statistics ARE corpus
+            #   statistics — the same reasoning the MCP handler applies on
+            #   its own load_all branch.
+            # - `mode` / `semantic_model`: this process never loads an
+            #   embedding model, so `semantic` ranks as `hybrid`, `hybrid`
+            #   fuses keyword + BM25 only, and a config value that isn't a
+            #   mode at all renders as hybrid where memory_search raises.
+            #   Under a config that resolves a model, memory_search fuses a
+            #   third leg and can order — or include — hits differently;
+            #   `_LEXICAL_ONLY_NOTE` puts that on the page rather than
+            #   leaving the difference silent. Not threading the model is
+            #   deliberate, not an oversight: this route ranks
+            #   `store.load_all()`, so a model here would embed the WHOLE
+            #   store on a request thread, where memory_search embeds at
+            #   most its `_PREFILTER_CAP`-capped pool.
             mode_raw = config.behavior.search_mode
             if mode_raw not in ("keyword", "bm25", "hybrid", "semantic"):
                 mode_raw = "hybrid"
@@ -1456,9 +1569,22 @@ def build_app(
             if hit_dicts:
                 events = ranking.events
                 if events is None:
-                    # Neither ranking tally ran, so no event read has
-                    # been paid yet — take the annotation's own window,
-                    # exactly as the handler does on this branch.
+                    # Neither ranking tally ran, so no event read has been
+                    # paid yet. The width below is the 600s ATTRIBUTION
+                    # horizon, NOT the annotation's own window
+                    # (`NEGATIVE_OUTCOME_WINDOW_DAYS`, 30 days) — same
+                    # constant `handlers.search.memory_search` passes on
+                    # this same branch, so the two surfaces annotate from
+                    # the same read. What that costs is stated where the
+                    # width is chosen (`ranking_events_window_seconds`):
+                    # `iter_events_window` rotation-proofs only the width
+                    # it is given, so a negative outcome that rotated out
+                    # of the active log more than 600s ago is invisible
+                    # here and the 30-day window is best-effort. Turning
+                    # on `[behavior] outcome_demotion` widens the SHARED
+                    # read to the full negative window on both surfaces
+                    # and makes it guaranteed; widening it here alone
+                    # would buy the web a window the model doesn't get.
                     from .audit import ATTRIBUTION_LOOKBACK_SECONDS
                     from .events import iter_events_window
 
@@ -1470,7 +1596,14 @@ def build_app(
                 )
             return _layout_resp(
                 "Memories",
-                _render_hits(hit_dicts, query=q, scope_filter=scope),
+                _render_hits(
+                    hit_dicts,
+                    query=q,
+                    scope_filter=scope,
+                    ranker_note=(
+                        _LEXICAL_ONLY_NOTE if _semantic_model_configured(config) else ""
+                    ),
+                ),
                 active="/memories",
             )
         summaries = store.list_summaries(scopes=[scope] if scope else None)
