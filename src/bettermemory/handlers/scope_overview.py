@@ -209,7 +209,8 @@ async def memory_scope_overview(
     # racing the scan for no gain — and `load_all` skips unparseable or
     # momentarily unreadable files, so "absent from the snapshot" is not
     # proof a memory died. `upsert_scan` stays the only collector; every
-    # applying curation pass runs it unconditionally.
+    # applying curation pass runs it unconditionally, and it applies that
+    # same caveat to its own snapshot before collecting anything.
     active_ids = {m.id for m in all_memories}
     judgeable_conflicts, _unjudgeable_conflicts = split_judgeable(
         ConflictQueue(deps.store.root).pending(),

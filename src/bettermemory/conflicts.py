@@ -34,11 +34,24 @@ never haunt every future scan):
   `contradicts` link between the pair is cleared by the handler first
   (same before-the-stamp ordering as the confirm side), so the queue
   and the link layer cannot end up disagreeing about the same pair.
-  Sticky across scans — UNLESS either member's `updated` later moves
-  past the verdict timestamp, in which case the content the verdict
-  judged no longer exists and the pair resurrects as pending. (The same
-  claim-vs-resolution ordering rule `health._has_unresolved_contradiction`
-  and the outcome-demotion tally use.)
+  The verdict also records a fingerprint of each member's BODY as it
+  stood when it was judged (`verdict_hash_a` / `verdict_hash_b`).
+  Sticky across scans — UNLESS a member's body stops hashing to what
+  the verdict judged, in which case that content no longer exists and
+  the pair resurrects as pending.
+
+  Keying the resurrect rule on content rather than on `updated` is what
+  keeps a dismissal from reappearing for reasons that have nothing to
+  do with its own pair. Both arbitration paths REWRITE memories — the
+  confirm path adds a `contradicts` link, the dismiss path strips one —
+  and each rewrite bumps `updated` on a memory that may well sit in
+  other queued pairs too (near-identical bodies cluster, so one memory
+  routinely has several partners). Under an `updated`-keyed rule,
+  arbitrating one pair silently re-queued every dismissed pair sharing
+  a member with it. A body hash cannot mistake a link edit for a claim
+  edit. Rows dismissed before the hashes existed carry none and fall
+  back to the old `updated > verdict_ts` rule until they are dismissed
+  again.
 
 Rows whose members stop being active (tombstoned, merged) are dropped
 on the next full-corpus upsert — a conflict with a dead side is moot.
@@ -50,6 +63,18 @@ advertises it — `split_judgeable` is the shared filter both the
 `memory_conflicts` listing and `memory_scope_overview`'s
 `curation_pending.conflicts` count run their rows through — but each of
 them re-pays a liveness check on it every time they report.
+
+Collecting needs the caller's snapshot to be COMPLETE, not merely
+full-corpus. `Store.load_all` skips any file it cannot parse
+(`PARSE_SKIP_EXCEPTIONS` is `(Exception,)` — a truncated write, a bad
+`chmod`, a mid-tombstone race), so "absent from the snapshot" is on its
+own evidence of a bad read and not of a death, and GC is permanent: a
+dropped row takes its status, `verdict_ts`, `note` and body hashes with
+it, and re-detection can only ever re-file the pair as `pending`. So
+`upsert_scan` compares the snapshot against the number of active `.md`
+files under the root and, when it holds fewer, merges and refreshes as
+usual but collects NOTHING and reports `gc_deferred`. See
+`_snapshot_is_complete` for what else can trip that comparison.
 
 On-disk: ``<root>/.conflicts.jsonl`` — one JSON object per line,
 0o600, atomically rewritten under a per-file ``flock`` (the
@@ -69,6 +94,7 @@ from typing import Any
 
 from ._fsutil import atomic_write_bytes, flock_excl
 from .models import Memory, utcnow
+from .store import count_active_memory_files
 from .time_utils import parse_event_ts
 
 log = logging.getLogger("bettermemory.conflicts")
@@ -76,6 +102,22 @@ log = logging.getLogger("bettermemory.conflicts")
 CONFLICTS_FILENAME = ".conflicts.jsonl"
 
 _VALID_STATUSES = ("pending", "confirmed", "dismissed")
+
+
+def _body_hash(body: str) -> str:
+    """Fingerprint of one member's body, as a verdict judged it.
+
+    The resurrect rule's key. Deliberately over the RAW body with no
+    normalisation: the question is "is this still the text the model
+    ruled on", and a rewrite that only moved whitespace is still a
+    rewrite the verdict never saw. Erring toward re-arbitration matches
+    the direction the old `updated`-keyed rule erred in, so nothing that
+    used to re-queue silently stops.
+
+    Truncated to 64 bits — this compares a body against its own earlier
+    self, not against an attacker-chosen one, and the queue row it lives
+    on is already inside the store's 0o600 trust boundary."""
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
 
 
 def _pair_id(a_id: str, b_id: str) -> str:
@@ -93,7 +135,14 @@ class ConflictCandidate:
     judgment. `detector` says WHY the pair was flagged: ``"polarity"``
     (negation flip between near-identical bodies) or ``"numeric"``
     (near-identical bodies whose number-bearing tokens diverge — ports,
-    versions, dates)."""
+    versions, dates).
+
+    `verdict_hash_a` / `verdict_hash_b` are `_body_hash` of each member
+    as the verdict judged it — the resurrect rule's key on a dismissed
+    row (see the module docstring). `None` on a pending row, and `None`
+    on a row whose verdict predates the field or whose member was
+    already gone at verdict time, in which case that side falls back to
+    the `updated > verdict_ts` rule."""
 
     id: str
     a_id: str
@@ -107,6 +156,8 @@ class ConflictCandidate:
     status: str = "pending"
     verdict_ts: str | None = None
     note: str | None = None
+    verdict_hash_a: str | None = None
+    verdict_hash_b: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -125,6 +176,10 @@ class ConflictCandidate:
             out["verdict_ts"] = self.verdict_ts
         if self.note is not None:
             out["note"] = self.note
+        if self.verdict_hash_a is not None:
+            out["verdict_hash_a"] = self.verdict_hash_a
+        if self.verdict_hash_b is not None:
+            out["verdict_hash_b"] = self.verdict_hash_b
         return out
 
     @classmethod
@@ -147,6 +202,16 @@ class ConflictCandidate:
                 str(raw["verdict_ts"]) if raw.get("verdict_ts") is not None else None
             ),
             note=(str(raw["note"]) if raw.get("note") is not None else None),
+            verdict_hash_a=(
+                str(raw["verdict_hash_a"])
+                if raw.get("verdict_hash_a") is not None
+                else None
+            ),
+            verdict_hash_b=(
+                str(raw["verdict_hash_b"])
+                if raw.get("verdict_hash_b") is not None
+                else None
+            ),
         )
 
 
@@ -253,10 +318,16 @@ class ConflictQueue:
 
         Per row: new pair → pending; pending → refresh summaries and
         similarity (bodies may have drifted since detection); dismissed
-        → resurrect to pending ONLY when a member's `updated` postdates
-        the verdict (the judged content no longer exists); confirmed →
-        terminal, left alone. Returns integer counters for telemetry:
-        `{added, resurrected, refreshed, dropped, pending_total}`.
+        → resurrect to pending ONLY when a member's body no longer
+        matches the fingerprint the verdict recorded (see
+        `_judged_content_changed`); confirmed → terminal, left alone.
+
+        Collection is skipped wholesale when `memories_by_id` looks
+        incomplete against the store root — see `_snapshot_is_complete`
+        and the module docstring. Returns integer counters for
+        telemetry: `{added, resurrected, refreshed, dropped, gc_deferred,
+        pending_total}`, where `gc_deferred` is 1 on exactly the pass
+        that declined to collect.
         """
         with flock_excl(self.path):
             current = self.load()
@@ -274,22 +345,26 @@ class ConflictQueue:
                     existing.similarity = cand.similarity
                     existing.detector = existing.detector or cand.detector
                     refreshed += 1
-                elif existing.status == "dismissed" and self._member_moved_since(
+                elif existing.status == "dismissed" and self._judged_content_changed(
                     existing, memories_by_id
                 ):
                     existing.status = "pending"
                     existing.verdict_ts = None
                     existing.note = None
+                    existing.verdict_hash_a = None
+                    existing.verdict_hash_b = None
                     existing.summary_a = cand.summary_a
                     existing.summary_b = cand.summary_b
                     existing.similarity = cand.similarity
                     existing.created = cand.created
                     resurrected += 1
                 # confirmed: terminal — the contradicts link is the artifact.
+            collectable = self._snapshot_is_complete(memories_by_id)
             kept = [
                 c
                 for c in by_id.values()
-                if c.a_id in memories_by_id and c.b_id in memories_by_id
+                if not collectable
+                or (c.a_id in memories_by_id and c.b_id in memories_by_id)
             ]
             dropped = len(by_id) - len(kept)
             self._write_all_locked(kept)
@@ -298,19 +373,113 @@ class ConflictQueue:
                 "resurrected": resurrected,
                 "refreshed": refreshed,
                 "dropped": dropped,
+                "gc_deferred": 0 if collectable else 1,
                 "pending_total": sum(1 for c in kept if c.status == "pending"),
             }
 
+    def _snapshot_is_complete(self, memories_by_id: dict[str, Memory]) -> bool:
+        """Is the caller's snapshot fit to rule that a member DIED?
+
+        True when it holds at least as many memories as the store root
+        holds active `.md` files. GC is permanent and irreversible — the
+        dropped row carries away a settled verdict's status, timestamp,
+        note and body hashes — so it may only run on evidence that
+        distinguishes "the file is gone" from "the file did not parse".
+        `Store.load_all` cannot: it skips per-file failures on
+        `PARSE_SKIP_EXCEPTIONS`, which is `(Exception,)`, so one
+        truncated write or one bad `chmod` used to be enough to erase an
+        arbitration decision the model can never re-derive.
+
+        A bare file count (`store.count_active_memory_files` — the same
+        regular-file/non-symlink/`.md` filter `Store._iter_active_paths`
+        walks, borrowed rather than re-spelt so the two cannot drift)
+        answers that without re-parsing anything: a load that skipped a
+        file necessarily returns fewer memories than there are files.
+
+        The comparison is `>=`, not `==`, and it is deliberately
+        one-sided — it detects an under-count, never an over-count:
+
+        - A memory WRITTEN between the caller's load and this call makes
+          the count exceed the snapshot. Benign: GC waits for the next
+          pass, and every applying curation pass runs one.
+        - A memory TOMBSTONED in that window leaves the snapshot larger
+          than the count. Also benign — the stale member is still in the
+          map, so its rows are kept, and the next pass collects them.
+        - Two active files carrying the SAME id collapse to one entry in
+          the caller's dict, and a stray non-memory `.md` dropped into
+          the root parses as nothing. Both read as an under-count and
+          defer GC until they are cleaned up; both are corruption the
+          store already flags loudly (the S4 divergence warning at
+          construction, `doctor`'s `index_health`). Dead rows lingering
+          in the queue file cost nothing model-visible — every reporting
+          surface filters them through `split_judgeable` — so deferring
+          is the cheap side of this trade in a way that dropping a
+          verdict is not.
+
+        An unlistable root is treated as incomplete for the same reason:
+        no evidence, no collection.
+        """
+        try:
+            on_disk = count_active_memory_files(self.root)
+        except OSError:
+            log.warning(
+                "conflict-queue GC deferred: cannot list %s", self.root, exc_info=True
+            )
+            return False
+        if len(memories_by_id) < on_disk:
+            log.warning(
+                "conflict-queue GC deferred: caller's snapshot has %d memories but "
+                "%s holds %d active .md files — an unreadable file must not look "
+                "like a dead conflict member",
+                len(memories_by_id),
+                self.root,
+                on_disk,
+            )
+            return False
+        return True
+
     @staticmethod
-    def _member_moved_since(
+    def _judged_content_changed(
         cand: ConflictCandidate, memories_by_id: dict[str, Memory]
     ) -> bool:
+        """Has either member's body stopped being the text the verdict
+        ruled on? The resurrect predicate for a dismissed row.
+
+        Per side, keyed on the `_body_hash` the verdict recorded — NOT on
+        `updated`. The arbitration surface itself rewrites memories (the
+        confirm path adds a `contradicts` link, the dismiss path strips
+        one), so `updated` moves for reasons that are not claim edits and
+        that belong to a DIFFERENT pair: any dismissed pair sharing a
+        member with the pair just arbitrated used to resurrect on the
+        next scan. A body hash is blind to link edits, which is the whole
+        point.
+
+        A side whose row carries no hash (dismissed before the field
+        existed, or its member was already gone at verdict time) falls
+        back to the old `updated > verdict_ts` rule — including its
+        "unprovable verdict cannot stay sticky" escape when
+        `verdict_ts` will not parse. Such a row converges: resurrecting
+        it once re-queues it, and the next dismissal records hashes.
+
+        A member absent from the snapshot is skipped rather than treated
+        as changed. Callers only reach this for a pair in `fresh`, whose
+        members came from the very list `memories_by_id` was built from,
+        so absence here means a caller broke the full-corpus contract —
+        and guessing "changed" would flip a settled verdict on no
+        evidence at all.
+        """
         verdict = parse_event_ts(cand.verdict_ts)
-        if verdict is None:
-            return True  # unprovable verdict cannot stay sticky
-        for mid in (cand.a_id, cand.b_id):
+        for mid, judged in (
+            (cand.a_id, cand.verdict_hash_a),
+            (cand.b_id, cand.verdict_hash_b),
+        ):
             m = memories_by_id.get(mid)
-            if m is not None and m.updated > verdict:
+            if m is None:
+                continue
+            if judged is not None:
+                if _body_hash(m.body) != judged:
+                    return True
+            elif verdict is None or m.updated > verdict:
                 return True
         return False
 
@@ -320,17 +489,30 @@ class ConflictQueue:
         *,
         status: str,
         note: str | None = None,
+        member_bodies: dict[str, str] | None = None,
     ) -> ConflictCandidate | None:
         """Stamp a verdict on a PENDING candidate. Returns the updated
-        row, or None when no pending row has that id. `verdict_ts` is
-        stamped HERE (post-caller-side-effects by contract: the handler
-        writes the `contradicts` link BEFORE resolving, so the link's
-        `updated` bump lands before the verdict timestamp and the
-        resurrect rule stays quiet)."""
+        row, or None when no pending row has that id.
+
+        `member_bodies` maps memory id → body text as the model judged
+        it; the two sides of this pair are fingerprinted onto the row and
+        become what the resurrect rule compares against. A caller that
+        omits it (or omits one side — a member already gone leaves no
+        body to hash) leaves that side hashless and on the legacy
+        `updated > verdict_ts` fallback, so pass it whenever the bodies
+        are in hand.
+
+        `verdict_ts` is stamped HERE, after the caller's side effects by
+        contract: the handler writes or clears the `contradicts` link
+        BEFORE resolving. With hashes recorded that ordering no longer
+        carries the resurrect rule — a link edit does not touch the body
+        — but it still keeps the fallback correct for rows that predate
+        them."""
         if status not in ("confirmed", "dismissed"):
             raise ValueError(
                 f"verdict status must be 'confirmed' or 'dismissed', got {status!r}"
             )
+        bodies = member_bodies or {}
         with flock_excl(self.path):
             current = self.load()
             hit: ConflictCandidate | None = None
@@ -339,6 +521,9 @@ class ConflictQueue:
                     c.status = status
                     c.verdict_ts = utcnow().isoformat()
                     c.note = note
+                    body_a, body_b = bodies.get(c.a_id), bodies.get(c.b_id)
+                    c.verdict_hash_a = None if body_a is None else _body_hash(body_a)
+                    c.verdict_hash_b = None if body_b is None else _body_hash(body_b)
                     hit = c
                     break
             if hit is not None:

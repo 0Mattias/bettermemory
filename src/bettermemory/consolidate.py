@@ -1165,7 +1165,10 @@ def consolidate(
     # UNCONDITIONAL, including when this scan produced no skips at all.
     # `upsert_scan` is not only the merge — it is also the queue's ONLY
     # garbage collector, dropping rows whose members stopped being
-    # active against the full-corpus liveness map it is handed. Gating
+    # active against the full-corpus liveness map it is handed (which it
+    # first checks for completeness: `memories` came from `load_all`,
+    # which skips files it cannot parse, and a settled verdict must not
+    # die of a bad read). Gating
     # the call on `polarity_skipped` stranded dead rows forever the
     # moment fresh skips stopped (arbitrate the last pair, tombstone a
     # member, and the row stays `pending` on disk with nothing able to
@@ -1175,7 +1178,7 @@ def consolidate(
     # so neither prompts a pass that would find nothing — but that is a
     # per-report liveness filter, not a fix for the row: this pass is
     # the only thing that ever removes it. `upsert_scan([])` merges
-    # nothing and still GCs.
+    # nothing and still collects.
     try:
         from .conflicts import ConflictQueue, skip_to_candidate
         from .models import utcnow as _utcnow

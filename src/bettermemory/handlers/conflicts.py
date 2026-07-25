@@ -8,20 +8,29 @@ bodies inline, and rules on each pair:
 
 - verdict="contradiction": the pair genuinely disagrees. A
   `contradicts` link is written (a→b, with the note) BEFORE the verdict
-  is stamped — ordering matters: the link-write bumps `updated`, and
-  stamping the verdict afterwards keeps the resurrect rule quiet. Both
-  members must still be ACTIVE for that to mean anything (see
-  `_load_active_member`). Both memories then surface the link on every
-  retrieval, and resolution happens through the normal verbs at the
-  model's leisure (memory_verify the right one, memory_update or
-  memory_remove the wrong one).
+  is stamped. Both members must still be ACTIVE for that to mean
+  anything (see `_load_active_member`). Both memories then surface the
+  link on every retrieval, and resolution happens through the normal
+  verbs at the model's leisure (memory_verify the right one,
+  memory_update or memory_remove the wrong one).
 - verdict="compatible": the detector misfired (incidental negator,
   added-detail number). Any `contradicts` link between the pair is
   cleared first — the queue and the link layer are two authorities on
   the same question and a dismissal that left the edge standing would
   leave them permanently disagreeing — then the pair is dismissed and
-  stays dismissed UNLESS either member's content later changes, which
+  stays dismissed UNLESS either member's BODY later changes, which
   resurrects it.
+
+Both verdicts hand `queue.resolve` the member bodies they just read, so
+the row records what it actually judged. That is what makes the
+resurrect rule immune to this very surface: both branches REWRITE
+memories (one adds a link, the other strips one) and both bumps land on
+memories that sit in other queued pairs too, so a rule keyed on
+`updated` had arbitrating one pair re-queue unrelated dismissed ones.
+Both branches also record a `conflict_verdict` event — a verdict that
+rewrites memories has to be as visible in the log as every other
+mutating operation, and the compatible branch mutates just as surely as
+the contradiction branch does.
 
 Scans are cheap to trigger here (`scan=True`) and also run
 automatically on every APPLYING consolidate pass (memory_curate /
@@ -72,7 +81,8 @@ DESC_MEMORY_CONFLICTS = (
     "negator, added-detail number). Clears any `contradicts` link "
     "between the pair (echoed as `links_cleared`), then dismisses; "
     "stays dismissed unless either body later changes, which re-queues "
-    "the pair.\n\n"
+    "the pair. Editing a memory's links or metadata is not a body "
+    "change and will not re-queue anything.\n\n"
     "Judging tips: read both bodies, not the summaries. For numeric "
     "pairs, 'compatible' is right when the numbers describe different "
     "things (two ports of two services); 'contradiction' when they "
@@ -145,9 +155,12 @@ async def memory_conflicts(
                 f"{omitted} queued candidate(s) name a memory that is no "
                 "longer active, so they are omitted from `pending` and "
                 "`pending_total` — a one-sided pair cannot be judged. The "
-                "rows sit in the queue until a full scan drops them: "
+                "rows sit in the queue until a full scan collects them: "
                 "memory_conflicts(scan=True), or the automatic scan every "
-                "applying curation pass runs. Nothing advertises them "
+                "applying curation pass runs (a scan reports `gc_deferred` "
+                "instead when the store holds a file it could not read — "
+                "collecting on that evidence would delete settled verdicts). "
+                "Nothing advertises them "
                 "meanwhile — memory_scope_overview's "
                 "curation_pending.conflicts leaves them out too."
             )
@@ -195,13 +208,15 @@ def _render_pending(
 
     Dead rows are reported, never GC'd here. `upsert_scan` stays the
     queue's only garbage collector: it rules on liveness from one
-    full-corpus snapshot, while this path has only per-row `load_one`
-    misses — which a momentarily unparseable or unreadable file also
-    produces. Deleting arbitration state from a read path on that
-    evidence trades a phantom count (now fixed at the reporting layer)
-    for lost judgment, and turns every list call into a locked rewrite
-    racing the scan. The rows are short-lived anyway: every applying
-    curation pass GCs unconditionally.
+    full-corpus snapshot, and only after checking that snapshot is
+    COMPLETE against the root's file count — while this path has only
+    per-row `load_one` misses, which a momentarily unparseable or
+    unreadable file also produces. Deleting arbitration state from a
+    read path on that evidence trades a phantom count (now fixed at the
+    reporting layer) for lost judgment, and turns every list call into a
+    locked rewrite racing the scan. The rows stay short-lived in the
+    normal case: every applying curation pass calls the collector, which
+    collects unless the store has a file it could not read.
     """
     live_sides: dict[str, dict[str, Any]] = {}
     dead_ids: set[str] = set()
@@ -261,6 +276,32 @@ def _load_active_member(deps: "ToolHandlers", memory_id: str) -> Memory:
             f"conflict member {memory_id} is no longer active ({exc}); "
             "re-scan (memory_conflicts(scan=True)) to GC the candidate"
         ) from exc
+
+
+def _member_bodies(
+    deps: "ToolHandlers", candidate: ConflictCandidate
+) -> dict[str, str]:
+    """`{memory_id: body}` for the pair, for the verdict's fingerprint.
+
+    A member that no longer loads is simply ABSENT from the mapping
+    rather than an error: a `compatible` verdict on a half-dead pair is
+    harmless (`_clear_contradicts_links` takes the same line) and the row
+    is GC'd by the next complete scan anyway. `ConflictQueue.resolve`
+    then leaves that side hashless, on the `updated > verdict_ts`
+    fallback — the honest answer when there is no body to fingerprint.
+
+    Reads separately from `_clear_contradicts_links` rather than sharing
+    its load: that one re-reads under its own CAS discipline, and a body
+    is identical either side of a links-only rewrite, so the two extra
+    indexed `load_one`s buy simplicity at no correctness cost.
+    """
+    bodies: dict[str, str] = {}
+    for memory_id in (candidate.a_id, candidate.b_id):
+        try:
+            bodies[memory_id] = deps.store.load_one(memory_id).body
+        except (MemoryNotFoundError, TombstonedError):
+            continue
+    return bodies
 
 
 def _clear_contradicts_links(
@@ -329,6 +370,13 @@ def _resolve_verdict(
         )
 
     if verdict == "compatible":
+        # Snapshot the bodies BEFORE mutating anything: they are what
+        # this verdict judged, and the fingerprint the row records is
+        # what a later scan compares against to decide whether the pair
+        # deserves re-arbitration. Clearing links below does not touch a
+        # body, so before/after would hash the same — reading first just
+        # keeps "what was judged" and "what was recorded" the same act.
+        bodies = _member_bodies(deps, candidate)
         # Two authorities rule on the same question — this queue and the
         # `contradicts` link layer retrieval annotates from. A dismissal
         # that left a standing edge in place (written by an earlier
@@ -336,12 +384,27 @@ def _resolve_verdict(
         # memory_update) would leave them permanently disagreeing: the
         # queue calls the pair settled while every retrieval keeps
         # flagging it, and nothing ever re-raises it for arbitration.
-        # Clear BEFORE stamping, for the same ordering reason the
-        # confirm path writes before stamping: the clear bumps `updated`,
-        # and a bump that postdates `verdict_ts` would resurrect the row
-        # on the very next scan.
+        # Clear BEFORE stamping, matching the confirm path's ordering:
+        # with body fingerprints recorded the clear's `updated` bump can
+        # no longer resurrect this row whichever way round it lands, but
+        # a row that falls back to the timestamp rule still needs it.
         cleared = _clear_contradicts_links(deps, candidate.a_id, candidate.b_id)
-        resolved = queue.resolve(candidate_id, status="dismissed", note=note)
+        resolved = queue.resolve(
+            candidate_id, status="dismissed", note=note, member_bodies=bodies
+        )
+        # Same event the contradiction branch records, and for the same
+        # reason: this branch rewrote up to two memories and retired a
+        # queue row, so leaving it out of the log made a mutating
+        # operation the one invisible thing in an audit trail every other
+        # mutator writes to.
+        deps.recorder.record(
+            "conflict_verdict",
+            candidate=candidate_id,
+            verdict="compatible",
+            a=candidate.a_id,
+            b=candidate.b_id,
+            memories_rewritten=len(cleared),
+        )
         out: dict[str, Any] = {
             "id": candidate_id,
             "verdict": "compatible",
@@ -364,7 +427,7 @@ def _resolve_verdict(
     # the next full scan GCs the queue row, so the verdict's only
     # durable artifact would be invisible from the moment it was made.
     source = _load_active_member(deps, candidate.a_id)
-    _load_active_member(deps, candidate.b_id)
+    target = _load_active_member(deps, candidate.b_id)
     already = any(
         link.type == LinkType.CONTRADICTS and link.target_id == candidate.b_id
         for link in source.links
@@ -385,7 +448,15 @@ def _resolve_verdict(
                 f"memory {candidate.a_id} changed concurrently; re-fetch via "
                 f"memory_show and retry the verdict ({exc})"
             ) from exc
-    resolved = queue.resolve(candidate_id, status="confirmed", note=note)
+    # `source.body` is pre-link-write, which is the same body: the write
+    # above only replaces `links`. Recorded for symmetry and forensics —
+    # `confirmed` is terminal, so no scan ever consults these hashes.
+    resolved = queue.resolve(
+        candidate_id,
+        status="confirmed",
+        note=note,
+        member_bodies={candidate.a_id: source.body, candidate.b_id: target.body},
+    )
     deps.recorder.record(
         "conflict_verdict",
         candidate=candidate_id,

@@ -30,7 +30,7 @@ from bettermemory.consolidate import (
     _numeric_divergence,
     _numeric_token_set,
 )
-from bettermemory.events import Recorder
+from bettermemory.events import Recorder, iter_events
 from bettermemory.models import Confidence, Memory, Source, generate_ulid
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
@@ -129,7 +129,6 @@ def test_queue_upsert_resolve_and_resurrect(tmp_path: Path) -> None:
     b = _memory(
         "the alpha api service binds listen port 8081 on the shared docker host"
     )
-    by_id = {a.id: a, b.id: b}
 
     first = scan_conflicts(root, [a, b])
     assert first["added"] == 1 and first["pending_total"] == 1
@@ -142,21 +141,71 @@ def test_queue_upsert_resolve_and_resurrect(tmp_path: Path) -> None:
     queue = ConflictQueue(root)
     cand = queue.pending()[0]
     assert (
-        queue.resolve(cand.id, status="dismissed", note="different services")
+        queue.resolve(
+            cand.id,
+            status="dismissed",
+            note="different services",
+            member_bodies={a.id: a.body, b.id: b.body},
+        )
         is not None
     )
     assert conflicts_pending_count(root) == 0
 
-    # Dismissal is sticky across scans while content is unchanged...
-    third = scan_conflicts(root, [a, b])
+    # Dismissal is sticky across scans while content is unchanged — even
+    # though `updated` moved on both members in the meantime, which is
+    # what a link edit from arbitrating a neighbouring pair looks like.
+    later = datetime.now(timezone.utc)
+    touched = [m.model_copy(update={"updated": later}) for m in (a, b)]
+    third = ConflictQueue(root).upsert_scan(
+        find_conflict_candidates(touched), {m.id: m for m in touched}
+    )
     assert third["resurrected"] == 0 and third["pending_total"] == 0
 
-    # ...but edited content resurrects the pair: the judged bodies are gone.
-    a2 = a.model_copy(update={"updated": datetime.now(timezone.utc)})
-    by_id[a.id] = a2
-    fourth = ConflictQueue(root).upsert_scan(find_conflict_candidates([a2, b]), by_id)
+    # ...but edited BODY resurrects the pair: the judged content is gone.
+    a2 = a.model_copy(
+        update={
+            "body": "the alpha api service binds listen port 8082 on the shared docker host",
+            "updated": later,
+        }
+    )
+    fourth = ConflictQueue(root).upsert_scan(
+        find_conflict_candidates([a2, b]), {a2.id: a2, b.id: b}
+    )
     assert fourth["resurrected"] == 1
     assert conflicts_pending_count(root) == 1
+    # The stale fingerprints go with the verdict they belonged to.
+    revived = ConflictQueue(root).pending()[0]
+    assert revived.verdict_ts is None
+    assert revived.verdict_hash_a is None and revived.verdict_hash_b is None
+
+
+def test_dismissal_without_verdict_hashes_falls_back_to_updated(
+    tmp_path: Path,
+) -> None:
+    """Rows dismissed before verdict fingerprints existed keep the old
+    rule, so an upgrade cannot strand them as permanently sticky.
+
+    They converge: this resurrection re-queues the pair, and the next
+    dismissal records hashes.
+    """
+    root = tmp_path / "memories"
+    root.mkdir()
+    a = _memory("the gamma worker pool runs 4 processes on the shared docker host")
+    b = _memory("the gamma worker pool runs 5 processes on the shared docker host")
+    scan_conflicts(root, [a, b])
+    cand = ConflictQueue(root).pending()[0]
+    # No `member_bodies` — exactly the shape a pre-upgrade row has.
+    resolved = ConflictQueue(root).resolve(
+        cand.id, status="dismissed", note="two different pools"
+    )
+    assert resolved is not None
+    assert resolved.verdict_hash_a is None and resolved.verdict_hash_b is None
+
+    a2 = a.model_copy(update={"updated": datetime.now(timezone.utc)})
+    out = ConflictQueue(root).upsert_scan(
+        find_conflict_candidates([a2, b]), {a2.id: a2, b.id: b}
+    )
+    assert out["resurrected"] == 1
 
 
 def test_queue_gc_drops_rows_with_dead_members(tmp_path: Path) -> None:
@@ -169,6 +218,7 @@ def test_queue_gc_drops_rows_with_dead_members(tmp_path: Path) -> None:
     # b vanishes (tombstoned/merged): the next full scan drops the row.
     result = ConflictQueue(root).upsert_scan([], {a.id: a})
     assert result["dropped"] == 1
+    assert result["gc_deferred"] == 0
     assert conflicts_pending_count(root) == 0
 
 
@@ -591,6 +641,252 @@ async def test_e2e_applying_pass_gcs_dead_rows_without_fresh_skips(
     assert conflicts_pending_count(memory_dir) == 0
     overview = _unwrap(await _call(server, "memory_scope_overview"))
     assert overview["curation_pending"]["conflicts"] == 0
+
+
+def _member_file(memory_dir: Path, memory_id: str) -> Path:
+    return next(
+        p for p in memory_dir.glob("*.md") if memory_id in p.read_text(encoding="utf-8")
+    )
+
+
+async def test_e2e_unreadable_member_file_does_not_destroy_a_settled_verdict(
+    memory_dir: Path,
+) -> None:
+    """GC may not read "absent from the snapshot" as "the memory died".
+
+    `Store.load_all` skips a file on `PARSE_SKIP_EXCEPTIONS`, which is
+    `(Exception,)` — a truncated write, a bad `chmod`, a mid-tombstone
+    race all present as a missing member. Collecting on that evidence is
+    irreversible and destroys the row's status, `verdict_ts`, `note` and
+    body fingerprints, and re-detection can only ever re-file the pair as
+    `pending`: the arbitration is simply gone. So a snapshot holding
+    fewer memories than the root holds files collects nothing.
+    """
+    server = _build(memory_dir)
+    _a_id, b_id = await _seed_conflicting_pair(server)
+    scanned = _unwrap(await _call(server, "memory_conflicts", scan=True))
+    cid = scanned["pending"][0]["id"]
+    await _call(
+        server,
+        "memory_conflicts",
+        resolve=cid,
+        verdict="compatible",
+        note="two different services, two different ports",
+    )
+
+    path = _member_file(memory_dir, b_id)
+    original = path.read_text(encoding="utf-8")
+    path.write_text("---\nid: [unterminated\n---\nbroken\n", encoding="utf-8")
+
+    degraded = _unwrap(await _call(server, "memory_conflicts", scan=True))
+    assert degraded["scan"]["gc_deferred"] == 1
+    assert degraded["scan"]["dropped"] == 0
+    settled = ConflictQueue(memory_dir).load()
+    assert [(c.id, c.status, c.note) for c in settled] == [
+        (cid, "dismissed", "two different services, two different ports")
+    ]
+
+    # The file was only transiently unreadable. Once it parses again the
+    # verdict is still there, still sticky, and GC resumes.
+    path.write_text(original, encoding="utf-8")
+    healthy = _unwrap(await _call(server, "memory_conflicts", scan=True))
+    assert healthy["scan"]["gc_deferred"] == 0
+    assert healthy["scan"]["resurrected"] == 0
+    assert healthy["pending_total"] == 0
+    assert [c.status for c in ConflictQueue(memory_dir).load()] == ["dismissed"]
+
+
+async def _seed_triangle(server: Any) -> list[str]:
+    """Three near-identical bodies → three overlapping candidate pairs.
+
+    The realistic shape: near-identical bodies cluster, so one memory
+    routinely has several conflict partners and any rewrite of it touches
+    every pair it sits in.
+    """
+    ids: list[str] = []
+    for index, port in enumerate((8080, 8081, 8082)):
+        written = _unwrap(
+            await _call(
+                server,
+                "memory_write",
+                content=(
+                    "the alpha api service binds its listen "
+                    f"port {port} on the shared docker host"
+                ),
+                scopes=["infrastructure"],
+                **({"force": True} if index else {}),
+            )
+        )
+        ids.append(written["id"])
+    return ids
+
+
+def _neighbour_of(rows: list[ConflictCandidate], row: ConflictCandidate) -> Any:
+    """The other queued pair that shares `row`'s a-side member."""
+    return next(r for r in rows if r.id != row.id and row.a_id in (r.a_id, r.b_id))
+
+
+async def test_e2e_confirming_one_pair_does_not_resurrect_a_neighbour(
+    memory_dir: Path,
+) -> None:
+    """A dismissal must only reopen for a change to ITS OWN pair.
+
+    The confirm path writes a `contradicts` link, and `store.update`
+    bumps `updated` on the memory it rewrites. Keyed on `updated`, that
+    bump re-queued every dismissed pair the rewritten memory also sits
+    in — arbitration of one pair spontaneously undoing the arbitration of
+    another. A cue that reappears for reasons the model cannot connect to
+    its own decision is the signal erosion that teaches it to ignore the
+    cue.
+    """
+    server = _build(memory_dir)
+    await _seed_triangle(server)
+    await _call(server, "memory_conflicts", scan=True)
+    rows = ConflictQueue(memory_dir).load()
+    assert len(rows) == 3
+    victim, neighbour = rows[0], _neighbour_of(rows, rows[0])
+
+    dismissed = _unwrap(
+        await _call(
+            server,
+            "memory_conflicts",
+            resolve=neighbour.id,
+            verdict="compatible",
+            note="three different services",
+        )
+    )
+    assert dismissed["resolved"]["status"] == "dismissed"
+
+    confirmed = _unwrap(
+        await _call(
+            server,
+            "memory_conflicts",
+            resolve=victim.id,
+            verdict="contradiction",
+            note="one of these ports is stale",
+        )
+    )
+    assert confirmed["resolved"]["link_written"] is True
+
+    rescan = _unwrap(await _call(server, "memory_conflicts", scan=True))
+    assert rescan["scan"]["resurrected"] == 0
+    statuses = {c.id: c.status for c in ConflictQueue(memory_dir).load()}
+    assert statuses[neighbour.id] == "dismissed"
+    assert statuses[victim.id] == "confirmed"
+
+
+async def test_e2e_dismissing_one_pair_does_not_resurrect_a_neighbour(
+    memory_dir: Path,
+) -> None:
+    """The dismiss path rewrites memories too — `_clear_contradicts_links`
+    strips the standing edge — so it carried the same `updated`-keyed
+    hazard as the confirm path, one pair over."""
+    server = _build(memory_dir)
+    ids = await _seed_triangle(server)
+    await _call(server, "memory_conflicts", scan=True)
+    rows = ConflictQueue(memory_dir).load()
+    victim, neighbour = rows[0], _neighbour_of(rows, rows[0])
+
+    # Give the victim pair a standing edge, so dismissing it actually
+    # rewrites both its members.
+    await _call(
+        server,
+        "memory_update",
+        id=victim.a_id,
+        links=[{"type": "contradicts", "target_id": victim.b_id}],
+    )
+    assert victim.a_id in ids
+
+    await _call(
+        server,
+        "memory_conflicts",
+        resolve=neighbour.id,
+        verdict="compatible",
+        note="three different services",
+    )
+    cleared = _unwrap(
+        await _call(
+            server,
+            "memory_conflicts",
+            resolve=victim.id,
+            verdict="compatible",
+            note="also three different services",
+        )
+    )
+    assert cleared["resolved"]["links_cleared"] == [
+        {"source": victim.a_id, "target": victim.b_id}
+    ]
+
+    rescan = _unwrap(await _call(server, "memory_conflicts", scan=True))
+    assert rescan["scan"]["resurrected"] == 0
+    statuses = {c.id: c.status for c in ConflictQueue(memory_dir).load()}
+    assert statuses[neighbour.id] == "dismissed"
+    assert statuses[victim.id] == "dismissed"
+
+
+async def test_e2e_dismissal_still_resurrects_on_a_real_body_edit(
+    memory_dir: Path,
+) -> None:
+    """The positive control for the two tests above: making dismissals
+    immune to unrelated bumps must not make them immune to the edit they
+    exist to catch. Rewrite a judged body and the pair comes back."""
+    server = _build(memory_dir)
+    a_id, _b_id = await _seed_conflicting_pair(server)
+    scanned = _unwrap(await _call(server, "memory_conflicts", scan=True))
+    cid = scanned["pending"][0]["id"]
+    await _call(
+        server, "memory_conflicts", resolve=cid, verdict="compatible", note="two hosts"
+    )
+    assert _unwrap(await _call(server, "memory_conflicts"))["pending_total"] == 0
+
+    await _call(
+        server,
+        "memory_update",
+        id=a_id,
+        content=(
+            "the homelab postgres instance backing grafana metrics "
+            "listens on tcp port 5434"
+        ),
+    )
+    rescan = _unwrap(await _call(server, "memory_conflicts", scan=True))
+    assert rescan["scan"]["resurrected"] == 1
+    assert rescan["pending_total"] == 1
+    assert [c.id for c in ConflictQueue(memory_dir).pending()] == [cid]
+
+
+async def test_e2e_compatible_verdict_is_recorded_in_the_event_log(
+    memory_dir: Path,
+) -> None:
+    """A `compatible` verdict rewrites memories (it strips the standing
+    `contradicts` edge) and retires a queue row. Only the contradiction
+    branch reached `recorder.record`, so the one mutating operation with
+    no audit-trail entry was the one that silently un-links memories."""
+    server = _build(memory_dir)
+    a_id, b_id = await _seed_conflicting_pair(server)
+    await _call(
+        server,
+        "memory_update",
+        id=a_id,
+        links=[{"type": "contradicts", "target_id": b_id}],
+    )
+    scanned = _unwrap(await _call(server, "memory_conflicts", scan=True))
+    cid = scanned["pending"][0]["id"]
+    await _call(
+        server,
+        "memory_conflicts",
+        resolve=cid,
+        verdict="compatible",
+        note="two different services",
+    )
+
+    verdicts = [
+        e for e in iter_events(memory_dir) if e.get("kind") == "conflict_verdict"
+    ]
+    assert len(verdicts) == 1
+    assert verdicts[0]["verdict"] == "compatible"
+    assert verdicts[0]["candidate"] == cid
+    assert {verdicts[0]["a"], verdicts[0]["b"]} == {a_id, b_id}
+    assert verdicts[0]["memories_rewritten"] == 1
 
 
 async def test_e2e_applying_curate_feeds_queue(memory_dir: Path) -> None:
