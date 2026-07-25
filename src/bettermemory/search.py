@@ -1053,6 +1053,47 @@ def _relevance_label_v2(matched_unique: int, query_unique: int) -> str:
     threshold rule) stays on v1 until the logged v1/v2 disagreement
     data justifies a flip. v1-high implies v2-high (the fraction arm is
     unchanged), so v2 is a strict widening.
+
+    THAT DATA NOW EXISTS, AND IT SAYS DO NOT FLIP. Measured 2026-07-25
+    over 195 `turn_audited` events carrying both labels, from a
+    185-memory dogfood store. Bucketing the SAME turns by the length of
+    the user message that produced them:
+
+        user message chars     0-40   40-80   80-150   150+
+        v1 "high" rate          45%     32%       0%     3%
+        v2 "high" rate          47%     63%      83%   100%
+
+    Neither label is measuring relevance; both are measuring LENGTH, in
+    opposite directions. v1's coverage fraction has a denominator that
+    grows with the query, so a long message can no longer clear 0.75 and
+    the rate collapses to zero — the documented blind spot this function
+    was written to close. But the floor that closes it replaces a
+    length-BLIND rule with a length-CREDULOUS one: four distinct content
+    tokens landing somewhere in a 185-document store is not evidence
+    about a specific memory, it is a near-certainty for any message long
+    enough, which is why the v2 arm reaches 100% and stays there.
+
+    Flipping the miss rule to v2 would have taken this store from 11
+    flagged misses to 105 of 195 turns. Reading the 95 newly-flagged
+    previews is the fastest way to see it: they are dominated by bare
+    continuations ("sorry continue, 5 hour limit cap" x6, "sorry about
+    that, i restarted the server" x8) and ordinary work turns ("fix the
+    readme" x4, "improve the slogans", "dude this svg sucks") — turns
+    with no memory to miss.
+
+    A rule's flag rate not tracking message length is a necessary
+    condition, not a sufficient one, and it is checkable without ground
+    truth, which is why it is the screen used here. Same 195 turns,
+    max-minus-min flag rate across those four buckets: v1 45%, v2 53%
+    (worse than what it replaces, and the only candidate that climbs
+    monotonically to 100%), `matched>=4` alone 92%, and the CONJUNCTIVE
+    form `coverage>=0.75 AND matched>=4` 29% at a 11.3% flag rate. So
+    the matched-token count is worth keeping and the `or` is the defect:
+    it lets the floor overrule the fraction instead of corroborating it.
+    That conjunction is the candidate a v5 should be calibrated from —
+    against labelled turns, since this screen can only rank candidates,
+    never confirm one. Caveat that travels with every number here: one
+    store, one user, n=195.
     """
     if query_unique <= 0:
         return "low"

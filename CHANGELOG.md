@@ -355,6 +355,71 @@ ranked sixth.
   high score proves only that this particular failure is absent — and it
   is explicitly not a helpfulness metric.
 
+### Changed — `memory_search` documents how to word a query
+
+The check above measures the gap; this acts on it, from the only side
+that can. The mismatch is between the asker's vocabulary and the store's,
+and the asker's vocabulary originates outside the store — a corpus cannot
+teach itself words it does not contain. But the caller is a frontier model
+that already relates "cut a release" to "tag", "pypi" and "changelog", and
+nothing on the tool surface had ever asked it to say so.
+
+- **`query` stopped being documented as "free text".** Measured on a
+  185-memory store over a 20-question gold set authored document-first in
+  caller voice — each target chosen by reading it, then a question written
+  the way a caller asks *before* knowing that memory exists, so the ranker
+  never picked the labels. Questions as asked retrieve at **10% recall@1**;
+  the same questions re-queried in concrete nouns reach **65%** (13
+  improved, 0 regressed), with an insider-vocabulary ceiling arm at 90%.
+- **The control arm is what fixed the wording.** Stripping the question
+  words and keeping the content words scores **10%** — byte-identical to
+  asking outright, because the ranker already strips stopwords. "Use
+  keywords, not questions" would therefore buy exactly nothing. The new
+  line names the lever that actually moved, the vocabulary a memory would
+  literally contain, plus the re-query reflex — a weak first hit is the
+  only signal a caller ever gets that its wording missed.
+- **Retracted in the same pass:** `mode`'s "`hybrid` for paraphrase
+  recall". With no semantic leg configured — the package default —
+  `hybrid` is RRF over keyword and BM25, both lexical, so that line
+  promised the caller the exact capability whose absence this window
+  spent a check measuring.
+- Paid for inside the existing description budget rather than by raising
+  the ratchet: `since_prior_session` gave back the sentence deriving why
+  its boundary is strict-`>`, rationale the caller cannot act on and whose
+  real guard is `test_api_md_since_prior_session_strict_after`. The lean
+  default-on surface **shrank**, 27,245 → 27,155 chars.
+
+### Changed — the shadow relevance label stays shadow, with a reason
+
+`_relevance_label_v2`'s contract said live behaviour holds on v1 "until
+the logged v1/v2 disagreement data justifies a flip." That data now
+exists — 195 `turn_audited` events carrying both labels — and it answers
+the question in the negative. Recorded in the docstring so the next reader
+inherits the verdict rather than the open question.
+
+- Bucketing the same turns by the length of the user message that produced
+  them, v1's "high" rate runs 45% → 32% → 0% → 3% as messages grow, while
+  v2's runs 47% → 63% → 83% → **100%**. Neither label is measuring
+  relevance; both are measuring length, in opposite directions. v1's
+  coverage denominator grows with the query, so long messages can never
+  clear 0.75 — the blind spot v2 exists to close — but v2's absolute floor
+  replaces a length-blind rule with a length-credulous one, because four
+  distinct content tokens landing *somewhere* in a 185-document store is
+  near-certain for any long message.
+- Flipping would have taken this store from 11 flagged misses to 105 of
+  195 turns, dominated by bare continuations and ordinary work turns with
+  no memory to miss.
+- A rule's flag rate not tracking message length is a necessary condition
+  and needs no ground truth, so it is the screen used: max-minus-min flag
+  rate across those buckets is 45% for v1, 53% for v2 — worse than what it
+  replaces — and 29% for the conjunctive `coverage>=0.75 AND matched>=4`.
+  The matched-token count is worth keeping; the `or` is the defect. That
+  conjunction is what a v5 should be calibrated from, against labelled
+  turns, since this screen can rank candidates but never confirm one.
+- Consequence worth stating plainly: `silent_miss_rate` is a length
+  artifact under either rule, so a low value is not evidence that a store
+  is being retrieved well.
+
 ### Added — machinery that re-derives instead of restating
 
 The window's most valuable output. A commit dedicated to hunting

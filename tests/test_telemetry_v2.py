@@ -105,6 +105,47 @@ def test_v2_floor_promotes_long_query_to_high() -> None:
     assert _relevance_label_v2(5, 8) == "high"
 
 
+def test_v2_high_arm_degenerates_as_the_query_grows() -> None:
+    """Why v2 stays shadow-only — the arithmetic behind the dogfood
+    measurement in `_relevance_label_v2`'s docstring, pinned hermetically
+    so the verdict survives without that private event log.
+
+    Hold the EVIDENCE fixed at exactly the floor and let only the query
+    grow. v1 decays the way a coverage fraction should: the same four
+    matched tokens are worth steadily less as the question gets longer.
+    v2 returns "high" at every length, including a 60-token query where
+    four matches is 7% coverage — so past the floor its high arm no
+    longer carries information about the query at all.
+
+    That is the whole finding. On real turns the floor is not hard to
+    reach (four distinct content tokens landing SOMEWHERE in a
+    185-document store is near-certain for any long message), so a
+    v2-driven miss rule fires on message length rather than on
+    relevance: 100% of turns whose user message ran past 150 characters.
+    The fix direction is the conjunction, asserted below — `and` makes
+    the floor corroborate the fraction, where `or` lets it overrule it.
+    """
+    floor = _V2_HIGH_MATCHED_FLOOR
+    for query_unique in (floor, 8, 16, 30, 60):
+        assert _relevance_label_v2(floor, query_unique) == "high", query_unique
+    assert _relevance_label(floor, floor) == "high"
+    assert _relevance_label(floor, 8) == "medium"
+    assert _relevance_label(floor, 60) == "low"
+
+    # The conjunctive candidate keeps the floor's evidence requirement
+    # without letting it manufacture a "high" out of a long query.
+    def conjunctive(matched: int, query: int) -> bool:
+        return bool(query) and matched / query >= 0.75 and matched >= floor
+
+    assert conjunctive(floor, floor)
+    assert not conjunctive(floor, 60)
+    # It is strictly NARROWER than v1, not wider: a tiny fully-covered
+    # query ("restic backup" matching 2/2) clears v1 on coverage alone
+    # but carries less evidence than the floor asks for.
+    assert _relevance_label(2, 2) == "high"
+    assert not conjunctive(2, 2)
+
+
 def test_v2_matches_v1_below_the_floor() -> None:
     """Below the matched-count floor the two formulas are identical —
     the v2 change is ONLY the absolute floor on the high arm."""
