@@ -3,11 +3,19 @@
 We monkeypatch `bettermemory.origin.capture` so tests can choose what the
 "current" origin looks like at write and search time, without setting up
 a fake git repo for every case.
+
+The "checkout-path lifecycle" section at the bottom is the deliberate
+exception: those cases are ABOUT what real `git rev-parse
+--show-toplevel` output does over a checkout's life (a directory move,
+a second live clone), so they feed the fixture a real `capture()` of a
+real on-disk checkout rather than a hand-built `Origin`.
 """
 
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -300,3 +308,159 @@ async def test_search_with_auto_scope_false_records_null_filter(
     e = search_events[-1]
     assert e["auto_scope"] is False
     assert e["repo_filter"] is None
+
+
+# ---------------------------------------------------------------------------
+# Checkout-path lifecycle — `origin.worktree_root` is an absolute path
+# frozen at write time, and the retrieval surface must not go dark when
+# that path stops describing where the project lives.
+#
+# `tests/test_origin.py` pins the same rule at the `worktrees_match` unit
+# level. These are the surface-level twins: the assertion is about what
+# `memory_search` / `memory_scope_overview` actually return, because the
+# failure this guards is a SILENT one — an empty result set carries no
+# signal that a filter dropped everything.
+# ---------------------------------------------------------------------------
+
+_GIT_AVAILABLE = shutil.which("git") is not None
+_REMOTE = "git@github.com:example/myapp.git"
+
+
+def _init_checkout(path: Path, *, remote: str = _REMOTE) -> None:
+    """A real primary checkout with `remote` as `origin` — enough for
+    `capture()` to report a repo URL and a worktree root."""
+    path.mkdir(parents=True)
+    for args in (
+        ["init", "--initial-branch=main"],
+        ["remote", "add", "origin", remote],
+    ):
+        subprocess.run(["git", *args], cwd=path, check=True, capture_output=True)
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+async def test_project_memories_survive_a_checkout_move(
+    server_factory, tmp_path: Path
+) -> None:
+    """Rename the project directory and the project's memories still
+    surface under auto_scope.
+
+    The recorded `worktree_root` is the pre-move absolute path, so the
+    strict-equality core of `worktrees_match` says "different worktree".
+    The dead-worktree degrade is what saves it: the recorded root no
+    longer exists, so there is no live workspace to isolate from and the
+    filter falls back to repo-level matching. Without that leg every
+    memory written before an ordinary `mv` would drop out of every
+    auto-scoped search for the project, with an empty result set as the
+    only symptom.
+    """
+    from bettermemory.origin import _primary_root_of, capture
+
+    old = tmp_path / "projects" / "myapp"
+    new = tmp_path / "Documents" / "projects" / "myapp"
+    _init_checkout(old)
+
+    _primary_root_of.cache_clear()
+    server, captured = server_factory(capture(cwd=old))
+    assert captured["value"].worktree_root == str(old.resolve())
+
+    written = await _call(
+        server,
+        "memory_write",
+        content="myapp hashes passwords with bcrypt at cost factor 12",
+        scopes=["projects:myapp"],
+    )
+    before = _unwrap(await _call(server, "memory_search", query="bcrypt"))
+    assert [h["id"] for h in before] == [written["id"]]
+
+    new.parent.mkdir(parents=True)
+    shutil.move(str(old), str(new))
+    assert not old.exists()
+    _primary_root_of.cache_clear()
+    captured["value"] = capture(cwd=new)
+    # Same project by repo URL, different absolute root — the exact
+    # shape the strict check would have excluded.
+    assert captured["value"].repo == _REMOTE
+    assert captured["value"].worktree_root == str(new.resolve())
+
+    after = _unwrap(await _call(server, "memory_search", query="bcrypt"))
+    assert [h["id"] for h in after] == [written["id"]]
+    overview = _unwrap(await _call(server, "memory_scope_overview"))
+    assert overview["total"] == 1
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+async def test_synced_memory_from_another_machine_surfaces_locally(
+    server_factory, tmp_path: Path
+) -> None:
+    """A memory that arrived over `sync` from another machine carries
+    that machine's absolute `worktree_root`, which cannot exist locally
+    — it still surfaces for the same repo.
+
+    Distinct from the move case only in that the path was never local to
+    begin with; both land on the dead-worktree degrade. Pinned
+    separately because a "resolve the recorded path relative to the
+    current machine" style fix would pass the move test and fail this
+    one.
+    """
+    from bettermemory.origin import _primary_root_of, capture
+
+    foreign = "/home/ci-user/projects/myapp"
+    server, captured = server_factory(
+        Origin(cwd=foreign, repo=_REMOTE, branch="main", worktree_root=foreign)
+    )
+    written = await _call(
+        server,
+        "memory_write",
+        content="myapp hashes passwords with bcrypt at cost factor 12",
+        scopes=["projects:myapp"],
+    )
+
+    local = tmp_path / "Documents" / "projects" / "myapp"
+    _init_checkout(local)
+    _primary_root_of.cache_clear()
+    captured["value"] = capture(cwd=local)
+    assert captured["value"].worktree_root == str(local.resolve())
+
+    hits = _unwrap(await _call(server, "memory_search", query="bcrypt"))
+    assert [h["id"] for h in hits] == [written["id"]]
+    overview = _unwrap(await _call(server, "memory_scope_overview"))
+    assert overview["total"] == 1
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+async def test_second_live_checkout_of_one_repo_stays_isolated(
+    server_factory, tmp_path: Path
+) -> None:
+    """The negative control for the two tests above, and the boundary of
+    what the degrade covers.
+
+    When the recorded root is still a live checkout on disk, the
+    worktree filter keeps doing its job: a memory written in one
+    checkout of a repo does not surface in a second, concurrently
+    existing checkout of the same repo. So the degrade is keyed on the
+    recorded workspace being GONE, not on "paths differ" — a fix that
+    simply dropped the worktree clause would pass the move test and
+    fail this one.
+    """
+    from bettermemory.origin import _primary_root_of, capture
+
+    first = tmp_path / "clones" / "myapp"
+    second = tmp_path / "clones" / "myapp-review"
+    _init_checkout(first)
+    _init_checkout(second)
+
+    _primary_root_of.cache_clear()
+    server, captured = server_factory(capture(cwd=first))
+    await _call(
+        server,
+        "memory_write",
+        content="myapp hashes passwords with bcrypt at cost factor 12",
+        scopes=["projects:myapp"],
+    )
+
+    _primary_root_of.cache_clear()
+    captured["value"] = capture(cwd=second)
+    assert captured["value"].repo == _REMOTE
+    assert first.exists()
+
+    assert _unwrap(await _call(server, "memory_search", query="bcrypt")) == []

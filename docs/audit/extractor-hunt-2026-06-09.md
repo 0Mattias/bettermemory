@@ -30,6 +30,22 @@ file-disjoint parallel batches, and adversarially verified:
 - **The rest parked as feature-class work** (see below) — proportionate
   fixes need new architecture, not heuristic tweaks.
 
+One JSON entry was **listed in error and never open**: *"worktree_root
+strict equality hides ALL memories for a repo after the checkout moves,
+is re-cloned, or the store syncs to another machine"*
+(`src/bettermemory/origin.py`). It is the medium-rated twin of the HIGH
+that b0ab779 — the parking commit itself — fixed, shipped in v3.9.0:
+`worktrees_match` gained the linked-worktree and dead-worktree
+relaxations, so a memory whose recorded `worktree_root` no longer exists
+degrades to repo-level matching. Re-measured at 3.28.0 against the
+surface rather than the helper: a memory written in one checkout still
+comes back from `memory_search`/`memory_scope_overview` after the
+directory is renamed, and after arriving over `sync` carrying another
+machine's absolute path; a second checkout that is still live on disk
+stays isolated, which is the boundary of the degrade. Those three are
+pinned end-to-end in `tests/test_server_origin.py` — read them rather
+than the JSON entry for the current behaviour.
+
 Per-finding dispositions are journaled in the audit-loop episodes
 (scope `projects:bettermemory`, 2026-06-10) and the queue memory
 (`audit-loop-state`).
