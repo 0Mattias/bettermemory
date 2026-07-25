@@ -85,11 +85,24 @@ def _semantic_model_configured(config: Config) -> bool:
 
     The gate ``_semantic_model_or_none`` opens on, lifted out so a
     caller can ask the question WITHOUT triggering the load. The web
-    UI does exactly that: it never loads a model, and uses this to
-    decide whether to tell the reader that its ranking is lexical
-    while ``memory_search``'s may not be. Answering it by restating
-    the two clauses at the call site is how the two would drift, so
-    there is one predicate and ``_semantic_model_or_none`` calls it too.
+    UI does exactly that: it never loads a model, and needs to know
+    whether ``memory_search``'s ranking could be non-lexical while its
+    own is. Answering it by restating the two clauses at the call site
+    is how the two would drift, so there is one predicate and
+    ``_semantic_model_or_none`` calls it too.
+
+    But this predicate is only HALF of that web question — reading it as
+    the whole answer is what once put a semantic-ranker caveat on
+    ``/memories`` under configs where no semantic leg ranks at all. A
+    loaded model reaches the RANKER only for ``search_mode`` in
+    ``hybrid`` / ``semantic``
+    (``handlers.search.memory_search`` leaves ``semantic_model=None``
+    for ``keyword`` / ``bm25``), so ``semantic_dedup = true`` under
+    ``keyword`` opens this gate for the write path while both search
+    surfaces stay single-scorer. So: a caller asking whether to LOAD
+    wants this predicate alone (``_semantic_model_or_none`` below); a
+    caller asking whether a semantic leg RANKS must AND in the resolved
+    search mode, as ``web._lexical_only_note`` does.
 
     Says nothing about whether an embeddings extra is actually
     installed — that answer costs a load attempt. ``True`` here means

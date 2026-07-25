@@ -831,19 +831,29 @@ def test_search_stays_lexical_and_says_so_under_a_semantic_config(
     """The divergence `_RANKER_INPUTS_DIVERGENT` files, pinned end to end.
 
     With `search_mode = "semantic"` and a resolvable model, `memory_search`
-    ranks by cosine; this route resolves no model, downgrades the mode to
-    `hybrid`, and fuses keyword + BM25 — so the two surfaces can return
-    different rows for the same query (reproduced: a paraphrase-only memory
-    that memory_search ranks FIRST never appears here at all). The contract
-    is not that they agree; it is that the page does not pass the lexical
-    order off as the model's.
+    ranks by the embedding scorer; this route resolves no model, downgrades
+    the mode to `hybrid`, and fuses keyword + BM25 — so the two surfaces can
+    return different rows for the same query (reproduced: a paraphrase-only
+    memory that memory_search ranks FIRST never appears here at all). The
+    contract is not that they agree; it is that the page does not pass the
+    lexical order off as the model's.
+
+    The note is per-config because the divergence is: the same lexical order
+    stands next to a THIRD fused leg under `hybrid` + `semantic_dedup`, and
+    next to a ranking that fuses neither of its two legs under
+    `search_mode = "semantic"`. Which text belongs to which config is
+    pinned against the handler in
+    `test_lexical_only_note_fires_exactly_when_a_semantic_leg_ranks`.
     """
     import html
 
     from bettermemory.config import BehaviorConfig
     from bettermemory.search import search as real_search
     from bettermemory.semantic_setup import _semantic_model_or_none
-    from bettermemory.web import _LEXICAL_ONLY_NOTE
+    from bettermemory.web import (
+        _LEXICAL_ONLY_FUSED_NOTE,
+        _LEXICAL_ONLY_SEMANTIC_NOTE,
+    )
 
     captured: dict[str, Any] = {}
 
@@ -858,9 +868,17 @@ def test_search_stays_lexical_and_says_so_under_a_semantic_config(
     monkeypatch.setattr("bettermemory.semantic.get_model", lambda *a, **k: object())
 
     store.write(content="theta rollout runbook", scopes=["tools"])
-    for behavior in (
-        BehaviorConfig(search_mode="semantic"),
-        BehaviorConfig(search_mode="hybrid", semantic_dedup=True),
+    for behavior, expected_note, other_note in (
+        (
+            BehaviorConfig(search_mode="semantic"),
+            _LEXICAL_ONLY_SEMANTIC_NOTE,
+            _LEXICAL_ONLY_FUSED_NOTE,
+        ),
+        (
+            BehaviorConfig(search_mode="hybrid", semantic_dedup=True),
+            _LEXICAL_ONLY_FUSED_NOTE,
+            _LEXICAL_ONLY_SEMANTIC_NOTE,
+        ),
     ):
         cfg = Config(
             storage=StorageConfig(directory=str(memory_dir)), behavior=behavior
@@ -873,14 +891,166 @@ def test_search_stays_lexical_and_says_so_under_a_semantic_config(
         assert captured.get("semantic_model") is None
         assert captured["mode"] == "hybrid"
         # The caveat is on the page, escaped like every other rendered
-        # string, so a reader knows this order is not memory_search's.
-        assert html.escape(_LEXICAL_ONLY_NOTE) in r.text
+        # string, so a reader knows this order is not memory_search's — and
+        # it is the caveat for THIS config, not the other one's divergence.
+        assert html.escape(expected_note) in r.text
+        assert html.escape(other_note) not in r.text
 
-    # And it stays OFF for the default config, where the two surfaces do
-    # rank identically — a permanent caveat would be noise.
+    # And it stays OFF for the default config, where both surfaces fuse the
+    # same two legs — a permanent caveat would be noise.
     client = _app_with(memory_dir, store, BehaviorConfig())
     r = client.get("/memories", params={"q": "theta runbook"})
-    assert "never loads an embedding model" not in r.text
+    for note in (_LEXICAL_ONLY_FUSED_NOTE, _LEXICAL_ONLY_SEMANTIC_NOTE):
+        assert html.escape(note) not in r.text
+    assert "keyword + BM25 fusion only" not in r.text
+
+
+# (search_mode, semantic_dedup, does a semantic leg RANK in memory_search).
+# The third column is not asserted from reading the handler — the test below
+# drives it and fails if the handler's answer moves.
+_SEMANTIC_LEG_MATRIX = [
+    # Shipped default: nothing asks for the model, so nothing resolves one.
+    ("hybrid", False, False),
+    # Dedup's model is what grows the default `hybrid` its third leg.
+    ("hybrid", True, True),
+    ("", True, True),  # unset search_mode resolves to hybrid on both sides
+    # Retrieval asks for the model itself; the dedup flag is irrelevant.
+    ("semantic", False, True),
+    ("semantic", True, True),
+    # The false-positive class: the gate `_semantic_model_configured` is OPEN
+    # (dedup wants a model for the write path) and no semantic leg ranks on
+    # either surface, because the handler resolves a model only for
+    # hybrid/semantic. A caveat here would invent a divergence.
+    ("keyword", True, False),
+    ("bm25", True, False),
+    ("keyword", False, False),
+    ("bm25", False, False),
+]
+
+
+async def test_lexical_only_note_fires_exactly_when_a_semantic_leg_ranks(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """`_lexical_only_note`'s gate, pinned against the handler it describes.
+
+    The caveat's predicate used to be `_semantic_model_configured` alone —
+    the model-LOAD gate, which `semantic_dedup = true` opens for the write
+    path under ANY search mode. Driven across the config matrix, that fired
+    the caveat under `search_mode = "keyword"` / `"bm25"` + dedup, where
+    `memory_search` passes `semantic_model=None` and both surfaces run the
+    same single scorer.
+
+    Which legs ran is observed, not inferred: `_score_semantic` /
+    `_score_keyword` / `_score_bm25` are spied at their `search` call sites,
+    so this also proves each note's TEXT — the fused note claims a third leg
+    beside these two, the semantic note claims neither of them runs.
+    """
+    import bettermemory.search as search_mod
+    from bettermemory.config import BehaviorConfig, StorageConfig
+    from bettermemory.models import Memory
+    from bettermemory.server import build_server
+    from bettermemory.session import SessionState
+    from bettermemory.web import (
+        _LEXICAL_ONLY_FUSED_NOTE,
+        _LEXICAL_ONLY_SEMANTIC_NOTE,
+        _lexical_only_note,
+    )
+
+    legs: list[str] = []
+
+    def _spy(name: str) -> Any:
+        real = getattr(search_mod, name)
+
+        def wrapper(*a: Any, **k: Any) -> Any:
+            legs.append(name)
+            return real(*a, **k)
+
+        return wrapper
+
+    for scorer in ("_score_keyword", "_score_bm25"):
+        monkeypatch.setattr(search_mod, scorer, _spy(scorer))
+
+    def fake_semantic(candidates: list[Memory], *a: Any, **k: Any) -> Any:
+        # Stands in for the real cosine scorer so the matrix runs without
+        # an embeddings extra (and without numpy). Shape only — this test
+        # asserts WHICH scorers run, never their order.
+        legs.append("_score_semantic")
+        return [(m, 1.0, ["theta"]) for m in candidates]
+
+    monkeypatch.setattr(search_mod, "_score_semantic", fake_semantic)
+    # A resolvable model, so every "the handler resolves one" row is real.
+    monkeypatch.setattr("bettermemory.semantic.get_model", lambda *a, **k: object())
+
+    for i, (mode_cfg, dedup, semantic_expected) in enumerate(_SEMANTIC_LEG_MATRIX):
+        label = f"search_mode={mode_cfg!r}, semantic_dedup={dedup}"
+        md = tmp_path / f"store{i}"
+        store = Store(md)
+        store.write(content="theta rollout runbook alpha", scopes=["tools"])
+        cfg = Config(
+            storage=StorageConfig(directory=str(md)),
+            behavior=BehaviorConfig(search_mode=mode_cfg, semantic_dedup=dedup),
+        )
+        server = build_server(config=cfg, store=store, state=SessionState())
+        legs.clear()
+        content, _structured = await server.call_tool(
+            "memory_search", {"query": "theta runbook"}
+        )
+        assert content is not None
+        ran = set(legs)
+        assert ("_score_semantic" in ran) is semantic_expected, label
+
+        note = _lexical_only_note(cfg)
+        assert bool(note) is semantic_expected, label
+        if not semantic_expected:
+            continue
+        if "_score_keyword" in ran or "_score_bm25" in ran:
+            # A leg on TOP of the two this page fuses.
+            assert ran == {"_score_keyword", "_score_bm25", "_score_semantic"}, label
+            assert note == _LEXICAL_ONLY_FUSED_NOTE, label
+        else:
+            # Neither of this page's legs contributed to that ranking.
+            assert ran == {"_score_semantic"}, label
+            assert note == _LEXICAL_ONLY_SEMANTIC_NOTE, label
+
+
+def test_lexical_only_note_stays_silent_and_inert_on_an_unknown_search_mode(
+    memory_dir: Path, store: Store
+) -> None:
+    """An unparseable `search_mode` gets no caveat, and cannot reach the page.
+
+    `memory_search` raises on an unknown mode before it ranks anything (the
+    `mode` entry in `_RANKER_INPUTS_DIVERGENT`), so it produces no ranking to
+    diverge FROM — a caveat comparing this page's order to a search that
+    errors would describe a divergence that never happens. The route
+    still renders (it coerces the unknown value to `hybrid`), and because no
+    config value is interpolated into the caveat, a markup-shaped
+    `search_mode` has no path onto the page through it. Differently-cased
+    `"Semantic"` is the same case: `_semantic_model_configured` normalises,
+    the handler does not, so the handler raises.
+    """
+    import html
+
+    from bettermemory.config import BehaviorConfig
+    from bettermemory.web import _lexical_only_note
+
+    store.write(content="theta rollout runbook", scopes=["tools"])
+    hostile = '<script>alert("mode")</script>'
+    for mode_cfg in (hostile, "Semantic", "emantic"):
+        behavior = BehaviorConfig(search_mode=mode_cfg, semantic_dedup=True)
+        cfg = Config(
+            storage=StorageConfig(directory=str(memory_dir)), behavior=behavior
+        )
+        assert _lexical_only_note(cfg) == "", mode_cfg
+        client = _app_with(memory_dir, store, behavior)
+        r = client.get("/memories", params={"q": "theta runbook"})
+        assert r.status_code == 200
+        assert "keyword + BM25 fusion only" not in r.text
+        # The page carries its own inline CSRF script, so look for the
+        # payload rather than for `<script>`: the hostile value reaches the
+        # response neither raw nor escaped, because it is never rendered.
+        assert "alert(" not in r.text
+        assert hostile not in r.text
+        assert html.escape(hostile) not in r.text
 
 
 def test_search_hits_carry_recent_negative_outcomes(

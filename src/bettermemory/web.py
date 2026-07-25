@@ -43,13 +43,12 @@ Scope:
   of `search.search`, so a new ranker input cannot land on the MCP side
   unnoticed — `test_web.py` fails until it is threaded or filed. The
   load-bearing entry is `semantic_model`: this process never loads an
-  embedding model, so a store configured for the semantic ranker
-  (`search_mode = "semantic"`, or `semantic_dedup = true`, which is
-  what grows `hybrid` a semantic leg) ranks here on keyword + BM25
-  alone and can order — or entirely omit — hits `memory_search`
-  returns. The page says so via `_LEXICAL_ONLY_NOTE` whenever that
-  config gate is open, rather than letting a lexical order pass for
-  the model's order.
+  embedding model, so under the two configs where `memory_search`
+  ranks WITH one — `search_mode = "semantic"`, or the default
+  `hybrid` plus `semantic_dedup = true` — the two orders, and the two
+  row sets, can differ. `_lexical_only_note` puts that on the page, in
+  the shape that config actually diverges in, rather than letting a
+  lexical order pass for the model's order.
 - No JS framework: server-side rendered HTML, minimal inline CSS,
   no template engine. Each route returns a complete HTML response
   built from the helper functions below. Cheap to maintain, no
@@ -154,7 +153,7 @@ _RANKER_INPUTS_DIVERGENT = frozenset(
         # raises. Decided in the `/memories` route below.
         "mode",
         # Never resolved: this process loads no embedding model. The one
-        # divergence that reorders results — see `_LEXICAL_ONLY_NOTE`.
+        # divergence that reorders results — see `_lexical_only_note`.
         "semantic_model",
         # Session-disabled scopes (`memory_scope_disable`) are an MCP
         # session concept; a browser tab carries no such session.
@@ -173,19 +172,91 @@ _RANKER_INPUTS_DIVERGENT = frozenset(
 )
 
 
-# Rendered above the ranked hits whenever the store's config opens the
-# embedding-model gate `memory_search` reads (`semantic_dedup = true`, or
-# `search_mode = "semantic"`). This page ranks lexically either way; the
-# note is what keeps that from reading as the model's own order. Same
-# discipline the silent-miss probe settled on for the same shortage — it
-# returns `no_signal_reason="semantic_model_unavailable"` rather than
-# probing with a scorer the model would not have used.
-_LEXICAL_ONLY_NOTE = (
-    "Ranked with keyword + BM25 fusion only. Your config enables the "
-    "semantic ranker, but this page never loads an embedding model — with "
-    "an embeddings extra installed, memory_search fuses a semantic leg on "
-    "top of these two and can order (or include) hits differently."
+# Rendered above the ranked hits whenever `memory_search` would rank with
+# a semantic leg and this page would not — see `_lexical_only_note` for the
+# gate, which is NOT the same question as "does the config load a model".
+# This page ranks the same way under either note (`semantic` is coerced to
+# `hybrid` in the route), so the lead sentence is shared; the divergence it
+# names is not, so the rest is per-config. Same discipline the silent-miss
+# probe settled on for the same shortage — it returns
+# `no_signal_reason="semantic_model_unavailable"` rather than probing with a
+# scorer the model would not have used.
+_LEXICAL_ONLY_LEAD = "Ranked with keyword + BM25 fusion only. "
+
+# `search_mode` at its `hybrid` default (or unset) with `semantic_dedup =
+# true`: the handler resolves the dedup model and `search.search` appends
+# `_score_semantic` as a THIRD RRF leg beside the two this page fused. With
+# no extra installed `semantic.get_model` returns None with the install hint
+# logged, and the handler fuses these same two legs instead — so the hedge
+# below is load-bearing here, not decorative.
+_LEXICAL_ONLY_FUSED_NOTE = _LEXICAL_ONLY_LEAD + (
+    "Your config turns on semantic dedup and leaves search_mode at hybrid, "
+    "so with an embeddings extra installed memory_search fuses a third, "
+    "semantic leg on top of these two and can order (or include) hits "
+    "differently. Without that extra it fuses these same two legs instead."
 )
+
+# `search_mode = "semantic"`: NOT a leg on top of these two. The handler
+# takes `search.search`'s `mode == "semantic"` branch, which scores with
+# `_score_semantic`; on an encode-time fault inside a LOADED model that
+# branch falls back to `_score_keyword` alone. Neither shape fuses the pair
+# this page fused. Nor is there a no-extra degrade: with no model resolvable
+# the handler raises its install-hint ValueError instead of ranking. So
+# "fuses a leg on top of these two" — what `_LEXICAL_ONLY_FUSED_NOTE`
+# describes — is the wrong divergence to hand this reader.
+_LEXICAL_ONLY_SEMANTIC_NOTE = _LEXICAL_ONLY_LEAD + (
+    "Your config sets search_mode = semantic, where memory_search does not "
+    "fuse these two legs at all — it ranks on the embedding scorer, so both "
+    "its rows and their order can differ from this page's. Nor does it fall "
+    "back to a lexical order without an embeddings extra installed: that "
+    "mode fails with an install hint instead."
+)
+
+
+def _lexical_only_note(config: Config) -> str:
+    """The ranking caveat for `/memories`, or `""` when there is none.
+
+    Gated on whether a semantic leg would actually RANK in
+    `memory_search`, which is two conditions, not one:
+
+    - `_semantic_model_configured` — the config asks some consumer for
+      the model. Necessary, not sufficient: it is the model-LOAD gate,
+      and `semantic_dedup = true` opens it under EVERY search mode,
+      including the two the handler never hands the model to.
+    - the mode `handlers.search.memory_search` resolves from config
+      (`search_mode or "hybrid"`, no normalising — mirrored here) is one
+      the handler resolves a model FOR. It resolves one only for
+      `hybrid` and `semantic`; under `keyword` / `bm25` it passes
+      `semantic_model=None` no matter what the dedup flag says, so the
+      two surfaces then run the *same* single scorer and a caveat would
+      be a fabricated divergence. Measured, not assumed: driving the
+      handler across the config matrix, `search_mode = "keyword"` +
+      `semantic_dedup = true` never enters `_score_semantic`.
+
+    A per-call `mode=` argument overrides the config mode for one
+    `memory_search` request; no page can anticipate that, so this reads
+    the config default the way the handler does when the argument is
+    omitted.
+
+    Anything else the config might hold (`"keyword"`, `"bm25"`, a typo,
+    a differently-cased `"Semantic"`) gets `""`: either no semantic leg
+    ranks, or the handler raises on the unknown mode before it ranks at
+    all — and a caveat comparing this order to a search that errors
+    would be describing a divergence that never happens. That last case
+    is the one `_RANKER_INPUTS_DIVERGENT`'s `mode` entry files.
+
+    Returns plain text, never markup — `_render_hits` escapes it. No
+    config value is interpolated, so nothing hostile in `search_mode`
+    can reach the page through this string either way.
+    """
+    if not _semantic_model_configured(config):
+        return ""
+    resolved_mode = config.behavior.search_mode or "hybrid"
+    if resolved_mode == "semantic":
+        return _LEXICAL_ONLY_SEMANTIC_NOTE
+    if resolved_mode == "hybrid":
+        return _LEXICAL_ONLY_FUSED_NOTE
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -682,9 +753,11 @@ def _render_hits(
     dict and maps it to a chip.
 
     `ranker_note`, when non-empty, is a caveat about the RANKING that
-    produced these rows (today: `_LEXICAL_ONLY_NOTE`). It renders above
-    the rows and also on the zero-hit page — a query that finds nothing
-    lexically is exactly where a missing semantic leg matters most.
+    produced these rows (today: whatever `_lexical_only_note` returns).
+    It renders above the rows and also on the zero-hit page — a query
+    that finds nothing lexically is exactly where a missing semantic leg
+    matters most. Plain text: escaped here, so a caller must not pass
+    markup.
     """
     parts: list[str] = [_render_search_bar(query, scope_filter)]
     parts.append(
@@ -1522,14 +1595,14 @@ def build_app(
             #   embedding model, so `semantic` ranks as `hybrid`, `hybrid`
             #   fuses keyword + BM25 only, and a config value that isn't a
             #   mode at all renders as hybrid where memory_search raises.
-            #   Under a config that resolves a model, memory_search fuses a
-            #   third leg and can order — or include — hits differently;
-            #   `_LEXICAL_ONLY_NOTE` puts that on the page rather than
-            #   leaving the difference silent. Not threading the model is
-            #   deliberate, not an oversight: this route ranks
-            #   `store.load_all()`, so a model here would embed the WHOLE
-            #   store on a request thread, where memory_search embeds at
-            #   most its `_PREFILTER_CAP`-capped pool.
+            #   The two configs where that costs the reader a different
+            #   ranking get `_lexical_only_note`'s caveat, in the shape each
+            #   one diverges in, rather than leaving the difference silent.
+            #   Not threading the model is deliberate, not an oversight:
+            #   this route ranks `store.load_all()`, so a model here would
+            #   embed the WHOLE store on a request thread, where
+            #   memory_search embeds at most its `_PREFILTER_CAP`-capped
+            #   pool.
             mode_raw = config.behavior.search_mode
             if mode_raw not in ("keyword", "bm25", "hybrid", "semantic"):
                 mode_raw = "hybrid"
@@ -1600,9 +1673,7 @@ def build_app(
                     hit_dicts,
                     query=q,
                     scope_filter=scope,
-                    ranker_note=(
-                        _LEXICAL_ONLY_NOTE if _semantic_model_configured(config) else ""
-                    ),
+                    ranker_note=_lexical_only_note(config),
                 ),
                 active="/memories",
             )
