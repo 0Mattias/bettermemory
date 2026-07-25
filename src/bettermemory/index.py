@@ -93,16 +93,16 @@ log = logging.getLogger("bettermemory.index")
 #     empty, and set `meta.needs_rebuild = '1'`. The flag is cleared
 #     ONLY by a successful `rebuild()` — never by the incremental
 #     Store hooks, which repopulate just the memories that happen to
-#     get touched. Without the flag, `_load_search_candidates` would
-#     re-engage the FTS prefilter as soon as `indexed_count` crossed
+#     get touched. Without the flag, `_handlers.load_search_candidates`
+#     would re-engage the FTS prefilter as soon as `indexed_count` crossed
 #     its threshold and every untouched pre-upgrade memory would be
 #     silently unreachable in `memory_search`; with it, search routes
 #     to `load_all` until `Store.__post_init__`'s auto-rebuild (or an
 #     explicit `bettermemory reindex`) restores full coverage.
 #
 # Version 2: adds `memories.filename` for id → path lookup (so
-# `_load_search_candidates` can directly read the candidate set
-# instead of walking the whole store with `load_all`), and adds
+# `_handlers.load_search_candidates` can directly read the candidate
+# set instead of walking the whole store with `load_all`), and adds
 # the `memory_links` table so `_links_payload`'s reverse-link
 # scan stops being O(N) per `memory_show`.
 #
@@ -382,8 +382,8 @@ def _ensure_schema(
       Memory data lives on disk in the .md files; `Store.__post_init__`
       auto-rebuilds from them on the next construction, and
       `bettermemory reindex` remains the manual path. While the flag is
-      set, `_load_search_candidates` treats the index as unusable and
-      routes to `load_all` — the incremental Store hooks only
+      set, `_handlers.load_search_candidates` treats the index as unusable
+      and routes to `load_all` — the incremental Store hooks only
       repopulate touched memories, so `indexed_count` alone can cross
       the prefilter threshold with most of the corpus still missing.
     """
@@ -850,7 +850,7 @@ def filenames_for_ids(root: Path, ids: list[str]) -> dict[str, str]:
     a schema upgrade pending reindex) are omitted — the caller falls
     back to the `load_all` path for those.
 
-    This is the lookup `_load_search_candidates` uses to avoid
+    This is the lookup `_handlers.load_search_candidates` uses to avoid
     parsing every memory's frontmatter when only a handful of
     candidates from the FTS5 pre-filter are actually wanted."""
     if not ids:
@@ -1071,7 +1071,7 @@ def links_for(
     Returns empty lists when the index file doesn't exist or has
     no rows for either direction. The handler falls back to
     `load_all` in that case (the same fallback shape the rest of
-    `_load_search_candidates` uses)."""
+    `_handlers.load_search_candidates` uses)."""
     path = index_path(root)
     if not path.exists():
         return [], []
@@ -1206,8 +1206,9 @@ def links_for_with_status(
     only touched memories, so `indexed_count` can climb back above zero
     while untouched legacy sources' `memory_links` rows are still
     missing. The handler must treat flag-set exactly like a zero count
-    — the same unusable-index routing `_load_search_candidates` applies
-    (via `status()`) on the search surface.
+    — the same unusable-index routing
+    `_handlers.load_search_candidates` applies (via `status()`) on the
+    search surface.
 
     A populated-but-no-inbound id (the common case) returns
     `([], [], n>0, False)`: empty inbound, but a non-zero count with

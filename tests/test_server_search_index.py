@@ -167,7 +167,7 @@ async def test_search_falls_back_when_index_data_pages_corrupt(
     a data b-tree page is garbage (torn WAL recovery, disk fault).
     Unlike the whole-file garbage above, `index.status()` reads only
     the meta/sqlite_master pages, so the pre-gate in
-    `_load_search_candidates` passes and the `sqlite3.DatabaseError`
+    `_handlers.load_search_candidates` passes and the `sqlite3.DatabaseError`
     first surfaces from `_index.query()` mid-search. Pre-fix it escaped
     to the MCP tool boundary and EVERY memory_search failed until
     reindex; the guard must instead warn once (with the reindex hint)
@@ -242,8 +242,8 @@ async def test_search_bypasses_index_flagged_by_schema_migration(
     rebuild restores coverage.
 
     Deliberately avoids constructing a Store after the migration so the
-    flag-gate in `_load_search_candidates` is exercised on its own,
-    not rescued by the construction-time auto-rebuild."""
+    flag-gate in `_handlers.load_search_candidates` is exercised on its
+    own, not rescued by the construction-time auto-rebuild."""
     import sqlite3
 
     from bettermemory import index as _index
@@ -294,8 +294,8 @@ async def test_link_annotations_survive_rebuild_pending_partial_index(
     — quietly defeating the retrieval-side suppression signal the link
     system exists to provide. The flag now routes the annotation to a
     scan of the already-loaded candidates — the same window in which
-    `_load_search_candidates` routes to `load_all`, so the scan sees the
-    full active corpus.
+    `_handlers.load_search_candidates` routes to `load_all`, so the scan
+    sees the full active corpus.
 
     Deliberately avoids constructing a Store after the migration so the
     flag-handling in `attach_link_annotations` is exercised on its own,

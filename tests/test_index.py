@@ -569,7 +569,7 @@ def test_rebuild_recovers_from_torn_fts_shadow_page(
 def test_filenames_for_ids_resolves_written_memories(
     store: Store, memory_dir: Path
 ) -> None:
-    """The lookup that `_load_search_candidates` uses to skip
+    """The lookup that `_handlers.load_search_candidates` uses to skip
     parsing the whole store. Every newly-written memory should
     have a row populated on the same transaction."""
     a = store.write(content="alpha", scopes=["tools"])
@@ -584,8 +584,8 @@ def test_filenames_for_ids_resolves_written_memories(
 
 def test_filenames_for_ids_omits_unknown_ids(store: Store, memory_dir: Path) -> None:
     """An id that doesn't correspond to an index row is silently
-    omitted — the caller (_load_search_candidates) falls back to
-    load_all for those candidates."""
+    omitted — the caller (_handlers.load_search_candidates) falls back
+    to load_all for those candidates."""
     a = store.write(content="something", scopes=["tools"])
     filenames = index.filenames_for_ids(
         memory_dir, [a.id, "01JUNKEEEEEEEEEEEEEEEEEEEE"]
@@ -1029,7 +1029,7 @@ def test_genuine_v3_index_migrates_and_rebuild_restores_search(
     assert s["indexed_count"] == 0
     assert s["needs_rebuild"] is True
     # The hollowed-out index matches nothing yet; the flag is what
-    # keeps `_load_search_candidates` off it in the meantime.
+    # keeps `_handlers.load_search_candidates` off it in the meantime.
     assert index.query(memory_dir, "tokyo") == []
 
     # rebuild() repopulates `body_fts` from canonical disk state and

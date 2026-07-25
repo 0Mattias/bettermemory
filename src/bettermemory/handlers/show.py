@@ -191,8 +191,8 @@ def _links_payload(deps: "ToolHandlers", memory: Any) -> dict[str, Any]:
     deleted) OR exists but reports zero indexed rows,
     `links_for_with_status` returns empty lists with
     `indexed_count == 0` and we walk the active set once. That matches
-    the same fallback shape `_load_search_candidates` uses — search
-    keeps working through a torn-down index, just slower.
+    the same fallback shape `_handlers.load_search_candidates` uses —
+    search keeps working through a torn-down index, just slower.
 
     The present-but-empty case is the post-upgrade window: a
     `SCHEMA_VERSION` bump makes `_ensure_schema` drop+recreate the
@@ -211,8 +211,8 @@ def _links_payload(deps: "ToolHandlers", memory: Any) -> dict[str, Any]:
     set and untouched legacy sources' `memory_links` rows are still
     missing. Flag-set is therefore treated exactly like a zero count —
     discard the (possibly partial) index answer and take the `load_all`
-    scan — mirroring the `needs_rebuild` gate `_load_search_candidates`
-    applies on the search surface.
+    scan — mirroring the `needs_rebuild` gate
+    `_handlers.load_search_candidates` applies on the search surface.
 
     `links_for_with_status` returns the inbound links AND the
     `indexed_count` / `needs_rebuild` meta pair from a SINGLE index
@@ -241,8 +241,8 @@ def _links_payload(deps: "ToolHandlers", memory: Any) -> dict[str, Any]:
     cache, and the canonical `.md` bodies are intact (still readable —
     the root kept its read bit), so the show must degrade gracefully
     rather than hard-crash for every id until reindex — mirroring the
-    corruption tolerance `_load_search_candidates` already gets from
-    the tolerant `index.status()`.
+    corruption tolerance `_handlers.load_search_candidates` already gets
+    from the tolerant `index.status()`.
     """
     from .. import index as _index
 
@@ -276,8 +276,9 @@ def _links_payload(deps: "ToolHandlers", memory: Any) -> dict[str, Any]:
         # bodies are intact, so treat it as an unusable index (no
         # inbound, zero rows) and route to the reverse-scan fallback
         # below rather than hard-crashing memory_show for every id
-        # until reindex. Same tolerance `_load_search_candidates` gets
-        # from the corruption-swallowing `index.status()`. `outbound`
+        # until reindex. Same tolerance
+        # `_handlers.load_search_candidates` gets from the
+        # corruption-swallowing `index.status()`. `outbound`
         # is unused downstream (only `inbound` + `indexed_count` +
         # `needs_rebuild` drive the fallback), so it's dropped here.
         inbound, indexed_count, needs_rebuild = [], 0, False

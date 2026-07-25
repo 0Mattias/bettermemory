@@ -195,8 +195,8 @@ async def test_reverse_links_survive_rebuild_pending_partial_index(
     `memory_links` row is still missing. Pre-fix `_links_payload`'s
     only unusable-index signal was `indexed_count == 0`, so this state
     returned EMPTY reverse_links for the untouched legacy target with
-    no fallback — the same hole class `_load_search_candidates` closes
-    with its `needs_rebuild` gate, on the links surface.
+    no fallback — the same hole class `_handlers.load_search_candidates`
+    closes with its `needs_rebuild` gate, on the links surface.
 
     Deliberately avoids constructing a Store after the migration so
     the flag-handling in `_links_payload` is exercised on its own, not

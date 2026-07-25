@@ -866,11 +866,11 @@ class ResponseBuilder:
         already-loaded `memories` candidates instead of being trusted
         alone (see `_links_map_with_candidate_scan`). That is the same
         truth table every sibling surface applies:
-        `_load_search_candidates` routes all four states to `load_all`
-        (so the candidates here carry the edges the index can't serve, at
-        zero extra file I/O) and `_links_payload`'s reverse_links treats
-        a zero count / set flag as no-usable-index. Resolution reuses the
-        `depends_on` discipline: a side-map over the loaded candidates, a
+        `_handlers.load_search_candidates` routes all four states to
+        `load_all` (so the candidates here carry the edges the index can't
+        serve, at zero extra file I/O) and `_links_payload`'s reverse_links
+        treats a zero count / set flag as no-usable-index. Resolution reuses
+        the `depends_on` discipline: a side-map over the loaded candidates, a
         targeted `store.load_one` for targets outside the FTS prefilter,
         tombstoned / missing skipped silently, and the caller's scope/origin
         filter re-applied so a link can't leak a hidden-scope memory.
@@ -925,8 +925,8 @@ class ResponseBuilder:
                 # failure to an empty links map, which killed the
                 # `superseded_by` suppression signal exactly when the index
                 # was broken. `status()` reports these states `corrupt=True`,
-                # so `_load_search_candidates` served `memories` via
-                # `load_all` — the scan's corpus is already paid for.
+                # so `_handlers.load_search_candidates` served `memories`
+                # via `load_all` — the scan's corpus is already paid for.
                 links_map, unusable = {}, True
             if not unusable:
                 # A clear flag doesn't finish the truth table:
@@ -936,7 +936,7 @@ class ResponseBuilder:
                 # connecting, flag reported False) and present-but-empty
                 # (`indexed_count == 0` with the flag clear — a zero-item
                 # rebuild, a schema created before the first write) are
-                # both states `_load_search_candidates` routes to
+                # both states `_handlers.load_search_candidates` routes to
                 # `load_all` and reverse_links treats as no-usable-index,
                 # so judge them unusable here too. `status()` never raises
                 # and never creates the file (absent is a bare stat); its
@@ -957,12 +957,12 @@ class ResponseBuilder:
                 # have refilled only touched memories, so the index answer
                 # above may be silently missing the very inbound `supersedes`
                 # edge this annotation exists to surface.
-                # `_load_search_candidates` routes every one of these states
-                # to `load_all` (same signals), so `memories` here is the
-                # full active corpus — scan it for the edges instead of
-                # trusting the partial index, at zero extra I/O. Union, not
-                # replace: on the one narrowed caller path
-                # (`since_prior_session`'s post-boundary slice) the partial
+                # `_handlers.load_search_candidates` routes every one of
+                # these states to `load_all` (same signals), so `memories`
+                # here is the full active corpus — scan it for the edges
+                # instead of trusting the partial index, at zero extra
+                # I/O. Union, not replace: on the one narrowed caller
+                # path (`since_prior_session`'s post-boundary slice) the partial
                 # index can still hold live hook-written edges whose sources
                 # fall outside `memories`, so keeping both sides means the
                 # fallback never serves fewer edges than the index alone.
@@ -1178,8 +1178,8 @@ def _links_map_with_candidate_scan(
     untouched legacy sources — the 'superseded by X' warning included — are
     silently absent from the index answer. The scan recovers them from the
     candidate list the search loader already paid for: while the flag is
-    set, `_load_search_candidates` routes to `load_all` (same flag, same
-    window), so `memories` carries every active memory and the scan yields
+    set, `_handlers.load_search_candidates` routes to `load_all` (same flag,
+    same window), so `memories` carries every active memory and the scan yields
     exactly the edge set a completed `rebuild()` would serve. Pure in-memory
     work — no second store walk, no index reads. The other unusable-index
     states reuse this same scan (the candidate loader routes every one of

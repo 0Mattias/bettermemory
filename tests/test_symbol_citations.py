@@ -32,7 +32,8 @@ until its live findings were exactly the entries in ``_ALLOWLIST``.
 Shapes that could not be separated from working prose were dropped and
 are named as blind spots rather than guessed at.
 
-What is checked — four shapes, each a mechanically decidable slice
+What is checked — four shapes and one follow-up, each a mechanically
+decidable slice
 ------------------------------------------------------------------
 The corpus is every tracked ``*.py`` file; the prose read from it is
 docstrings **and** ``#`` comments. Comments matter here: they are the
@@ -67,6 +68,24 @@ lived in one.
    single-word bullet lead in this corpus is a search mode, an outcome
    name, or a wire value, and a SCREAMING_SNAKE one is an environment
    variable. Both were measured, not assumed.
+5. ``unreferenced-private`` — the follow-up rules 1 and 2 ask once the
+   cited name DOES resolve. Being bound is not being reached. A dead
+   delegate — an alias whose only consumer was rewritten to call the
+   implementation directly — keeps a whole family of citations "valid"
+   while every one of them names a code path nothing enters, and the
+   binding-only test cannot tell the difference. Not hypothetical: the
+   commit that added this rule retired 26 such citations across ten
+   files, every one of them naming a single method on ``ToolHandlers``
+   whose only surviving purpose was to hold those citations up.
+   Reported when the cited name is private AND every statement binding
+   it is an **undecorated** ``def``/``async def``/``class`` AND nothing
+   in the tracked Python loads it, imports it, or names it in a lookup
+   string. ``NameUse`` names each clause and why it is there; the
+   ``What this cannot see`` section below states the two things this
+   rule deliberately declines to judge. The two measurements the design
+   rests on — that the undecorated clause is still load-bearing, and
+   that the same scan is noise on public names — are re-derived by
+   guards on every run rather than recorded here as counts.
 
 Suppressed on purpose
 ---------------------
@@ -132,6 +151,32 @@ What this cannot see
   of precisely this kind. If you are writing prose, prefer the
   ``module.symbol`` spelling — it is the form this file can check.
 * **Wrong-module attribution.** By construction, per rule 1 above.
+* **Whether a PUBLIC name is reached.** Rule 5 stops at the leading
+  underscore, and the reason is a measurement rather than caution: the
+  same scan run over public names flags most of them, because pytest
+  collects its tests by name and an exported API is called by consumers
+  outside the corpus, so "defined here and mentioned nowhere else" is
+  the normal state of a public name rather than a defect. The figure is
+  not written down here — it is re-derived on every run by
+  ``test_the_same_scan_over_public_names_is_measured_noise``, which
+  fails if the scan ever becomes precise enough on public names for
+  this narrowing to be costing recall for nothing. A dead PUBLIC
+  delegate cited in prose is invisible to rule 5, and that is the
+  largest hole it leaves open.
+* **Reachability, as opposed to being referenced.** Rule 5 decides
+  "the tracked Python never mentions this name outside its own
+  definition" and nothing beyond it. A private helper called only from
+  inside another dead function reads as referenced and always will —
+  reachability is undecidable in general, and a transitive liveness
+  pass would trade a rule whose negative evidence is one unambiguous
+  AST node for one that must model imports, dynamic dispatch and
+  framework entry points. Rule 5 is a proper subset of dead code,
+  chosen because its evidence is a single pass and its negative is
+  exact. Two further channels it cannot follow, both conceded rather
+  than guessed: a dispatch name assembled from fragments
+  (``getattr(self, f"_handle_{kind}")`` — the literal-string channel
+  in ``_lookup_strings`` covers the spelled-out form and nothing else),
+  and a reference from outside the tracked Python.
 * **History told in the predicative voice.** A cited name *followed* by
   "was removed" or "has since been renamed" states the same fact as the
   attributive "the removed ``_handle_foo``", but the marker trails the
@@ -185,6 +230,27 @@ must fire on a seeded offender, stay quiet on a real symbol, and — the
 part that makes the other two non-vacuous — stop firing when the rule's
 own lookup is neutered, proving the finding came from the missing
 binding rather than from the token's shape.
+
+Rule 5 is the one with no live yield at all, and saying so is the point:
+its first commit both introduced it and repaired everything it found, so
+the corpus now holds zero ``unreferenced-private`` findings and no
+``_ALLOWLIST`` entry covers one. Nothing about the live tree would notice
+if the rule were deleted tomorrow. Its self-tests are therefore the whole
+of its evidence, and they are built to carry that: the reachability
+verdict is computed over a synthetic corpus the tests hold in hand, so
+the positive and its neuter differ by exactly one added call site — not
+by a flag, and not by a name injected into the world. The three quiet
+cases (a decorated definition, a name reached only through a lookup
+string, a public name) are pinned the same way, each against the corpus
+shape it was measured from.
+
+One consequence of the lookup-string channel, stated because it looks
+like a bug and is a deliberate bound: an ``_ALLOWLIST`` entry cannot be
+written for an ``unreferenced-private`` finding by naming the symbol in a
+dict key — ``_lookup_strings`` reads call arguments and assigned
+sequences only, so the key does not register as a reference and the
+exemption behaves like any other. The alternative, counting every string
+literal, would make writing the exemption retire the finding it exempts.
 
 Corollary for anyone editing this file: these rules scan every tracked
 ``*.py``, this one included, and they read comments as well as
@@ -417,16 +483,15 @@ def _all_py_files() -> tuple[str, ...]:
     return _walk_py_files() if tracked is None else tracked
 
 
-@lru_cache(maxsize=None)
-def _bound_names(rel: str) -> frozenset[str]:
-    """Every name bound anywhere in a module, by AST.
+def _bound_names_in(text: str) -> frozenset[str]:
+    """Every name bound anywhere in one Python source, by AST.
 
     Deliberately generous — a citation is satisfied by any binding form,
     including a parameter or an attribute, because prose names all of them
     and the question this rule asks is "does this name exist at all".
     """
     names: set[str] = set()
-    tree = ast.parse((_REPO_ROOT / rel).read_text(encoding="utf-8"))
+    tree = ast.parse(text)
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             names.add(node.name)
@@ -446,6 +511,157 @@ def _bound_names(rel: str) -> frozenset[str]:
     return frozenset(names)
 
 
+@lru_cache(maxsize=None)
+def _bound_names(rel: str) -> frozenset[str]:
+    return _bound_names_in((_REPO_ROOT / rel).read_text(encoding="utf-8"))
+
+
+def _lookup_strings(tree: ast.AST) -> set[str]:
+    """String literals sitting where something could look a name up.
+
+    Two positions, both measured against this corpus rather than imagined:
+    a call argument (``getattr(obj, "_x")``, ``monkeypatch.setattr(m, "_x",
+    v)``, ``pytest.mark.parametrize``) and an element of a list/tuple/set
+    that is the direct right-hand side of an assignment (the ``__all__``
+    re-export lists that carry private names in ``_handlers.py`` and
+    ``handlers/_shared.py``). A name written in either place is registered
+    somewhere no AST edge records, so it must not read as unreferenced.
+
+    Both positions exclude a string nested in a dict key, which is what
+    ``_ALLOWLIST`` entries are. That is load-bearing rather than incidental:
+    were the subject of an exemption to count as a reference, writing the
+    entry would retire the very finding it exempts and the reverse guard
+    would then delete it, leaving no way to exempt one of these at all.
+    """
+    out: set[str] = set()
+    for node in ast.walk(tree):
+        values: list[ast.expr] = []
+        if isinstance(node, ast.Call):
+            values = [*node.args, *(kw.value for kw in node.keywords)]
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)) and isinstance(
+            node.value, (ast.List, ast.Tuple, ast.Set)
+        ):
+            values = list(node.value.elts)
+        for value in values:
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                out.add(value.value)
+    return out
+
+
+@dataclass(frozen=True)
+class NameUse:
+    """How a corpus uses every identifier in it, partitioned four ways.
+
+    Kept separate from the verdict so the two measurements the rule's design
+    rests on — that the undecorated clause is load-bearing, and that the same
+    scan is useless on public names — are computable by a test instead of
+    written into prose as counts that rot as the tree grows.
+    """
+
+    plain_defs: frozenset[str]
+    """Names with at least one UNDECORATED ``def``/``async def``/``class``."""
+
+    decorated_defs: frozenset[str]
+    """Names with at least one decorated definition — a registration channel
+    with no AST edge back to a caller. ``@field_validator``,
+    ``@pytest.fixture`` and ``@app.tool`` all produce callables that a
+    framework calls correctly and nothing else calls at all."""
+
+    rebound: frozenset[str]
+    """Names bound by something other than a definition — an assignment, a
+    parameter, an attribute store, an import alias, a ``global``. Something
+    besides the definition owns the name and this scan cannot reason about
+    it."""
+
+    used: frozenset[str]
+    """Names appearing as a load — bare name, attribute access, imported
+    name, decorator expression — or in a lookup string."""
+
+
+def name_use(sources: dict[str, str]) -> NameUse:
+    """Partition every identifier in ``{path: text}`` by how it is used.
+
+    Takes the corpus as a mapping rather than reading the tree, so a
+    self-test can hand it a two-file world it controls and watch the verdict
+    move when one call site is added. That is the only honest way to show
+    the rule below turns on the reference scan rather than on the shape of
+    the citation.
+    """
+    plain: set[str] = set()
+    decorated: set[str] = set()
+    rebound: set[str] = set()
+    used: set[str] = set()
+    for text in sources.values():
+        tree = ast.parse(text)
+        used |= _lookup_strings(tree)
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                (decorated if node.decorator_list else plain).add(node.name)
+            elif isinstance(node, ast.Name):
+                (rebound if isinstance(node.ctx, ast.Store) else used).add(node.id)
+            elif isinstance(node, ast.Attribute):
+                (rebound if isinstance(node.ctx, ast.Store) else used).add(node.attr)
+            elif isinstance(node, ast.arg):
+                rebound.add(node.arg)
+            elif isinstance(node, ast.keyword) and node.arg is not None:
+                rebound.add(node.arg)
+            elif isinstance(node, (ast.Global, ast.Nonlocal)):
+                rebound.update(node.names)
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                for alias in node.names:
+                    rebound.add((alias.asname or alias.name).split(".")[0])
+                    used.add(alias.name.split(".")[-1])
+    return NameUse(
+        plain_defs=frozenset(plain),
+        decorated_defs=frozenset(decorated),
+        rebound=frozenset(rebound),
+        used=frozenset(used),
+    )
+
+
+def unreferenced_names(
+    use: NameUse, *, allow_decorated: bool = False
+) -> frozenset[str]:
+    """Names a corpus defines and then never mentions again.
+
+    A name qualifies when every statement binding it is a definition, none
+    of those definitions is decorated, and nothing loads it, imports it or
+    names it in a lookup string. ``allow_decorated`` drops the second clause
+    and exists for one caller: the guard that shows the clause is still
+    doing work on the live tree.
+
+    NOT filtered to private names — that filter belongs to the rule, not to
+    the scan, so the guard below can run the identical scan over public
+    names and measure what it would cost there.
+
+    What this decides is exactly "the corpus never mentions this name
+    outside its own definition". What it does **not** decide is
+    reachability, which is undecidable in general: a name called only from
+    inside another dead function reads as referenced here and always will.
+    The rule is a subset of dead code, chosen because its evidence is a
+    single AST pass and its negative — one reference anywhere — is
+    unambiguous.
+    """
+    defined = use.plain_defs | use.decorated_defs if allow_decorated else use.plain_defs
+    barred = use.rebound | use.used
+    if not allow_decorated:
+        barred = barred | use.decorated_defs
+    return frozenset(defined - barred)
+
+
+def unreferenced_private_names(sources: dict[str, str]) -> frozenset[str]:
+    """The rule's verdict: ``unreferenced_names`` narrowed to private names.
+
+    The leading underscore is the whole of the narrowing, and it is what
+    keeps the rule usable —
+    ``test_the_same_scan_over_public_names_is_measured_noise`` runs the
+    identical scan without it.
+    """
+    return frozenset(
+        name for name in unreferenced_names(name_use(sources)) if _PRIVATE.match(name)
+    )
+
+
 @dataclass(frozen=True)
 class World:
     """The name universe a scan resolves citations against.
@@ -453,12 +669,18 @@ class World:
     Injectable so the self-tests can neuter one lookup at a time and show
     that a finding disappears — which is what proves the positive self-tests
     are testing the rule rather than the token's shape.
+
+    ``symbols`` answers "is this name bound anywhere"; ``unreferenced``
+    answers the narrower follow-up "and does anything reach it". The two are
+    separate fields, with no default between them, so a construction site
+    that forgets the second cannot silently disable the reachability verdict.
     """
 
     symbols: frozenset[str]
     module_stems: frozenset[str]
     basenames: frozenset[str]
     local: frozenset[str]
+    unreferenced: frozenset[str]
 
 
 @lru_cache(maxsize=None)
@@ -467,6 +689,13 @@ def _repo_symbols() -> frozenset[str]:
     for rel in _all_py_files():
         names |= _bound_names(rel)
     return frozenset(names)
+
+
+@lru_cache(maxsize=None)
+def _repo_unreferenced_privates() -> frozenset[str]:
+    return unreferenced_private_names(
+        {rel: (_REPO_ROOT / rel).read_text(encoding="utf-8") for rel in _all_py_files()}
+    )
 
 
 @lru_cache(maxsize=None)
@@ -491,6 +720,7 @@ def world_for(source: str) -> World:
         module_stems=_package_module_stems(),
         basenames=_tracked_basenames(),
         local=local,
+        unreferenced=_repo_unreferenced_privates(),
     )
 
 
@@ -611,10 +841,10 @@ def _judge(
     dotted = _DOTTED.match(token)
     if dotted is not None and dotted.group(1) in world.module_stems:
         name = dotted.group(2)
-        if name in _FILE_EXTENSIONS or name in world.symbols:
+        if name in _FILE_EXTENSIONS or _has_placeholder_segment(name):
             return []
-        if _has_placeholder_segment(name):
-            return []
+        if name in world.symbols:
+            return _unreferenced_findings(source, line, kind, token, name, world)
         return [
             Finding(
                 source,
@@ -625,10 +855,12 @@ def _judge(
             )
         ]
     if _PRIVATE.match(token):
-        if token in world.symbols or token in world.module_stems:
+        if token in world.module_stems:
             return []
         if _has_placeholder_segment(token) or _is_local_tail(token, world):
             return []
+        if token in world.symbols:
+            return _unreferenced_findings(source, line, kind, token, token, world)
         return [
             Finding(
                 source,
@@ -639,6 +871,34 @@ def _judge(
             )
         ]
     return []
+
+
+def _unreferenced_detail(name: str, world: World) -> str | None:
+    """Why a name that IS bound still resolves to nothing, or ``None``.
+
+    The one seam between "bound" and "reachable". Every rule that used to
+    stop at ``name in world.symbols`` routes its yes-branch through here, so
+    there is no rule for which the two questions can drift apart.
+    """
+    if name not in world.unreferenced:
+        return None
+    return (
+        f"{name} is defined but nothing in the tracked Python references it — "
+        f"the binding survives, the code path does not"
+    )
+
+
+def _unreferenced_findings(
+    source: str, line: int, kind: str, subject: str, name: str, world: World
+) -> list[Finding]:
+    detail = _unreferenced_detail(name, world)
+    if detail is None:
+        return []
+    return [
+        Finding(
+            source, line, "unreferenced-private", subject, f"{detail} (in a {kind})"
+        )
+    ]
 
 
 def _scan_inventory_bullets(source: str, text: str, world: World) -> list[Finding]:
@@ -662,6 +922,13 @@ def _scan_inventory_bullets(source: str, text: str, world: World) -> list[Findin
         name = match.group(1)
         if "_" not in name or name == name.upper():
             continue
+        # No reachability verdict here, and none is missing: a bullet lead
+        # that is private is already a backticked token in this same module
+        # docstring, so the token walk above judges it and adding a second
+        # judgement would only mint a duplicate under one allowlist key. The
+        # leads this rule uniquely owns are the public ones, where the
+        # reference scan is measured useless — see
+        # `test_the_same_scan_over_public_names_is_measured_noise`.
         if name in world.symbols or _has_placeholder_segment(name):
             continue
         findings.append(
@@ -880,6 +1147,7 @@ def _real_world(local: frozenset[str] = frozenset()) -> World:
         module_stems=_package_module_stems(),
         basenames=_tracked_basenames(),
         local=local,
+        unreferenced=_repo_unreferenced_privates(),
     )
 
 
@@ -891,6 +1159,27 @@ def _world_knowing(*names: str) -> World:
         module_stems=base.module_stems,
         basenames=base.basenames,
         local=base.local,
+        unreferenced=base.unreferenced,
+    )
+
+
+def _world_over(sources: dict[str, str]) -> World:
+    """A world whose binding AND reference verdicts come from ``sources``.
+
+    The other helpers vary one axis against the real tree. This one replaces
+    the tree, because the reachability rule's verdict is a property of the
+    whole corpus: the only way to show a finding turns on a call site is to
+    hold a corpus in hand and add one.
+    """
+    symbols: set[str] = set()
+    for text in sources.values():
+        symbols |= _bound_names_in(text)
+    return World(
+        symbols=frozenset(symbols),
+        module_stems=_package_module_stems(),
+        basenames=_tracked_basenames(),
+        local=frozenset(),
+        unreferenced=unreferenced_private_names(sources),
     )
 
 
@@ -979,6 +1268,177 @@ def test_a_local_tail_is_an_elision_not_a_citation() -> None:
     assert _rules(_FAKE_TEST, text, local) == []
 
 
+# The bound-but-unreached shape, held as synthetic corpora so the reference
+# scan can be driven over a tree whose call sites are under this file's
+# control. Sources live in string constants for the same reason the prose
+# fixtures do: the lint scans itself, and a real `def` here would enter the
+# live corpus.
+_DEAD_DELEGATE_SRC = '''
+def load_rows(store):
+    """Module-level implementation; the one caller reaches it directly."""
+    return store.rows()
+
+
+class Bundle:
+    def _load_rows(self):
+        """Bound alias over this bundle's store."""
+        return load_rows(self.store)
+'''
+
+_DEAD_DELEGATE_CORPUS = {"src/bettermemory/fake.py": _DEAD_DELEGATE_SRC}
+
+# The same tree with one call site added — the whole difference between the
+# two verdicts below.
+_LIVE_DELEGATE_CORPUS = {
+    "src/bettermemory/fake.py": _DEAD_DELEGATE_SRC,
+    "src/bettermemory/caller.py": "def go(bundle):\n    return bundle._load_rows()\n",
+}
+
+# Registered by a decorator, called by a framework, reachable from no AST
+# edge: the pydantic/pytest shape that made the undecorated clause necessary.
+_DECORATED_CORPUS = {
+    "src/bettermemory/fake.py": '''
+class Model:
+    @field_validator("scopes")
+    @classmethod
+    def _load_rows(cls, v):
+        """A validator pydantic calls and nothing else does."""
+        return v
+'''
+}
+
+# Reached only through a string: getattr dispatch and an export list, the two
+# lookup positions `_lookup_strings` reads.
+_GETATTR_CORPUS = {
+    "src/bettermemory/fake.py": """
+class Bundle:
+    def _load_rows(self):
+        return ()
+
+
+def dispatch(bundle):
+    return getattr(bundle, "_load_rows")()
+"""
+}
+
+_EXPORT_CORPUS = {
+    "src/bettermemory/fake.py": '__all__ = ["_load_rows"]\n\n\ndef _load_rows():\n    return ()\n'
+}
+
+# A public delegate with the identical dead shape, to pin that the rule
+# declines to judge it.
+_PUBLIC_DEAD_CORPUS = {
+    "src/bettermemory/fake.py": "def orphan_helper():\n    return ()\n"
+}
+
+_UNREACHED_PROSE = '\n"""Candidates come from `_load_rows` before ranking."""\n'
+
+
+def test_flags_a_private_citation_that_nothing_in_the_tree_reaches() -> None:
+    """The demonstrated shape: the binding survives, the code path does not."""
+    assert _rules(_FAKE_TEST, _UNREACHED_PROSE, _world_over(_DEAD_DELEGATE_CORPUS)) == [
+        ("unreferenced-private", "_load_rows")
+    ]
+
+
+def test_reachability_is_the_reference_scan_not_the_delegation_shape() -> None:
+    """Neuter the rule's own lookup by adding one call site, nothing else.
+
+    Both corpora define the same method with the same body and the same
+    delegating shape. Only the second is reached. Without this the positive
+    above would pass just as well against a rule that flagged every private
+    one-line delegate.
+    """
+    assert (
+        _rules(_FAKE_TEST, _UNREACHED_PROSE, _world_over(_LIVE_DELEGATE_CORPUS)) == []
+    )
+
+
+def test_a_decorated_private_is_registered_rather_than_dead() -> None:
+    """``@field_validator`` and ``@pytest.fixture`` have no direct caller.
+
+    Dropping this clause is what takes the live yield from 1 name to 8: six
+    pydantic validators in ``models.py`` and an autouse fixture spread over
+    three semantic test modules, every one of them correctly called.
+    """
+    assert _rules(_FAKE_TEST, _UNREACHED_PROSE, _world_over(_DECORATED_CORPUS)) == []
+
+
+def test_a_private_reached_only_through_a_lookup_string_stays_quiet() -> None:
+    assert _rules(_FAKE_TEST, _UNREACHED_PROSE, _world_over(_GETATTR_CORPUS)) == []
+    assert _rules(_FAKE_TEST, _UNREACHED_PROSE, _world_over(_EXPORT_CORPUS)) == []
+
+
+def test_the_dotted_spelling_carries_the_same_reachability_verdict() -> None:
+    """The module-qualified spelling and the bare one are one claim.
+
+    Named without backticks on purpose — this lint scans itself, and the
+    synthetic symbol below exists only inside a string constant.
+    """
+    text = '\n"""Routed through `_handlers._load_rows` on the way in."""\n'
+    assert _rules(_FAKE_SRC, text, _world_over(_DEAD_DELEGATE_CORPUS)) == [
+        ("unreferenced-private", "_handlers._load_rows")
+    ]
+
+
+def test_the_reachability_rule_declines_to_judge_public_names() -> None:
+    """A public delegate with the identical dead shape draws no verdict."""
+    text = '\n"""Rows are flattened through `store.orphan_helper` first."""\n'
+    assert _rules(_FAKE_SRC, text, _world_over(_PUBLIC_DEAD_CORPUS)) == []
+
+
+@lru_cache(maxsize=None)
+def _repo_name_use() -> NameUse:
+    return name_use(
+        {rel: (_REPO_ROOT / rel).read_text(encoding="utf-8") for rel in _all_py_files()}
+    )
+
+
+def test_the_same_scan_over_public_names_is_measured_noise() -> None:
+    """Why the rule stops at the leading underscore, measured on this tree.
+
+    pytest collects its tests by name and an exported API is called by
+    consumers outside the corpus, so "defined here, mentioned nowhere else"
+    is the NORMAL state of a public name rather than a defect. Asserted as a
+    ratio rather than a count so growth in the tree cannot rot it: at the
+    time of writing the scan flags roughly four public names in five.
+    """
+    use = _repo_name_use()
+    public = {
+        name for name in use.plain_defs | use.decorated_defs if not name.startswith("_")
+    }
+    flagged = {name for name in unreferenced_names(use) if not name.startswith("_")}
+    assert len(flagged) * 2 > len(public), (
+        f"the same scan now flags only {len(flagged)} of {len(public)} public "
+        f"definitions — if it has become precise on public names, the rule's "
+        f"private-only narrowing is costing recall for no reason and should "
+        f"be revisited rather than left as documented"
+    )
+
+
+def test_the_undecorated_clause_still_earns_its_place() -> None:
+    """Dropping it widens the live yield — the measurement the rule rests on.
+
+    Every name it lets back in is one with a decorated definition: a pydantic
+    ``@field_validator``, a pytest fixture, a tool registered on a server.
+    Each is correctly called by a framework and by nothing this scan can see,
+    so each would be a false positive. Pinned as "the difference is
+    non-empty" rather than as a list, because the list is exactly the sort of
+    thing that rots.
+    """
+    use = _repo_name_use()
+    strict = {n for n in unreferenced_names(use) if _PRIVATE.match(n)}
+    loose = {
+        n for n in unreferenced_names(use, allow_decorated=True) if _PRIVATE.match(n)
+    }
+    assert loose - strict, (
+        "dropping the undecorated clause no longer changes the live yield, so "
+        "nothing here demonstrates why the clause exists — re-measure before "
+        "trusting the docstring's account of it"
+    )
+    assert not strict - loose, "the strict scan must be a subset of the loose one"
+
+
 def test_historical_prose_is_not_a_present_tense_claim() -> None:
     text = (
         '\n"""Identical behavior to the pre-extraction `_cli_serve` entry point."""\n'
@@ -1051,6 +1511,7 @@ def test_module_file_rule_is_the_basename_lookup_not_the_suffix() -> None:
         module_stems=_package_module_stems(),
         basenames=_tracked_basenames() | frozenset({"test_health_commit_drift.py"}),
         local=frozenset(),
+        unreferenced=_repo_unreferenced_privates(),
     )
     assert _rules(_FAKE_TEST, text, neutered) == []
 

@@ -1200,7 +1200,7 @@ async def test_memory_search_survives_file_gone_adversarial_after_indexing(
     """The lazy-load twin: a memory hand-edited into the scalar-scopes
     shape AFTER it was indexed. The FTS prefilter still returns its id
     and filename, so the per-candidate `_load_path` in
-    `_handlers._load_search_candidates` hit the same TypeError pre-fix
+    `_handlers.load_search_candidates` hit the same TypeError pre-fix
     — the crash just moved from the full scan to the indexed path."""
     monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
     good = store.write(

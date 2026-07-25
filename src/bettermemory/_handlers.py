@@ -368,31 +368,17 @@ class ToolHandlers:
 
     # ---- FTS candidate prefilter ----------------------------------------
     #
-    # The implementation is module-level (`load_search_candidates`) so the
-    # out-of-process Stop hook can reach it with only a `Store`, and the
-    # extraction rewrote the sole consumer
-    # (`handlers.search.resolve_search_pool`) to call it directly. So the
-    # alias below has NO caller anywhere in src/, tests/, bench/,
-    # examples/ or plugin/ — it is kept for one reason only: prose spread
-    # across the package still names `_load_search_candidates` as the
-    # routing implementation, and dropping the binding strands every one
-    # of those citations. Which ones is measurable rather than guessable —
-    # delete this method and tests/test_symbol_citations.py names them,
-    # one finding apiece, most in modules another change owns right now.
-    # Retargeting them at `load_search_candidates` and then deleting this
-    # alias is one sweep, deliberately not spliced into an unrelated fix;
-    # when that lint comes back clean without this method, the alias has
-    # nothing left to hold up. The sibling alias removed in this same
-    # change, `_index_threshold`, was cited by nothing at all.
-    #
-    # Nothing new should call this: a caller holding a bundle is a caller
-    # that could take the module function and its explicit `Store`.
-
-    def _load_search_candidates(
-        self, query: str, scopes: list[str] | None = None
-    ) -> tuple[list[Any], bool, bool]:
-        """Bound alias for `load_search_candidates` over this store."""
-        return load_search_candidates(self.store, query, scopes)
+    # Deliberately NOT a method. The prefilter is module-level
+    # (`load_search_candidates`) so the out-of-process Stop hook can reach
+    # it with only a `Store`, and the sole consumer
+    # (`handlers.search.resolve_search_pool`) calls it directly. The bound
+    # alias that survived the extraction is gone: it had no caller in src/,
+    # tests/, bench/, examples/ or plugin/, and the prose that kept it
+    # alive — a spread of citations naming it as the routing
+    # implementation — now names the module function instead. Don't
+    # re-add it: a caller holding this bundle is a caller that could take
+    # the module function and its explicit `Store`, and a bound alias with
+    # no caller is a name that reads live while reaching nothing.
 
     # ---- delegations to per-tool modules --------------------------------
     #

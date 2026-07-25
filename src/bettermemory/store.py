@@ -128,7 +128,7 @@ _locked = flock_excl
 # The ONE skip-set every per-file catch around `_parse_memory_file` uses:
 # the bulk readers (`load_all`, `iter_active`), the id walks (`load_one`,
 # `rename_scope`'s active branch), the search prefilter's per-candidate
-# load (`_handlers._load_search_candidates`), and the divergence counter
+# load (`_handlers.load_search_candidates`), and the divergence counter
 # (`count_unparseable_memory_files`). Deliberately `(Exception,)` rather
 # than an enumerated tuple: the parser delegates to pydantic and enum
 # internals whose raise surface can't be enumerated durably — the audited
@@ -1933,7 +1933,7 @@ def _rebuild_index_if_flagged(store: Store) -> None:
     legacy memory. Rebuilding here, at the first Store construction
     after the upgrade, closes that window at its earliest opportunity;
     `index.rebuild` is transactional and clears the flag only when the
-    repopulation lands, and `_load_search_candidates` routes to
+    repopulation lands, and `_handlers.load_search_candidates` routes to
     `load_all` while the flag is set, so search stays correct (just
     linear-scan slow) before/without this rebuild.
 

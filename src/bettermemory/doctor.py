@@ -511,8 +511,8 @@ def _check_index_health(directory: Path) -> Diagnosis:
 
     A status()-visible unhealthy index (corrupt meta, missing,
     rebuild-pending) never breaks correctness —
-    `_load_search_candidates` routes every `memory_search` to a full
-    `load_all` — but the degradation to a linear scan is silent, and a
+    `_handlers.load_search_candidates` routes every `memory_search` to a
+    full `load_all` — but the degradation to a linear scan is silent, and a
     count divergence additionally means stale filename lookups and link
     annotations. Page-level corruption is worse: that routing keys off
     the same meta-only `status()`, so nothing falls back and the first
