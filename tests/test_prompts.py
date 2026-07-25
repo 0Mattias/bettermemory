@@ -398,6 +398,46 @@ def test_audit_turn_desc_enumerates_retrieval_event_kinds() -> None:
     )
 
 
+def test_api_md_does_not_promise_worktree_isolation() -> None:
+    """`auto_scope`'s worktree half is permissive, and api.md described it
+    as isolation in three places.
+
+    All three read `origin.worktrees_match` — `memory_search` via
+    `should_include_for_caller`, `episode_search` and `episode_patterns`
+    directly — and it passes an episode or memory through on four
+    distinct cases, of which the docs listed two. The unlisted pair is
+    the pair a reader cannot infer: a caller in a LINKED worktree of the
+    recording checkout, and a recorded worktree positively gone from
+    disk.
+
+    This is worth a guard rather than a one-time correction because
+    "isolation" is a claim a user can rely on for separation between
+    projects, and the true rule is weaker than the word. `episode_patterns`
+    raises the stakes again — its commit path DELETES the episodes its
+    filter admits, so every pass-through case is a cross-worktree delete.
+
+    Asserted as an absence plus the two missing cues, so a future doc
+    rewrite cannot quietly restore the stronger word.
+    """
+    api_md = Path(__file__).resolve().parents[1] / "docs" / "api.md"
+    text = api_md.read_text(encoding="utf-8")
+
+    assert "Worktree isolation for the" not in text, (
+        "docs/api.md is advertising worktree ISOLATION for a filter that "
+        "runs the permissive `origin.worktrees_match`. It is scoping, not "
+        "a boundary — say so, and keep the four pass-through cases."
+    )
+    for cue, why in (
+        ("linked worktree", "the linked-worktree pass-through (agent fan-out)"),
+        ("gone from disk", "the dead-worktree degrade"),
+        (
+            "permissive",
+            "the word that stops a reader treating this as a guarantee",
+        ),
+    ):
+        assert cue in text, f"docs/api.md no longer documents {cue!r} — {why}."
+
+
 def test_api_md_since_prior_session_strict_after() -> None:
     """api.md memory_search documents the strict-after boundary semantic.
 

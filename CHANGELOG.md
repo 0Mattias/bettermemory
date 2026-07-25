@@ -389,6 +389,35 @@ nothing on the tool surface had ever asked it to say so.
   real guard is `test_api_md_since_prior_session_strict_after`. The lean
   default-on surface **shrank**, 27,245 → 27,155 chars.
 
+### Fixed — "worktree isolation" was never isolation
+
+`auto_scope`'s worktree half runs `origin.worktrees_match`, which is
+**permissive**: it passes a memory or episode through on four cases, and both
+the model-facing descriptions and `docs/api.md` listed two. The unlisted pair
+is the pair nobody can infer — a caller sitting in a **linked worktree** of
+the recording checkout, and a recorded worktree **positively gone from disk**.
+
+- The linked-worktree case is not a corner: `git worktree`-based agent fan-out
+  runs there, and under it the primary checkout's memories and episodes are
+  fully visible. That is deliberate and desirable — it is why the relaxation
+  exists — but a reader told "isolation" will conclude the opposite.
+- `DESC_EPISODE_SEARCH` additionally claimed to mirror "the isolation
+  `episode_handoff` enforces". It does not: handoff uses strict equality, this
+  uses the permissive rule, so the two disagree on **every** pass-through case.
+  `docs/api.md` carried the same claim.
+- `episode_patterns` is where it bites hardest, and its doc now says so: that
+  call's commit path DELETES the episodes its filter admits, so each
+  pass-through case is a potential cross-worktree delete.
+- Corrected in all three places (`memory_search`, `episode_search`,
+  `episode_patterns`) and guarded two ways — one test asserts against
+  `inspect.getsource`, so swapping either handler's filter names the
+  description that has gone stale, and one asserts `docs/api.md` cannot
+  quietly restore the stronger word. What genuinely stays isolated, and is now
+  stated positively, is the live-sibling case.
+
+The handlers' own inline comments were right the whole time. Only the copy a
+reader sees was wrong, which is the shape this window keeps finding.
+
 ### Fixed — one `search_mode` string, three behaviours
 
 `[behavior] search_mode` was loaded with a bare `str(...)` and read by three
