@@ -39,7 +39,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from ..models import Episode
-from ..patterns import PatternDismissals, find_episode_patterns
+from ..patterns import PatternDismissals, clusterable_episodes, find_episode_patterns
 from . import write as _write_mod
 from ._shared import Context, _advance_turn
 from .episode_promote import _delete_source_episode
@@ -261,8 +261,14 @@ async def episode_patterns(
             # set can never reach past the read filters that produced the
             # candidate. `target.episode_ids` already comes from a
             # candidate detected over `episodes`, so this is belt-and-
-            # braces — but it is the line that makes "no cross-worktree
-            # deletion" true by construction rather than by derivation.
+            # braces — but it is the line that makes "the delete set
+            # never reaches past the read filters" true by construction
+            # rather than by derivation. Note what that does and does
+            # not buy: it is exactly as strong as the filters, and the
+            # worktree one is the permissive `origin.worktrees_match`,
+            # so an episode the filter had no boundary to enforce on
+            # (no captured worktree, dead recorded worktree, caller
+            # outside any git checkout) is inside the delete set.
             by_id = {ep.id: ep for ep in episodes}
             for eid in target.episode_ids:
                 ep = by_id.get(eid)
@@ -283,13 +289,32 @@ async def episode_patterns(
             )
         return response
 
+    # TWO counts, deliberately, because they answer different questions
+    # and neither one alone is honest:
+    #
+    # - `episodes_scanned` is the VISIBLE pool — every episode this call
+    #   read after the two read-surface hides. Reporting the on-disk
+    #   total here instead would make a scope-hidden or cross-worktree
+    #   journal look like it was considered and found unpatterned.
+    # - `episodes_clustered` is detection's actual input, i.e. the
+    #   evidence base behind `patterns` (and behind an EMPTY `patterns`).
+    #   It comes from `clusterable_episodes`, the same predicate
+    #   `find_episode_patterns` filters with, so the reported number
+    #   cannot drift from what was clustered.
+    #
+    # The visible pool is a strict superset: floors (session-tag anchors
+    # `episode_handoff` writes) and empty-body episodes are read and
+    # counted as scanned, then dropped before clustering. Publishing the
+    # visible pool under the label "what detection clustered over" — the
+    # shape this response shipped with — overstates the evidence base in
+    # any store where a handoff has ever written a floor, which is the
+    # exact overstatement that label was reaching for. Pinned by
+    # `test_patterns_listing_separates_scanned_from_clustered`.
+    clustered = len(clusterable_episodes(episodes))
     return {
         "patterns": [c.to_dict() for c in candidates],
-        # The VISIBLE count — what detection actually clustered over.
-        # Reporting the on-disk total would overstate the evidence base
-        # and make a scope-hidden or cross-worktree journal look like it
-        # was considered and found unpatterned.
         "episodes_scanned": len(episodes),
+        "episodes_clustered": clustered,
         **(
             {}
             if candidates

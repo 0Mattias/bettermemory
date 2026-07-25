@@ -72,14 +72,35 @@ delete paths inherit that reach, since both act on the
 `episode_session_id` resolved by the unfiltered walk: the synchronous
 `status="committed"` branch below, and the deferred one where a
 `status="pending"` promotion is stashed here and unlinked later by
-`memory_write_confirm`. The reach is bounded by
-unguessability rather than by a filter — a ULID cannot be arrived at by
-walking, so holding a foreign one means some surface handed it over, and
-the only surfaces that hand out a foreign episode id are the deliberate
-cross-tree reads (`episode_search` with `swarm_id` /
-`parent_session_id` / `auto_scope=False`, `episode_handoff` with an
-explicit `prior_session_id`). Default-scoped `episode_search` and
-`episode_patterns` never do.
+`memory_write_confirm`.
+
+What bounds that reach is the SELECTOR, not a filter: exactly one
+episode is unlinked, the one whose 26-character ULID the caller typed,
+and a ULID cannot be arrived at by walking — holding one means a read
+surface handed it over. Do NOT upgrade that into "so a foreign id only
+ever arrives through a deliberate cross-tree read". The cross-tree reads
+(`episode_search` with `swarm_id` / `parent_session_id` /
+`auto_scope=False`, `episode_handoff` with an explicit
+`prior_session_id`) hand out a foreign id BY DESIGN, but they are not
+the only route to one. The DEFAULT-scoped walks in `episode_search` and
+`episode_patterns` filter through `origin.worktrees_match`, which is
+permissive on purpose: it answers True whenever either side carries no
+worktree information — a pre-origin episode, a caller outside any git
+checkout — and it carries further deliberate relaxations documented on
+the function itself, including the dead-worktree degrade the relocation
+note below leans on. Read `worktrees_match` for the current rule rather
+than trusting a restatement here; what stays true is that a
+default-scoped listing CAN legitimately put a sibling worktree's episode
+id in front of a caller, and this handler will then act on it
+(`test_default_scoped_listing_can_hand_out_a_foreign_episode_id` pins
+one such route end-to-end, promote included).
+
+That does not weaken the carve-out, because the carve-out never needed
+the stronger claim: the bound is "promote destroys exactly the one
+episode you named", not "no read will ever name a foreign one for you".
+It does mean the argument has to be stated at that strength — a safety
+argument resting on a false absolute is worse than none, since it stops
+the next reader from checking.
 
 One consequence worth naming, because it is the sharpest edge: the
 durable memory is stamped with the PROMOTER's origin. Promoting across a
@@ -100,9 +121,9 @@ on EVERY turn including the ~90% that never touch memory, and what slack
 it carries is reserved for field-discoverability pins. This is a
 behavioural caveat, not such a pin. The audience that needs the
 reasoning — the next reader of this handler — is reading this docstring,
-which costs nothing per turn. The DESC already states the delete
-plainly; a caller only ever holds a foreign id by having opted into a
-cross-tree read first. If you want it in the DESC anyway, buy the room
+which costs nothing per turn. The DESC already states the delete plainly
+and names the single `episode_id` it acts on, which is the bound the
+whole caveat turns on. If you want it in the DESC anyway, buy the room
 by trimming policy elsewhere and say so in the commit; raising the
 ceiling to fit one more paragraph is the move that test's docstring
 rules out.

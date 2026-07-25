@@ -19,7 +19,11 @@ from bettermemory.episodes import EpisodeStore
 from bettermemory.events import Recorder
 from bettermemory.models import Episode, generate_ulid
 from bettermemory.origin import Origin
-from bettermemory.patterns import PatternDismissals, find_episode_patterns
+from bettermemory.patterns import (
+    PatternDismissals,
+    clusterable_episodes,
+    find_episode_patterns,
+)
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
 from bettermemory.store import Store
@@ -257,6 +261,86 @@ async def test_e2e_promote_requires_authored_body(memory_dir: Path) -> None:
         await _call(server, "episode_patterns", promote=pid, body="x y z")
 
 
+def _blank_episode_body(memory_dir: Path, body_marker: str) -> str:
+    """Blank the body of the episode whose file contains `body_marker`,
+    leaving a loadable file with an EMPTY body — the shape a legacy or
+    external writer leaves behind (`EpisodeStore.write` itself refuses an
+    empty body). Returns its id. Frontmatter round-trip, the same
+    technique `tests/test_episodes.py::_corrupt_scopes_to_scalar` uses."""
+    from bettermemory import _frontmatter as frontmatter
+
+    target = next(
+        p
+        for p in (memory_dir / "episodes").rglob("*.md")
+        if body_marker in p.read_text(encoding="utf-8")
+    )
+    post = frontmatter.load(target)
+    post.content = ""
+    target.write_text(frontmatter.dumps(post), encoding="utf-8")
+    return str(post.metadata["id"])
+
+
+async def test_patterns_listing_separates_scanned_from_clustered(
+    memory_dir: Path,
+) -> None:
+    """`episodes_scanned` is the VISIBLE pool; `episodes_clustered` is
+    what detection actually ran over. They are different numbers whenever
+    the pool holds a floor or an empty-body episode, and the response
+    used to publish only the first one under the second one's
+    description — overstating the evidence base in any store where
+    `episode_handoff` has ever written a session-tag anchor.
+
+    Fixture makes the gap real: four themed episodes, one of them blanked
+    (empty body), plus a floor. Pool 5, clustered 3, pattern of 3."""
+    body = "the tailscale exit node dropped again mid-sync"
+    await _journal_across_sessions(memory_dir, [body] * 3)
+    # A fourth session journals a body that is uniquely markable, then
+    # gets blanked — so it stays in the pool but leaves the cluster.
+    await _journal_across_sessions(memory_dir, [f"{body} plus a doomed marker"])
+    blanked = _blank_episode_body(memory_dir, "doomed marker")
+
+    store = EpisodeStore(memory_dir)
+    floor = store.write_floor(session_id=sorted(store.iter_session_ids())[0])
+
+    on_disk = _episode_ids_on_disk(memory_dir)
+    assert len(on_disk) == 5
+    assert {blanked, floor.id} <= on_disk
+
+    listing = _unwrap(await _call(_build(memory_dir), "episode_patterns"))
+    assert listing["episodes_scanned"] == 5, (
+        f"the floor and the blanked episode were read and are visible, so "
+        f"they count as scanned; got {listing['episodes_scanned']}"
+    )
+    assert listing["episodes_clustered"] == 3, (
+        f"detection drops floors and empty bodies before clustering, so the "
+        f"evidence base is 3, not 5; got {listing['episodes_clustered']}"
+    )
+    # And the reported evidence base is the detector's real input: the one
+    # pattern is made of exactly the three clusterable episodes.
+    assert len(listing["patterns"]) == 1, listing
+    members = set(listing["patterns"][0]["episode_ids"])
+    assert len(members) == 3
+    assert blanked not in members and floor.id not in members
+
+
+def test_clusterable_episodes_is_the_predicate_detection_uses() -> None:
+    """The unit-level half: the handler reports `len(clusterable_
+    episodes(...))` precisely so the number cannot drift from what
+    `find_episode_patterns` clusters. Pin that they agree on the
+    excluded shapes."""
+    eps = [
+        _episode(_THEME_A, session="sess-a", offset_minutes=0),
+        _episode(_THEME_A, session="sess-b", offset_minutes=1),
+        _episode(_THEME_A, session="sess-c", offset_minutes=2),
+        _episode("(session-tag floor)", session="sess-d", is_floor=True),
+        _episode("   ", session="sess-e"),
+    ]
+    clusterable = clusterable_episodes(eps)
+    assert len(eps) == 5 and len(clusterable) == 3
+    pattern = find_episode_patterns(eps)[0]
+    assert set(pattern.episode_ids) == {ep.id for ep in clusterable}
+
+
 # ---------------------------------------------------------------------------
 # Read-surface filters — episode_patterns must honor the same two hides
 # `episode_search` / `episode_handoff` enforce ("episodes are the third
@@ -447,10 +531,12 @@ async def test_promote_by_explicit_id_deliberately_crosses_worktrees(
     )
 
     _set_origin(monkeypatch, origin_b)
-    # Learn one of A's episode ids through a deliberate cross-tree read —
-    # `auto_scope=False` is one of the few surfaces that legitimately
-    # hands a caller a foreign episode id (the default-scoped walks never
-    # do). This mirrors how a coordinator gets ids out of a swarm fan-in.
+    # Learn one of A's episode ids through a deliberate cross-tree read.
+    # `auto_scope=False` is the DESIGNED route to a foreign episode id —
+    # it is not the only one (see
+    # `test_default_scoped_listing_can_hand_out_a_foreign_episode_id`),
+    # and the carve-out doesn't need it to be. This mirrors how a
+    # coordinator gets ids out of a swarm fan-in.
     foreign = _unwrap(await _call(server_b, "episode_search", auto_scope=False))
     a_eps = [e for e in foreign if "tailscale" in e["body"]]
     assert len(a_eps) == 3, f"expected A's 3 episodes via the escape hatch: {a_eps}"
@@ -489,6 +575,74 @@ async def test_promote_by_explicit_id_deliberately_crosses_worktrees(
     )
     shown = _unwrap(await _call(server_a2, "memory_show", id=promoted["id"]))
     assert shown["id"] == promoted["id"], "by-id access must still reach it"
+
+
+async def test_default_scoped_listing_can_hand_out_a_foreign_episode_id(
+    memory_dir: Path, monkeypatch: Any
+) -> None:
+    """The `episode_promote` carve-out rests on the SELECTOR — promote
+    unlinks exactly the episode whose ULID the caller typed — and NOT on
+    "a foreign id only ever arrives through a deliberate cross-tree
+    read". That stronger claim is false: both default-scoped walks filter
+    through the permissive `origin.worktrees_match`, which answers True
+    whenever either side carries no worktree information.
+
+    Here the caller runs OUTSIDE any git checkout (`worktree_root=None`,
+    the shape `capture()` returns for a non-repo cwd), so it has no
+    boundary to enforce and the default-scoped `episode_patterns` /
+    `episode_search` walks hand it ids belonging to worktree A — which is
+    alive on disk, so no dead-worktree degrade is doing the work. Promote
+    then acts on one, deleting a foreign worktree's journal entry with no
+    escape hatch anywhere in the sequence.
+
+    This is not a bug report against the filters (permissiveness is their
+    documented trade — see `worktrees_match` and
+    `test_episode_search_auto_scope_no_worktree_caller_sees_all`); it
+    pins the honest strength of the promote docstring's safety argument
+    so a future reader can't be stopped from checking by a false
+    absolute."""
+    wt_a = memory_dir.parent / "wt-repo-a"
+    wt_a.mkdir(parents=True, exist_ok=True)
+    origin_a = Origin(
+        cwd=str(wt_a),
+        repo="git@github.com:example/repo.git",
+        branch="a",
+        worktree_root=str(wt_a),
+    )
+    _set_origin(monkeypatch, origin_a)
+    await _journal_across_sessions(memory_dir, [_THEME_A] * 3)
+
+    # Caller outside any git checkout — no repo, no worktree.
+    _set_origin(monkeypatch, Origin(cwd=str(memory_dir.parent / "no-checkout")))
+    server = _build(memory_dir)
+
+    listing = _unwrap(await _call(server, "episode_patterns"))
+    foreign_ids = [e for p in listing["patterns"] for e in p["episode_ids"]]
+    assert len(foreign_ids) == 3, (
+        "a DEFAULT-scoped episode_patterns listing hands a worktree-less "
+        f"caller worktree A's episode ids: {listing}"
+    )
+    searched = _unwrap(await _call(server, "episode_search"))
+    assert {e["id"] for e in searched} == set(foreign_ids), (
+        "default-scoped episode_search is the same story — no auto_scope=False, "
+        f"no swarm_id, no parent_session_id: {searched}"
+    )
+
+    # And promote acts on one, across the boundary, with no opt-in anywhere.
+    before = _episode_ids_on_disk(memory_dir)
+    promoted = _unwrap(
+        await _call(
+            server,
+            "episode_promote",
+            episode_id=foreign_ids[0],
+            scopes=["infrastructure"],
+        )
+    )
+    assert promoted["status"] == "committed", promoted
+    assert _episode_ids_on_disk(memory_dir) == before - {foreign_ids[0]}, (
+        "the delete is still bounded by the named id — that is the bound the "
+        "carve-out actually rests on"
+    )
 
 
 async def test_promote_by_explicit_id_ignores_disabled_scopes(

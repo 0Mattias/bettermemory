@@ -123,6 +123,29 @@ def _distinctive_tokens(ep: Episode) -> set[str]:
     return {t for t in tokens if len(t) >= _MIN_TERM_LEN and not t.isdigit()}
 
 
+def clusterable_episodes(episodes: list[Episode]) -> list[Episode]:
+    """The subset of `episodes` detection can actually cluster.
+
+    `find_episode_patterns` drops two shapes before it does anything
+    else, and this is that filter: floors (the session-tag anchors
+    `episode_handoff` writes — fixed marker body, `takeaway=None`) and
+    episodes whose body is blank. The body test is deliberate rather
+    than a "has no tokens" test: a blank-bodied episode can still carry
+    a takeaway (`EpisodeStore.write` refuses an empty body, but a legacy
+    or hand-edited file can hold one), and detection counts it as an
+    anchor rather than content either way.
+
+    Exported rather than inlined at that one call site because the
+    `episode_patterns` handler reports the SIZE of this subset back to
+    the caller as `episodes_clustered`. A number described as "what
+    detection clustered over" and the detector's actual input have to be
+    the same predicate, not two copies of it that can drift apart — the
+    handler used to report the visible pool (larger by every floor and
+    blank-bodied episode in it) under exactly that description.
+    """
+    return [ep for ep in episodes if not ep.is_floor and ep.body.strip()]
+
+
 def find_episode_patterns(
     episodes: list[Episode],
     *,
@@ -131,7 +154,7 @@ def find_episode_patterns(
 ) -> list[PatternCandidate]:
     """Pure detection over the given episodes. No queue I/O — the
     handler filters against persisted dismissals."""
-    live = [ep for ep in episodes if not ep.is_floor and ep.body.strip()]
+    live = clusterable_episodes(episodes)
     if len(live) < _MIN_EPISODES:
         return []
 
@@ -310,5 +333,6 @@ __all__ = [
     "PATTERNS_FILENAME",
     "PatternCandidate",
     "PatternDismissals",
+    "clusterable_episodes",
     "find_episode_patterns",
 ]
