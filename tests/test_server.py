@@ -5932,6 +5932,46 @@ async def test_point_of_call_cues_survive_in_descriptions(
     )
 
 
+async def test_search_desc_tells_the_caller_how_to_word_a_query(
+    tmp_path: Path,
+) -> None:
+    """The `query` cue is the only guidance on this whole surface that acts
+    on retrieval's INPUT, and it is the highest-leverage line measured: on a
+    185-memory store, a 20-question gold set authored document-first in
+    caller voice retrieves at 10% recall@1 as asked and 65% re-queried in
+    concrete nouns. It sits in `memory_search`'s description rather than the
+    instructions block because it is written at the moment the caller types
+    a query, and it survives here because every other force on this file
+    pushes toward deleting it: it is the newest line, it is pure prose to a
+    byte-counting reader, and the budget ratchet 30 lines up makes "shorten
+    a description" a recurring move.
+
+    Two halves are pinned, because the measurement says only one of them
+    works. The lift comes from VOCABULARY: the control arm — question words
+    stripped, content words kept — scored 10%, identical to asking outright,
+    since the ranker already strips stopwords. A future reword that
+    compressed this to "use keywords, not questions" would read as the same
+    advice and buy exactly nothing, so `nouns` is pinned as the operative
+    word. `re-query` is pinned separately: a weak first result is the only
+    signal the caller ever gets that its wording missed, and dropping the
+    retry turns a recoverable miss into a silent one."""
+    desc = (await _lean_descriptions(tmp_path)).get("memory_search", "")
+    assert "nouns" in desc, (
+        "memory_search's `query` cue lost the word `nouns`. The measured "
+        "lever is the vocabulary a memory would literally contain — NOT "
+        "keyword-vs-question phrasing, which measured a 0-point control."
+    )
+    assert "re-query" in desc, (
+        "memory_search's `query` cue lost the re-query instruction; a weak "
+        "first hit is the caller's only signal that its wording missed."
+    )
+    assert "paraphrase recall" not in desc, (
+        "memory_search's `mode` line is claiming paraphrase recall again. "
+        "With no semantic leg configured (the package default) `hybrid` is "
+        "RRF over keyword + BM25 — both lexical."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Backward-scan early-exit in _already_recorded_pending_ids
 # ---------------------------------------------------------------------------

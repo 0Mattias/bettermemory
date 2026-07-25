@@ -11,6 +11,32 @@ Description-edit history:
   Hoisted to a two-line lead block so it's the first thing the model
   reads — opt-in retrieval + the transparency requirement land before
   any parameter detail.
+- H9: `query` stopped being described as "free text". Every line above it
+  told the caller how to READ a result; nothing told it how to WRITE the
+  one input that decides whether a result exists. Measured on a 185-memory
+  store over a 20-question gold set authored document-first in caller
+  voice (so the ranker never picked the labels): questions as asked
+  retrieve at 10% recall@1, the same questions re-queried in concrete
+  nouns at 65%, and an insider-vocabulary ceiling arm at 90%. The control
+  is what fixes the wording: stripping the question words and keeping the
+  content words scores 10% — byte-identical to asking, because the ranker
+  already strips stopwords. So the cue names the lever that moved
+  (vocabulary the memory would literally contain) and not the one that
+  did nothing ("use keywords, not questions"), and it names re-querying,
+  since a weak first hit is the caller's only signal that it happened.
+  Same pass retracted "`hybrid` for paraphrase recall" from `mode`: with
+  no semantic leg configured — the package default — hybrid is RRF over
+  keyword and BM25, both lexical, so that line promised the caller the
+  exact capability whose absence this measurement is about.
+
+  Paid for in the same string rather than by raising the ratchet in
+  `test_default_on_descriptions_fit_budget`: `since_prior_session` gave
+  back the sentence deriving why its boundary is strict-`>`. That is
+  rationale for a decision the caller cannot influence, it was resident
+  on every turn, and its actual guard is
+  `test_prompts.py::test_api_md_since_prior_session_strict_after`, which
+  pins the wording in `docs/api.md` — the field's actionable semantics
+  ("strictly after", the /loop guidance, empty-vs-no-baseline) all stay.
 """
 
 from __future__ import annotations
@@ -80,7 +106,9 @@ DESC_MEMORY_SEARCH = (
     "per outcome). The user already rejected this; don't re-surface "
     "unless you have new reason. OMITTED when none.\n\n"
     "Parameters:\n"
-    "- `query`: free text.\n"
+    "- `query`: nouns a memory would contain (tool, file, error names), "
+    "not question phrasing — measured 10%→65% recall@1. Weak hits: "
+    "re-query, different nouns.\n"
     "- `scopes` (optional): filter to scope union.\n"
     "- `max_results` (default 5, cap 50).\n"
     "- `expand_top=True`: inline the full body of the top hit when "
@@ -92,11 +120,7 @@ DESC_MEMORY_SEARCH = (
     "- `since_prior_session=False` (default): when True, filter "
     "to memories whose `updated` is strictly after the prior "
     "session boundary (latest event from a different session_id "
-    "in the log). The boundary IS the prior session's last-event "
-    "ts, so a memory whose `updated` equals it belongs to that "
-    "prior session — strict-`>` mirrors "
-    "`curation_pending_new_since_last_session`'s exclusion so the "
-    "two surfaces never double-count. The semantic is 'what has "
+    "in the log). The semantic is 'what has "
     "changed in the current session, since the last activity by "
     "other sessions' — i.e. this session's intra-session diff. A "
     "/loop iteration uses this to track what IT has "
@@ -107,8 +131,8 @@ DESC_MEMORY_SEARCH = (
     "checking `curation_pending_new_since_last_session is None`.\n"
     "- `mode` (optional, default from config; package default `hybrid`): `keyword`, `bm25`, "
     "`semantic` (needs embeddings extra + config opt-in), or `hybrid` "
-    "(RRF of all three). `hybrid` for paraphrase recall; `keyword` for "
-    "literal tokens.\n\n"
+    "(RRF of all three). Without the semantic leg every mode is "
+    "lexical, so see `query`.\n\n"
     "Outcome is recorded automatically via the use_token within ~2 "
     "turns; only call memory_record_use to override "
     "(ignored / contradicted / corrected)."
