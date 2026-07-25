@@ -1880,7 +1880,7 @@ def test_acknowledge_debt_skips_memory_below_retrieval_floor(
     store: Store,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """A memory retrieved fewer than `_ENDORSEMENT_DEBT_MIN_RETRIEVALS`
+    """A memory retrieved fewer than `health._COLD_ENDORSEMENT_MIN_RETRIEVALS`
     (5) times isn't surfaced as debt — the rollup's floor exists so a
     one-off retrieval doesn't enter the bucket. Acknowledging it would
     create a false explicit signal where the audit had no opinion."""

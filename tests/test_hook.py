@@ -675,7 +675,7 @@ def _seed_search_event(mem_dir: Path, *, session_id: str, returned: list[str]) -
 
 
 def _seed_list_event(mem_dir: Path, *, session_id: str, returned: list[str]) -> None:
-    """Write a synthetic `list` event (as the `_list_active` handler does)
+    """Write a synthetic `list` event (as the `memory_list` handler does)
     so the hook treats the listed memory_ids as retrieved this turn. The
     handler records the listed ids under the same `returned` field name a
     `search` uses, so attribution can read one shape across both kinds."""
@@ -804,7 +804,7 @@ def test_hook_attributes_use_when_listed_body_appears_in_reply(
     """Regression for list-retrieval attribution (fix h).
 
     A `memory_list` surfaces memory ids exactly like a `search` hit, and
-    `_list_active` records them under a `list` event so the hook can
+    `memory_list` records them under a `list` event so the hook can
     attribute them. Before the fix, `_pending_retrievals` dispatched on
     `search`/`show`/`use` only, so a memory seen ONLY via a listing was
     never eligible for hook attribution — undercounting

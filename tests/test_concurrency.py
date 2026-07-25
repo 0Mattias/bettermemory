@@ -846,7 +846,7 @@ def test_update_after_concurrent_tombstone_raises(
 
     # Patch `_find_path_for_id` to capture the path it would return,
     # then tombstone the memory before the caller takes the lock.
-    # `_fired` guards against recursion: `tombstone()` itself calls
+    # `fired` guards against recursion: `tombstone()` itself calls
     # `_find_path_for_id`, so we only inject the race on the first
     # call (the one made by `update`).
     original_find = Store._find_path_for_id
@@ -1543,13 +1543,14 @@ def test_multi_process_concurrent_disjoint_updates_no_silent_clobber(
 # ---------------------------------------------------------------------------
 #
 # Pre-W8 two parallel `mark_verified` calls on the same id with disjoint
-# `verified_paths` (or `_commits` / `_versions`) lists would both serialise
-# on the file lock, but neither verified the on-disk verification snapshot
-# against what the caller saw when they decided to attest. The
-# `verified_*` lists have REPLACE (not append) semantics by design — the
-# event log is the audit trail — so whichever serialised second silently
-# dropped the first writer's attestation: agent A attesting path #1 and
-# agent B attesting path #2 simultaneously left only one path on disk.
+# `verified_paths` (or `verified_commits` / `verified_versions`) lists would
+# both serialise on the file lock, but neither verified the on-disk
+# verification snapshot against what the caller saw when they decided
+# to attest. The `verified_*` lists have REPLACE (not append) semantics
+# by design — the event log is the audit trail — so whichever serialised
+# second silently dropped the first writer's attestation: agent A
+# attesting path #1 and agent B attesting path #2 simultaneously left
+# only one path on disk.
 #
 # The fix mirrors W2's CAS pattern: `Store.mark_verified` accepts an
 # optional `expected_last_verified_at` snapshot fingerprint and

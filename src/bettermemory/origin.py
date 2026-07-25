@@ -389,8 +389,8 @@ def should_include_for_caller(
     filter must not silently hide writes that predate it.
 
     **Not the right helper for commit-drift**: the commit-drift path in
-    `verify`, `server._attach_commit_drift_counts`, and the
-    `health.compute_commit_drift_*` rollups need a stricter check that
+    `verify`, `_response.attach_commit_drift_counts`, and the
+    `health._compute_commit_drift_debt` rollup need a stricter check that
     rejects global memories (no repo anchor means nothing to count
     commits against). Those sites call `repos_match` directly after a
     `null → return None` check. Mixing the two would silently start

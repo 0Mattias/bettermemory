@@ -25,7 +25,7 @@ introspect.
 
 The addendum is `--with-addendum`-gated rather than printed by default
 because the server-level MCP `instructions` block already carries the
-load-bearing parts (see `prompts.py` + `server._build_mcp`); the
+load-bearing parts (see `prompts.py` + `builder.build_server`); the
 addendum is now an optional tightening document, not part of the
 required setup.
 """

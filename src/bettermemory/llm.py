@@ -31,7 +31,7 @@ is gated.
   port 11434), `AnthropicProvider` (env `ANTHROPIC_API_KEY`),
   `OpenAIProvider` (env `OPENAI_API_KEY`). All three lazy-import their
   SDKs so a clean install without API keys works fine.
-- `validate_proposals` rejects hallucinated memory IDs and other
+- `parse_and_validate` rejects hallucinated memory IDs and other
   malformed responses BEFORE the diff renderer sees them. An LLM
   reaching for a memory that isn't in the cluster is a hallucination
   signal worth refusing on principle.

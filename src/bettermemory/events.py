@@ -469,7 +469,7 @@ class Recorder:
                     # perspective stale — readers see an empty/absent log.
                     # Only on first-write: subsequent appends modify an
                     # existing dirent and don't need re-syncing. Mirrors
-                    # the `fsync_dir` ceremony in `episodes._write_post`
+                    # the `fsync_dir` ceremony in `episodes._write_path`
                     # (tick-3 fix 7017b2c) and `store._atomic_write_post`.
                     # `fsync_dir` no-ops on Windows; see `_fsutil.fsync_dir`.
                     fsync_dir(self.root)

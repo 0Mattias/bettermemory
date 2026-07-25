@@ -14,7 +14,7 @@ the report-failure rows in ``consolidate.py``) keep their bespoke
 try/except — wrapping them in a generic decorator would HIDE the
 recovery semantics the call site needs to be obvious about. The
 audit's broader suggestion landed on these two store sites and
-arguably ``semantic._maybe_hydrate_persistent_cache`` (handled
+arguably ``semantic._hydrate_persistent_cache`` (handled
 inline today; the cleanup state there reads naturally as inline
 code, so it stays).
 """

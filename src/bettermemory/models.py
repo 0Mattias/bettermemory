@@ -254,12 +254,22 @@ class MemoryLink(BaseModel):
     memory and the target memory see the link, the target via a
     `reverse_links` field).
 
-    `target_id` must be a valid ULID. The runtime does NOT enforce
-    that the target exists at write time — a broken link (target
-    tombstoned or never written) is surfaced as a `broken_link` flag
-    on the retrieval side rather than blocking the write, so a
-    consolidation pass that tombstones the source half of a pair
-    can't accidentally orphan the surviving half.
+    `target_id` must be a valid ULID, and that is the ONLY check the
+    write side makes: the runtime does not enforce that the target
+    exists, then or ever. Nothing flags a broken link (target
+    tombstoned or never written) afterwards either. The entry stays
+    verbatim in the source's frontmatter and `memory_show` returns it
+    in `links` unchanged — pinned by
+    `test_broken_link_to_tombstoned_memory_still_surfaces` — while the
+    retrieval-side resolvers that hydrate a target's summary
+    (`_response.attach_depends_on_resolved`,
+    `_response.attach_link_annotations`) drop a target they cannot
+    load without saying so. A consumer that follows a link is the one
+    that discovers it is broken; `memory_list_tombstones` finds a
+    target that was removed rather than never written. Not blocking
+    the write is the point of the arrangement: a consolidation pass
+    that tombstones the source half of a pair can't accidentally
+    orphan the surviving half.
 
     `note` is an optional free-form string capturing *why* the link
     exists. Important for `contradicts` and `supersedes` where the

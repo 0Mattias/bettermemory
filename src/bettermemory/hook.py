@@ -864,7 +864,8 @@ def _pending_retrievals(
         kind = event.get("kind")
         if kind in ("search", "list", "list_active"):
             # `list`/`list_active` (memory_list) surfaces memory ids exactly
-            # like a `search` hit — the `_list_active` handler records the
+            # like a `search` hit — the `memory_list` handler in
+            # `src/bettermemory/handlers/list_active.py` records the
             # ids under the same `returned` field name precisely so the
             # attribution pass and the probe's shield read one shape. Treat
             # them on the same branch so memories seen only via a listing are

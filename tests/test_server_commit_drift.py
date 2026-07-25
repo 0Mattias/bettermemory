@@ -1,10 +1,12 @@
 """Integration tests for the commit-drift staleness signal on the server.
 
-`compute_commit_drift` and the `CommitDriftDebt` rollup are unit-tested in
-`test_verify.py` and `test_health_commit_drift.py` respectively. These
-tests cover the wiring on the MCP tools — that `memory_show`,
-`memory_search(expand_top=True)`, and `memory_health` actually surface
-the signal end-to-end against a real git repo and a real memory store.
+`compute_commit_drift` is unit-tested in `test_verify.py`. The
+`CommitDriftDebt` rollup has no unit-test module of its own — it is
+covered here, through `memory_health`, alongside the rest of the
+wiring. These tests cover that wiring on the MCP tools — that
+`memory_show`, `memory_search(expand_top=True)`, and `memory_health`
+actually surface the signal end-to-end against a real git repo and a
+real memory store.
 
 Each test sets up a tmp repo with controlled commit timestamps, tells the
 server's `capture_origin` to return an Origin pointing at that repo, and

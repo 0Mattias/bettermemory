@@ -1426,7 +1426,7 @@ def test_lookback_zero_clamps_up() -> None:
     now = _utc(2026, 5, 1)
     # search at exactly `now` — lookback_seconds=0 would miss it under
     # strict-less cutoff. We still expect the probe to find it via the
-    # `ts >= cutoff` semantics in `_count_recent_searches`.
+    # `ts >= cutoff` semantics in `_count_recent_retrievals`.
     events = [
         _search_event(session="sess_x", ts=now, returned=[m.id]),
     ]
@@ -1439,7 +1439,7 @@ def test_lookback_zero_clamps_up() -> None:
         lookback_seconds=0,
     )
     # With cutoff=now-0=now and the search ts=now, the search lands
-    # exactly on the cutoff. _count_recent_searches uses `ts < cutoff`
+    # exactly on the cutoff. _count_recent_retrievals uses `ts < cutoff`
     # for the negative case so ts == cutoff is included → recent count
     # is 1 and verdict is ok.
     assert report.recent_retrieval_count == 1
