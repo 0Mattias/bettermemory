@@ -645,6 +645,90 @@ async def test_default_scoped_listing_can_hand_out_a_foreign_episode_id(
     )
 
 
+async def test_patterns_promote_from_a_linked_worktree_deletes_the_primarys_journal(
+    memory_dir: Path, monkeypatch: Any
+) -> None:
+    """The destructive reach of the LINKED-worktree relaxation, pinned
+    because `DESC_EPISODE_PATTERNS` now tells the model this leg exists.
+
+    `worktrees_match` relaxes for a caller in a linked `git worktree`
+    whose primary checkout is where the episode was written — deliberate,
+    and the reason is in that function: strict equality made every memory
+    written in the primary invisible to the ephemeral checkouts an agent
+    harness spawns (this project's own audit-loop fan-out is one). The
+    consequence on THIS surface is destructive rather than merely
+    visible: the relaxed pool is also what a committed promote
+    bulk-deletes from, so a pattern promoted out of a throwaway worktree
+    unlinks the primary checkout's journal entries.
+
+    Not a bug report against the relaxation — it is the documented trade,
+    and the delete-set line in the handler says the set is exactly as
+    strong as the filters and no stronger. What this pins is the DESC
+    staying honest about it: the earlier copy claimed the read filters
+    "keep the commit-time member DELETION inside your own worktree",
+    which this sequence falsifies with the primary alive on disk (so no
+    dead-worktree degrade is doing the work) and no `auto_scope=False`
+    anywhere.
+    """
+    primary = memory_dir.parent / "primary-checkout"
+    (primary / ".git" / "worktrees" / "ephemeral").mkdir(parents=True)
+    linked = memory_dir.parent / "linked-worktree"
+    linked.mkdir(parents=True)
+    # A linked worktree's root carries a `.git` FILE pointing into the
+    # primary's admin dir — the shape `_primary_root_of` reads. Built with
+    # `Path` so the separator is native on every platform.
+    (linked / ".git").write_text(
+        f"gitdir: {primary / '.git' / 'worktrees' / 'ephemeral'}\n", encoding="utf-8"
+    )
+
+    repo = "git@github.com:example/repo.git"
+    # `_primary_root_of` resolves the primary root it derives, so the
+    # episodes must record the resolved path for the relaxation to fire.
+    _set_origin(
+        monkeypatch,
+        Origin(
+            cwd=str(primary),
+            repo=repo,
+            branch="main",
+            worktree_root=str(primary.resolve()),
+        ),
+    )
+    await _journal_across_sessions(memory_dir, [_THEME_A] * 3)
+    before = _episode_ids_on_disk(memory_dir)
+    assert len(before) == 3
+    assert primary.exists(), "the primary must be ALIVE or the degrade explains it"
+
+    _set_origin(
+        monkeypatch,
+        Origin(
+            cwd=str(linked), repo=repo, branch="ephemeral", worktree_root=str(linked)
+        ),
+    )
+    server = _build(memory_dir)
+    listing = _unwrap(await _call(server, "episode_patterns"))
+    assert listing["episodes_scanned"] == 3, (
+        f"a caller in a linked worktree sees the primary checkout's journal "
+        f"under the DEFAULT auto_scope: {listing}"
+    )
+    assert len(listing["patterns"]) == 1, listing
+
+    promoted = _unwrap(
+        await _call(
+            server,
+            "episode_patterns",
+            promote=listing["patterns"][0]["id"],
+            body="Tailscale exit nodes drop mid-sync; restarting tailscaled clears it.",
+            scopes=["infrastructure"],
+        )
+    )
+    assert promoted["status"] == "committed", promoted
+    assert promoted["episodes_deleted"] == 3, promoted
+    assert _episode_ids_on_disk(memory_dir) == set(), (
+        "the promote deleted the PRIMARY checkout's journal entries from a "
+        "linked worktree — the reach the DESC has to state, not deny"
+    )
+
+
 async def test_promote_by_explicit_id_ignores_disabled_scopes(
     memory_dir: Path,
 ) -> None:

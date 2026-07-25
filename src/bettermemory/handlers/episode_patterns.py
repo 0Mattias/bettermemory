@@ -77,17 +77,22 @@ DESC_EPISODE_PATTERNS = (
     "(>= 3 episodes, >= 3 sessions, ubiquitous project vocabulary "
     "excluded) — an empty list usually just means the journal is "
     "young or already consolidated.\n\n"
-    "READ FILTERS (same hides episode_search / episode_handoff "
-    "enforce): episodes whose scopes are in this session's "
+    "READ FILTERS (the same two hides episode_search applies to its "
+    "bare walk): episodes whose scopes are in this session's "
     "`disabled_scopes` are dropped before detection, and by default "
-    "(`auto_scope=True`) so are episodes written from a DIFFERENT git "
-    "worktree of the same repository sharing one memory root. Both "
-    "apply to promote/dismiss too — a pattern you cannot see is "
-    "neither promotable nor dismissible, which is what keeps the "
-    "commit-time member DELETION inside your own worktree. Legacy "
-    "episodes with no captured worktree, and callers outside any git "
-    "checkout, pass through. Set `auto_scope=False` to sweep every "
-    "worktree sharing the root (scope-disable still applies)."
+    "(`auto_scope=True`) so are episodes whose captured git worktree "
+    "differs from yours. That second hide is PERMISSIVE — not a "
+    "boundary. It passes an episode through when there is nothing to "
+    "compare (no worktree captured on the episode, or you outside any "
+    "git checkout) and, deliberately, when the recorded worktree is "
+    "gone from disk or you are in a linked git worktree of the "
+    "checkout that wrote it. Both hides gate promote/dismiss too — a "
+    "pattern you cannot see is neither promotable nor dismissible — "
+    "so the commit-time member DELETION reaches exactly as far as "
+    "these filters admit and no further, which in every pass-through "
+    "case above can mean another worktree's journal entries. Set "
+    "`auto_scope=False` to sweep every worktree sharing the root "
+    "(scope-disable still applies)."
 )
 
 
@@ -266,9 +271,13 @@ async def episode_patterns(
             # rather than by derivation. Note what that does and does
             # not buy: it is exactly as strong as the filters, and the
             # worktree one is the permissive `origin.worktrees_match`,
-            # so an episode the filter had no boundary to enforce on
-            # (no captured worktree, dead recorded worktree, caller
-            # outside any git checkout) is inside the delete set.
+            # so every episode any of that function's permissive legs
+            # admits is inside the delete set. Read the function for
+            # which legs those are rather than assuming the
+            # None-on-either-side pair is all of them — it carries
+            # further deliberate relaxations, and `DESC_EPISODE_PATTERNS`
+            # is where they are spelled out for the model, which cannot
+            # read the function.
             by_id = {ep.id: ep for ep in episodes}
             for eid in target.episode_ids:
                 ep = by_id.get(eid)
