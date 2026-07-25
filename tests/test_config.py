@@ -28,6 +28,7 @@ from bettermemory.config import (
     ENV_DIR_OVERRIDE,
     Config,
     StorageConfig,
+    _SEARCH_MODES,
     load_config,
 )
 
@@ -1063,3 +1064,91 @@ def test_resolved_directory_no_warn_for_user_path(
     assert not any("system directory" in record.message for record in caplog.records), (
         f"unexpected warning on user path: {[r.message for r in caplog.records]}"
     )
+
+
+# ---------------------------------------------------------------------------
+# [behavior] search_mode
+# ---------------------------------------------------------------------------
+
+
+def test_search_modes_match_the_ranker_literal() -> None:
+    """`_SEARCH_MODES` is a hand-copy of `search.SearchMode` — the import
+    can't go the other way, since `search` imports `config`. Cross-pin it,
+    because the whole value of coercing at load is that the loader agrees
+    with the dispatcher about what a valid mode is; a drifted copy would
+    reject a real mode or admit one `search.search` raises on."""
+    import typing
+
+    from bettermemory.search import SearchMode
+
+    assert set(_SEARCH_MODES) == set(typing.get_args(SearchMode)), (
+        "config._SEARCH_MODES has drifted from search.SearchMode; update "
+        "the copy in lockstep or the loader and the ranker disagree about "
+        "which strings are modes"
+    )
+
+
+def test_search_mode_normalises_case_and_whitespace(tmp_path: Path) -> None:
+    """The three consumers of this knob disagreed about normalisation:
+    `_search_mode_needs_model` (the embedding-model LOAD gate) compared
+    `.strip().lower()`, `handlers.search` passed the raw string to a
+    dispatcher that raises on anything outside the four literals, and the
+    web UI silently rewrote an unknown value to `hybrid`. So
+    `search_mode = "Semantic"` loaded a model, broke every `memory_search`
+    call, and rendered a working lexical page. Normalise once, at the
+    source, so all three see the same value."""
+    import json
+
+    for raw in ("Semantic", " semantic ", "SEMANTIC", "\tSemantic  "):
+        # `json.dumps` for the TOML string literal: both grammars escape
+        # basic strings the same way, so a tab survives the round trip
+        # instead of being written raw and breaking the parse.
+        (tmp_path / "config.toml").write_text(
+            f"[behavior]\nsearch_mode = {json.dumps(raw)}\n", encoding="utf-8"
+        )
+        cfg = load_config(tmp_path / "config.toml")
+        assert cfg.behavior.search_mode == "semantic", (
+            f"{raw!r} did not normalise to 'semantic'"
+        )
+
+
+def test_search_mode_falls_back_loudly_on_an_unknown_value(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A typo must not take the server down (the `default_max_results`
+    rule) and must not pass through either — passing through is what made
+    every `memory_search` call raise `unknown search mode` mid-conversation
+    while the web page looked healthy.
+
+    The warning is the whole point of the fallback. A user who wrote
+    `serantic` asked for semantic ranking and is about to get lexical, and
+    no other surface reports that: `doctor`'s retrieval check reads the
+    resolved mode, so once the fallback lands it sees a legitimate
+    `hybrid`."""
+    (tmp_path / "config.toml").write_text(
+        '[behavior]\nsearch_mode = "serantic"\n', encoding="utf-8"
+    )
+    caplog.set_level("WARNING", logger="bettermemory.config")
+
+    cfg = load_config(tmp_path / "config.toml")
+
+    assert cfg.behavior.search_mode == "hybrid"
+    # `getMessage()` and not `.message`: the warning is logged lazily with
+    # %-args, so the offending value only appears once they are applied.
+    assert any("serantic" in record.getMessage() for record in caplog.records), (
+        "unknown search_mode fell back silently; got: "
+        f"{[r.getMessage() for r in caplog.records]}"
+    )
+
+
+def test_search_mode_absent_and_valid_values_are_untouched(tmp_path: Path) -> None:
+    """No warning and no rewriting on the happy paths — otherwise the
+    fallback's warning becomes noise every load and stops being read."""
+    (tmp_path / "config.toml").write_text("[behavior]\n", encoding="utf-8")
+    assert load_config(tmp_path / "config.toml").behavior.search_mode == "hybrid"
+
+    for mode in _SEARCH_MODES:
+        (tmp_path / "config.toml").write_text(
+            f'[behavior]\nsearch_mode = "{mode}"\n', encoding="utf-8"
+        )
+        assert load_config(tmp_path / "config.toml").behavior.search_mode == mode

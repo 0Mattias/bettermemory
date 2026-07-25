@@ -389,6 +389,34 @@ nothing on the tool surface had ever asked it to say so.
   real guard is `test_api_md_since_prior_session_strict_after`. The lean
   default-on surface **shrank**, 27,245 → 27,155 chars.
 
+### Fixed — one `search_mode` string, three behaviours
+
+`[behavior] search_mode` was loaded with a bare `str(...)` and read by three
+consumers that each assumed something different about it:
+`semantic_setup._search_mode_needs_model`, which decides whether an
+embedding model is **loaded**, compared `.strip().lower()`;
+`handlers.search` passed the raw value to a dispatcher that raises on
+anything outside the four literals; and the web UI rewrote an unrecognised
+value to `hybrid` and ranked with it, because a page cannot 500 on a config
+typo.
+
+- So `search_mode = "Semantic"` loaded an embedding model, made **every**
+  `memory_search` call raise `unknown search mode` mid-conversation, and
+  served a healthy-looking lexical web page. `"HYBRID"` was the cruel one:
+  capitalising the *default* value killed memory search outright while every
+  other surface looked fine.
+- Now normalised once at the loader, which is where the policy layer already
+  lives — so the whole system agrees with the assumption
+  `_search_mode_needs_model` was making on its own. An unrecognised value
+  falls back to `hybrid` rather than raising, per `default_max_results`' rule
+  that one bad knob must not take the server down, and it **warns**: a silent
+  fallback would leave someone who asked for semantic ranking quietly getting
+  lexical, which no other surface reports.
+- The mode tuple is a hand-copy of `search.SearchMode` (config cannot import
+  search — the dependency runs the other way) and is now cross-pinned, since
+  a drifted copy would either reject a real mode or admit one the ranker
+  raises on.
+
 ### Changed — the shadow relevance label stays shadow, with a reason
 
 `_relevance_label_v2`'s contract said live behaviour holds on v1 "until

@@ -741,6 +741,70 @@ def _coerce_int(
     raise ValueError(_malformed_config_msg(label, value, config_path, "an integer"))
 
 
+#: The four modes `search.search` dispatches on. Duplicated from the
+#: `SearchMode` Literal rather than imported because `config` is imported
+#: by `search`, not the other way round; `test_config.py` cross-pins the
+#: two so the copy cannot drift.
+_SEARCH_MODES = ("keyword", "bm25", "semantic", "hybrid")
+
+
+def _coerce_search_mode(value: object, *, config_path: Path | None) -> str:
+    """Normalise `[behavior] search_mode`, falling back to `hybrid`.
+
+    Unlike the scalars above this does NOT raise, and unlike the old bare
+    `str(...)` it does not pass the value through untouched. Both of those
+    were wrong for this knob, because three consumers read it and each one
+    made a different assumption about what it holds:
+
+    - `semantic_setup._search_mode_needs_model`, which decides whether an
+      embedding model is LOADED, compares `.strip().lower()`.
+    - `handlers.search.memory_search` passes `search_mode or "hybrid"`
+      through unnormalised, and `search.search` raises on anything outside
+      the four literals.
+    - the web UI normalises an unrecognised value to `hybrid` and ranks
+      with it, because a page cannot 500 on a config typo.
+
+    So a config saying `search_mode = "Semantic"` loaded an embedding
+    model, made EVERY `memory_search` call raise `unknown search mode`,
+    and served a working lexical web page — three behaviours from one
+    string. `"HYBRID"` was the cruel one: capitalising the DEFAULT value
+    killed memory search outright while every other surface looked fine.
+
+    Normalising here makes the whole system agree with the assumption
+    `_search_mode_needs_model` was already making. Falling back rather
+    than raising follows `default_max_results`' rule that a bad value in
+    one knob must not take the server down — and the fallback is loud,
+    since a silent one would leave a user who asked for semantic ranking
+    quietly getting lexical.
+
+    Scope, stated so it is not mistaken for a whole-system invariant:
+    this runs in `load_config`, so it covers config FILES. A programmatic
+    embedder building `BehaviorConfig(search_mode=...)` directly still
+    reaches the consumers unnormalised. That is deliberate and matches
+    how `full_tool_surface` already works — these are value types and
+    the loader is the policy layer — and it is why
+    `_search_mode_needs_model` keeps its own `.strip().lower()` rather
+    than being simplified now that this exists.
+    """
+    if value is None:
+        return "hybrid"
+    normalised = str(value).strip().lower()
+    if normalised in _SEARCH_MODES:
+        return normalised
+    import logging
+
+    logging.getLogger("bettermemory.config").warning(
+        "[behavior] search_mode = %r is not one of %s%s; falling back to "
+        "'hybrid'. Retrieval will be lexical (keyword + BM25 fused), so if "
+        "you meant to enable semantic ranking, fix the spelling — nothing "
+        "else will report this.",
+        value,
+        ", ".join(_SEARCH_MODES),
+        f" (in {config_path})" if config_path is not None else "",
+    )
+    return "hybrid"
+
+
 def _coerce_float(
     value: object, default: float, *, label: str, config_path: Path | None
 ) -> float:
@@ -932,7 +996,9 @@ def load_config(path: Path | None = None) -> Config:
                 label="[behavior] default_max_results",
                 config_path=config_path,
             ),
-            search_mode=str(behavior_raw.get("search_mode", "hybrid")),
+            search_mode=_coerce_search_mode(
+                behavior_raw.get("search_mode"), config_path=config_path
+            ),
             recency_boost_half_life_days=_coerce_float(
                 behavior_raw.get("recency_boost_half_life_days"),
                 30.0,
