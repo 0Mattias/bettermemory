@@ -298,6 +298,19 @@ _ILLUSTRATIVE_CUE = re.compile(
 # that the symbol is there now. Checked against the match and a short
 # lookback, since the tense marker often sits ahead of the symbol
 # ("Pre-Round-3 `build_server` and `_register_tools` lived in ...").
+#
+# Two consumers now, reading this differently, so editing it has both as
+# its blast radius. `check_symbols` below searches the whole lookback for
+# any alternative, which is affordable because the claim it guards is
+# already narrowed to the two-token `sym` in `mod.py` shape. The ratchet in
+# `tests/test_symbol_citations.py` imports the same pattern for a far wider
+# surface — every backticked token in every docstring and comment — and
+# there the marker must ATTACH to the citation it excuses, because `was`,
+# `were`, `before`, `until`, `once`, `old`, `moved`, `dropped` and
+# `renamed` are ordinary English before they are tense markers, and a
+# blanket search exempted any citation that merely shared a sentence with
+# one. That module's seam test fails loudly if an alternative here
+# disappears, and equally if one grows until it matches everything.
 _RELOCATION_PROSE = re.compile(
     r"\b(lived|moved|used to|previously|formerly|no longer|was|were|removed"
     r"|dropped|renamed|once|before|pre-\w+|until|old|former)\b",

@@ -70,14 +70,29 @@ lived in one.
 
 Suppressed on purpose
 ---------------------
-* **Historical prose.** ``_RELOCATION_PROSE`` from
-  ``tests/test_doc_claims.py``, imported rather than copied so the two
-  checkers cannot drift apart, within ``_RELOCATION_LOOKBACK``
-  characters ahead of the citation. "the pre-extraction ``_cli_serve``"
-  is a true statement about a symbol that was removed, not a claim that
-  it is there now. ``test_imported_tense_vocabulary_still_carries_the_markers_we_rely_on``
-  fails if that shared vocabulary loses a marker this module depends on,
-  so a tightening over there cannot silently change verdicts here.
+* **Historical prose, but only when the marker attaches to the
+  citation.** ``_RELOCATION_PROSE`` from ``tests/test_doc_claims.py``,
+  imported rather than copied so the two checkers cannot drift apart,
+  supplies the vocabulary — and only the vocabulary. That regex was
+  tuned for a narrower consumer over there (the two-token ```` `sym` in
+  `mod.py` ```` shape), and its alternatives include ordinary English:
+  ``was``, ``were``, ``before``, ``until``, ``once``, ``old``,
+  ``moved``, ``dropped``, ``renamed``. Searched as a blanket over the
+  whole ``_RELOCATION_LOOKBACK`` window, any of those words anywhere in
+  the window exempted the citation beside it — which silently swallows
+  exactly the class this file exists to catch. A marker now counts only
+  when it **pre-modifies the cited name**: nothing but whitespace or a
+  dash may sit between the marker and the citation (``_MARKER_ATTACHES``).
+  "the pre-extraction ``_cli_serve``" is a true statement about a symbol
+  that was removed; a sentence that merely said "before" one clause
+  earlier is not. Attachment, not the window width, is now what bounds
+  the exemption, so the imported constant is a prefilter rather than the
+  guarantee. The suppression sits in the token walk, so it covers rules
+  1-3; rule 4 has its own walk and no tense exemption at all.
+  ``test_imported_tense_seam_holds_in_both_directions`` drives the real
+  predicate over both halves of the import and both directions of each,
+  so neither a lost marker, nor a widened one, nor a shrunk lookback can
+  change verdicts here in silence.
 * **Module references spelled without the suffix.** ``_handlers`` names
   a module, not a symbol; any private token equal to a module basename
   in ``src/bettermemory/`` is a module reference.
@@ -96,11 +111,13 @@ Suppressed on purpose
 Where the reading is literal, each costing a missed finding and never a
 false one: a comment's prose unit is the single comment line, so a tense
 marker one line above a citation does not reach it (grouping contiguous
-comment lines was measured and suppressed a live finding whose preceding
-line said "before the caller takes the lock" about lock ordering); a
-call shape is stripped only when it trails the token; and a token
-containing anything but one identifier, one dot, or a ``.py`` suffix is
-not a claim these rules read.
+comment lines was measured under the old blanket suppressor and hid a
+live finding whose preceding line said "before the caller takes the
+lock" about lock ordering — the attachment rule would now block that
+case on its own, so the one-line unit is the belt to its braces rather
+than the only thing holding); a call shape is stripped only when it
+trails the token; and a token containing anything but one identifier,
+one dot, or a ``.py`` suffix is not a claim these rules read.
 
 What this cannot see
 --------------------
@@ -115,6 +132,18 @@ What this cannot see
   of precisely this kind. If you are writing prose, prefer the
   ``module.symbol`` spelling — it is the form this file can check.
 * **Wrong-module attribution.** By construction, per rule 1 above.
+* **History told in the predicative voice.** A cited name *followed* by
+  "was removed" or "has since been renamed" states the same fact as the
+  attributive "the removed ``_handle_foo``", but the marker trails the
+  citation instead of modifying it, and reading forward from a citation
+  is a second suppression channel this file does not open — every extra
+  channel is another way to swallow a real finding. Such a citation is
+  reported. Prefer the attributive spelling; where the sentence should
+  not be reworded, an ``_ALLOWLIST`` entry is the escape hatch, and two
+  of the four base entries are exactly that. It is the same judgement
+  ``tests/test_doc_claims.py`` makes for its commit-pin vocabulary: an
+  unmatched phrasing leaves the claim checked, which fails loudly and
+  teaches the canonical form.
 * **Markdown.** ``CHANGELOG.md``, ``README.md`` and ``docs/`` are not
   in this corpus. The changelog is frozen history where a removed
   symbol is a true record, and the living documents are already served
@@ -251,6 +280,15 @@ _MODULE_FILE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\.py$")
 _INVENTORY_BULLET = re.compile(
     r"^[ \t]*[-*][ \t]+`{1,2}([A-Za-z_][A-Za-z0-9_]*)(?:\([^`]*\))?`{1,2}"
 )
+
+# Everything permitted between a tense marker and the citation it modifies:
+# whitespace and dashes, nothing else. A content word, a comma or any other
+# punctuation between the two means the marker belongs to a different phrase
+# and says nothing about the cited name. This is the whole difference between
+# "the pre-extraction <name>" and "flushed before the writer returns; <name>",
+# and it is what stops the imported vocabulary's ordinary-English
+# alternatives from exempting a live citation.
+_MARKER_ATTACHES = re.compile(r"[\s–—-]*")
 
 
 # ---------------------------------------------------------------------------
@@ -499,10 +537,26 @@ def _module_docstring(text: str) -> tuple[int, str] | None:
 # ---------------------------------------------------------------------------
 # Rules
 # ---------------------------------------------------------------------------
-def _is_historical(text: str, start: int) -> bool:
-    """A tense marker just ahead of the citation makes it a claim about the past."""
-    return bool(
-        _RELOCATION_PROSE.search(text[max(0, start - _RELOCATION_LOOKBACK) : start])
+def _is_historical(text: str, start: int, lookback: int | None = None) -> bool:
+    """A tense marker ATTACHED to the citation makes it a claim about the past.
+
+    Attached, not merely nearby. The imported vocabulary is a word list tuned
+    for a different consumer and it includes ordinary English, so searching
+    the whole lookback for it exempted any citation that happened to share a
+    sentence with `before`, `once`, `was` or `old`. The marker must instead
+    pre-modify the cited name, with only whitespace or a dash between them.
+
+    ``lookback`` defaults to the imported ``_RELOCATION_LOOKBACK``, read here
+    rather than captured as a default argument so the seam test sees the same
+    value this module actually runs on. Overriding it is how that test proves
+    the guarantee is grammatical rather than numeric: widening the window
+    does not widen the exemption, because attachment is what bounds it.
+    """
+    reach = _RELOCATION_LOOKBACK if lookback is None else lookback
+    window = text[max(0, start - reach) : start]
+    return any(
+        _MARKER_ATTACHES.fullmatch(window[match.end() :])
+        for match in _RELOCATION_PROSE.finditer(window)
     )
 
 
@@ -702,19 +756,106 @@ def test_walk_fallback_admits_nothing_the_git_listing_excludes() -> None:
     )
 
 
-def test_imported_tense_vocabulary_still_carries_the_markers_we_rely_on() -> None:
-    """The suppression vocabulary is shared with ``tests/test_doc_claims.py``.
+# The seam fixtures, held as data so the guard below and the rule self-tests
+# further down cannot drift apart. `{}` marks where the citation sits.
+#
+# Constructions that MUST read as historical: the marker pre-modifies the
+# cited name. Only the `pre-\w+` alternative is load-bearing for the corpus as
+# it stands — dropping each alternative in turn and rescanning reopens two
+# citations, both spelled "the pre-extraction ...", and nothing else. The rest
+# are the canonical spellings this module teaches, pinned so that narrowing
+# the shared vocabulary is a loud failure here rather than a silent one.
+_ATTACHED_TENSE_PROSE = (
+    "Identical behavior to the pre-extraction {} entry point.",
+    "Superseded by the former {} helper.",
+    "The now-removed {} took the same argument.",
+    "History only: the renamed {} became the shared parser.",
+    "The old {} spelling is gone from the tree.",
+)
 
-    Importing rather than copying keeps one definition, but it also means a
-    tightening over there silently changes verdicts here. These are the
-    markers this module's live suppressions actually depend on; losing one
-    should fail loudly at the seam instead of quietly reopening a citation.
+# Constructions that must NOT read as historical: an ordinary sentence that
+# happens to contain one of the imported vocabulary's common-English
+# alternatives, with a live citation beside it. Every one of these was
+# silently exempt while the vocabulary was searched as a blanket over the
+# lookback, which is the overreach the attachment rule closed.
+_INNOCENT_TENSE_WORD_PROSE = (
+    "Flushed before the writer returns; {} guards against recursion.",
+    "Once the queue drains, {} takes over.",
+    "The verdict was surprising, so {} logs it.",
+    "Blocks until the lock clears, then {} runs.",
+    "Rows dropped by the filter never reach {} at all.",
+    "The cursor moved forward, so {} re-reads the row.",
+    "Renamed scopes are rewritten in place by {}.",
+    "The old-style rows still land in {} today.",
+)
+
+
+def _reads_as_historical(template: str, lookback: int | None = None) -> bool:
+    """Run the real suppression predicate over one ``{}`` template."""
+    prose = template.format("`_cli_serve`")
+    return _is_historical(prose, prose.index("`"), lookback)
+
+
+def test_imported_tense_seam_holds_in_both_directions() -> None:
+    """Both halves of the import, and both directions of each.
+
+    ``tests/test_doc_claims.py`` owns the vocabulary and the window; importing
+    rather than copying keeps one definition, but it also means an edit over
+    there changes verdicts here. Asserting that a list of phrases still
+    *matches* the regex covers exactly one of the four ways this seam can
+    break, and it is the least dangerous one: it says nothing about a
+    vocabulary that grew until it matches everything, nothing about the
+    constant, and nothing about the suppression this module actually applies.
+    So the guard drives the real predicate over measured constructions
+    instead.
+
+    * a marker lost from the vocabulary breaks the attached fixtures;
+    * a marker widened until it matches ordinary English breaks the innocent
+      ones — the fail-open direction, which is the one that quietly reopens
+      the class this file exists to catch;
+    * a lookback shrunk below the fixtures' reach breaks the attached ones,
+      and is asserted separately so the failure names the constant.
+
+    The remaining direction — a lookback *widened* — is bounded by the
+    attachment rule rather than by the number, and
+    ``test_attachment_not_the_window_width_bounds_the_suppression`` pins that.
     """
-    for phrase in ("pre-extraction", "previously", "no longer", "removed"):
-        assert _RELOCATION_PROSE.search(phrase), (
-            f"_RELOCATION_PROSE no longer matches {phrase!r}; "
-            f"tests/test_symbol_citations.py relies on it"
+    for template in _ATTACHED_TENSE_PROSE:
+        assert _reads_as_historical(template), (
+            f"the shared tense vocabulary no longer suppresses {template!r}; "
+            f"tests/test_symbol_citations.py relies on that construction"
         )
+    for template in _INNOCENT_TENSE_WORD_PROSE:
+        assert not _reads_as_historical(template), (
+            f"{template!r} is an ordinary sentence, not a claim about the "
+            f"past, yet it now exempts the citation beside it — the shared "
+            f"vocabulary or the attachment rule has widened"
+        )
+    reach = max(template.index("{}") for template in _ATTACHED_TENSE_PROSE)
+    assert _RELOCATION_LOOKBACK >= reach, (
+        f"_RELOCATION_LOOKBACK is {_RELOCATION_LOOKBACK}, too short to reach "
+        f"the marker in a {reach}-character construction this module relies "
+        f"on; the historical exemption dies silently when it shrinks"
+    )
+
+
+def test_attachment_not_the_window_width_bounds_the_suppression() -> None:
+    """The fail-open direction of the imported constant.
+
+    ``_RELOCATION_LOOKBACK`` used to be the only thing keeping the exemption
+    from going paragraph-wide, and raising it failed nothing. Attachment
+    replaces the number with a grammatical bound, so a marker a whole
+    paragraph away cannot reach the citation however wide the window is.
+    """
+    far = "The old contract is gone. " + "Filler prose that says nothing. " * 8
+    assert not _reads_as_historical(far + "{} decides the verdict.")
+    assert not _reads_as_historical(far + "{} decides the verdict.", lookback=10_000), (
+        "a marker a paragraph away exempts the citation once the window is "
+        "wide enough — the bound is back to being the constant, not the "
+        "attachment rule"
+    )
+    # ...while the attributive form is still reached at any width.
+    assert _reads_as_historical(_ATTACHED_TENSE_PROSE[0], lookback=10_000)
 
 
 # ---------------------------------------------------------------------------
@@ -848,6 +989,37 @@ def test_historical_prose_is_not_a_present_tense_claim() -> None:
 def test_the_same_citation_without_a_tense_marker_still_fires() -> None:
     text = '\n"""Identical behavior to the `_cli_serve` entry point."""\n'
     assert _rules(_FAKE_TEST, text) == [("private-symbol", "_cli_serve")]
+
+
+def test_an_unattached_tense_word_does_not_exempt_the_citation_beside_it() -> None:
+    """The overreach the attachment rule closed, end to end through the lint.
+
+    Every sentence in the innocent set holds one of the imported vocabulary's
+    common-English alternatives next to a dangling citation, and every one of
+    them was silently exempt before. The two halves share a word on purpose —
+    "The old <name> spelling" suppresses and "The old-style rows still land
+    in <name>" does not — which is what shows the verdict turns on the
+    construction rather than on the vocabulary entry.
+    """
+    for template in _INNOCENT_TENSE_WORD_PROSE:
+        text = '\n"""' + template.format("`_cli_serve`") + '"""\n'
+        assert _rules(_FAKE_TEST, text) == [("private-symbol", "_cli_serve")], template
+    for template in _ATTACHED_TENSE_PROSE:
+        text = '\n"""' + template.format("`_cli_serve`") + '"""\n'
+        assert _rules(_FAKE_TEST, text) == [], template
+
+
+def test_the_tense_exemption_covers_every_token_rule_it_sits_above() -> None:
+    """The suppression is in the token walk, so rules 1-3 share its verdict.
+
+    Both shapes below were exempt under the blanket reading — a fabricated
+    dotted symbol and a filename no tracked file carries, each beside an
+    ordinary past-tense clause.
+    """
+    dotted = '\n"""Rows dropped by the filter reach `store.list_row_to_dict` raw."""\n'
+    assert _rules(_FAKE_SRC, dotted) == [("dotted-symbol", "store.list_row_to_dict")]
+    named = '\n"""The cursor moved forward, so `test_health_commit_drift.py` runs."""\n'
+    assert _rules(_FAKE_TEST, named) == [("module-file", "test_health_commit_drift.py")]
 
 
 def test_a_tense_marker_on_the_line_above_a_comment_does_not_reach_it() -> None:

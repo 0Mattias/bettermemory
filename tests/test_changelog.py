@@ -35,12 +35,29 @@ series — release branches diverge and rebase, and a "1.5.0 then
 2.0.0 then 1.5.1" sequence (where 1.5.1 is a backport) is legal even
 if rare. The invariants above cover the actual classes of bug the
 audit cycle keeps surfacing.
+
+Invariant 3's judge is separated from its git plumbing
+(``_unrepresented``) so that self-tests below can drive it with
+synthetic commits, and each of its tiers is then neutered in turn to
+prove one of those fixtures notices. That discipline is borrowed from
+``tests/test_doc_claims.py`` and ``tests/test_platform_fixture_lint.py``,
+and for the reason both of them state: a rule the current tree happens
+to satisfy is indistinguishable from a rule that does nothing, so the
+green tick on the live corpus is not by itself evidence of anything.
+
+Those self-tests cover invariant 3, which is where the policy lives.
+Invariant 1 compares two values read from two files with nothing in
+between to go slack. Invariant 2 does have one soft spot — its
+``version_like`` prefilter would pass vacuously if it ever stopped
+matching — left unpinned deliberately: a fixture for one anchored
+prefix regex costs more than it pins.
 """
 
 from __future__ import annotations
 
 import re
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -357,50 +374,16 @@ def _unigram_hit(token_stem: str, entry_stems: frozenset[str]) -> bool:
     )
 
 
-def test_newest_tag_window_commits_are_represented() -> None:
-    """Every substantive commit in the newest tag's window has an entry trace.
+def _unrepresented(commits: list[tuple[str, str]], entry: str) -> list[str]:
+    """Commits with no trace in ``entry``, rendered one per line.
 
-    What "represented" means here, in order of authority:
-
-    1. The commit's 7+ character SHA prefix appears in the entry — the
-       deterministic escape hatch for an entry that deliberately
-       paraphrases (this is how the erratum convention cites commits).
-    2. The entry reuses a two-word phrase from the commit subject
-       (stem-equal adjacent word pair).
-    3. Nearly all of the subject's distinctive words appear in the
-       entry (all but one, and no fewer than ``_UNIGRAM_FLOOR``).
-
-    The bar is "zero-representation is impossible", not "the entry is
-    good prose". Lexical overlap can in principle be satisfied
-    coincidentally, and a heavily-paraphrased real entry can miss both
-    lexical tiers — the failure message names the SHA hatch for that
-    case. Merge commits, trivially-typed commits, and commits whose
-    every scope is test/docs/ci/bench tooling are out of scope. Skips
-    when git, two release tags, or the window's history are missing
-    (shallow CI checkouts); the moment it has teeth is a full checkout
-    right after ``git tag``, before the tag is pushed — see the release
-    runbook in ``docs/release.md``.
+    The whole judgement of invariant 3, deliberately pure: no git, no clock,
+    no filesystem. That is what lets the self-tests at the bottom of this
+    file drive it with synthetic commits and a synthetic entry — and it is
+    the only reason the live test below is worth anything, because a rule
+    that today's CHANGELOG happens to satisfy is indistinguishable from a
+    rule that exempts every commit unconditionally.
     """
-    window = _newest_tag_window()
-    if window is None:
-        pytest.skip(
-            "needs a git checkout with two or more vX.Y.Z tags visible "
-            "(shallow CI checkouts have at most the pushed tag)"
-        )
-    version, prev_tag, newest_tag = window
-    commits = _window_commits(prev_tag, newest_tag)
-    if commits is None:
-        pytest.skip(
-            f"cannot enumerate {prev_tag}..{newest_tag} "
-            f"(shallow or partial git history)"
-        )
-
-    entry = _entry_text(version)
-    assert entry is not None, (
-        f"tag {newest_tag} exists but CHANGELOG.md has no "
-        f"`## {version} - YYYY-MM-DD` entry for it — the release shipped "
-        f"with no notes at all"
-    )
     entry_words = _WORD.findall(entry.lower())
     entry_stems = frozenset(_stem(w) for w in entry_words)
     entry_bigrams = frozenset(
@@ -430,7 +413,59 @@ def test_newest_tag_window_commits_are_represented() -> None:
         offenders.append(
             f"  {sha[:9]}  {subject!r}\n    entry words matched: {matched or 'none'}"
         )
+    return offenders
 
+
+def test_newest_tag_window_commits_are_represented() -> None:
+    """Every substantive commit in the newest tag's window has an entry trace.
+
+    What "represented" means here, in order of authority:
+
+    1. The commit's 7+ character SHA prefix appears in the entry — the
+       deterministic escape hatch for an entry that deliberately
+       paraphrases (this is how the erratum convention cites commits).
+    2. The entry reuses a two-word phrase from the commit subject
+       (stem-equal adjacent word pair).
+    3. Nearly all of the subject's distinctive words appear in the
+       entry (all but one, and no fewer than ``_UNIGRAM_FLOOR``).
+
+    The bar is "zero-representation is impossible", not "the entry is
+    good prose". Lexical overlap can in principle be satisfied
+    coincidentally, and a heavily-paraphrased real entry can miss both
+    lexical tiers — the failure message names the SHA hatch for that
+    case. Merge commits, trivially-typed commits, and commits whose
+    every scope is test/docs/ci/bench tooling are out of scope. Skips
+    when git, two release tags, or the window's history are missing
+    (shallow CI checkouts); the moment it has teeth is a full checkout
+    right after ``git tag``, before the tag is pushed — see the release
+    runbook in ``docs/release.md``.
+
+    This test passing says nothing on its own: it is green whenever the
+    newest entry happens to cover its window, and equally green against
+    a judge that exempts every commit. The self-tests below are what
+    make it evidence — see ``_NEUTERINGS``.
+    """
+    window = _newest_tag_window()
+    if window is None:
+        pytest.skip(
+            "needs a git checkout with two or more vX.Y.Z tags visible "
+            "(shallow CI checkouts have at most the pushed tag)"
+        )
+    version, prev_tag, newest_tag = window
+    commits = _window_commits(prev_tag, newest_tag)
+    if commits is None:
+        pytest.skip(
+            f"cannot enumerate {prev_tag}..{newest_tag} "
+            f"(shallow or partial git history)"
+        )
+
+    entry = _entry_text(version)
+    assert entry is not None, (
+        f"tag {newest_tag} exists but CHANGELOG.md has no "
+        f"`## {version} - YYYY-MM-DD` entry for it — the release shipped "
+        f"with no notes at all"
+    )
+    offenders = _unrepresented(commits, entry)
     if offenders:
         listing = "\n".join(offenders)
         pytest.fail(
@@ -442,3 +477,176 @@ def test_newest_tag_window_commits_are_represented() -> None:
             f"This is the v3.24.0/`096218e` omission class — see the module "
             f"docstring."
         )
+
+
+# --- Self-tests for the coverage judge ---------------------------------------
+#
+# Everything above this line is a verdict on one repo state. A rule that
+# today's CHANGELOG satisfies is indistinguishable from a rule that does
+# nothing, which is the argument `tests/test_doc_claims.py` and
+# `tests/test_platform_fixture_lint.py` both make about their own extractors —
+# and which this file shipped without. So each tier below gets a fixture that
+# fires and a paired fixture that stays quiet, and `_NEUTERINGS` then breaks
+# each tier in turn and asserts one of those fixtures notices.
+#
+# The fixtures never touch CHANGELOG.md: each carries its own synthetic entry
+# text, and the synthetic SHAs appear in none of them unless a test puts one
+# there on purpose, so the SHA hatch can never rescue a fixture by accident.
+
+# A commit whose subject shares nothing with the entry. The baseline offender:
+# it is the shape the v3.24.0 omission had, and it is what every always-pass
+# neutering below must silence.
+_BARE: tuple[list[tuple[str, str]], str] = (
+    [("a1b2c3d4e5f6a1b2", "feat(search): demote ranking on negative outcomes")],
+    "## 9.9.9 - 2026-01-01\n\n- Unrelated prose about tombstone retention.\n",
+)
+
+# Every distinctive word of a short subject appears in the entry, but scattered
+# — no shared adjacent pair. `_UNIGRAM_FLOOR` is the only thing that keeps this
+# from counting as coverage, which is what makes it the floor's control.
+_SCATTERED: tuple[list[tuple[str, str]], str] = (
+    [("bbbb1111bbbb2222", "feat(ui): verdict parity")],
+    "## 9.9.9 - 2026-01-01\n\n- Parity of every verdict is now shown.\n",
+)
+
+# The only two-word phrase shared with the entry is prose glue ("the store").
+# `_distinctive` dropping stopwords before pairs are formed is what keeps that
+# from reading as coverage.
+_GLUE_BIGRAM: tuple[list[tuple[str, str]], str] = (
+    [("cccc3333cccc4444", "feat(store): rework the store")],
+    "## 9.9.9 - 2026-01-01\n\n- Touched the store lightly.\n",
+)
+
+# Each entry breaks one tier to its always-pass form and names the fixture that
+# must stop being reported. `_stem` collapsing to a constant is how the bigram
+# tier is neutered: every adjacent pair on both sides becomes the same tuple,
+# so the tier matches unconditionally.
+_NEUTERINGS: tuple[tuple[str, str, object, tuple[list[tuple[str, str]], str]], ...] = (
+    ("trivial-commit exemption", "_classify_subject", lambda s: (True, ""), _BARE),
+    ("bigram tier", "_stem", lambda w: "x", _BARE),
+    ("unigram lookup", "_unigram_hit", lambda stem, stems: True, _BARE),
+    ("unigram floor", "_UNIGRAM_FLOOR", 0, _SCATTERED),
+    ("stopword filter", "_distinctive", lambda words: list(words), _GLUE_BIGRAM),
+)
+
+
+def test_a_commit_with_no_trace_in_the_entry_is_reported() -> None:
+    commits, entry = _BARE
+    assert len(_unrepresented(commits, entry)) == 1
+
+
+def test_a_short_sha_citation_represents_a_paraphrased_commit() -> None:
+    """Rank 1: the deterministic hatch for an entry that paraphrases.
+
+    The added line shares no word with the commit subject, so the citation
+    is the only thing carrying it — deleting the hatch fails this test.
+    """
+    commits, entry = _BARE
+    cited = entry.rstrip() + "\n- Reworked the ordering wholesale (a1b2c3d).\n"
+    assert _unrepresented(commits, cited) == []
+
+
+def test_a_shared_two_word_phrase_represents_a_commit() -> None:
+    """The bigram tier, on a subject too short for the unigram tier to save."""
+    commits = [("dddd5555dddd6666", "feat(ui): verdict parity")]
+    entry = "## 9.9.9 - 2026-01-01\n\n- The web UI gains verdict parity.\n"
+    assert _unrepresented(commits, entry) == []
+
+
+def test_the_bigram_tier_matches_across_an_inflection() -> None:
+    """``_SUFFIXES`` is why "shared marker" finds "shared markers"."""
+    commits = [("eeee7777eeee8888", "feat(hook): shared marker table")]
+    entry = "## 9.9.9 - 2026-01-01\n\n- The shared markers table replaces it.\n"
+    assert _unrepresented(commits, entry) == []
+
+
+def test_nearly_every_distinctive_word_represents_a_paraphrased_commit() -> None:
+    """The unigram tier: all but one word, and no shared adjacent pair."""
+    commits = [
+        (
+            "ffff9999ffffaaaa",
+            "feat(curation): corpus-level conflict arbitration across scopes",
+        )
+    ]
+    entry = (
+        "## 9.9.9 - 2026-01-01\n\n"
+        "- Scopes now surface an arbitration verdict for each conflict; "
+        "corpus totals stay level.\n"
+    )
+    assert _unrepresented(commits, entry) == []
+
+
+def test_a_scattered_short_subject_is_below_the_unigram_floor() -> None:
+    """The floor's whole job: two generic words in common is not coverage."""
+    commits, entry = _SCATTERED
+    assert len(_unrepresented(commits, entry)) == 1
+
+
+def test_a_glue_only_shared_phrase_is_not_coverage() -> None:
+    """ "the store" is a phrase two unrelated sentences share by accident."""
+    commits, entry = _GLUE_BIGRAM
+    assert len(_unrepresented(commits, entry)) == 1
+
+
+def test_a_trivially_typed_commit_owes_the_entry_nothing() -> None:
+    commits = [("1111aaaa1111bbbb", "docs(readme): lead the install with the plugin")]
+    _, entry = _BARE
+    assert _unrepresented(commits, entry) == []
+
+
+def test_a_substantive_type_with_only_tooling_scopes_is_exempt() -> None:
+    """``fix(test)`` is how this repo spells a test-suite repair."""
+    _, entry = _BARE
+    assert (
+        _unrepresented([("2222cccc2222dddd", "fix(test): repair the lint")], entry)
+        == []
+    )
+    # The same subject under a product scope is not exempt.
+    assert (
+        len(
+            _unrepresented([("2222cccc2222dddd", "fix(store): repair the lint")], entry)
+        )
+        == 1
+    )
+
+
+def test_an_unparseable_subject_is_treated_as_substantive() -> None:
+    """An unclassifiable change is the one that must not slip through."""
+    _, entry = _BARE
+    commits = [
+        ("3333eeee3333ffff", "Rework the shard picker with no conventional prefix")
+    ]
+    assert len(_unrepresented(commits, entry)) == 1
+
+
+def test_each_tier_has_a_fixture_that_notices_when_it_is_neutered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The negative control: break each tier, and a fixture above must fail.
+
+    Without this the fixtures are only evidence that the judge agrees with
+    itself today. Every tier here can be neutered to its always-pass form —
+    exempt every commit, match every bigram, hit on every unigram, drop the
+    floor to zero, keep the stopwords — and this is the test that proves at
+    least one fixture distinguishes the working rule from the broken one.
+
+    The SHA hatch is the one tier with no always-pass form to install (it is
+    a substring test, not a helper), so it is controlled the other way round:
+    ``test_a_short_sha_citation_represents_a_paraphrased_commit`` and
+    ``test_a_commit_with_no_trace_in_the_entry_is_reported`` share a commit
+    and differ only in whether the entry cites it, so deleting the hatch
+    fails the first and widening it fails the second.
+    """
+    module = sys.modules[__name__]
+    for label, attr, replacement, (commits, entry) in _NEUTERINGS:
+        assert _unrepresented(commits, entry), (
+            f"the {label} fixture must report an offender before the tier is "
+            f"neutered, or the assertion below proves nothing"
+        )
+        with monkeypatch.context() as patched:
+            patched.setattr(module, attr, replacement)
+            assert not _unrepresented(commits, entry), (
+                f"neutering the {label} to its always-pass form changed no "
+                f"verdict — no fixture in this file can tell that tier "
+                f"working from that tier gone"
+            )
