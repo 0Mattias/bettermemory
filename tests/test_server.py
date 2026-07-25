@@ -5165,22 +5165,32 @@ async def test_scope_overview_recently_removed_zero_when_clean(
 
 async def test_scope_overview_recently_removed_filtered_by_worktree(
     memory_dir: Path,
+    tmp_path: Path,
     monkeypatch: Any,
 ) -> None:
-    """Two worktrees of one repo sharing a memory root must not see each
-    other's tombstones counted into `recently_removed_in_worktree` under
-    auto_scope=True. Worktree A writes and removes a memory; a fresh
-    server in worktree B asks for a scope_overview and the recently-
-    removed count for B is zero — A's tombstone is excluded because its
-    `origin.worktree_root` does not match B's caller-origin.
+    """Two LIVE worktrees of one repo sharing a memory root must not see
+    each other's tombstones counted into `recently_removed_in_worktree`
+    under auto_scope=True. Worktree A writes and removes a memory; a
+    fresh server in worktree B asks for a scope_overview and the
+    recently-removed count for B is zero — A's tombstone is excluded
+    because its `origin.worktree_root` is not B's.
 
     `memory_search`, `memory_scope_overview`'s active-counts, and
     `episode_handoff` all enforce worktree isolation through
-    `should_include_for_caller`; `_count_recent_tombstones` mirrors the
-    same rule for the removal-activity surface. Without this branch, a
-    sibling worktree's curation pass would look like rot belonging to
-    the current worktree and the model would be nudged to avoid ground
-    it never actually covered.
+    `should_include_for_caller`; `_count_recent_tombstones` routes
+    through the same helper for the removal-activity surface. Without
+    that, a sibling worktree's curation pass would look like rot
+    belonging to the current worktree and the model would be nudged to
+    avoid ground it never actually covered.
+
+    Both worktree roots must EXIST on disk, which is why they are
+    `tmp_path` directories rather than string literals: a recorded root
+    that is gone triggers `worktrees_match`'s deliberate dead-worktree
+    degrade, and the degrade's whole point is that a workspace nobody
+    can be sitting in has nothing to be isolated from. The
+    survives-a-move twin of that leg is
+    `tests/test_server_origin.py`'s
+    `test_tombstone_count_survives_a_checkout_move`.
 
     The companion `auto_scope=False` call confirms the tombstone still
     exists on disk (the worktree filter is the only thing hiding it
@@ -5193,17 +5203,22 @@ async def test_scope_overview_recently_removed_filtered_by_worktree(
 
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
 
+    root_a = tmp_path / "worktrees" / "repo-feature-x"
+    root_b = tmp_path / "worktrees" / "repo-bug-fix"
+    root_a.mkdir(parents=True)
+    root_b.mkdir(parents=True)
+
     origin_a = Origin(
-        cwd="/worktrees/repo-feature-x",
+        cwd=str(root_a),
         repo="git@github.com:example/repo.git",
         branch="feature-x",
-        worktree_root="/worktrees/repo-feature-x",
+        worktree_root=str(root_a),
     )
     origin_b = Origin(
-        cwd="/worktrees/repo-bug-fix",
+        cwd=str(root_b),
         repo="git@github.com:example/repo.git",
         branch="bug-fix",
-        worktree_root="/worktrees/repo-bug-fix",
+        worktree_root=str(root_b),
     )
 
     # Mirror the patch idiom from

@@ -464,3 +464,54 @@ async def test_second_live_checkout_of_one_repo_stays_isolated(
     assert first.exists()
 
     assert _unwrap(await _call(server, "memory_search", query="bcrypt")) == []
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+async def test_tombstone_count_survives_a_checkout_move(
+    server_factory, tmp_path: Path
+) -> None:
+    """`recently_removed_in_worktree` survives the same directory move
+    the active-memory surfaces do.
+
+    The retrieval-path twin of
+    `test_project_memories_survive_a_checkout_move`. The tombstone count
+    is worktree-keyed like every other auto-scoped surface, but it was
+    the one that compared roots with a raw `!=` instead of routing
+    through the shared rule, so it never got the degrade: after an
+    ordinary `mv` of the checkout the searches kept working and this
+    count silently dropped to 0 — reporting "nothing was trimmed here"
+    about a workspace that had just trimmed something.
+
+    The negative control lives in `tests/test_server.py`'s
+    `test_scope_overview_recently_removed_filtered_by_worktree`: two
+    checkouts that are both LIVE on disk still do not see each other's
+    removals.
+    """
+    from bettermemory.origin import _primary_root_of, capture
+
+    old = tmp_path / "projects" / "myapp"
+    new = tmp_path / "Documents" / "projects" / "myapp"
+    _init_checkout(old)
+
+    _primary_root_of.cache_clear()
+    server, captured = server_factory(capture(cwd=old))
+    written = await _call(
+        server,
+        "memory_write",
+        content="myapp hashes passwords with bcrypt at cost factor 12",
+        scopes=["projects:myapp"],
+    )
+    await _call(server, "memory_remove", id=written["id"], reason="superseded")
+    before = _unwrap(await _call(server, "memory_scope_overview"))
+    assert before["recently_removed_in_worktree"] == 1
+
+    new.parent.mkdir(parents=True)
+    shutil.move(str(old), str(new))
+    assert not old.exists()
+    _primary_root_of.cache_clear()
+    captured["value"] = capture(cwd=new)
+    assert captured["value"].repo == _REMOTE
+    assert captured["value"].worktree_root == str(new.resolve())
+
+    after = _unwrap(await _call(server, "memory_scope_overview"))
+    assert after["recently_removed_in_worktree"] == 1

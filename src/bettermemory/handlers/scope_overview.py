@@ -68,8 +68,8 @@ DESC_MEMORY_SCOPE_OVERVIEW = (
     "`recently_removed_in_worktree` is the integer count of "
     "tombstones removed in the trailing 7 days; under "
     "`auto_scope=True` it's filtered to this worktree (tombstones "
-    "without an origin are excluded), under `auto_scope=False` it "
-    "covers every tombstone in the window. Non-zero is a 'where "
+    "with no recorded worktree are excluded), under `auto_scope=False` "
+    "it covers every tombstone in the window. Non-zero is a 'where "
     "did X go?' signal — material was deliberately trimmed here "
     "recently; don't blindly re-suggest it.\n\n"
     "`curation_pending_new_since_last_session` is the same shape, "
@@ -272,17 +272,15 @@ async def memory_scope_overview(
 
     # Tombstone activity in the last 7 days. Helps the model spot
     # "you removed N memories about this area last week" before it
-    # re-covers ground already explicitly trimmed. Filtered by the
-    # same auto_scope rule as the active count above: when
-    # auto_scope=True and the caller is in a worktree, we restrict
-    # the count to tombstones whose origin.worktree_root matches.
-    # Tombstones without an origin (legacy or hand-edited) always
-    # count under auto_scope=False; under auto_scope=True they are
-    # excluded to keep the signal scoped tightly. The window mirrors
-    # the curation_pending rollup's spirit (recent activity is what
+    # re-covers ground already explicitly trimmed. Filtered through
+    # the SAME `should_include_for_caller` rule as the active count
+    # above — see `_count_recent_tombstones` for the one extra
+    # precondition this surface adds. The window mirrors the
+    # curation_pending rollup's spirit (recent activity is what
     # matters, not the full lifetime of the store).
     recent_removed = _count_recent_tombstones(
         deps.store,
+        caller_repo=repo_filter,
         worktree_root=(
             current_origin.worktree_root if auto_scope and current_origin else None
         ),
@@ -337,18 +335,44 @@ async def memory_scope_overview(
 def _count_recent_tombstones(
     store: Any,
     *,
+    caller_repo: str | None,
     worktree_root: str | None,
     now: Any,
     window_days: int,
 ) -> int:
     """Count tombstones removed within the trailing window.
 
-    When `worktree_root` is provided (auto_scope=True path), only
-    tombstones whose `origin.worktree_root` matches are counted —
-    tombstones without an origin are excluded under this branch
-    because they can't be attributed to the current workspace. When
-    `worktree_root` is None (auto_scope=False), every tombstone in
-    the window counts.
+    When `worktree_root` is None — `auto_scope=False`, or a caller
+    outside any git checkout — every tombstone in the window counts.
+
+    Otherwise ownership is decided by `should_include_for_caller`, the
+    same rule the active per-scope counts above and `memory_search`'s
+    auto-scope run on, applied to the tombstone's own `origin` (a
+    tombstone carries the origin of the memory it retired). Read that
+    function for the rule; what is worth stating HERE is the one extra
+    precondition this surface adds and why:
+
+    * a tombstone with no `origin`, or an `origin` carrying no
+      `worktree_root`, is excluded rather than passed. The shared rule
+      treats a null worktree as "no boundary to enforce" and falls back
+      to repo-level matching, which is right for the retrieval surfaces
+      — hiding a legacy memory is a real loss. Here the opposite is
+      right: this count answers "was material trimmed in THIS
+      workspace", it is not a retrieval, and nothing is lost by
+      declining to attribute an unattributable removal. It is also the
+      contract `DESC_MEMORY_SCOPE_OVERVIEW` and `docs/api.md` state.
+
+    Routing the rest through the shared rule is what makes this surface
+    agree with the memory counts sitting beside it in the same
+    response: a checkout that moved, was re-cloned, or arrived over
+    `sync` from another machine keeps its own tombstone count instead of
+    reporting 0, and a linked worktree sees its primary's removals —
+    the same relaxations `worktrees_match` already gave the active
+    counts. It inherits the shared rule's tolerated false negatives
+    too (a remote URL rewritten since the removal reads as another
+    project) — the direction `origin.py` names as the tolerated one,
+    since under-counting a removal costs a nudge and over-counting one
+    attributes another project's curation to this workspace.
 
     Defensive: a tombstone with a missing/malformed `removed`
     timestamp is skipped silently (treated as outside the window)
@@ -363,8 +387,13 @@ def _count_recent_tombstones(
             continue
         if worktree_root is not None:
             tomb_origin = tombstone.origin
-            tomb_worktree = tomb_origin.worktree_root if tomb_origin else None
-            if tomb_worktree != worktree_root:
+            if tomb_origin is None or tomb_origin.worktree_root is None:
+                continue
+            if not should_include_for_caller(
+                tomb_origin,
+                caller_repo,
+                caller_worktree_root=worktree_root,
+            ):
                 continue
         count += 1
     return count

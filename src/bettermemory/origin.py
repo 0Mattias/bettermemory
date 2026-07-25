@@ -34,7 +34,9 @@ use separate stores via the project-scoped resolution rule
 
 from __future__ import annotations
 
+import errno
 import logging
+import os
 import re
 import subprocess
 import warnings
@@ -293,9 +295,18 @@ def worktrees_match(memory_worktree: str | None, caller_worktree: str | None) ->
     2. **Dead-worktree degrade.** A memory written from a
        since-deleted worktree (ephemeral agent checkout, removed
        clone) would otherwise be invisible from EVERY worktree
-       forever. When the recorded root no longer exists on disk,
-       degrade to repo-level matching — there is no live workspace
-       left to isolate from.
+       forever. When the recorded root is POSITIVELY GONE, degrade
+       to repo-level matching — there is no live workspace left to
+       isolate from.
+
+       "Gone" is strictly narrower than "this process could not
+       stat it". An indeterminate answer — permission denied on a
+       parent, an unmounted volume, a detached network share, a
+       path under another user account — is NOT evidence of death,
+       and degrading on it would silently widen what the caller
+       sees for as long as the condition lasts. Those hold the
+       isolation instead. `_worktree_root_is_gone` owns the
+       classification; read it rather than a restatement here.
     """
     if memory_worktree is None or caller_worktree is None:
         return True
@@ -303,11 +314,101 @@ def worktrees_match(memory_worktree: str | None, caller_worktree: str | None) ->
         return True
     if _primary_root_of(caller_worktree) == memory_worktree:
         return True
+    return _worktree_root_is_gone(memory_worktree)
+
+
+# Errnos where the OS ANSWERED the liveness question — "is there
+# anything at this path?" — with "no". Each is a property of the path
+# itself failing to resolve to an object, independent of who is asking
+# and of whether any device is reachable:
+#
+#   ENOENT        a component of the path does not exist
+#   ENOTDIR       a component that would have to be a directory is not
+#                 one, so nothing can live below it
+#   ELOOP         the path cycles through symlinks and resolves to
+#                 nothing
+#   ENAMETOOLONG  this system cannot name an object at that path at
+#                 all — the shape a store synced from a longer-path OS
+#                 arrives in
+#
+# The complement is deliberately NOT enumerated: EACCES/EPERM on a
+# parent, the unreachable-device family (ENOTCONN, EHOSTDOWN,
+# ETIMEDOUT, ESTALE, EIO, ENODEV, …), and any errno a future platform
+# invents all fall through to "cannot tell". Listing the gone side and
+# treating every unclassified errno as indeterminate is what makes the
+# never-widen direction the default: a new error class holds the
+# isolation boundary rather than opening it.
+_WORKTREE_GONE_ERRNOS = frozenset(
+    {errno.ENOENT, errno.ENOTDIR, errno.ELOOP, errno.ENAMETOOLONG}
+)
+
+# Windows-only companion, for the codes CPython does not fold into one
+# of the errnos above. Both are path-intrinsic in the same sense:
+# ERROR_INVALID_NAME (123) is "that syntax cannot name anything",
+# ERROR_CANT_RESOLVE_FILENAME (1921) is the reparse-point cycle.
+# `pathlib` treats both as not-exists too, and we match it there.
+#
+# Where we deliberately DIVERGE from `pathlib`: ERROR_NOT_READY (21) —
+# "the drive exists but is not accessible", i.e. a removable or
+# disconnected volume — is absent. `Path.exists()` reports it as
+# not-exists; for an isolation boundary that is the unmounted-volume
+# fail-open this classification exists to close, so it lands in
+# "cannot tell".
+_WORKTREE_GONE_WINERRORS = frozenset({123, 1921})
+
+
+def _worktree_root_is_gone(worktree: str) -> bool:
+    """True only when the OS positively reported that nothing exists at
+    `worktree` — the narrow condition the dead-worktree degrade needs.
+
+    Deliberately not `Path.exists()`. That helper answers a different
+    question: it collapses "nothing is there" together with a fixed
+    subset of "I could not find out" into one `False`, and RAISES for
+    the rest of that subset (`pathlib._ignore_error` — EACCES,
+    ENOTCONN, ENAMETOOLONG and friends propagate). Under a
+    degrade-on-falsey caller both halves of the collapse fail OPEN, and
+    so does wrapping the raise in a bare `except OSError` — every
+    unstattable path reads as a dead one and relaxes the isolation
+    boundary for as long as it stays unstattable.
+
+    `verify._path_exists` makes the opposite call from the same raw
+    material, and the contrast is the point: an indeterminate stat
+    there folds into the `missing` path-drift bucket, i.e. toward MORE
+    signal, and over-reporting drift is that surface's safe direction.
+    Here the safe direction is the other one, so the two cannot share
+    an implementation.
+
+    Follows symlinks (`os.stat`, not `os.lstat`) — a recorded root that
+    is now a dangling symlink names no live checkout, and it keeps the
+    resolution semantics `_git_worktree_root` captured under.
+    Uncached on purpose: liveness genuinely changes under a
+    long-running server (a worktree is removed, a volume is remounted),
+    and a cache would freeze the first answer — including a transient
+    failure — for the rest of the process.
+    """
     try:
-        if not Path(memory_worktree).exists():
-            return True
-    except OSError:
+        os.stat(worktree)
+    except ValueError:
+        # `os.stat` rejected the string before the OS ever saw it (an
+        # embedded NUL, an un-encodable surrogate). Nothing can live at
+        # a path this process cannot even ask about, so this is an
+        # answer, not a refusal to answer.
         return True
+    except OSError as exc:
+        winerror: object = getattr(exc, "winerror", None)
+        if exc.errno in _WORKTREE_GONE_ERRNOS or winerror in _WORKTREE_GONE_WINERRORS:
+            return True
+        # Indeterminate. Log it: "my project's memories went dark" and
+        # "a stale mount is quietly widening auto-scope" are both
+        # invisible from the outside, and this is the only place that
+        # sees the errno.
+        log.debug(
+            "cannot determine whether worktree root %s still exists (%s); "
+            "keeping worktree isolation in force",
+            worktree,
+            exc,
+        )
+        return False
     return False
 
 

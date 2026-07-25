@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import os
 import re
 import shutil
@@ -1574,3 +1575,148 @@ def test_distinct_existing_checkouts_still_isolated(tmp_path: Path) -> None:
     (a / ".git").mkdir(parents=True)
     (b / ".git").mkdir(parents=True)
     assert worktrees_match(str(a), str(b)) is False
+
+
+# ---------------------------------------------------------------------------
+# The degrade's boundary: "gone" vs "I could not find out"
+#
+# The dead-worktree degrade widens what a caller sees, so keying it on any
+# failed stat made every transiently-unstattable path read as a dead one —
+# an unmounted volume, a detached share, a permission-denied parent, a
+# checkout under another user account. Those hold the isolation instead;
+# only a positive "nothing is there" degrades.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "the fixture clears POSIX search permission on a parent directory to "
+        "make a LIVE path unstattable; Windows mode bits map onto the "
+        "read-only attribute and cannot reproduce that shape"
+    ),
+)
+def test_unstattable_live_worktree_keeps_isolation(tmp_path: Path) -> None:
+    """A worktree that is still there but cannot be stat'd stays isolated.
+
+    The distinction the degrade turns on: this path EXISTS — only the
+    parent directory refuses to be searched. Treating that as death let
+    a transient condition (a stale mount, a detached network share, a
+    parent whose permissions changed) silently widen auto-scope for as
+    long as it lasted, on the surface whose whole job is to keep one
+    workspace's notes out of another's.
+    """
+    from bettermemory.origin import _primary_root_of, worktrees_match
+
+    locked = tmp_path / "locked-parent"
+    memory_wt = locked / "clone-a"
+    (memory_wt / ".git").mkdir(parents=True)
+    caller = tmp_path / "clone-b"
+    (caller / ".git").mkdir(parents=True)
+
+    os.chmod(locked, 0o000)
+    try:
+        try:
+            os.stat(memory_wt)
+        except OSError:
+            pass
+        else:
+            pytest.skip("a 0o000 parent still yields a stat (running as root?)")
+        _primary_root_of.cache_clear()
+        assert worktrees_match(str(memory_wt), str(caller)) is False
+    finally:
+        # Restore before tmp_path teardown needs to walk back in.
+        os.chmod(locked, 0o700)
+
+
+class _StatRaises:
+    """Stand-in for the `os` module in origin's namespace whose `stat`
+    always raises. Patching origin's own binding rather than `os.stat`
+    globally keeps the fake off every other stat the interpreter makes
+    while the test runs."""
+
+    def __init__(self, exc: BaseException) -> None:
+        self._exc = exc
+
+    def stat(self, path: object) -> object:
+        raise self._exc
+
+
+@pytest.mark.parametrize(
+    "err",
+    [errno.ENOENT, errno.ENOTDIR, errno.ELOOP, errno.ENAMETOOLONG],
+)
+def test_path_intrinsic_errnos_read_as_gone(
+    err: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each of these is the OS answering "nothing resolves at that path",
+    independent of who is asking — so the degrade fires."""
+    from bettermemory import origin as origin_mod
+
+    monkeypatch.setattr(origin_mod, "os", _StatRaises(OSError(err, "no")))
+    assert origin_mod._worktree_root_is_gone("anywhere") is True
+
+
+@pytest.mark.parametrize(
+    "err",
+    [
+        errno.EACCES,
+        errno.EPERM,
+        errno.ENOTCONN,
+        errno.ETIMEDOUT,
+        errno.ESTALE,
+        errno.EIO,
+    ],
+)
+def test_indeterminate_errnos_hold_the_isolation(
+    err: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Access refusals and the unreachable-device family are "I could not
+    find out", which is not evidence of death. The unclassified default is
+    the same, which is why the errno set enumerates the GONE side only —
+    an errno nobody has classified holds the boundary rather than opening
+    it."""
+    from bettermemory import origin as origin_mod
+
+    monkeypatch.setattr(origin_mod, "os", _StatRaises(OSError(err, "no")))
+    assert origin_mod._worktree_root_is_gone("anywhere") is False
+
+
+def test_unnameable_path_reads_as_gone(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`os.stat` rejecting the string before the OS sees it (embedded NUL,
+    un-encodable surrogate) is an answer, not a refusal to answer."""
+    from bettermemory import origin as origin_mod
+
+    monkeypatch.setattr(origin_mod, "os", _StatRaises(ValueError("embedded null")))
+    assert origin_mod._worktree_root_is_gone("anywhere") is True
+
+
+@pytest.mark.parametrize(
+    ("winerror", "expected"),
+    [
+        # ERROR_INVALID_NAME / ERROR_CANT_RESOLVE_FILENAME — path-intrinsic,
+        # and `pathlib` treats both as not-exists too.
+        (123, True),
+        (1921, True),
+        # ERROR_NOT_READY — "the drive exists but is not accessible", i.e. a
+        # removable or disconnected volume. `Path.exists()` reports it as
+        # not-exists; for an isolation boundary that is precisely the
+        # unmounted-volume fail-open, so this one must NOT degrade.
+        (21, False),
+    ],
+)
+def test_windows_error_codes_are_classified_by_intent(
+    winerror: int, expected: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The Windows-only codes CPython does not fold into one of the errnos.
+
+    Runnable off Windows because the classification reads `winerror` off
+    the exception with `getattr`: the fixture sets the attribute the way
+    the platform would, so the branch is exercised on every leg of the
+    matrix rather than only the one nobody runs locally."""
+    from bettermemory import origin as origin_mod
+
+    exc = OSError(errno.EINVAL, "windows")
+    setattr(exc, "winerror", winerror)
+    monkeypatch.setattr(origin_mod, "os", _StatRaises(exc))
+    assert origin_mod._worktree_root_is_gone("anywhere") is expected
