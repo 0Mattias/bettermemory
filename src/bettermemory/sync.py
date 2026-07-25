@@ -1066,10 +1066,34 @@ def _require_no_sequencer_state(root: Path) -> None:
     """Raise unless `root` has no half-finished merge / cherry-pick / revert.
 
     A guard the porcelain commit path never needed, introduced by the move
-    to `commit-tree`. See `_SEQUENCER_SENTINELS` for what git does that
-    the plumbing cannot. Fails CLOSED and names the state, in the same
-    voice as `_unresolved_conflict_error`, whose non-rebase branch already
-    tells users to conclude these operations with a plain `git commit`.
+    to `commit-tree`. See `_SEQUENCER_SENTINELS` for what git does that the
+    plumbing cannot. Names the state, in the same voice as
+    `_unresolved_conflict_error`, whose non-rebase branch already tells
+    users to conclude these operations with a plain `git commit`.
+
+    WHERE IT IS CALLED IS PART OF THE GUARD, not a detail left to the
+    caller. `_stage_and_commit` calls it as one of its first two
+    statements — ahead of `_reconcile_gitignore`, ahead of the `git add
+    -A` — because a refusal that fires behind those has already rewritten
+    the index it is refusing to commit, and BOTH remedies this message
+    offers are degraded by exactly that rewrite. Measured on a two-clone
+    store parked mid-merge with the conflict resolved and staged, plus an
+    unrelated uncommitted edit to a second memory: with the guard behind
+    the stage, that second memory's porcelain code flipped from unstaged
+    to staged, and the `git merge --abort` this error names then reset it
+    to its committed content — bytes that had never been committed, so no
+    reflog entry and no dangling object could bring them back. The
+    identical fixture with no sync run KEEPS them: `reset --merge`
+    preserves an index-vs-worktree delta, and `git add -A` erases
+    precisely that distinction. The `git commit` route was degraded too,
+    folding the swept-in edit into the user's merge commit. Pinned by
+    `test_push_refuses_to_conclude_a_half_finished_merge` and its `auto`
+    twin, which assert porcelain is byte-identical across the refusal.
+
+    `_commit_snapshot_tree` calls it again immediately before it writes.
+    That second call is not redundant: the sync lock serialises this
+    package's operations, not the user's own git, so a merge started after
+    this check still meets a refusal at the point it would do damage.
     """
     pending = [name for name in _SEQUENCER_SENTINELS if _git_path_exists(root, name)]
     if not pending:
@@ -1157,8 +1181,42 @@ def _cleanup_commit_message(message: str) -> str:
     return "\n".join(kept)
 
 
-def _commit_snapshot_tree(root: Path, tree: str, message: str) -> None:
-    """Commit exactly `tree` onto the current branch, or raise.
+def _require_commit_message(message: str) -> str:
+    """The cleaned commit body, or raise the way `git commit` would.
+
+    Cleanup plus the one thing cleanup cannot express — see
+    `_cleanup_commit_message` for the byte-for-byte parity work, and note
+    that `git commit` REFUSES an empty message (exit 1) where
+    `commit-tree` records one.
+
+    Split out from `_commit_snapshot_tree` so the refusal can fire before
+    anything on disk moves. It used to live at the top of that function,
+    which is downstream of `_reconcile_gitignore` and `git add -A`, so
+    `sync push --message "   "` — a typo, on a command that then does
+    nothing — rewrote the store's `.gitignore` and staged the whole
+    worktree before telling the user their message was blank. Measured:
+    two unstaged edits and two untracked lockfiles became two STAGED edits,
+    the lockfiles having been swept out of sight by the reconcile on the
+    way past. `_stage_and_commit` now calls this first and passes the
+    result down.
+
+    IDEMPOTENT, which is what makes the second call inside
+    `_commit_snapshot_tree` free rather than a behaviour change: every rule
+    `_cleanup_commit_message` applies is already satisfied by its own
+    output, so cleaning a cleaned body returns it unchanged. Pinned by
+    `test_commit_message_cleanup_is_idempotent`.
+    """
+    body = _cleanup_commit_message(message)
+    if not body:
+        raise SyncError(
+            "refusing to commit: the commit message is empty after "
+            "whitespace cleanup. Pass a non-blank `--message`."
+        )
+    return body
+
+
+def _commit_snapshot_tree(root: Path, tree: str, message: str, parent: str) -> None:
+    """Commit exactly `tree` onto `parent`, or raise.
 
     The write half of the snapshot discipline: `_stage_and_commit` scans a
     tree object, and this commits THAT object, so the bytes that were
@@ -1166,16 +1224,41 @@ def _commit_snapshot_tree(root: Path, tree: str, message: str) -> None:
     that — it re-reads the index, which anything on the machine may have
     changed since the scan.
 
-    HEAD is read once and passed back to `git update-ref` as the expected
-    old value, which makes the ref write a compare-and-swap. That is not a
-    nicety: `commit-tree` bakes the parent into the commit object, so if
-    another actor advanced the branch after the parent was read, writing
-    unconditionally would ORPHAN their commit. The CAS turns that into a
-    refusal (verified on git 2.50.1: "cannot lock ref 'HEAD': is at … but
-    expected …", exit 128) and `_run_git`'s default `check=True` surfaces
-    it as a `SyncError`. An unborn HEAD passes the empty old value, which
-    git reads as "must not already exist", and `commit-tree` is given no
-    `-p` at all so the result is a root commit.
+    `parent` is the branch tip its caller read IMMEDIATELY BEFORE taking
+    the snapshot, and it is passed back to `git update-ref` as the expected
+    old value, which makes the ref write a compare-and-swap (verified on
+    git 2.50.1: "cannot lock ref 'HEAD': is at … but expected …", exit 128,
+    surfaced as a `SyncError` by `_run_git`'s default `check=True`). An
+    unborn HEAD passes the empty old value, which git reads as "must not
+    already exist", and `commit-tree` is given no `-p` at all so the result
+    is a root commit.
+
+    THE CAS SPANS THE WHOLE SNAPSHOT WINDOW, which is why the parent
+    arrives as an argument rather than as a `rev-parse` inside this
+    function. `commit-tree` bakes the parent into the commit object, and
+    the tree was frozen even earlier, so a commit landing mid-sync had two
+    distinct ways to be lost — the CAS as originally placed covered only
+    one of them:
+
+    * A commit landing after the parent was read is refused, rather than
+      ORPHANED by a ref write that points past it. This half has always
+      held, and is pinned by
+      `test_push_refuses_rather_than_orphaning_a_commit_that_lands_mid_sync`.
+    * A commit landing between the SNAPSHOT and the parent read used to
+      pass the CAS, because by then its tip WAS the parent — while the tree
+      being committed predated it, so its files vanished from the branch
+      tip even though the commit itself stayed reachable. Measured on git
+      2.50.1 with an interloping commit fired the instant `write-tree`
+      returned: `sync push` returned `committed=True, pushed=True`, the
+      interloper stayed an ancestor of `main`, and its `hand-written.md`
+      was absent from `main`'s tree while still sitting in the worktree.
+      Reading the parent BEFORE the snapshot folds that gap into the same
+      CAS, so it is now a refusal too
+      (`test_push_refuses_rather_than_reverting_a_commit_that_lands_on_the_snapshot`).
+
+    What the CAS does not cover is a commit that landed before its caller
+    read the parent. That commit simply IS the parent, and the snapshot is
+    committed on top of it — the intended outcome, not a gap.
 
     `update-ref` dereferences HEAD exactly as `git commit` does — moving
     the branch on an attached HEAD, moving HEAD itself when detached (both
@@ -1227,7 +1310,11 @@ def _commit_snapshot_tree(root: Path, tree: str, message: str) -> None:
       fails outright ("There is no merge to abort (MERGE_HEAD missing)").
       The user is left able to neither conclude nor back out.
       `_require_no_sequencer_state` refusing that state leaves both routes
-      open, which is why it is a refusal and not a repair.
+      open — and open in the shape the user left them, because it runs
+      ahead of the gitignore reconcile and the `git add -A` rather than
+      behind them. That placement is load-bearing, not incidental: see
+      that function for what a refusal sitting behind the stage cost `git
+      merge --abort`. Refusal, not repair, is what keeps both routes whole.
 
     Neither ground touches the hook gap, which is a real loss with no
     compensating argument — only a narrow blast radius (a store from
@@ -1235,19 +1322,15 @@ def _commit_snapshot_tree(root: Path, tree: str, message: str) -> None:
     unless the user installed a real one) and an escape hatch (enforce it
     server-side on the remote instead).
     """
-    body = _cleanup_commit_message(message)
-    if not body:
-        # Matches `git commit`, which aborts on an empty message rather
-        # than recording one. `commit-tree` would accept it.
-        raise SyncError(
-            "refusing to commit: the commit message is empty after "
-            "whitespace cleanup. Pass a non-blank `--message`."
-        )
-
+    # Both of these are RE-ASSERTIONS: `_stage_and_commit` already ran
+    # them before it touched the gitignore or the index, which is where the
+    # user-facing refusal has to happen (see `_require_no_sequencer_state`).
+    # They stay here because this is the last point before the write — the
+    # message cleanup is idempotent, so re-running it cannot change the
+    # commit, and a sequencer state entered by the user's own git since the
+    # early check is caught before it can be mis-committed.
+    body = _require_commit_message(message)
     _require_no_sequencer_state(root)
-
-    head = _run_git(root, ["rev-parse", "--verify", "HEAD"], check=False)
-    parent = head.stdout.strip() if head.returncode == 0 else ""
 
     args = ["commit-tree", tree]
     if parent:
@@ -1263,7 +1346,7 @@ def _commit_snapshot_tree(root: Path, tree: str, message: str) -> None:
 
 
 def _stage_and_commit(root: Path, message: str) -> bool:
-    """Reconcile the gitignore, `git add -A`, commit iff anything staged.
+    """Refuse, reconcile the gitignore, `git add -A`, commit iff staged.
 
     Returns True iff a commit was created. THE CALLER MUST ALREADY HOLD
     the sync lock — this helper deliberately does not take it, because
@@ -1274,6 +1357,28 @@ def _stage_and_commit(root: Path, message: str) -> bool:
     Extracted from `push` so `auto` can commit local edits BEFORE it
     pulls (see `auto`) without duplicating the reconcile + stage +
     commit discipline or reordering it by accident.
+
+    EVERY REFUSAL THIS FUNCTION OWNS THAT CAN BE DECIDED WITHOUT STAGING
+    IS DECIDED FIRST, before `_reconcile_gitignore` and before the `git add
+    -A`. That is the blank message (`_require_commit_message`) and the
+    half-finished merge / cherry-pick / revert
+    (`_require_no_sequencer_state`). Both used to live inside
+    `_commit_snapshot_tree`, i.e. behind the stage, and both therefore
+    mutated the user's `.gitignore` and index before telling them the sync
+    would not proceed — see `_require_no_sequencer_state` for the
+    uncommitted memory edit that cost, and why `git merge --abort` could
+    not get it back. Deciding them here is also why they sit at this choke
+    point rather than being duplicated into `push` and
+    `_commit_local_changes`: this function holds the package's only `git
+    add -A`, so a guard at its front door cannot be forgotten by a third
+    caller. (`_require_no_unresolved_conflict` stays in the callers because
+    `pull` needs it too and never comes through here.)
+
+    The two refusals that CANNOT be hoisted stay downstream for a reason
+    rather than by inheritance: the staged-content marker scan below judges
+    the staged bytes themselves, and `_commit_snapshot_tree`'s
+    compare-and-swap has to open its window at the snapshot — and there is
+    no snapshot until the index has been staged.
 
     Between staging and committing, the staged content is scanned for
     line-start conflict markers (`_STAGED_MARKER_PATTERN`) and the commit
@@ -1306,6 +1411,14 @@ def _stage_and_commit(root: Path, message: str) -> bool:
     `_run_git`'s default `check=True` turns that into a `SyncError`, so a
     conflict state that somehow reached here cannot be snapshotted either.
     """
+    # NOTHING ON DISK MOVES ABOVE THIS LINE. Both refusals are decided from
+    # the argument and from git's sentinel files, neither of which staging
+    # would change, so deciding them here costs nothing and buys the user a
+    # store that is byte-identical to the one they had before they ran the
+    # sync. See the docstring for the data loss the old placement caused.
+    body = _require_commit_message(message)
+    _require_no_sequencer_state(root)
+
     # Reconcile the on-disk `.gitignore` with `_GITIGNORE_LINES` BEFORE
     # `git add -A` reads the tree, so a pattern added in a release AFTER
     # this store was initialised takes effect on this very commit rather
@@ -1342,6 +1455,16 @@ def _stage_and_commit(root: Path, message: str) -> bool:
     diff = _run_git(root, ["diff", "--cached", "--quiet"], check=False)
     if diff.returncode == 0:
         return False
+    # Read the parent IMMEDIATELY BEFORE the snapshot, so the
+    # compare-and-swap `_commit_snapshot_tree` performs covers the snapshot
+    # too. Read after it instead — where it used to live — and a commit
+    # landing in between became the parent, passed the CAS, and had its
+    # files silently deleted at the branch tip by a tree that predated it.
+    # An unborn HEAD yields the empty string, which `commit-tree` reads as
+    # "root commit" and `update-ref` as "must not already exist".
+    head = _run_git(root, ["rev-parse", "--verify", "HEAD"], check=False)
+    parent = head.stdout.strip() if head.returncode == 0 else ""
+
     # SNAPSHOT the index into an immutable tree object. Everything from
     # here on judges and commits this one object, never the index again —
     # see the docstring for why check-then-act on the shared index was not
@@ -1397,7 +1520,7 @@ def _stage_and_commit(root: Path, message: str) -> bool:
             f"(git grep exited {scan.returncode}): "
             f"{scan.stderr.strip() or scan.stdout.strip()}"
         )
-    _commit_snapshot_tree(root, tree, message)
+    _commit_snapshot_tree(root, tree, body, parent)
     return True
 
 

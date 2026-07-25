@@ -2635,18 +2635,112 @@ def test_push_refuses_rather_than_orphaning_a_commit_that_lands_mid_sync(
     )
 
 
+def test_push_refuses_rather_than_reverting_a_commit_that_lands_on_the_snapshot(
+    memory_dir: Path, bare_remote: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """🟡 The OTHER half of the mid-sync window, which the CAS used to miss.
+
+    Its sibling above covers a commit landing after the parent was read:
+    the ref write then names a stale old value and git refuses. This one
+    covers the earlier gap — a commit landing between the SNAPSHOT and the
+    parent read — where the failure mode is different and quieter. By the
+    time the parent was read it WAS the interloper's tip, so the CAS was
+    satisfied; but the tree being committed had been frozen before that
+    commit existed, so the sync's commit deleted its files at the branch
+    tip while leaving the commit itself reachable. Measured against the
+    pre-fix base: `sync.push` returned `committed=True, pushed=True`,
+    `hand-written.md` was absent from `main`'s tree, and only the worktree
+    copy survived.
+
+    Reading the parent immediately BEFORE `git write-tree` folds this gap
+    into the same compare-and-swap, so it is a refusal like the other half.
+
+    Mutation-sound: move the `rev-parse --verify HEAD` back below
+    `write-tree` and this fails on the tree assertion, with `sync.push`
+    returning instead of raising.
+    """
+    sync.init(memory_dir, remote=str(bare_remote))
+    store = Store(memory_dir)
+    store.write(content="clean baseline", scopes=["tools"])
+    sync.push(memory_dir)
+    store.write(content="a second clean fact", scopes=["tools"])
+
+    original_run_git = sync._run_git
+    interloper: dict[str, str] = {}
+
+    def fake_run_git(
+        root: Path, args: list[str], *, check: bool = True
+    ) -> subprocess.CompletedProcess[str]:
+        result = original_run_git(root, args, check=check)
+        if args and args[0] == "write-tree" and "tip" not in interloper:
+            # THE WINDOW: the snapshot is frozen; the parent has NOT been
+            # read yet. A hand-run commit advances the branch here.
+            (root / "hand-written.md").write_text("by hand\n", encoding="utf-8")
+            original_run_git(root, ["add", "--", "hand-written.md"])
+            original_run_git(root, ["commit", "-m", "hand-run commit"])
+            interloper["tip"] = original_run_git(
+                root, ["rev-parse", "HEAD"]
+            ).stdout.strip()
+        return result
+
+    monkeypatch.setattr(sync, "_run_git", fake_run_git)
+
+    with pytest.raises(sync.SyncError):
+        sync.push(memory_dir)
+
+    assert "tip" in interloper, (
+        "`write-tree` never ran — this test no longer covers the window it "
+        "was written for"
+    )
+    assert _git(memory_dir, "rev-parse", "main").strip() == interloper["tip"], (
+        "the sync moved the branch past a commit that landed on its snapshot"
+    )
+    assert "hand-written.md" in _git(memory_dir, "ls-tree", "--name-only", "main"), (
+        "a commit that landed mid-sync stayed reachable but its file was "
+        "deleted from the branch tip by a tree snapshotted before it existed"
+    )
+
+
+_BYSTANDER_EDIT = "\nan edit that was never committed\n"
+
+
 def _wedge_a_resolved_but_unconcluded_merge(
     memory_dir: Path, bare_remote: Path, tmp_path: Path
-) -> Path:
-    """Leave a clone mid-merge with every conflict already RESOLVED.
+) -> tuple[Path, str]:
+    """Leave a clone mid-merge with every conflict already RESOLVED, beside
+    an uncommitted edit to an unrelated memory.
 
     The state `_require_no_sequencer_state` exists for, and the reason it
     could not be folded into the porcelain conflict guard: resolving and
     `git add`ing the conflicted files clears every `UU` code, and a merge
     leaves no rebase sentinel, so `_unmerged_paths` and
     `_rebase_in_progress` both come back empty. Only `MERGE_HEAD` still
-    marks it. Returns the wedged clone.
+    marks it.
+
+    THE BYSTANDER IS NOT DECORATION. A refusal is only harmless if it
+    changes nothing, and the two halves of "nothing" are visible in
+    different columns of `git status --porcelain`: the resolved conflict
+    sits in the STAGED column (`M `) and the bystander in the UNSTAGED one
+    (` M`). A `git add -A` collapses the second into the first, and that
+    collapse is exactly what makes the `git merge --abort` this refusal
+    recommends destroy content — `reset --merge` keeps an
+    index-vs-worktree delta and has nothing to keep once staging erased it.
+    A fixture with only the conflicted file could not see that, because its
+    entry reads `M ` either way.
+
+    Written into `memory_dir` BEFORE `_wedge_a_conflicted_merge` runs, so
+    the shared helper's own `sync.push` carries it into the bare remote and
+    the clone inherits it — no change to that helper's signature, which
+    four other tests depend on.
+
+    Returns `(wedged clone, bystander filename)`.
     """
+    bystander = Store(memory_dir).write(
+        content="an unrelated memory the sync must not touch", scopes=["tools"]
+    )
+    bystander_path = Store(memory_dir)._find_path_for_id(bystander.id)
+    assert bystander_path is not None
+
     other = _wedge_a_conflicted_merge(memory_dir, bare_remote, tmp_path)
 
     for line in _git(other, "status", "--porcelain").splitlines():
@@ -2655,15 +2749,64 @@ def _wedge_a_resolved_but_unconcluded_merge(
             (other / name).write_text("resolved by hand\n", encoding="utf-8")
             _git(other, "add", "--", name)
 
-    porcelain = _git(other, "status", "--porcelain")
-    assert not any(line.startswith("UU") for line in porcelain.splitlines()), (
+    clone_bystander = other / bystander_path.name
+    assert clone_bystander.exists(), (
+        "the bystander memory never reached the clone — the fixture's "
+        "write-before-wedge ordering has drifted"
+    )
+    clone_bystander.write_text(
+        clone_bystander.read_text(encoding="utf-8") + _BYSTANDER_EDIT,
+        encoding="utf-8",
+    )
+
+    porcelain = _git(other, "status", "--porcelain").splitlines()
+    assert not any(line.startswith("UU") for line in porcelain), (
         f"fixture did not resolve the conflict; porcelain: {porcelain!r}"
+    )
+    assert f" M {bystander_path.name}" in porcelain, (
+        "the bystander edit is not an UNSTAGED tracked modification, so it "
+        f"cannot show a staging side effect; porcelain: {porcelain!r}"
     )
     assert sync._git_path_exists(other, "MERGE_HEAD"), (
         "fixture left no MERGE_HEAD — the state under test is a RESOLVED "
         "but unconcluded merge"
     )
-    return other
+    return other, bystander_path.name
+
+
+def _assert_the_merge_refusal_changed_nothing(
+    other: Path, bystander: str, before_porcelain: str, before_tip: str
+) -> None:
+    """Every claim `_require_no_sequencer_state`'s message makes, checked.
+
+    Three separate properties, and the first two are what the guard's old
+    placement broke:
+
+    * `git status --porcelain` is BYTE-IDENTICAL across the refusal. Not
+      "no commit was made" — the refusal ran behind `_reconcile_gitignore`
+      and `git add -A`, so it left `main` where it was while rewriting the
+      index underneath it, which is precisely why the existing HEAD
+      assertion could not see the defect.
+    * `git merge --abort` — the recommended way out — still returns the
+      bystander's uncommitted bytes. With the edit staged those bytes are
+      unrecoverable: never committed, so no reflog entry and no dangling
+      object holds them.
+    * `main` did not move, the original claim, kept.
+    """
+    assert _git(other, "status", "--porcelain") == before_porcelain, (
+        "the refusal mutated the index before refusing; `git merge --abort` "
+        "will now discard uncommitted work that it would otherwise keep"
+    )
+    assert _git(other, "rev-parse", "main").strip() == before_tip, (
+        "the sync wrote a single-parent commit over an unconcluded merge, "
+        "dropping the merged branch from history"
+    )
+    _git(other, "merge", "--abort")
+    assert _BYSTANDER_EDIT in (other / bystander).read_text(encoding="utf-8"), (
+        "`git merge --abort`, which this refusal recommends, destroyed an "
+        "uncommitted memory edit that survives the same abort on a store no "
+        "sync ever touched"
+    )
 
 
 def test_push_refuses_to_conclude_a_half_finished_merge(
@@ -2683,23 +2826,70 @@ def test_push_refuses_to_conclude_a_half_finished_merge(
     the command that does it properly. That is a deliberate behaviour
     change: before the snapshot rework, `sync push` would silently
     conclude this merge with a "bettermemory: sync" message.
+
+    🔴 DATA LOSS on the ORDERING, which is why this test grew an index
+    assertion. The refusal shipped inside `_commit_snapshot_tree`, behind
+    `_reconcile_gitignore` and the `git add -A` — so it staged the whole
+    worktree and only then declined, and the `git merge --abort` it
+    recommends then reset the swept-in edit to its committed content.
+    Measured against the pre-fix commit on this exact fixture: porcelain
+    went `[" M bystander", "M  conflicted"]` -> `["M  bystander", "M
+    conflicted"]` and the uncommitted bytes were gone after the abort,
+    while the identical fixture with no sync run kept them.
+
+    Mutation-sound in both directions: move either refusal back into
+    `_commit_snapshot_tree` and the porcelain assertion fails; drop
+    `_require_no_sequencer_state` entirely and the branch-tip assertion
+    fails.
     """
-    other = _wedge_a_resolved_but_unconcluded_merge(memory_dir, bare_remote, tmp_path)
-    before = _git(other, "rev-parse", "main").strip()
+    other, bystander = _wedge_a_resolved_but_unconcluded_merge(
+        memory_dir, bare_remote, tmp_path
+    )
+    before_porcelain = _git(other, "status", "--porcelain")
+    before_tip = _git(other, "rev-parse", "main").strip()
 
     with pytest.raises(sync.SyncError) as excinfo:
         sync.push(other)
 
-    assert _git(other, "rev-parse", "main").strip() == before, (
-        "push wrote a single-parent commit over an unconcluded merge, "
-        "dropping the merged branch from history"
-    )
     message = str(excinfo.value)
     assert "MERGE_HEAD" in message, (
         f"the refusal does not name the state that blocked it: {message}"
     )
     assert "git commit" in message, (
         f"the refusal does not point at the command that concludes it: {message}"
+    )
+    _assert_the_merge_refusal_changed_nothing(
+        other, bystander, before_porcelain, before_tip
+    )
+
+
+def test_auto_refuses_to_conclude_a_half_finished_merge(
+    memory_dir: Path, bare_remote: Path, tmp_path: Path
+) -> None:
+    """The same refusal on the UNATTENDED path, index integrity included.
+
+    `auto` is the cron / shell-alias one-shot, so it is the route on which
+    a destructive side effect goes unwatched the longest — and it reaches
+    the staging choke point through a different door
+    (`_commit_local_changes` -> `_stage_and_commit`) than `push` does. The
+    ordering defect reproduced identically through both, so both are
+    pinned; a guard hoisted on one path only would leave the cron half
+    still mutating the user's index before it declined.
+    """
+    other, bystander = _wedge_a_resolved_but_unconcluded_merge(
+        memory_dir, bare_remote, tmp_path
+    )
+    before_porcelain = _git(other, "status", "--porcelain")
+    before_tip = _git(other, "rev-parse", "main").strip()
+
+    with pytest.raises(sync.SyncError) as excinfo:
+        sync.auto(other)
+
+    assert "MERGE_HEAD" in str(excinfo.value), (
+        f"`auto` refused for some other reason: {excinfo.value}"
+    )
+    _assert_the_merge_refusal_changed_nothing(
+        other, bystander, before_porcelain, before_tip
     )
 
 
@@ -2858,17 +3048,38 @@ def test_push_signs_exactly_when_the_store_asked_for_it(
 def test_push_refuses_a_commit_message_that_is_only_whitespace(
     memory_dir: Path, bare_remote: Path
 ) -> None:
-    """Porcelain parity on the empty-message edge.
+    """Porcelain parity on the empty-message edge, refused before staging.
 
     `git commit -m "   "` aborts ("empty commit message"); `git commit-tree
     -m "   "` happily records one. `_cleanup_commit_message` reproduces
     git's `--cleanup=whitespace` byte-for-byte on every non-empty message,
     but cleanup alone cannot reproduce a REFUSAL, so the empty result is
-    rejected explicitly. This pins the behaviour the porcelain path had,
-    on the path that replaced it.
+    rejected explicitly by `_require_commit_message`. This pins the
+    behaviour the porcelain path had, on the path that replaced it.
+
+    🔴 And it pins WHEN. The check shipped inside `_commit_snapshot_tree`,
+    downstream of `_reconcile_gitignore` and `git add -A`, so a blank
+    `--message` — a typo, on a command that does nothing — rewrote the
+    store's `.gitignore` and staged the entire worktree before declining.
+    Both are asserted byte-for-byte here, and the stale `.gitignore` in
+    this fixture is what gives the reconcile something to change: without
+    it the file is already canonical and the assertion passes vacuously.
     """
     sync.init(memory_dir, remote=str(bare_remote))
     Store(memory_dir).write(content="clean baseline", scopes=["tools"])
+    gitignore = memory_dir / ".gitignore"
+    # `*.lock` is kept deliberately: `flock_excl` creates `.sync.lock` on
+    # every sync op, and an unignored lockfile would show up as an
+    # untracked porcelain entry — a side effect of taking the lock, not of
+    # staging, which would make the assertion below fail for the wrong
+    # reason. Everything else is left stale so the reconcile has work.
+    gitignore.write_text("# hand-written\n.index.sqlite\n*.lock\n", encoding="utf-8")
+    assert sync._missing_gitignore_patterns(gitignore.read_text(encoding="utf-8")), (
+        "the fixture's .gitignore is already canonical, so a reconcile "
+        "running before the refusal would leave no trace"
+    )
+    before_porcelain = _git(memory_dir, "status", "--porcelain")
+    before_gitignore = gitignore.read_text(encoding="utf-8")
 
     with pytest.raises(sync.SyncError, match="empty"):
         sync.push(memory_dir, message="   \n\n  ")
@@ -2876,6 +3087,41 @@ def test_push_refuses_a_commit_message_that_is_only_whitespace(
     assert not _git(memory_dir, "rev-list", "--all").strip(), (
         "a commit was recorded despite the blank message"
     )
+    assert _git(memory_dir, "status", "--porcelain") == before_porcelain, (
+        "a blank --message staged the worktree before refusing"
+    )
+    assert gitignore.read_text(encoding="utf-8") == before_gitignore, (
+        "a blank --message rewrote the store's .gitignore before refusing"
+    )
+
+
+def test_commit_message_cleanup_is_idempotent() -> None:
+    """The property that makes `_commit_snapshot_tree`'s re-check free.
+
+    `_stage_and_commit` validates the message up front — before anything on
+    disk moves — and passes the CLEANED body down;
+    `_commit_snapshot_tree` runs `_require_commit_message` again on what it
+    receives, as a last statement before the write. That second call is
+    only harmless if cleaning a cleaned body is a no-op: if it were not,
+    the commit would carry a different message than the one that was
+    validated, and the two call sites would silently disagree.
+
+    Covers each rule `_cleanup_commit_message` applies (trailing
+    whitespace, blank-line runs, leading and trailing blanks) plus a
+    non-ASCII body, since `rstrip()` is unicode-aware.
+    """
+    for raw in (
+        "subject",
+        "  padded subject  \n\n\n  body with trailing space   \n\n",
+        "\n\nsubject after blanks\n\n\ttab-indented body\t\n",
+        "sujet accentué — é\n\n\ncorps \n",
+        "a\nb\nc",
+    ):
+        once = sync._cleanup_commit_message(raw)
+        assert sync._cleanup_commit_message(once) == once, (
+            f"cleanup is not idempotent for {raw!r}: {once!r} -> "
+            f"{sync._cleanup_commit_message(once)!r}"
+        )
 
 
 def _arm_a_conflicting_stash(memory_dir: Path, bare_remote: Path) -> None:
@@ -3637,16 +3883,15 @@ def test_cli_sync_push_maps_the_blank_message_refusal_to_exit_2(
 
     `_cli_sync_push` resolves the message as `message or
     DEFAULT_COMMIT_MESSAGE`. A whitespace-only `--message` is truthy, so it
-    reaches `_commit_snapshot_tree` and is refused there for parity with
+    reaches `_require_commit_message` and is refused there for parity with
     `git commit -m "   "` — which aborts, where `commit-tree` would have
     recorded the blank message. Pinned at the CLI boundary because the
     alternative reading of that `or` (treat blank as absent, silently
     substitute the default) is a one-character change away and would commit
     under a message the user never asked for.
 
-    Nothing may be committed: the refusal fires after `git add -A`, so
-    "refused" and "refused without leaving a commit behind" are separate
-    claims.
+    Nothing may be committed, which is a separate claim from "refused" and
+    so gets its own assertion.
     """
     sync.init(memory_dir, remote=str(bare_remote))
     Store(memory_dir).write(content="a fact that must not ship blank", scopes=["tools"])
@@ -3679,9 +3924,16 @@ def test_cli_sync_push_maps_the_unconcluded_merge_refusal_to_exit_2(
     in the message — `git commit` to conclude, or `git merge --abort` to
     back out — so a refusal that exits non-zero but drops the text leaves
     them with a store parked mid-merge and no stated way forward.
+
+    The porcelain assertion belongs here as much as on the library twin:
+    the CLI is where a user meets this refusal, and both routes the message
+    offers only work if the store is still in the shape they left it.
     """
-    other = _wedge_a_resolved_but_unconcluded_merge(memory_dir, bare_remote, tmp_path)
+    other, _bystander = _wedge_a_resolved_but_unconcluded_merge(
+        memory_dir, bare_remote, tmp_path
+    )
     before = _git(other, "rev-parse", "main").strip()
+    before_porcelain = _git(other, "status", "--porcelain")
 
     err = _run_cli_expecting_exit(
         ["sync", "push"],
@@ -3697,6 +3949,10 @@ def test_cli_sync_push_maps_the_unconcluded_merge_refusal_to_exit_2(
     assert "git merge --abort" in err
     assert _git(other, "rev-parse", "main").strip() == before, (
         "the CLI push wrote a single-parent commit over an unconcluded merge"
+    )
+    assert _git(other, "status", "--porcelain") == before_porcelain, (
+        "the CLI push mutated the index before refusing, degrading both "
+        "remedies its own error message offers"
     )
 
 
