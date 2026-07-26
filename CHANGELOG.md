@@ -9,6 +9,94 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+### Added — attested relative paths are checked, against the memory's own worktree
+
+`detect_path_drift` excluded relative paths by design: without an anchor,
+checking one would mean checking the cwd at *retrieval* time, making a
+verdict depend on where the reader happens to stand. The rot corpus put a
+number on what that exclusion costs. Across 37,635 claims with 8,627 real
+deletions in front of it, the path leg fired **exactly zero times** in the
+relative-citation arm — while scoring 95.7% of gone-file claims at a 0.0%
+false-alarm rate when the citation was absolute. Citation style alone
+decided whether the detector ever ran, and relative is how a developer
+writes.
+
+A census of a real 206-memory store showed the cost in place: 136
+memories carry attested `verified_paths`, **104 of them attest relative
+paths**, and 72 memories were receiving no path check of any kind. Three
+attested files were already gone with nothing surfacing it, and each had
+failed differently — one deleted, one moved, and one whose attestation
+was already wrong when it was made.
+
+The cwd objection does not reach an *attestation*, because
+`origin.worktree_root` is captured at write time and stored on the
+memory. The anchor already existed; the five call sites all held the
+memory object and none were passing it. They do now.
+
+Scoped deliberately to `verified_paths` / `verified_absent_paths` and
+**not** to relative paths in body prose: an attestation is an explicit,
+reviewed claim, while prose is the false-positive swamp the original
+exclusion was right to avoid. Two ordering traps are now pinned by tests
+— anchoring has to happen *before* candidate validation, and again before
+attestation normalisation, or the paths are silently dropped and the
+`verified_absent_paths` escape hatch inverts into a permanent false
+alarm.
+
+### Fixed — the SHA marker never bucketed, so its own override rate was unmeasurable
+
+`find_transient_markers` emitted `sha:<7-char prefix>` as the marker
+*name*, while the comment beside it said "bucket all SHA hits under one
+canonical marker". The `break` bucketed within a body; across bodies every
+write minted a fresh name.
+
+That defeated the one report built to answer the question. `marker_stats`
+exists so "is this marker's override rate high enough to drop it?" gets
+answered from telemetry rather than vibes, and it aggregates by name — so
+the highest-volume marker class in the store sat as 89 events smeared
+across 52 rows, largest n = 5. No row could ever carry enough evidence to
+act on. Pooled, it was overridden on what looked like a coin flip against
+0.169 for the phrase markers.
+
+The emitted name is now canonical, mirroring the `as of <date>` marker
+that was modelled on this one and got it right; the offending hash still
+travels in the match's snippet, which is what the caller was already
+shown. `canonical_marker` folds the pre-fix names read-side, since the
+event log is append-only and is not rewritten.
+
+Deliberately *not* decided here: whether that override rate meant the
+marker should go. Taking the policy call off the same data in the same
+commit is the tune-after-seeing lever this project's pre-registration
+discipline exists to prevent. It shipped with a row it could accumulate
+on — and the next section is what the accumulated row then said.
+
+### Performance — one sort at the source, not one per memory
+
+Found by pointing the rot harness at its first unfamiliar repository:
+scipy would not finish, and a profile put 82 of 90 seconds inside
+`compute_commit_drift`, in a single `sorted()`.
+
+`commit_author_timestamps` documented its order as "whatever git emits —
+callers that want ascending for bisect should sort explicitly", and all
+four callers then did exactly that, because all four follow it with
+`bisect_right`. Nobody wanted git's order. Three of them hoist the sort
+out of their per-memory loop; the fourth *is* the per-memory call, so it
+re-sorted the repository's entire history once per memory evaluated —
+2,163 times at 38ms each, on a list its own caller had already sorted.
+
+The sort was also slower than it looked. `%aI` preserves each author's
+own UTC offset, so the list carries thousands of distinct `tzinfo`
+objects (17,100 in a scipy sample); CPython's same-tzinfo fast path never
+fires and every comparison makes a Python-level `utcoffset()` call.
+Keying on the absolute instant pays that once per element instead of once
+per comparison. Both sources now guarantee ascending order, pinned by
+mutation-sound tests rather than by a docstring.
+
+    scipy: did not finish in 20+ min -> 14.8s, 9,591 claims
+
+The published 60-day report reproduces full-document identical after
+these changes, which is what the pre-registration requires of anything
+touching the instrument before results exist.
+
 ### Fixed — the staleness verdict was a constant function at the shipped default
 
 `staleness_verdict` is the field this project tells consumers to branch
