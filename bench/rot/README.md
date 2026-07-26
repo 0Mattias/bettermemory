@@ -6,7 +6,14 @@ README leads with, and the one that had none.
 ```sh
 venv/bin/python bench/rot/run.py --days 60
 venv/bin/python bench/rot/run.py --days 30 --json
+venv/bin/python bench/rot/run.py --t0 053ab9de4520   # reproduce a published run
 ```
+
+**Pin `--t0` for anything you intend to compare.** Without it t0 is resolved
+from `--days` against the wall clock, so it slides between runs — during the
+session that produced the tables below it moved from `5910a39a` to `053ab9de`
+in under an hour, changing the commit count from 368 to 363. Every result
+file records its full t0 and t1 shas and whether t0 was pinned.
 
 ## Method
 
@@ -38,22 +45,85 @@ Three arms are reported because they answer different questions:
 
 ## Results — bettermemory's own history, 2026-07-26
 
-`drift_only_relative_cite`, 60-day window:
+60-day window, t0 `053ab9de4520` -> t1 `388b5be75472`, 675 claims, 363
+commits / 3,941 hunks indexed, 0 hunk-parse mismatches.
 
-| class | n | false | flagged | unflagged-stale | precision | **J** | **Fisher p** | **alerts/catch** |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| path | 77 | 0 | 91% | n/a | 0% | n/a | n/a | n/a |
-| symbol | 485 | 6 | 98% | 0% | 1% | 0.023 | **0.871** | 79.0 |
-| literal | 113 | 20 | 96% | 0% | 18% | 0.043 | **0.454** | 5.5 |
-| **ALL** | 675 | 26 | 97% | 0% | 4% | **0.034** | **0.415** | 25.1 |
+**The shipped signal (`commit_drift`, file-level):**
 
-Constant classifiers on the same claims:
+| class | n | false | flagged | unflagged-stale | precision | **J** | **Fisher p** | **alerts/catch** | AUROC |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| path | 77 | 0 | 91% | n/a | 0% | n/a | n/a | n/a | n/a |
+| symbol | 485 | 6 | 98% | 0% | 1% | 0.023 | **0.871** | 79.0 | 0.725 |
+| literal | 113 | 20 | 96% | 0% | 18% | 0.043 | **0.594** | 5.5 | 0.484 |
+| **ALL** | 675 | 26 | 97% | 0% | 4% | **0.034** | **0.415** | 25.1 | 0.550 |
+
+**The claim-level detector, same claims, same arm:**
+
+| detector | class | flagged | unflagged-stale | precision | **J** | **alerts/catch** |
+| --- | --- | --- | --- | --- | --- | --- |
+| strict | ALL | 4% | 0% | 100% | **1.000** | **1.0** |
+| weak | symbol | 6% | 0% | 19% | 0.948 | 5.2 |
+| weak | literal | 18% | 0% | 100% | 1.000 | 1.0 |
+| weak | **ALL** | 8% | 0% | 51% | **0.962** | **2.0** |
+
+Reference classifiers on the same claims:
 
 | detector | flag rate | unflagged-stale | **J** |
 | --- | --- | --- | --- |
 | `always_flag` | 100% | **0%** | **0.000** |
 | `never_flag` | 0% | 100% | **0.000** |
 | `shipped_default` | 100% | **0%** | **0.000** |
+| `oracle_replica` *(peeks at the label)* | 3.85% | 0% | **1.000** |
+
+## The claim-level detector reaches 1.000, and that is not a win
+
+`claim_level_strict` scores **J = 1.000, precision 100%, zero misses** — it
+flags exactly 26 of 675 claims, and exactly the 26 that went false. Compare
+the `oracle_replica` row: 3.85% of 675 is **the same 26**. The detector is
+*arithmetically identical to peeking at the answer*, on both windows
+(15/820 at 30 days).
+
+That is a fact about this benchmark, not about the product. The window's
+diff **is** the transformation from the t0 tree to the t1 tree. The oracle
+asks "is `foo` still a top-level def at t1?"; the detector asks "did a
+column-0 `def foo` net-disappear across that transformation". Given the
+claim was true at t0, those are nearly the same question — the bag of hunks
+is very close to a *sufficient statistic* for the oracle's own decision. So
+`oracle_replica` is printed in the same table as the result it defuses,
+exactly as `always_flag` is printed beside the 0% miss rate.
+
+**What survives the objection is the contrast, not the score.** The shipped
+file-level signal costs **25.1 alerts per genuine catch**. The `weak` tier —
+which does *not* collapse onto the oracle (51% precision, so it is making
+real mistakes) — costs **2.0**, at the same zero miss rate. On the 30-day
+window it is 48.7 against 2.2. The information needed to cut false alarms by
+an order of magnitude was in git data the harness was already reading; the
+signal was throwing it away by asking "did this file change?" instead of
+"did the thing this memory cites change?".
+
+**This is why nothing here has been shipped into `verify.py`.** A corpus
+where the target is diff-decidable cannot distinguish a genuine detector
+from a well-dressed oracle replay, so J = 1.000 is not evidence a user would
+feel. The multi-repo corpus in item 3 below — repositories neither party
+chose, with enough positives to resolve a small effect — is the thing that
+would make that call safe. Building the detector measured the size of the
+prize; it did not earn it.
+
+### Two smaller findings that only the continuous score could state
+
+**The commit COUNT carries signal the `> 0` threshold discards.** For symbol
+claims the count scores **AUROC 0.725 (permutation p = 0.030)** while the
+boolean decision built from the same number scores J = 0.023 at p = 0.871.
+That combination — near-zero J, AUROC well above a coin — means the signal
+is real but the *operating point* is wrong, which is a different repair from
+"the signal isn't there". It is also not significant at this project's own
+p<0.01 bar, on six positives.
+
+**And for literal claims the same count is very slightly ANTI-informative:
+AUROC 0.484.** Ranking by how hard a file was hit puts genuinely-rotten
+literal claims *below* fresh ones marginally more often than chance. The old
+boolean model could not express either number: with every score pinned to 0
+or 1, almost every pair was a tie and AUROC was degenerate by construction.
 
 ## What this says
 
@@ -90,7 +160,7 @@ significance). Aggregates hide this completely.
 shipped, costs the user essentially what flagging everything would cost.
 
 **Every single flag came from `commit_drift`.** `path_drift` fired
-exactly zero times across all 674 claims, in every arm
+exactly zero times across all 675 claims, in every arm
 (`path_drift_flags: 0`). Two independent reasons, and both matter:
 
 1. **Nothing was deleted.** Across `src`, `tests` and `docs` there were
@@ -147,10 +217,15 @@ that barely drifts; the axis that drifts most has no detector at all.
   the window means this run says nothing about how well `path_drift`
   performs when there is something to catch. A repository that actually
   removes files is needed before any claim about it is supported.
-- **`commit_drift` is modelled as a boolean.** The harness records 1 for
-  any file changed in the window rather than a true commit count. The
-  verdict only tests `> 0`, so this is faithful for what is being graded,
-  but the reported `commit_drift` counts are not commit counts.
+- ~~**`commit_drift` is modelled as a boolean.** The harness records 1 for
+  any file changed in the window rather than a true commit count.~~
+  **RETRACTED** — `commit_counts_touching` now emits real per-path commit
+  counts from one `git log --name-only` pass, which is what made the AUROC
+  column above computable. The verdict is unchanged, since
+  `compute_staleness_verdict` still tests only `> 0`; what changed is that
+  the benchmark can now ask whether a *better* threshold exists. It found
+  that for symbol claims one might (AUROC 0.725) and for literal claims one
+  does not (0.484).
 - **Claims are synthesised, not written by anyone.** They are the shapes a
   real memory *contains*, not real memories. A real body mixes a checkable
   claim with judgement the verdict can never speak to — `bench/claims.py`
@@ -165,17 +240,55 @@ this flag rate; the work is raising discrimination without giving it back.
    constant function is a defect. A calendar leg that fires on everything
    older than 30 days makes the drift legs unreachable in exactly the
    configuration most users run.
-2. **Make `commit_drift` ask the right question.** It currently answers
-   "did this file change?" when the useful question is "did the thing this
-   memory cites change?" — whether the cited *symbol* appears in the diff
-   hunks, or whether the cited literal's line moved. Both are answerable
-   from git data this harness already reads. Aim it at the symbol class:
-   72% of claims, p = 0.871, 79 alerts per catch.
-3. **Get statistical power.** 26 positives cannot resolve a small effect.
-   A multi-repo corpus targeting ≥150 positives — and including
-   repositories that actually delete files, so `path_drift` gets its first
-   real test after 0 flags in 675 claims — is what makes any of these
-   numbers conclusive rather than suggestive.
+2. ~~**Make `commit_drift` ask the right question.**~~ **DONE, AND THE
+   ANSWER WAS NOT A NUMBER TO SHIP.** The claim-level detector is built
+   (`build_binding_index`, `claim_level_drift`) and measured above: 25.1
+   alerts per catch becomes 2.0 at the same zero miss rate. But its strict
+   tier is arithmetically identical to `oracle_replica`, so this corpus
+   cannot certify it. The finding is the *size of the gap*, not the score.
+3. **Get statistical power.** 26 positives cannot resolve a small effect,
+   and — now the sharper reason — a corpus whose claims are diff-decidable
+   cannot tell a real detector from an oracle replay. A multi-repo corpus
+   targeting ≥150 positives, including repositories that actually delete
+   files so `path_drift` gets its first real test after 0 flags in 675
+   claims, is what would let the claim-level detector be shipped on
+   evidence rather than on a ceiling.
+
+## What the claim-level detector is, and what stops it cheating
+
+One `git log -p -U0` pass builds an inverted index of *column-0 binding
+tokens* — `def`/`class`/`async def` and module-level assignments — found on
+changed lines. Claims then resolve by dict lookup. Two rules keep it from
+quietly becoming a second copy of the oracle:
+
+1. **`build_binding_index` takes the diff text and nothing else.** It cannot
+   see a claim, so it cannot look one up. Pinned by a signature test.
+2. **The claim side enters only as the rendered memory body**, parsed by
+   `parse_claim_citation` — the same material a production implementation
+   reads off a real memory. Passing the `Claim` dataclass would hand the
+   detector structured truth the product never has, and would make the
+   value comparison privileged rather than fair.
+
+Deliberately unused: git's `@@ … @@` section headings. This repo ships no
+`.gitattributes`, so git falls back to its default funcname heuristic, which
+labels hunks `class Store:` (136×), `__all__ = [` (61×) and
+`def add_subparser(` (84×). Every method-body edit inside `Store` would
+report `class Store:`, making a heading-keyed detector a body-churn
+amplifier wearing a def-shaped label.
+
+**A body-only edit is deliberately not drift.** `label_claim` matches a
+definition by name and never reads its contents, so a body edit leaves the
+claim true *by construction*. Counting body churn could only manufacture
+false alarms — today's failure, restored under a new name.
+
+**One bug worth recording, because it cost 12 of 20 literal catches.** The
+obvious implementation splits the claimed value into lines and looks for
+those lines in the diff. It finds almost nothing: Python's implicit
+concatenation means a long constant's *logical* lines and its *physical*
+source lines are different objects, and a value with no newline at all still
+occupies a dozen lines of source. The fix is to invert the test — decode
+each changed physical line back to the text it contributes and ask whether
+that text appears anywhere in the claimed value.
 
 Each is now gradeable: change it, re-run, and read J and p. That is the
 first time this project has been able to say that about its headline

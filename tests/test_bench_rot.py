@@ -14,6 +14,8 @@ the ones where a careless checker would get the label backwards:
 from __future__ import annotations
 
 import importlib.util
+import random
+import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -253,6 +255,370 @@ def test_relative_citations_get_no_path_checking_at_all(tmp_path: Path) -> None:
             "relative-vs-absolute arms and this project's path-drift "
             "coverage claims both need revisiting"
         )
+
+
+# ---------------------------------------------------------------------------
+# Continuous commit counts, and the AUROC they make computable
+# ---------------------------------------------------------------------------
+
+
+def _git_repo(root: Path) -> None:
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    for key, value in (("user.email", "t@t"), ("user.name", "t")):
+        subprocess.run(["git", "-C", str(root), "config", key, value], check=True)
+
+
+def _commit(root: Path, rel: str, source: str, message: str) -> None:
+    _tree(root, rel, source)
+    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+    subprocess.run(
+        ["git", "-C", str(root), "commit", "-q", "-m", message],
+        check=True,
+    )
+
+
+def test_commit_counts_are_counts_not_booleans(tmp_path: Path) -> None:
+    """The defect item (c) exists to fix.
+
+    The first version wrote `{p: 1 for p in changed}` — one bit meaning
+    "touched at some point". Every score was then 0 or 1, which makes the
+    ROC curve degenerate and the question "does churn MAGNITUDE carry
+    information the >0 threshold discards?" unaskable. A file hammered
+    five times must score above one touched once, or the continuous
+    metric is measuring nothing the boolean did not already say.
+    """
+    _git_repo(tmp_path)
+    _commit(tmp_path, "src/a.py", "X = 1\n", "base")
+    _commit(tmp_path, "src/quiet.py", "Y = 1\n", "add quiet")
+    t0 = subprocess.run(
+        ["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    for n in range(5):
+        _commit(tmp_path, "src/a.py", f"X = {n + 2}\n", f"churn {n}")
+    _commit(tmp_path, "src/quiet.py", "Y = 2\n", "one touch")
+
+    counts = rot.commit_counts_touching(tmp_path, t0, "HEAD", "src")
+    assert counts["src/a.py"] == 5, "a hammered file must carry its real count"
+    assert counts["src/quiet.py"] == 1
+    assert set(counts.values()) != {1}, (
+        "counts collapsed back to booleans — AUROC becomes degenerate and "
+        "the continuous metric silently re-reports the flag rate"
+    )
+
+
+def test_a_boolean_score_makes_auroc_degenerate() -> None:
+    """Why the count had to become continuous, stated as arithmetic.
+
+    Under the old model the only scores were 0 and 1, so almost every
+    (false, still-true) pair was a TIE and contributed exactly 0.5. AUROC
+    was therefore pinned near the flag rate rather than measuring
+    discrimination. Real counts break the ties.
+    """
+    boolean_pos, boolean_neg = [1.0, 1.0, 1.0], [1.0, 1.0, 0.0]
+    counted_pos, counted_neg = [9.0, 7.0, 5.0], [2.0, 1.0, 0.0]
+    degenerate = rot.auroc(boolean_pos, boolean_neg)
+    informative = rot.auroc(counted_pos, counted_neg)
+    assert degenerate is not None and informative is not None
+    assert degenerate < informative
+    assert informative == 1.0, "perfectly ordered counts must score a perfect AUROC"
+
+
+def test_auroc_scores_a_tie_as_exactly_half_credit() -> None:
+    """Midranks, not an arbitrary win. A detector that cannot separate two
+    claims must be given no credit for the pair, in either direction."""
+    assert rot.auroc([1.0], [1.0]) == 0.5
+    assert rot.auroc([1.0, 1.0], [1.0, 1.0]) == 0.5
+    # One greater, one tied, one less -> (1 + 0.5 + 0) / 3
+    assert rot.auroc([2.0], [1.0, 2.0, 3.0]) == 0.5
+
+
+def test_auroc_of_a_constant_classifier_is_exactly_a_coin() -> None:
+    """The same property that makes Youden's J the primary metric: a
+    detector that emits one value for everything must score 0.5, so
+    "flag everything" cannot buy a good AUROC either."""
+    assert rot.auroc([1.0] * 6, [1.0] * 479) == 0.5
+    assert rot.auroc([0.0] * 6, [0.0] * 479) == 0.5
+
+
+def test_the_same_auroc_is_less_significant_on_fewer_positives() -> None:
+    """The honesty ratchet on the new metric.
+
+    The symbol class has SIX actually-false claims. A point estimate
+    around 0.75 there reads like a finding, and the identical estimate on
+    sixty positives is a different piece of evidence entirely. The number
+    that must move with n is the p, not the AUROC — so this pins that an
+    AUROC held FIXED gets less significant as n shrinks, and that at n=6
+    it does not clear the project's own p<0.01 bar.
+
+    This is the shape of the claim the benchmark already retracted once:
+    a strong-looking figure whose n could not support it.
+    """
+    negative = [float(i) for i in range(100)]
+    small = rot.auroc_permutation_p([75.0] * 6, negative)
+    large = rot.auroc_permutation_p([75.0] * 60, negative)
+    assert rot.auroc([75.0] * 6, negative) == rot.auroc([75.0] * 60, negative)
+    assert small is not None and large is not None
+    assert small > large, "significance must track n at a fixed effect size"
+    assert small > 0.01, (
+        "an AUROC of 0.755 on six positives must not clear the project's "
+        "significance bar on the strength of its size alone"
+    )
+    assert large < 0.01
+
+
+def test_auroc_permutation_p_is_reproducible_and_never_reports_zero() -> None:
+    """A published p that moves between runs is not a published p. The
+    seed is fixed, and the +1/+1 estimator forbids a p of exactly 0 —
+    20,000 samples can never justify that.
+
+    The floor has to survive PRINTING too: at 4 decimal places the
+    smallest attainable value (1/20001) renders as "0.0000", which would
+    put the forbidden number on the page anyway.
+    """
+    pos, neg = [5.0, 6.0, 7.0], [0.0, 1.0, 2.0, 3.0]
+    first = rot.auroc_permutation_p(pos, neg)
+    assert first == rot.auroc_permutation_p(pos, neg)
+    assert first is not None and first > 0.0
+
+    # A separation so total that every permutation is beaten — the case
+    # that drives the estimator to its floor.
+    floored = rot.auroc_permutation_p([1e6] * 60, [float(i) for i in range(200)])
+    assert floored is not None
+    assert floored > 0.0, "the +1/+1 floor was rounded away by the formatter"
+    assert floored == round(1 / (rot._PERMUTATIONS + 1), 5)
+
+
+def test_auroc_permutation_p_calls_a_real_effect_significant() -> None:
+    """The counterweight to the test above: the gate must not be so
+    conservative that nothing can ever pass it."""
+    rng = random.Random(4)
+    negative = [float(rng.choice([0, 1])) for _ in range(200)]
+    positive = [50.0, 60.0, 70.0, 80.0, 90.0, 100.0, 110.0, 120.0]
+    p = rot.auroc_permutation_p(positive, negative)
+    assert p is not None and p < 0.01
+
+
+# ---------------------------------------------------------------------------
+# Claim-level drift — and the guards that keep it from becoming the oracle
+# ---------------------------------------------------------------------------
+
+
+def _diff(*hunks: str) -> str:
+    """A minimal `git log -p -U0` stream, one commit."""
+    return "\x01" + "deadbeef\n" + "".join(hunks)
+
+
+def _file_hunk(path: str, removed: list[str], added: list[str]) -> str:
+    return (
+        f"diff --git a/{path} b/{path}\n"
+        f"--- a/{path}\n+++ b/{path}\n"
+        f"@@ -1,{len(removed)} +1,{len(added)} @@\n"
+        + "".join(f"-{line}\n" for line in removed)
+        + "".join(f"+{line}\n" for line in added)
+    )
+
+
+def test_the_detector_cannot_see_a_claim() -> None:
+    """The firewall, enforced by signature rather than by discipline.
+
+    `build_binding_index` takes the diff text and nothing else, so it
+    cannot look a claim up. Everything the detector knows about a claim
+    arrives through `parse_claim_citation`, which reads the RENDERED BODY
+    — exactly the material a production implementation has. Handing it the
+    `Claim` dataclass would give it structured truth the product never
+    sees, and would make the value comparison privileged rather than fair.
+    """
+    import inspect
+
+    params = list(inspect.signature(rot.build_binding_index).parameters)
+    assert params == ["diff_text"], (
+        "build_binding_index grew an argument; if a claim can reach it, "
+        "the detector can no longer be distinguished from the oracle"
+    )
+    for claim in (
+        rot.Claim("path", "src/m.py", "src/m.py", ""),
+        rot.Claim("symbol", "src/m.py", "handler", ""),
+        rot.Claim("literal", "src/m.py", "TIMEOUT", "30"),
+    ):
+        cite = rot.parse_claim_citation(claim.body())
+        assert cite is not None, f"body not recoverable for {claim.kind}"
+        assert cite.kind == claim.kind
+        assert cite.rel_path == "src/m.py"
+        assert cite.name == claim.name
+        assert cite.value == claim.value
+
+
+def test_a_body_only_edit_is_not_drift() -> None:
+    """The negative the whole design rests on.
+
+    `label_claim` matches a definition by `.name` and never reads its
+    contents, so a body edit leaves the claim TRUE by construction
+    (`test_pure_reformat_is_not_drift` pins that). A detector that counted
+    body churn could therefore only manufacture false alarms — which is
+    exactly today's failure, restored under a new name.
+    """
+    index = rot.build_binding_index(
+        _diff(
+            _file_hunk("src/m.py", ["    return 1"], ["    # explain", "    return 2"])
+        )
+    )
+    cite = rot.parse_claim_citation(
+        rot.Claim("symbol", "src/m.py", "handler", "").body()
+    )
+    assert cite is not None
+    assert rot.claim_level_drift(cite, index)["strict"] is False
+    assert rot.claim_level_drift(cite, index)["weak"] is False
+
+
+def test_a_signature_reflow_fires_weak_but_not_strict() -> None:
+    """The inverse ratchet, and the strongest guard against the detector
+    quietly becoming the oracle.
+
+    Adding a parameter touches the `def` line but leaves the symbol
+    defined, so the oracle says still_true. STRICT must stay quiet (net
+    removals are zero — the binding was re-added). WEAK must fire, because
+    "the binding was touched" is genuinely true. If WEAK ever stops firing
+    here, the detector has started reading truth instead of diffs.
+    """
+    index = rot.build_binding_index(
+        _diff(_file_hunk("src/m.py", ["def handler(a):"], ["def handler(a, b=1):"]))
+    )
+    cite = rot.parse_claim_citation(
+        rot.Claim("symbol", "src/m.py", "handler", "").body()
+    )
+    assert cite is not None
+    drift = rot.claim_level_drift(cite, index)
+    assert drift["weak"] is True, "a touched binding must reach the weak tier"
+    assert drift["strict"] is False, (
+        "a re-added binding is not drift — net-of-readds is what separates "
+        "a surviving definition from one that went away"
+    )
+
+
+def test_a_removed_definition_is_strict_drift() -> None:
+    """The counterweight: recall must not be free."""
+    index = rot.build_binding_index(
+        _diff(_file_hunk("src/m.py", ["def handler(a):"], ["def renamed(a):"]))
+    )
+    cite = rot.parse_claim_citation(
+        rot.Claim("symbol", "src/m.py", "handler", "").body()
+    )
+    assert cite is not None
+    assert rot.claim_level_drift(cite, index)["strict"] is True
+
+
+def test_only_column_zero_bindings_count() -> None:
+    """The entire difference between this detector and a name-grep.
+
+    An indented `def` is a method or a nested function, which is not what
+    a top-level claim asserts. A keyword argument and a dict entry are not
+    bindings at all. If any of these produced a token, every method edit
+    inside a class would read as drift on the class's own claim.
+    """
+    assert rot._binding_token("def handler():") == ("def", "handler")
+    assert rot._binding_token("async def handler():") == ("def", "handler")
+    assert rot._binding_token("class Store:") == ("def", "Store")
+    assert rot._binding_token("TIMEOUT = 30") == ("assign", "TIMEOUT")
+    for not_a_binding in (
+        "    def inner(self):",  # a method
+        "\tdef inner(self):",
+        "        TIMEOUT = 30",  # a local
+        "foo(TIMEOUT=30)",  # a keyword argument
+        '    "TIMEOUT": 30,',  # a dict entry
+        "if x == 30:",  # a comparison, not an assignment
+        "# def handler():",  # a comment
+    ):
+        assert rot._binding_token(not_a_binding) is None, not_a_binding
+
+
+def test_string_fragments_survive_implicit_concatenation() -> None:
+    """The bug that cost 12 of 20 literal catches before it was found.
+
+    Python writes a long constant as adjacent string literals, so the
+    value's LOGICAL lines and the file's PHYSICAL lines are different
+    objects — a logical line spans several physical ones, and a value with
+    no newline at all still occupies a dozen lines of source. Matching
+    whole logical lines against diff lines therefore finds almost nothing.
+    Decoding each physical line and testing CONTAINMENT is what works.
+    """
+    fragment = rot.string_fragment('    "the user references shared context "')
+    assert fragment == "the user references shared context "
+    # Escapes must be decoded, or every interesting line fails to match.
+    assert rot.string_fragment(r'    "a \"quoted\" phrase here"') == (
+        'a "quoted" phrase here'
+    )
+    assert rot.string_fragment('    "trailing piece",') == "trailing piece"
+    assert rot.string_fragment('    "closing piece")') == "closing piece"
+    # Not self-contained string literals.
+    assert rot.string_fragment("    return handler(x)") is None
+    assert rot.string_fragment("TIMEOUT = 30") is None
+
+    # End to end: a concatenated constant whose edited physical line is
+    # nowhere to be found among the value's logical lines.
+    value = repr("Search stored memories. Default: do NOT call.\nSecond line here.")
+    index = rot.build_binding_index(
+        _diff(
+            _file_hunk(
+                "src/m.py",
+                ['    "Search stored memories. Default: do NOT call.\\n"'],
+                ['    "Search stored memories. Call it always.\\n"'],
+            )
+        )
+    )
+    cite = rot.parse_claim_citation(
+        rot.Claim("literal", "src/m.py", "DESC", value).body()
+    )
+    assert cite is not None
+    assert rot.claim_level_drift(cite, index)["strict"] is True, (
+        "a multi-line constant edited through implicit concatenation must "
+        "be caught; whole-line anchors alone miss it"
+    )
+
+
+def test_hunk_parsing_survives_content_that_looks_like_a_diff() -> None:
+    """File content can contain `diff --git` and `@@` lines — a docstring
+    about diffs, or this very test file. At -U0 a hunk's line count is
+    exact, so the parser consumes a known number of lines and verifies it
+    rather than scanning for the next header and hoping."""
+    hostile = (
+        "diff --git a/src/m.py b/src/m.py\n"
+        "--- a/src/m.py\n+++ b/src/m.py\n"
+        "@@ -1,2 +1,2 @@\n"
+        "-diff --git a/fake b/fake\n"
+        "-@@ -9,9 +9,9 @@\n"
+        "+def handler():\n"
+        "+TIMEOUT = 5\n"
+    )
+    index = rot.build_binding_index("\x01deadbeef\n" + hostile)
+    assert index["parse_mismatches"] == 0, "the -U0 line-count check failed"
+    assert index["hunks"] == 1
+    # The decoy header lines were consumed as CONTENT, not as structure.
+    assert ("src/m.py", "def", "handler") in index["bindings"]
+    assert ("src/m.py", "assign", "TIMEOUT") in index["bindings"]
+    assert "fake" not in index["files"]
+
+
+def test_the_ceiling_baseline_is_present_and_perfect() -> None:
+    """`oracle_replica` peeks at the label, so it scores J = 1.000 by
+    construction. It is printed beside the real detectors because the
+    claim-level detector also reaches 1.000 on this corpus — the window's
+    diff is very nearly a sufficient statistic for the oracle's own
+    question. Without this row in the same table, a reader cannot tell a
+    hard-won result from a trivially reachable ceiling.
+    """
+    assert "oracle_replica" in rot.BASELINES
+    rows = [
+        {"truth": "false", "commit_drift": 0},
+        {"truth": "still_true", "commit_drift": 9},
+        {"truth": "still_true", "commit_drift": 0},
+    ]
+    ceiling = rot._detector_stats(rows, rot.BASELINES["oracle_replica"])
+    assert ceiling["youden_j"] == 1.0
+    for constant in ("always_flag", "never_flag"):
+        assert rot._detector_stats(rows, rot.BASELINES[constant])["youden_j"] == 0.0
 
 
 def test_absolute_citations_are_checked_and_catch_a_deletion(tmp_path: Path) -> None:
