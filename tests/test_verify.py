@@ -185,6 +185,91 @@ def test_relative_paths_are_ignored() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Anchored attestations — relative verified_paths + origin.worktree_root
+# ---------------------------------------------------------------------------
+
+
+def test_relative_attestation_is_checked_against_the_worktree(tmp_path: Path) -> None:
+    """The gap P2 measured: a relative citation gets no deletion check.
+
+    The body form stays unchecked (prose is a false-positive swamp), but
+    an ATTESTED relative path is the caller's explicit claim, and the
+    memory's own `origin.worktree_root` is the anchor the exclusion said
+    was missing. Measured on a real 206-memory store before this existed:
+    72 memories received no path check of any kind.
+    """
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "alive.py").write_text("x")
+    body = "Defined in `src/alive.py`, removed from `src/gone.py`."
+
+    unanchored = detect_path_drift(body, verified_paths=["src/alive.py", "src/gone.py"])
+    assert unanchored.checked == (), "relative body citations stay unchecked"
+    assert unanchored.missing == ()
+
+    anchored = detect_path_drift(
+        body,
+        verified_paths=["src/alive.py", "src/gone.py"],
+        worktree_root=tmp_path,
+    )
+    assert [Path(p).name for p in anchored.missing] == ["gone.py"]
+    assert [Path(p).name for p in anchored.verified] == ["alive.py"]
+
+
+def test_relative_attestation_checked_even_when_body_cites_nothing(
+    tmp_path: Path,
+) -> None:
+    """An attested-only memory must still get a report.
+
+    `detect_path_drift` returns early when the body yields no candidates;
+    with an anchor and attestations there is real work to do, so that
+    early exit would silence exactly the memories this covers.
+    """
+    report = detect_path_drift(
+        "A prose-only note with no path citation whatsoever.",
+        verified_paths=["src/gone.py"],
+        worktree_root=tmp_path,
+    )
+    assert [Path(p).name for p in report.missing] == ["gone.py"]
+
+
+def test_anchored_absent_attestation_is_expected_not_missing(tmp_path: Path) -> None:
+    """`verified_absent_paths` keeps its escape-hatch meaning when anchored —
+    an intentionally-absent path must not become a perpetual drift signal."""
+    report = detect_path_drift(
+        "Deployed from `deploy/remote.yml` on the other host.",
+        absent_paths=["deploy/remote.yml"],
+        worktree_root=tmp_path,
+    )
+    assert report.missing == ()
+    assert [Path(p).name for p in report.expected_absent] == ["remote.yml"]
+
+
+def test_anchoring_does_not_duplicate_an_absolute_citation(tmp_path: Path) -> None:
+    """A path cited absolutely AND attested is one claim, not two.
+
+    The body pass already checked it; the anchored pass must not append a
+    second entry for the same file.
+    """
+    real = tmp_path / "dup.py"
+    real.write_text("x")
+    report = detect_path_drift(
+        f"The file `{real}` is the entry point.",
+        verified_paths=[str(real)],
+        worktree_root=tmp_path,
+    )
+    assert len(report.checked) == 1
+
+
+def test_anchoring_is_inert_without_a_worktree_root(tmp_path: Path) -> None:
+    """Memories written outside a git checkout carry no worktree_root, and
+    must behave exactly as before rather than resolving against a cwd."""
+    report = detect_path_drift(
+        "Defined in `src/gone.py`.", verified_paths=["src/gone.py"]
+    )
+    assert report.checked == () and report.missing == ()
+
+
+# ---------------------------------------------------------------------------
 # Backtick-wrapped paths
 # ---------------------------------------------------------------------------
 

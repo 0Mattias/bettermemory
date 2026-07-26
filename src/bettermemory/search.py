@@ -1832,6 +1832,7 @@ def _build_hit(
         memory.body,
         verified_paths=memory.verified_paths,
         absent_paths=memory.verified_absent_paths,
+        worktree_root=memory.origin.worktree_root if memory.origin else None,
     )
     return MemoryHit(
         id=memory.id,

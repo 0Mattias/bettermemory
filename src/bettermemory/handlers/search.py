@@ -988,6 +988,7 @@ async def memory_search(
                 memory.body,
                 verified_paths=memory.verified_paths,
                 absent_paths=memory.verified_absent_paths,
+                worktree_root=memory.origin.worktree_root if memory.origin else None,
             )
             if drift.has_drift or drift.verified or drift.expected_absent:
                 out[0]["path_drift"] = drift.to_dict()

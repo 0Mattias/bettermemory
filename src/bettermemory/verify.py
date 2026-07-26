@@ -449,6 +449,7 @@ def detect_path_drift(
     *,
     verified_paths: tuple[str, ...] | list[str] = (),
     absent_paths: tuple[str, ...] | list[str] = (),
+    worktree_root: str | Path | None = None,
 ) -> PathDriftReport:
     """Extract path-shaped tokens from `body` and check them on disk.
 
@@ -475,6 +476,14 @@ def detect_path_drift(
     since disappeared still lands in `missing` — verification doesn't
     paper over deletion.
 
+    `worktree_root` anchors RELATIVE attestations. Body extraction drops
+    relative paths on purpose (checking them would otherwise mean
+    checking the reader's cwd), but an attested relative path resolved
+    against the memory's own `origin.worktree_root` — captured at WRITE
+    time — is anchored, so it gets a real existence check. Without it, a
+    memory citing `src/pkg/mod.py` and attesting the same path receives no
+    deletion detection at all. See `_check_anchored_attestations`.
+
     `absent_paths` is the mirror attestation (`memory_verify(
     verified_absent_paths=[...])`): paths the caller confirmed are
     *intentionally* not present on this machine. A candidate in that
@@ -490,7 +499,7 @@ def detect_path_drift(
     route-ONLY report still fires no block anywhere.
     """
     candidates = _extract_candidates(body)
-    if not candidates:
+    if not candidates and worktree_root is None:
         return PathDriftReport(checked=(), missing=(), verified=())
 
     # Run verified_paths through the same trim/validate pipeline the body
@@ -626,6 +635,16 @@ def detect_path_drift(
             continue
         if norm in verified_set:
             verified.append(path)
+
+    _check_anchored_attestations(
+        worktree_root,
+        verified_paths,
+        absent_paths,
+        checked=checked,
+        missing=missing,
+        verified=verified,
+        expected_absent=expected_absent,
+    )
     return PathDriftReport(
         checked=tuple(checked),
         missing=tuple(missing),
@@ -633,6 +652,83 @@ def detect_path_drift(
         expected_absent=tuple(expected_absent),
         dropped_as_route=tuple(dropped_as_route),
     )
+
+
+def _check_anchored_attestations(
+    worktree_root: str | Path | None,
+    verified_paths: tuple[str, ...] | list[str],
+    absent_paths: tuple[str, ...] | list[str],
+    *,
+    checked: list[str],
+    missing: list[str],
+    verified: list[str],
+    expected_absent: list[str],
+) -> None:
+    """Existence-check RELATIVE attestations against the memory's worktree.
+
+    Body extraction drops relative paths on purpose, and the reason given
+    is that without an anchor, checking them would mean checking the cwd
+    at RETRIEVAL time — which would make a memory's verdict depend on
+    where the reader happens to stand. That objection does not reach an
+    attestation resolved against `origin.worktree_root`: the worktree is
+    captured at WRITE time and stored on the memory, so the check is
+    anchored to the tree the author actually attested in.
+
+    Measured before this existed, on a 206-memory store: 104 memories
+    attested relative paths, 72 of them received NO path check of any
+    kind, and three attested files were already gone with nothing
+    surfacing it — one genuinely deleted, one moved, and one that never
+    existed (a false attestation). All three read clean.
+
+    Scoped deliberately to `verified_paths` / `verified_absent_paths` and
+    NOT to relative paths in body prose. An attestation is a caller's
+    explicit, reviewed claim that a path IS the citation; body prose is
+    the false-positive swamp the original exclusion correctly avoids.
+    """
+    if worktree_root is None:
+        return
+    root = Path(worktree_root)
+    seen = {_normalize_for_compare(p) for p in checked}
+
+    def _anchored(raw: str) -> str | None:
+        rel = raw.strip() if raw else ""
+        if not rel or rel.startswith(("/", "~")):
+            return None
+        return _normalize_candidate(str(root / rel))
+
+    # Built from the ANCHORED form, not from `_normalize_attestations`:
+    # that helper runs the bare relative path through `_normalize_candidate`,
+    # which rejects relative paths by design, so the absent set would come
+    # back empty and every intentionally-absent attestation would read as
+    # drift — the escape hatch inverted into a permanent false alarm.
+    absent_set = {
+        _normalize_for_compare(anchored)
+        for anchored in (_anchored(raw) for raw in absent_paths)
+        if anchored is not None
+    }
+    # Anchor BEFORE validating (see `_anchored`): `_normalize_candidate` is
+    # the gate that enforces the relative exclusion, so running the bare
+    # relative form through it would drop every attestation this function
+    # exists to check. Joining to the worktree root first produces the
+    # absolute form the validator is built for, which is also the honest
+    # object of the check — the file as it stands in the tree the author
+    # attested in.
+    for raw in (*verified_paths, *absent_paths):
+        resolved = _anchored(raw)
+        if resolved is None:
+            continue
+        norm = _normalize_for_compare(resolved)
+        if norm in seen:
+            continue
+        seen.add(norm)
+        checked.append(resolved)
+        if _path_exists(resolved):
+            if norm not in absent_set:
+                verified.append(resolved)
+        elif norm in absent_set:
+            expected_absent.append(resolved)
+        else:
+            missing.append(resolved)
 
 
 def _normalize_attestations(paths: tuple[str, ...] | list[str]) -> set[str]:

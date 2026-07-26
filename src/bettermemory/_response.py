@@ -295,6 +295,7 @@ class ResponseBuilder:
             memory.body,
             verified_paths=memory.verified_paths,
             absent_paths=memory.verified_absent_paths,
+            worktree_root=memory.origin.worktree_root if memory.origin else None,
         )
         verdict = compute_staleness_verdict(
             verification=verification,

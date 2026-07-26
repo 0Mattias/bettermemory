@@ -74,6 +74,7 @@ async def memory_show(
         memory.body,
         verified_paths=memory.verified_paths,
         absent_paths=memory.verified_absent_paths,
+        worktree_root=memory.origin.worktree_root if memory.origin else None,
     )
     # Verification staleness is structurally always present — emitted
     # even for "fresh" memories — because consistent shape means the

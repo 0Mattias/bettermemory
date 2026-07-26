@@ -874,6 +874,7 @@ def _render_memory_detail(
         memory.body,
         verified_paths=memory.verified_paths,
         absent_paths=memory.verified_absent_paths,
+        worktree_root=memory.origin.worktree_root if memory.origin else None,
     )
     verification = compute_verification_status(
         memory.last_verified_at, now=now, stale_after_days=stale_after_days
