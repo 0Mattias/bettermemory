@@ -9,6 +9,29 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+## 3.30.0 - 2026-07-26
+
+The window where the instruments turned on the product. 3.29.0 built
+machinery to make this project's claims about itself checkable; this
+release is what that machinery found, and it is not flattering.
+
+Three of the four entries below are a mechanism failing a measurement it
+had never been subjected to. The staleness verdict — the field the README
+tells consumers to branch on first — was a **constant function** at its
+shipped default, flagging every memory past the freshness window
+regardless of what the drift legs found. The path-drift detector scored
+95.7% against real deletions and fired **exactly zero times** in the
+citation style developers actually write. And the transient-marker gate,
+asked for the first time what its own event log said about it, turned out
+to be **overridden on 45 of 47 blocks** for commit hashes — a speed bump
+that had taught its caller the override reflex. That marker is now gone,
+executing a tuning protocol the module had carried in its docstring, and
+never run, since the day it was written.
+
+None of this was found by review. Each came from pointing an instrument
+at the thing and reading the number, which is the only reason any of it is
+in a changelog rather than in the code.
+
 ### Added — attested relative paths are checked, against the memory's own worktree
 
 `detect_path_drift` excluded relative paths by design: without an anchor,
