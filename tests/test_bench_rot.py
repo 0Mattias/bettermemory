@@ -687,6 +687,120 @@ def test_claims_already_false_at_t0_are_dropped_and_counted(tmp_path: Path) -> N
     )
 
 
+def test_a_wrong_subdir_fails_loudly_instead_of_scoring_nothing(
+    tmp_path: Path,
+) -> None:
+    """The most dangerous failure mode in a multi-repo run.
+
+    `rglob` on a missing directory returns [] without raising,
+    `_detector_stats` on an empty slice returns all-None, and the report
+    prints a complete, well-formed table with n = 0 and "n/a" everywhere.
+    A repository that silently contributed nothing would be
+    indistinguishable from one that contributed cleanly — and across
+    fifteen unfamiliar layouts, guessing the source directory wrong is
+    not a hypothetical.
+    """
+    _git_repo(tmp_path)
+    _commit(tmp_path, "src/a.py", "X = 1\n", "base")
+    t0 = subprocess.run(
+        ["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    _commit(tmp_path, "src/a.py", "X = 2\n", "drift")
+    t1 = subprocess.run(
+        ["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+    with pytest.raises(ValueError, match="no claims extracted"):
+        rot.collect_rows(tmp_path, "lib", t0, t1, "")
+
+    # The correct subdir still works, so the guard is not just refusing.
+    rows, _ = rot.collect_rows(tmp_path, "src", t0, t1, "")
+    assert rows
+
+
+def test_memoized_and_unmemoized_runs_agree_exactly(tmp_path: Path) -> None:
+    """The only guarantee the 16x speedup is allowed to make.
+
+    98.5% of this harness was one call: the shipped `compute_commit_drift`
+    runs a full-history `git log` per row, so cost scales with how much
+    HISTORY a repository has — the exact axis a multi-repo corpus of
+    established projects maximises. Caching those pure git reads takes the
+    published 60-day window from ~114s to ~7s.
+
+    A speedup that moved a number would be a defect, not an optimisation,
+    so the two paths are compared row for row. Note what is NOT cached:
+    `compute_staleness_verdict`, `compute_commit_drift`,
+    `compute_verification_status`, `detect_path_drift` and
+    `resolve_commit_drift_count` all still run per row, which is what
+    keeps "the function under test is the shipped one" true.
+    """
+    _git_repo(tmp_path)
+    _commit(
+        tmp_path, "src/a.py", "TIMEOUT = 30\n\n\ndef handler():\n    pass\n", "base"
+    )
+    t0 = subprocess.run(
+        ["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    _commit(
+        tmp_path, "src/a.py", "TIMEOUT = 60\n\n\ndef renamed():\n    pass\n", "drift"
+    )
+    _commit(tmp_path, "src/b.py", "OTHER = 1\n", "add another")
+    t1 = subprocess.run(
+        ["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+    def _run(memoize: bool) -> list[dict[str, object]]:
+        if memoize:
+            return rot.collect_rows(tmp_path, "src", t0, t1, "")[0]
+        # Neutralise the context manager to get the uncached path.
+        import contextlib
+
+        original = rot.memoized_git_reads
+        setattr(rot, "memoized_git_reads", lambda: contextlib.nullcontext({}))
+        try:
+            return rot.collect_rows(tmp_path, "src", t0, t1, "")[0]
+        finally:
+            setattr(rot, "memoized_git_reads", original)
+
+    assert _run(memoize=True) == _run(memoize=False), (
+        "caching the whole-history git reads changed a graded value"
+    )
+
+
+def test_memoization_is_removed_again_afterwards() -> None:
+    """The cache is installed on `bettermemory.verify`'s own globals, so it
+    must come off again — a wrapper left in place would silently serve
+    stale git state to anything else running in the same process."""
+    from bettermemory import verify
+
+    names = (
+        "commit_author_timestamps",
+        "commit_author_timestamps_touching_pathspecs",
+        "repo_toplevel",
+        "resolve_repo_pathspecs",
+    )
+    before = {n: getattr(verify, n) for n in names}
+    with rot.memoized_git_reads():
+        assert all(getattr(verify, n) is not before[n] for n in names), (
+            "memoization did not install"
+        )
+    assert all(getattr(verify, n) is before[n] for n in names), (
+        "memoization leaked past its context manager"
+    )
+
+
 def test_the_ceiling_baseline_is_present_and_perfect() -> None:
     """`oracle_replica` peeks at the label, so it scores J = 1.000 by
     construction. It is printed beside the real detectors because the

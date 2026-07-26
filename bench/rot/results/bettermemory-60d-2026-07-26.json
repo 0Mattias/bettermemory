@@ -21,6 +21,8 @@
   },
   "t0_pinned": true,
   "t1_pinned": true,
+  "python": "3.13.13",
+  "git": "2.50.1 (Apple Git-155)",
   "days": 60,
   "modes": {
     "drift_only_relative_cite": {

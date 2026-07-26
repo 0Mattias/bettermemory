@@ -58,6 +58,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import contextlib
 import json
 import math
 import random
@@ -65,6 +66,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from collections.abc import Generator
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -140,7 +142,12 @@ def extract_claims(tree_root: Path, subdir: str) -> list[Claim]:
         claims.append(Claim("path", rel, rel, ""))
         try:
             parsed = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
-        except SyntaxError:
+        except (SyntaxError, ValueError, RecursionError):
+            # Not just SyntaxError: a NUL byte raised ValueError before
+            # 3.12, and deeply nested literals raise RecursionError. On
+            # one hand-picked repository every file parses; across a
+            # corpus of unfamiliar codebases one of these would abort the
+            # run partway through, which is the worst possible time.
             continue
         for node in parsed.body:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -173,7 +180,13 @@ def label_claim(claim: Claim, tree_root: Path) -> str:
         return "false"
     try:
         parsed = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
-    except SyntaxError:
+    except (SyntaxError, ValueError, RecursionError):
+        # See `extract_claims`: a NUL byte raised ValueError before 3.12,
+        # and deep nesting raises RecursionError. A file that no longer
+        # parses cannot support a claim about a symbol it defines, so
+        # "false" is the right label — but it must be a LABEL, not an
+        # uncaught exception that kills the run on repository nine of
+        # fifteen.
         return "false"
     if claim.kind == "symbol":
         for node in parsed.body:
@@ -983,6 +996,84 @@ BASELINES: dict[str, Any] = {
 }
 
 
+@contextlib.contextmanager
+def memoized_git_reads() -> Generator[dict[str, int]]:
+    """Cache the whole-history git reads for the duration of one run.
+
+    WHY THIS IS NECESSARY, MEASURED RATHER THAN ASSUMED. Profiling the
+    60-day window found 98.5% of the harness in a single call:
+    `verdict_for` invokes the shipped `compute_commit_drift` once per
+    row, which calls `commit_author_timestamps(cwd)` — `git log
+    --format=%aI HEAD` over the repository's ENTIRE history — then sorts
+    it and parses a datetime per commit. When the count is positive it
+    additionally pays `repo_toplevel` and a path-filtered full-history
+    log. So the cost law is
+
+        T ~= files_in_subdir x TOTAL_COMMITS_IN_REPO_HISTORY x 1e-3 s
+
+    which does not scale with the window, the diff, or the claim classes.
+    It scales with how much HISTORY a repository has — precisely the axis
+    a corpus of established projects maximises. At 500 files and 30,000
+    commits that is hours per arm, and it is why the multi-repo corpus
+    needs this before it needs anything else.
+
+    WHY IT DOES NOT COMPROMISE WHAT IS BEING GRADED. Every cached
+    function is a PURE READ of git state that cannot change while the
+    bench runs — both window ends are pinned commits, and nothing here
+    writes to the repository. None of `compute_staleness_verdict`,
+    `compute_commit_drift`, `compute_verification_status`,
+    `detect_path_drift` or `resolve_commit_drift_count` is touched, so
+    the claim that the function under test is the SHIPPED one survives
+    intact. The cache is installed on `bettermemory.verify`'s own module
+    globals — the names its callers resolve at call time — and removed
+    again on exit, so it cannot leak into anything else in the process.
+
+    `tests/test_bench_rot.py` pins the only guarantee that matters: a
+    memoized and an unmemoized run of the same pinned window produce
+    identical reports. A speedup that changed a number would be a defect,
+    not an optimisation.
+    """
+    from bettermemory import verify as _verify
+
+    calls = {"hits": 0, "misses": 0}
+    originals = {
+        name: getattr(_verify, name)
+        for name in (
+            "commit_author_timestamps",
+            "commit_author_timestamps_touching_pathspecs",
+            "repo_toplevel",
+            "resolve_repo_pathspecs",
+        )
+    }
+
+    def _memoize(func: Any) -> Any:
+        cache: dict[Any, Any] = {}
+
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            # Lists are unhashable and every one of these takes at most a
+            # list of pathspecs, so freeze them positionally.
+            key = (
+                tuple(tuple(a) if isinstance(a, list) else a for a in args),
+                tuple(sorted(kwargs.items())),
+            )
+            if key in cache:
+                calls["hits"] += 1
+                return cache[key]
+            calls["misses"] += 1
+            cache[key] = func(*args, **kwargs)
+            return cache[key]
+
+        return wrapper
+
+    try:
+        for name, func in originals.items():
+            setattr(_verify, name, _memoize(func))
+        yield calls
+    finally:
+        for name, func in originals.items():
+            setattr(_verify, name, func)
+
+
 def collect_rows(
     repo: Path, subdir: str, t0: str, t1: str, origin_repo: str
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -1046,6 +1137,18 @@ def collect_rows(
             capture_output=True,
         )
         claims = extract_claims(tree0, subdir)
+        if not claims:
+            # A WRONG `--subdir` IS OTHERWISE A SILENT NO-OP, and that is
+            # the most dangerous failure mode in a multi-repo run.
+            # `rglob` on a missing directory returns [] without raising,
+            # `_detector_stats` on an empty slice returns all-None, and
+            # the report prints a complete, well-formed table with n = 0
+            # and "n/a" everywhere. A repository that contributed nothing
+            # would look exactly like one that contributed cleanly.
+            raise ValueError(
+                f"no claims extracted from {subdir!r} at {t0[:12]} in {repo} — "
+                "the subdir is wrong, empty, or holds no parseable Python"
+            )
 
         # DROP CLAIMS THAT WERE NEVER TRUE. A module that rebinds a
         # constant (`X = 1` then `X = 2`) yields one claim per binding,
@@ -1060,14 +1163,15 @@ def collect_rows(
         dropped = set(never_true)
         claims = [c for c in claims if c not in dropped]
 
-        rows, unresolved_citations, empty_anchor_literals = _score_claims(
-            claims,
-            repo=repo,
-            tree1=tree1,
-            origin_repo=origin_repo,
-            commits_touching=commits_touching,
-            index=index,
-        )
+        with memoized_git_reads():
+            rows, unresolved_citations, empty_anchor_literals = _score_claims(
+                claims,
+                repo=repo,
+                tree1=tree1,
+                origin_repo=origin_repo,
+                commits_touching=commits_touching,
+                index=index,
+            )
     finally:
         for tree in (tree0, tree1):
             subprocess.run(
@@ -1265,6 +1369,11 @@ def main() -> int:
         **meta,
         "t0_pinned": bool(args.t0),
         "t1_pinned": bool(args.t1),
+        # The oracle is `ast.parse`, so the interpreter is part of the
+        # measuring instrument: a file that parses on one version and not
+        # on another changes labels without any code changing.
+        "python": sys.version.split()[0],
+        "git": _git(repo, "--version").replace("git version ", ""),
         "days": args.days,
         "modes": {},
     }
