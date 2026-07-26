@@ -4,6 +4,7 @@
   "t0": "053ab9de452093c1503f13b6b9d234329a4787a3",
   "t1": "388b5be75472fe39899b95670a12d690bffc3a20",
   "claims": 675,
+  "claims_false_at_t0": 0,
   "files_changed_in_window": 82,
   "diff_index": {
     "commits": 363,

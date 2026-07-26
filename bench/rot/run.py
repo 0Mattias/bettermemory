@@ -708,13 +708,22 @@ def verdict_for(
     claim: Claim,
     *,
     repo: Path,
+    tree1: Path,
     origin_repo: str,
     commits_touching: dict[str, int],
     calendar_fresh: bool,
     absolute: bool,
 ) -> tuple[str, int, int]:
-    """Return (verdict, path_drift_missing, commit_drift_count)."""
-    body = claim.body(repo if absolute else None)
+    """Return (verdict, path_drift_missing, commit_drift_count).
+
+    `tree1` is the t1 END OF THE WINDOW as a materialised tree, and it is
+    what absolute citations point at. `repo` is only the git directory,
+    used for history. Keeping them separate is what makes `--t1` mean
+    something: the path-drift leg must stat the same tree the oracle
+    labels against, or a "missing file" verdict is about the developer's
+    current checkout rather than about the window.
+    """
+    body = claim.body(tree1 if absolute else None)
     drift = detect_path_drift(body)
     # Anchor inside the staleness window when isolating the drift legs, and
     # outside it when measuring the shipped default. Calendar age is not a
@@ -994,7 +1003,11 @@ def collect_rows(
     index = build_binding_index(window_diff_text(repo, t0, t1, subdir))
 
     workdir = Path(tempfile.mkdtemp(prefix="bm-rot-"))
-    tree0 = workdir / "t0"
+    tree0, tree1 = workdir / "t0", workdir / "t1"
+    rows: list[dict[str, Any]] = []
+    claims: list[Claim] = []
+    never_true: list[Claim] = []
+    unresolved_citations = empty_anchor_literals = 0
     try:
         subprocess.run(
             [
@@ -1011,19 +1024,88 @@ def collect_rows(
             check=True,
             capture_output=True,
         )
-        claims = extract_claims(tree0, subdir)
-    finally:
+        # MATERIALISE t1 TOO, rather than labelling against whatever is
+        # checked out. Reading the live working tree was a silent
+        # corruption waiting to happen: `--t1` moved the reported sha and
+        # the diff range while the oracle kept grading the developer's
+        # current checkout, so a pinned window could be scored against the
+        # wrong tree with no error anywhere.
         subprocess.run(
-            ["git", "-C", str(repo), "worktree", "remove", "--force", str(tree0)],
-            check=False,
+            [
+                "git",
+                "-C",
+                str(repo),
+                "worktree",
+                "add",
+                "--detach",
+                "-q",
+                str(tree1),
+                t1,
+            ],
+            check=True,
             capture_output=True,
         )
+        claims = extract_claims(tree0, subdir)
 
+        # DROP CLAIMS THAT WERE NEVER TRUE. A module that rebinds a
+        # constant (`X = 1` then `X = 2`) yields one claim per binding,
+        # but `label_claim` returns on the FIRST matching assignment — so
+        # the second claim reads `false` against its OWN t0 tree. A claim
+        # that was already false before the window opened is not drift,
+        # it is an extraction artifact, and counting it inflates the
+        # positive base rate with rot that never happened. Counted rather
+        # than silently filtered: if this number is ever large, the
+        # extractor needs fixing instead of a filter.
+        never_true = [c for c in claims if label_claim(c, tree0) == "false"]
+        dropped = set(never_true)
+        claims = [c for c in claims if c not in dropped]
+
+        rows, unresolved_citations, empty_anchor_literals = _score_claims(
+            claims,
+            repo=repo,
+            tree1=tree1,
+            origin_repo=origin_repo,
+            commits_touching=commits_touching,
+            index=index,
+        )
+    finally:
+        for tree in (tree0, tree1):
+            subprocess.run(
+                ["git", "-C", str(repo), "worktree", "remove", "--force", str(tree)],
+                check=False,
+                capture_output=True,
+            )
+    return rows, _repo_meta(
+        repo=repo,
+        subdir=subdir,
+        t0=t0,
+        t1=t1,
+        origin_repo=origin_repo,
+        claims=claims,
+        rows=rows,
+        commits_touching=commits_touching,
+        index=index,
+        never_true=len(never_true),
+        unresolved_citations=unresolved_citations,
+        empty_anchor_literals=empty_anchor_literals,
+    )
+
+
+def _score_claims(
+    claims: list[Claim],
+    *,
+    repo: Path,
+    tree1: Path,
+    origin_repo: str,
+    commits_touching: dict[str, int],
+    index: dict[str, Any],
+) -> tuple[list[dict[str, Any]], int, int]:
+    """Grade every claim under every arm. Pure scoring, no git setup."""
     rows: list[dict[str, Any]] = []
     unresolved_citations = 0
     empty_anchor_literals = 0
     for claim in claims:
-        truth = label_claim(claim, repo)
+        truth = label_claim(claim, tree1)
         for mode, absolute in (
             ("drift_only_relative_cite", False),
             ("drift_only_absolute_cite", True),
@@ -1032,6 +1114,7 @@ def collect_rows(
             verdict, missing, commits = verdict_for(
                 claim,
                 repo=repo,
+                tree1=tree1,
                 origin_repo=origin_repo,
                 commits_touching=commits_touching,
                 calendar_fresh=(mode != "shipped_default"),
@@ -1075,7 +1158,26 @@ def collect_rows(
                 }
             )
 
-    meta = {
+    return rows, unresolved_citations, empty_anchor_literals
+
+
+def _repo_meta(
+    *,
+    repo: Path,
+    subdir: str,
+    t0: str,
+    t1: str,
+    origin_repo: str,
+    claims: list[Claim],
+    rows: list[dict[str, Any]],
+    commits_touching: dict[str, int],
+    index: dict[str, Any],
+    never_true: int,
+    unresolved_citations: int,
+    empty_anchor_literals: int,
+) -> dict[str, Any]:
+    """Per-repo provenance, carried beside the numbers it explains."""
+    return {
         "repo": origin_repo or str(repo),
         "subdir": subdir,
         # Full shas, not abbreviations: the window has to be reconstructable
@@ -1083,6 +1185,10 @@ def collect_rows(
         "t0": t0,
         "t1": t1,
         "claims": len(claims),
+        # Claims discarded because they were ALREADY FALSE at t0 — an
+        # extraction artifact, not drift. Published because a filter whose
+        # size is unreported is indistinguishable from one tuned to taste.
+        "claims_false_at_t0": never_true,
         "files_changed_in_window": len(commits_touching),
         "diff_index": {
             "commits": index["commits"],
@@ -1106,7 +1212,6 @@ def collect_rows(
             "empty_anchor_literals": empty_anchor_literals,
         },
     }
-    return rows, meta
 
 
 def main() -> int:

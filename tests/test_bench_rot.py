@@ -601,6 +601,92 @@ def test_hunk_parsing_survives_content_that_looks_like_a_diff() -> None:
     assert "fake" not in index["files"]
 
 
+def test_labels_come_from_t1_not_from_the_working_tree(tmp_path: Path) -> None:
+    """A pinned window must be GRADED at its pinned end.
+
+    `--t1` originally moved only the reported sha and the diff range,
+    while `label_claim` kept reading the repository's live working tree.
+    Nothing errored: a run pinned to an old t1 would be silently scored
+    against whatever the developer happened to have checked out, and the
+    published sha would assert a window the numbers did not come from.
+
+    Here t1 is pinned to the commit where `handler` still exists, while
+    the working tree has moved on and renamed it. The claim must read
+    still_true — if it reads false, the oracle is grading HEAD again.
+    """
+    _git_repo(tmp_path)
+    _commit(tmp_path, "src/m.py", "def handler():\n    pass\n", "base")
+    t0 = subprocess.run(
+        ["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    _commit(tmp_path, "src/m.py", "def handler():\n    return 1\n", "edit body")
+    t1 = subprocess.run(
+        ["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    # The working tree moves PAST t1 and renames the symbol away.
+    _commit(tmp_path, "src/m.py", "def renamed():\n    return 1\n", "rename")
+
+    rows, meta = rot.collect_rows(tmp_path, "src", t0, t1, "")
+    symbol_rows = [r for r in rows if r["kind"] == "symbol"]
+    assert symbol_rows, "no symbol claims extracted"
+    assert {r["truth"] for r in symbol_rows} == {"still_true"}, (
+        "the symbol was renamed AFTER t1, so a run pinned to t1 must not "
+        "see it as drift — labels are coming from the working tree"
+    )
+    assert meta["t1"] == t1
+
+
+def test_claims_already_false_at_t0_are_dropped_and_counted(tmp_path: Path) -> None:
+    """An extraction artifact is not drift.
+
+    A module that rebinds a constant yields one claim per binding, but
+    `label_claim` returns on the FIRST matching assignment — so the
+    second claim reads `false` against its own t0 tree. Counting it as a
+    positive credits the window with rot that predates it and inflates
+    the base rate every precision figure is measured against.
+
+    The count is published rather than silently filtered: a filter whose
+    size is unreported cannot be distinguished from one tuned to taste.
+    """
+    _git_repo(tmp_path)
+    _commit(
+        tmp_path, "src/m.py", "X = 1\nX = 2\n\n\ndef handler():\n    pass\n", "base"
+    )
+    t0 = subprocess.run(
+        ["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    _commit(
+        tmp_path, "src/m.py", "X = 1\nX = 2\n\n\ndef handler():\n    return 1\n", "edit"
+    )
+    t1 = subprocess.run(
+        ["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+    # Both bindings are extracted, and the second is false against its own tree.
+    raw = rot.extract_claims(tmp_path, "src")
+    assert sum(1 for c in raw if c.kind == "literal") == 2
+
+    rows, meta = rot.collect_rows(tmp_path, "src", t0, t1, "")
+    assert meta["claims_false_at_t0"] == 1, "the never-true claim was not dropped"
+    literal_rows = [r for r in rows if r["kind"] == "literal"]
+    assert {r["truth"] for r in literal_rows} == {"still_true"}, (
+        "a claim that was false before the window opened is being counted "
+        "as drift the window caused"
+    )
+
+
 def test_the_ceiling_baseline_is_present_and_perfect() -> None:
     """`oracle_replica` peeks at the label, so it scores J = 1.000 by
     construction. It is printed beside the real detectors because the
