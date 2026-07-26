@@ -1,0 +1,65 @@
+{
+  "above_threshold": true,
+  "bettermemory_version": "3.29.0",
+  "corpus": "corpus.jsonl",
+  "corpus_note": "near-duplicate distractors: 8 per gold topic, same subsystem different decision",
+  "corpus_sha256": "c40acee95ce1bb70ac6ea788e0fb4a9a1c6eff1fc55fe4569b651b5b156ea2ea",
+  "corpus_size": 600,
+  "date": "2026-07-26",
+  "index_threshold": 500,
+  "machine": {
+    "cores": 12,
+    "cpu": "arm",
+    "machine": "arm64",
+    "os": "Darwin 25.5.0",
+    "python": "3.13.13"
+  },
+  "notes": [
+    "corpus is above the index threshold, but this runner ranks the full corpus \u2014 production would prefilter through SQLite bm25 first. Treat this as an upper bound on the semantic arm."
+  ],
+  "padded": true,
+  "results": [
+    {
+      "arm": "lexical",
+      "n": 20,
+      "probe": "asked",
+      "recall_at_1": 0.25,
+      "recall_at_5": 0.6
+    },
+    {
+      "arm": "lexical",
+      "n": 20,
+      "probe": "requery",
+      "recall_at_1": 0.7,
+      "recall_at_5": 1.0
+    },
+    {
+      "arm": "lexical",
+      "n": 20,
+      "probe": "control",
+      "recall_at_1": 0.25,
+      "recall_at_5": 0.6
+    },
+    {
+      "arm": "semantic",
+      "n": 20,
+      "probe": "asked",
+      "recall_at_1": 0.6,
+      "recall_at_5": 0.75
+    },
+    {
+      "arm": "semantic",
+      "n": 20,
+      "probe": "requery",
+      "recall_at_1": 0.75,
+      "recall_at_5": 1.0
+    },
+    {
+      "arm": "semantic",
+      "n": 20,
+      "probe": "control",
+      "recall_at_1": 0.6,
+      "recall_at_5": 0.7
+    }
+  ]
+}

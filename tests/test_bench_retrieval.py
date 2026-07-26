@@ -82,6 +82,38 @@ def test_corpus_is_large_enough_for_retrieval_to_be_nontrivial() -> None:
     assert len(CORPUS) >= 150
 
 
+def test_every_gold_topic_has_near_duplicate_competition() -> None:
+    """The v1 corpus scored far too high because each gold document was the
+    only one in its subsystem, so rare terms survived IDF weighting in a
+    way they never would in a real store. v2 exists to supply that
+    competition; a gold topic that lost its near-duplicates would silently
+    become easy again and lift the published recall."""
+    per_gold: dict[str, int] = {}
+    for row in CORPUS:
+        near = row.get("near_slug")
+        if near:
+            per_gold[near] = per_gold.get(near, 0) + 1
+    gold = {r["slug"] for r in CORPUS if r["gold"]}
+    thin = sorted(g for g in gold if per_gold.get(g, 0) < 5)
+    assert not thin, f"gold topics with fewer than 5 near-duplicates: {thin}"
+
+
+def test_near_duplicates_never_point_at_a_missing_gold_topic() -> None:
+    gold = {r["slug"] for r in CORPUS if r["gold"]}
+    dangling = sorted({r["near_slug"] for r in CORPUS if r.get("near_slug")} - gold)
+    assert not dangling, f"near_slug values with no gold document: {dangling}"
+
+
+def test_v1_corpus_is_retained_so_published_figures_stay_reproducible() -> None:
+    """The v1 numbers are the record of a pre-registered prediction being
+    scored. Deleting the corpus they ran against would turn that record
+    into a story."""
+    v1 = _HERE / "corpus-v1.jsonl"
+    assert v1.exists(), "corpus-v1.jsonl was removed; v1 results are now unverifiable"
+    rows = [json.loads(line) for line in v1.read_text().splitlines() if line.strip()]
+    assert len([r for r in rows if r["gold"]]) == 20
+
+
 def test_class_mix_matches_what_a_real_store_measured() -> None:
     """The README claims the corpus mirrors the ~64/36 checkable-literal
     split that bench/claims.py measured on a real store. If the corpus

@@ -61,6 +61,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import random
 import shutil
@@ -153,12 +154,25 @@ def _filler_body(seed: int) -> str:
     )
 
 
-def build_store(root: Path, *, pad_to: int | None) -> tuple[dict[str, str], int]:
+def corpus_fingerprint(path: Path) -> str:
+    """SHA-256 of the corpus file.
+
+    Every published result records this. A benchmark number that does not
+    name the corpus it ran against stops being reproducible the moment
+    the corpus changes — which is exactly the failure this directory
+    exists to fix, so it would be absurd to reproduce it here.
+    """
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def build_store(
+    root: Path, corpus_path: Path, *, pad_to: int | None
+) -> tuple[dict[str, str], int]:
     """Write the corpus into `root`. Returns (slug -> memory id, corpus size)."""
     store = Store(root)
     slug_to_id: dict[str, str] = {}
     n = 0
-    for row in _read_jsonl(CORPUS):
+    for row in _read_jsonl(corpus_path):
         memory = store.write(content=row["body"], scopes=row["scopes"])
         slug_to_id[row["slug"]] = memory.id
         n += 1
@@ -234,9 +248,11 @@ def run_arm(
 # ---------------------------------------------------------------------------
 
 
-def _format_text(rows: list[ArmResult], corpus_n: int, notes: list[str]) -> str:
+def _format_text(
+    rows: list[ArmResult], corpus_n: int, notes: list[str], name: str
+) -> str:
     out = [
-        f"corpus: {corpus_n} memories "
+        f"corpus: {name} — {corpus_n} memories "
         f"({'ABOVE' if corpus_n >= INDEX_THRESHOLD else 'below'} the "
         f"{INDEX_THRESHOLD}-memory index threshold)",
         "",
@@ -276,10 +292,22 @@ def main() -> int:
             f"above-{INDEX_THRESHOLD} prefilter regime. Reported separately."
         ),
     )
+    parser.add_argument(
+        "--corpus",
+        type=str,
+        default=str(CORPUS),
+        help=(
+            "Corpus JSONL. Defaults to the canonical corpus.jsonl. Point at "
+            "corpus-v1.jsonl to reproduce the superseded first-run figures."
+        ),
+    )
     parser.add_argument("--json", action="store_true", help="Emit JSON.")
     args = parser.parse_args()
 
-    if not CORPUS.exists() or not QUESTIONS.exists():
+    corpus_path = Path(args.corpus).expanduser()
+    if not corpus_path.is_absolute():
+        corpus_path = (_HERE / corpus_path).resolve()
+    if not corpus_path.exists() or not QUESTIONS.exists():
         print(f"missing corpus or questions under {_HERE}", file=sys.stderr)
         return 1
 
@@ -300,7 +328,7 @@ def main() -> int:
 
     root = Path(tempfile.mkdtemp(prefix="bm-retrieval-"))
     try:
-        slug_to_id, corpus_n = build_store(root, pad_to=args.pad_to)
+        slug_to_id, corpus_n = build_store(root, corpus_path, pad_to=args.pad_to)
         memories = Store(root).load_all()
         questions = _read_jsonl(QUESTIONS)
 
@@ -332,6 +360,8 @@ def main() -> int:
         print(
             json.dumps(
                 {
+                    "corpus": corpus_path.name,
+                    "corpus_sha256": corpus_fingerprint(corpus_path),
                     "corpus_size": corpus_n,
                     "index_threshold": INDEX_THRESHOLD,
                     "above_threshold": corpus_n >= INDEX_THRESHOLD,
@@ -352,7 +382,7 @@ def main() -> int:
             )
         )
     else:
-        print(_format_text(rows, corpus_n, notes))
+        print(_format_text(rows, corpus_n, notes, corpus_path.name))
     return 0
 
 

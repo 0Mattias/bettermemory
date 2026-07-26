@@ -132,7 +132,72 @@ they stay here and the results section says so.
 5. Padding above the threshold **compresses the semantic arm's
    advantage**, because bm25's nomination becomes the binding constraint.
 
-## Results — first run, 2026-07-26
+## Results — v2 corpus (canonical)
+
+`corpus.jsonl`, 180 documents: 20 gold plus **160 near-duplicate
+distractors — eight per gold topic, same subsystem, different decision.**
+This replaced the v1 distractor set, which was drawn from six broad
+themes and proved too easy. Questions were deliberately *not*
+regenerated, so v1→v2 measures corpus difficulty rather than two
+unrelated question sets. Corpus size was held comparable (180 vs 188) so
+IDF shifts are not a confound.
+
+| arm | probe | recall@1 | recall@5 | v1 recall@1 |
+| --- | --- | --- | --- | --- |
+| lexical | asked | 35% | 60% | 40% |
+| lexical | requery | 80% | 100% | 95% |
+| lexical | control | 35% | 60% | 45% |
+| semantic | asked | **60%** | 75% | 65% |
+| semantic | requery | 90% | 100% | 100% |
+| semantic | control | 60% | 70% | 60% |
+
+Padded to 600: lexical/asked 25%, semantic/asked 60%.
+
+**The hardening worked, and it was not enough.** Every arm moved down and
+the competition is measurably real — on the `requery` probe, the best
+distractor's overlap with the query rose from 0.37 to 0.44 and the number
+of questions where the gold document out-overlaps every distractor fell
+from 18/20 to 15/20. But `lexical / asked` only moved 40% → 35%, still
+**three and a half times** the original store's 10%.
+
+So the honest status is unchanged from v1, and the claim made when this
+work started — that near-duplicate distractors would turn the floor check
+into a replication — **was wrong.** It hardened the floor. It did not
+reach the floor.
+
+What remains different from a real store is not yet isolated. Candidates,
+none tested: real memories vary far more in length, density and quality
+than 1,100 characters of uniformly well-written synthetic prose; a real
+store's topics overlap in messy ways rather than partitioning into twenty
+clean subsystems; and the original's questions were written by the person
+who wrote the memories, months later, which may be a harder probe than
+any synthetic author produces. Until one of those is tested, **no
+absolute number in this directory is comparable to the 185/190 figures.**
+
+### What got stronger
+
+Both findings that survive are within-corpus comparisons, and both are
+now measured on two corpora of different difficulty:
+
+- **The semantic lift is +25 points at recall@1 on BOTH corpora** (65 vs
+  40 on v1; 60 vs 35 on v2). A constant advantage across a difficulty
+  shift is a stronger result than either number alone, and it is the
+  clearest evidence the 3.29.0 default flip was correct.
+- **The vocabulary finding sharpened.** On v2, `control` (35%) equals
+  `asked` (35%) exactly, against `requery` at 80%. Stripping
+  interrogatives buys literally nothing; content words the document
+  contains buy 45 points.
+
+### Reproducing the superseded v1 figures
+
+`corpus-v1.jsonl` is retained, and every result file records the
+`corpus_sha256` it ran against:
+
+```sh
+venv/bin/python bench/retrieval/run.py --corpus corpus-v1.jsonl
+```
+
+## Results — v1 corpus (superseded), 2026-07-26
 
 bettermemory 3.29.0, corpus of 188 (20 gold + 168 distractors), 12-core
 arm64 / Darwin 25.5.0. Raw JSON in `results/`.
@@ -175,11 +240,12 @@ subsystems, with distractors clustered into six broad themes, so rare
 discriminative terms survive IDF weighting far better than they would in
 a real store where a dozen memories concern the same subsystem.
 
-The fix is known and not yet done: generate distractors as
-near-duplicates of each *gold* topic — same subsystem, different
-decision — instead of same-theme neighbours. That is the next increment
-for this directory, and until it lands these numbers are a **floor
-check, not a replication**.
+The fix attempted was to generate distractors as near-duplicates of each
+*gold* topic — same subsystem, different decision — instead of same-theme
+neighbours. **That is what the v2 corpus above is, and it did not close
+the gap**: `lexical / asked` moved only 40% → 35%. The predicted
+replication did not arrive; see the v2 section for what remains
+untested.
 
 Two findings do survive that caveat, because they are within-corpus
 comparisons rather than absolute levels:
