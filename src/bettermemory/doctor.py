@@ -2286,17 +2286,19 @@ def _check_retrieval_discrimination(directory: Path, cfg: Config) -> Diagnosis:
             "little signal for a lexical query to single a memory out."
         ),
         fix_hint=(
-            "Add a non-lexical ranking signal — BOTH halves are needed. "
-            "Install an embeddings extra (`bettermemory[embeddings-fast]` "
-            "is the lighter ONNX path), AND route it into ranking: the "
-            'default `search_mode = "hybrid"` does NOT on its own, because '
-            "the model only resolves when `[behavior] semantic_dedup = "
-            'true` or `search_mode = "semantic"`. Prefer hybrid + '
-            "semantic_dedup = true, which keeps the two lexical legs (they "
-            "score 100% on rare-term queries) and fuses a third; note it "
-            "also switches write-time dedup from Jaccard to cosine, since "
-            "one flag gates both consumers. Weigh the install size first — "
-            "this is reported, never auto-applied."
+            "Install an embeddings extra — that is now the whole fix. "
+            "`bettermemory[embeddings-fast]` is the lighter ONNX path; "
+            "`bettermemory[embeddings]` is the torch one, and the choice is "
+            "install weight, not capability. The default "
+            '`search_mode = "hybrid"` picks the model up on its own and '
+            "fuses it as a third leg beside the two lexical ones, which keep "
+            "scoring 100% on rare-term queries. No config flag is required: "
+            "pairing this with `semantic_dedup = true` used to be needed and "
+            "is not, and that flag only ever controlled WRITE-time dedup "
+            "(Jaccard vs cosine) — leave it alone unless you want that. "
+            "Measured on a 190-memory store: recall@1 10% -> 30% on "
+            "questions as asked, 65% -> 80% on re-queried ones. Weigh the "
+            "install size; this is reported, never auto-applied."
         ),
         details=details,
     )

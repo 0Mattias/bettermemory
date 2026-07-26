@@ -896,8 +896,15 @@ def test_search_stays_lexical_and_says_so_under_a_semantic_config(
         assert html.escape(expected_note) in r.text
         assert html.escape(other_note) not in r.text
 
-    # And it stays OFF for the default config, where both surfaces fuse the
-    # same two legs — a permanent caveat would be noise.
+    # And it stays OFF when both surfaces genuinely fuse the same two legs —
+    # a permanent caveat would be noise. That is now the NO-EXTRA case rather
+    # than "the default config": with an extra importable the default config
+    # does diverge, because `hybrid` resolves a model and this page still
+    # does not. Pinning importability False is what makes the assertion about
+    # the caveat's gate instead of about the machine running the suite.
+    monkeypatch.setattr(
+        "bettermemory.semantic_setup._embeddings_extra_importable", lambda: False
+    )
     client = _app_with(memory_dir, store, BehaviorConfig())
     r = client.get("/memories", params={"q": "theta runbook"})
     for note in (_LEXICAL_ONLY_FUSED_NOTE, _LEXICAL_ONLY_SEMANTIC_NOTE):
@@ -909,9 +916,19 @@ def test_search_stays_lexical_and_says_so_under_a_semantic_config(
 # The third column is not asserted from reading the handler — the test below
 # drives it and fails if the handler's answer moves.
 _SEMANTIC_LEG_MATRIX = [
-    # Shipped default: nothing asks for the model, so nothing resolves one.
-    ("hybrid", False, False),
-    # Dedup's model is what grows the default `hybrid` its third leg.
+    # Every row below runs with an embeddings extra pinned IMPORTABLE, which
+    # is what the patched `get_model` already implied.
+    #
+    # `hybrid` + dedup off used to be the "nothing asks for the model" row.
+    # It is now the headline case instead: installing the extra is by itself
+    # enough to grow the default mode its third leg, because the measured
+    # recall gain was large and requiring an unrelated write-time flag to
+    # unlock a search improvement was a foot-gun. With NO extra importable
+    # this same row still resolves nothing — pinned separately in
+    # `test_semantic.py::test_factory_hybrid_stays_silent_without_an_extra`,
+    # since this matrix holds importability fixed.
+    ("hybrid", False, True),
+    # Dedup's model also reaches `hybrid`, as it always did.
     ("hybrid", True, True),
     ("", True, True),  # unset search_mode resolves to hybrid on both sides
     # Retrieval asks for the model itself; the dedup flag is irrelevant.
@@ -980,6 +997,13 @@ async def test_lexical_only_note_fires_exactly_when_a_semantic_leg_ranks(
     monkeypatch.setattr(search_mod, "_score_semantic", fake_semantic)
     # A resolvable model, so every "the handler resolves one" row is real.
     monkeypatch.setattr("bettermemory.semantic.get_model", lambda *a, **k: object())
+    # Hold extra-importability fixed at True. It is now an INPUT to the gate
+    # (hybrid resolves on an importable extra), so leaving it to the ambient
+    # environment would make this matrix mean different things on the plain
+    # CI legs and the embeddings ones.
+    monkeypatch.setattr(
+        "bettermemory.semantic_setup._embeddings_extra_importable", lambda: True
+    )
 
     for i, (mode_cfg, dedup, semantic_expected) in enumerate(_SEMANTIC_LEG_MATRIX):
         label = f"search_mode={mode_cfg!r}, semantic_dedup={dedup}"

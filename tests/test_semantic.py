@@ -410,17 +410,56 @@ def test_factory_resolves_for_semantic_search_mode_without_dedup(
     assert _semantic_model_or_none(cfg) is sentinel
 
 
-def test_factory_hybrid_with_extra_without_dedup_stays_none(
+def test_factory_hybrid_resolves_a_model_once_an_extra_is_installed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Hybrid must NOT trigger model resolution at the factory, even
-    with an extra installed: the factory result also feeds the
-    write-dedup gates, so resolving here would silently flip dedup
-    from Jaccard to cosine without the `semantic_dedup` opt-in — and
-    would make the shipped default config pay a model load whenever
-    an extra happens to be present. Hybrid keeps its graceful
-    keyword+bm25 degrade (see `_search_mode_needs_model`)."""
+    """REVERSAL, and deliberate. This asserted the opposite: hybrid was
+    held back from resolving even with an extra present, so installing
+    `bettermemory[embeddings]` did nothing at all under the DEFAULT mode
+    unless the user also set `semantic_dedup = true` — an unrelated
+    write-time flag. That was a documented foot-gun; two sessions'
+    worth of install advice got it wrong.
+
+    It was reversed on measurement, not taste. Same 190-memory store,
+    same 20-question gold set authored document-first in caller voice,
+    only the fusion changing: recall@1 went 10% -> 30% on questions as
+    asked, and 65% -> 80% on re-queried ones. That second number is the
+    one that settles it — it is 15 points ON TOP of the caller-side
+    query guidance, and it is the part no prompt wording can recover,
+    because what remains after the guidance is the caller guessing the
+    store's vocabulary.
+
+    The original objection was real and is now answered rather than
+    ignored: the factory is shared with write-dedup, so resolving here
+    used to mean silently flipping dedup Jaccard -> cosine.
+    `handlers.write._resolve_dedup_thresholds` now reads
+    `semantic_dedup` itself and asks the factory for nothing when it is
+    off, which is pinned by
+    `test_write_dedup_ignores_a_model_resolved_for_search`."""
     monkeypatch.setattr("bettermemory.semantic._torch_extra_installed", lambda: True)
+    monkeypatch.setattr(
+        "bettermemory.semantic_setup._embeddings_extra_importable", lambda: True
+    )
+    sentinel = object()
+    monkeypatch.setattr(
+        "bettermemory.semantic.get_model", lambda *a, **k: sentinel
+    )
+    cfg = _behavior_config(search_mode="hybrid", semantic_dedup=False)
+    assert _semantic_model_or_none(cfg) is sentinel
+
+
+def test_factory_hybrid_stays_silent_without_an_extra(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The other half of the reversal, and the reason it is safe to
+    ship on by default: with no extra importable, hybrid must not even
+    ATTEMPT a load. `get_model` emits an install-hint WARNING when it
+    fails, and firing that on every default install — for a config that
+    asked for nothing — would be a regression paid by the majority of
+    users to benefit the minority who installed the extra."""
+    monkeypatch.setattr(
+        "bettermemory.semantic_setup._embeddings_extra_importable", lambda: False
+    )
     _forbid_get_model(monkeypatch)
     cfg = _behavior_config(search_mode="hybrid", semantic_dedup=False)
     assert _semantic_model_or_none(cfg) is None
@@ -429,13 +468,23 @@ def test_factory_hybrid_with_extra_without_dedup_stays_none(
 def test_factory_default_config_without_extras_never_loads(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The shipped default config (hybrid, dedup off) must return None
-    without ever attempting a model load. The extra-presence probes
-    are pinned False so this also holds verbatim in the embeddings CI
-    jobs (where the gate short-circuits before any probe runs)."""
+    """The shipped default config (hybrid, dedup off) and NO extra must
+    return None without ever attempting a model load — the majority
+    case, and the one that must stay free.
+
+    The "without extras" in the name became load-bearing when hybrid
+    started resolving on an installed extra: `_embeddings_extra_importable`
+    is the gate that decides, and it has to be pinned here too. Pinning
+    only the two per-provider probes left this test reading the ambient
+    environment, so it passed on a clean checkout and failed the moment
+    the developer or the embeddings CI job had the extra present — a
+    test that measures its own machine rather than the contract."""
     monkeypatch.setattr("bettermemory.semantic._torch_extra_installed", lambda: False)
     monkeypatch.setattr(
         "bettermemory.semantic._fastembed_extra_installed", lambda: False
+    )
+    monkeypatch.setattr(
+        "bettermemory.semantic_setup._embeddings_extra_importable", lambda: False
     )
     _forbid_get_model(monkeypatch)
     assert _semantic_model_or_none(Config()) is None

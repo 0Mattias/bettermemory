@@ -33,9 +33,10 @@ with `memory_verify`, and answers from the corrected memory.
   should have made but didn't; `memory_health` and `memory_curate`
   report and act on the resulting rot.
 - Hybrid search (keyword + BM25), with plural-folding and CJK-capable
-  tokenization. An optional semantic leg needs the `embeddings` extra
-  plus a config opt-in: `[behavior] search_mode = "semantic"` or
-  `semantic_dedup = true`.
+  tokenization. An optional semantic leg fuses in as a third ranker
+  whenever an `embeddings` extra is installed — installing it is the
+  whole opt-in, no config flag. `semantic_dedup` governs WRITE-time dedup
+  only and does not gate retrieval.
 - Typed inter-memory links (`supersedes`, `contradicts`, `extends`,
   `depends_on`), surfaced as trust signals at retrieval.
 - Auto-scoping by repo and worktree; explicit cross-project queries.

@@ -357,6 +357,52 @@ ranked sixth.
   high score proves only that this particular failure is absent — and it
   is explicitly not a helpfulness metric.
 
+### Changed — installing an embeddings extra now actually enables semantic search
+
+This is the release's one behaviour change that a user will feel, and it
+reverses a decision this project defended for several versions.
+
+Installing `bettermemory[embeddings]` did **nothing** under the default
+`search_mode = "hybrid"`. The model resolved only when `semantic_dedup = true`
+— a flag about *write-time duplicate detection* — so anyone who installed an
+embedding model to improve **search** got no search change at all, and the
+documented fix was to opt into an unrelated write-time behaviour to buy it.
+`docs/api.md` had said for a long time that semantic mode "needs only the
+extra"; the code disagreed, and the code was wrong.
+
+- **Measured before changing it**, on a 190-memory store over a 20-question
+  gold set authored document-first in caller voice:
+
+  | | recall@1 | recall@5 |
+  |---|---|---|
+  | question as asked, lexical | 10% | 45% |
+  | question as asked, **+semantic** | **30%** | **70%** |
+  | re-queried, lexical | 65% | 95% |
+  | re-queried, **+semantic** | **80%** | 95% |
+
+  Three times the cold-query hit rate, and **+15 points on top of** the
+  caller-side query guidance shipped in this same window. That second number
+  is the one that decided it: what remains after the guidance is the caller
+  *guessing* the store's vocabulary, and no prompt wording recovers it —
+  only a model that knows "cut a release" relates to "publish a version"
+  without having seen the store.
+- **The original objection was real and is now answered rather than
+  overridden.** The factory is shared with write-dedup, so resolving under
+  `hybrid` would have silently flipped dedup from Jaccard to cosine — and
+  scored it against Jaccard-calibrated thresholds.
+  `handlers.write._resolve_dedup_thresholds` now reads `semantic_dedup`
+  itself and asks the factory for nothing when it is off. Pinned by
+  `test_write_dedup_ignores_a_model_resolved_for_search`, which primes the
+  factory with a model that raises if touched.
+- **Users without an extra are unaffected and stay silent.** Resolution is
+  gated on the extra actually importing, so no default install attempts a
+  load or takes `get_model`'s install-hint warning.
+- Fallout, all in the same direction: `mode="semantic"` now works with just
+  the extra (matching what the docs always claimed), the `/memories` lexical
+  caveat now names the extra rather than the dedup flag as its trigger, and
+  `doctor`'s `retrieval_discrimination` hint is one sentence shorter — the
+  fix is "install it".
+
 ### Added — `doctor` checks whether an attestation points at the claim
 
 `memory_verify(id, verified_paths=[...])` records the files someone read to

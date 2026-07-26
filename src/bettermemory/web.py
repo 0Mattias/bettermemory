@@ -183,17 +183,21 @@ _RANKER_INPUTS_DIVERGENT = frozenset(
 # scorer the model would not have used.
 _LEXICAL_ONLY_LEAD = "Ranked with keyword + BM25 fusion only. "
 
-# `search_mode` at its `hybrid` default (or unset) with `semantic_dedup =
-# true`: the handler resolves the dedup model and `search.search` appends
-# `_score_semantic` as a THIRD RRF leg beside the two this page fused. With
-# no extra installed `semantic.get_model` returns None with the install hint
-# logged, and the handler fuses these same two legs instead — so the hedge
-# below is load-bearing here, not decorative.
+# `search_mode` at its `hybrid` default (or unset) with a model resolvable:
+# the handler resolves one and `search.search` appends `_score_semantic` as a
+# THIRD RRF leg beside the two this page fused.
+#
+# The TRIGGER changed and this prose had to follow it. It used to name
+# `semantic_dedup = true` as the cause, because that flag was the only thing
+# that opened the factory under `hybrid`. Installing an embeddings extra is
+# now sufficient on its own, so blaming the dedup flag would send a reader
+# who never set it looking for a config line they do not have. The note
+# names the extra, which is the thing that is actually true in both cases.
 _LEXICAL_ONLY_FUSED_NOTE = _LEXICAL_ONLY_LEAD + (
-    "Your config turns on semantic dedup and leaves search_mode at hybrid, "
-    "so with an embeddings extra installed memory_search fuses a third, "
-    "semantic leg on top of these two and can order (or include) hits "
-    "differently. Without that extra it fuses these same two legs instead."
+    "An embeddings extra is installed and search_mode is hybrid, so "
+    "memory_search fuses a third, semantic leg on top of these two and can "
+    "order (or include) hits differently. This page never loads a model, so "
+    "it always shows the two lexical legs."
 )
 
 # `search_mode = "semantic"`: NOT a leg on top of these two. The handler

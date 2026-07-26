@@ -99,10 +99,23 @@ async def test_mode_hybrid_without_embeddings_falls_back_gracefully(
     assert all(0 < h["score"] < 0.1 for h in hits)
 
 
-async def test_mode_semantic_without_embeddings_raises(server: Any) -> None:
+async def test_mode_semantic_without_embeddings_raises(
+    server: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """`mode="semantic"` is an explicit ask — failing softly would hide
     the deps issue from the caller. The error should mention the extra
-    so the user can act on the message."""
+    so the user can act on the message.
+
+    The no-extra condition is now simulated rather than inherited from
+    the environment. It used to hold for free because the default config
+    resolved no model whatever was installed; now an importable extra
+    routes one into `hybrid`, so on a machine (or CI leg) with the extra
+    present this test was asserting against its own environment instead
+    of its contract, and would pass or fail by accident."""
+    monkeypatch.setattr(
+        "bettermemory.semantic_setup._embeddings_extra_importable", lambda: False
+    )
+    monkeypatch.setattr("bettermemory.builder._semantic_model_or_none", lambda _c: None)
     await _seed(server, "anything")
 
     with pytest.raises(Exception, match="embeddings extra"):

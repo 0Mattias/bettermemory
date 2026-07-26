@@ -229,3 +229,59 @@ async def test_dedup_fires_when_semantic_on_but_model_absent(
     second = await _call(server, "memory_write", content=near_dup, scopes=["tools"])
     assert second["status"] == "duplicate"
     assert second["matches"][0]["id"] == first["id"]
+
+
+async def test_write_dedup_ignores_a_model_resolved_for_search(
+    memory_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The guard that makes semantic SEARCH safe to enable by default.
+
+    Installing an embeddings extra now resolves a model under the default
+    `hybrid` mode, because it is worth a large measured recall gain. That
+    model comes from a factory shared with this write path, so without
+    this the extra would silently switch write-dedup from Jaccard to
+    cosine for every user who installed it to improve SEARCH — and worse,
+    score cosine against the Jaccard-natural 0.75/0.40 thresholds, a
+    similarity scale those numbers were never calibrated for.
+
+    `semantic_dedup` is off here while the factory is primed to hand back
+    a model that would explode if used. Dedup must still fire on Jaccard,
+    which proves it never asked.
+    """
+    from bettermemory.config import BehaviorConfig, Config, StorageConfig
+    from bettermemory.session import SessionState
+    from bettermemory.store import Store
+    from bettermemory.builder import build_server
+
+    class _Exploding:
+        def encode(self, *a: Any, **k: Any) -> Any:
+            raise AssertionError(
+                "write-dedup asked for the embedding model with "
+                "semantic_dedup=false — the decoupling regressed"
+            )
+
+    # Patch the REAL factory the builder wires in, rather than injecting a
+    # stub: the thing under test is whether the write path asks that
+    # factory at all, so replacing the wiring would test the harness.
+    monkeypatch.setattr(
+        "bettermemory.builder._semantic_model_or_none", lambda _cfg: _Exploding()
+    )
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(semantic_dedup=False, search_mode="hybrid"),
+    )
+    server = build_server(
+        config=cfg,
+        store=Store(memory_dir),
+        state=SessionState(),
+    )
+
+    body = "alpha beta gamma delta epsilon zeta theta kappa lambda sigma"
+    first = await _call(server, "memory_write", content=body, scopes=["tools"])
+    assert first["status"] == "committed"
+
+    near_dup = "alpha beta gamma delta epsilon zeta theta kappa lambda omega"
+    second = await _call(server, "memory_write", content=near_dup, scopes=["tools"])
+    assert second["status"] == "duplicate", second
+    assert second["matches"][0]["id"] == first["id"]

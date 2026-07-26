@@ -66,13 +66,18 @@ recency_boost_half_life_days = 30
 #       hint and turn audits record no_signal — there is no silent
 #       keyword fallback for an explicit ask).
 #   "hybrid"  — reciprocal-rank-fusion of keyword + BM25, plus a semantic
-#       leg only when the model is opted in (an embeddings extra AND
-#       `semantic_dedup = true`; "hybrid" alone never loads a model, so
-#       extra-installed users don't silently pay a model load or flip
-#       write-dedup to cosine). Gracefully degrades to keyword + BM25
-#       fusion otherwise. Default since 2.6.8.
-# The MCP `mode` parameter on memory_search overrides this per-call for
-# ranker selection, but does not bypass the model gate above.
+#       leg whenever an embeddings extra is INSTALLED. Installing it is
+#       the whole opt-in; no flag. Measured worth on a 190-memory store:
+#       recall@1 10% -> 30% on plainly-worded questions, 65% -> 80% on
+#       re-queried ones. With no extra it degrades to keyword + BM25 and
+#       never attempts a load, so users without one pay nothing and see
+#       no warning. Default since 2.6.8.
+# `semantic_dedup` below is NOT part of this — it governs write-time
+# duplicate detection only. It used to double as the switch that let
+# "hybrid" load a model, which made installing the extra a no-op for the
+# default mode and forced anyone wanting better SEARCH to also change how
+# WRITES dedup. The MCP `mode` parameter on memory_search overrides this
+# per-call for ranker selection.
 search_mode = "hybrid"
 
 # Usage-aware ranking. When true, a bounded "endorsement" factor (the same

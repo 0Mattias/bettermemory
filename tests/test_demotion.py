@@ -238,6 +238,24 @@ def memory_dir(tmp_path: Path) -> Path:
     return tmp_path / "memories"
 
 
+@pytest.fixture(autouse=True)
+def _no_semantic_leg(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep these tests on the two lexical legs, whatever is installed.
+
+    They turn on a bounded (<=10%) demotion factor and assert it flips a
+    NEAR-TIE, which only means anything against a fixed set of ranking
+    legs. Once `hybrid` began resolving a semantic model from a
+    merely-installed extra, the fused order changed and the pair stopped
+    being tied — so the suite passed or failed on whether the machine had
+    the extra. Pinning the mode instead would swap the scorer these ties
+    were tuned against; pinning importability keeps the exact ranking and
+    removes only the new leg.
+    """
+    monkeypatch.setattr(
+        "bettermemory.semantic_setup._embeddings_extra_importable", lambda: False
+    )
+
+
 def _build(memory_dir: Path, **behavior: Any) -> Any:
     cfg = Config(
         storage=StorageConfig(directory=str(memory_dir)),

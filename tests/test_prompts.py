@@ -540,60 +540,78 @@ def test_api_md_dead_weight_rule_matches_shared_predicate() -> None:
     )
 
 
-def test_docs_state_semantic_config_optin_gate() -> None:
-    """api.md + README state the semantic model-gating contract.
+def test_docs_state_semantic_is_enabled_by_the_extra_alone() -> None:
+    """api.md + internals.md state the semantic model-gating contract.
 
-    round-88 Branch B: `_semantic_model_or_none` (semantic_setup.py)
-    resolves the embedding model ONLY behind the config-level opt-in
-    (`[behavior] search_mode = "semantic"` or `semantic_dedup = true`)
-    — installation status of the `[embeddings]` extra is never
-    consulted on its own. The extra alone therefore leaves hybrid at
-    keyword+BM25 fusion and per-call mode="semantic" erroring with
-    the install hint (tests/test_server_search_mode.py pins the code
-    side; the gate is deliberate — resolving on extra-presence alone
-    would silently flip write-dedup from Jaccard to cosine). Pin both
-    directions on both doc surfaces so they can't drift back to the
-    extra-is-sufficient claim.
+    REVERSED, deliberately, and this test is the record of it. It used to
+    pin the opposite: that `_semantic_model_or_none` resolves ONLY behind
+    a config opt-in (`search_mode = "semantic"` or `semantic_dedup =
+    true`), so an installed extra alone left `hybrid` at keyword+BM25 and
+    made per-call `mode="semantic"` error with the install hint.
+
+    That contract lost on measurement. Fusing the semantic leg took
+    recall@1 from 10% to 30% on plainly-worded questions and from 65% to
+    80% on re-queried ones, and requiring an unrelated WRITE-time flag to
+    unlock a SEARCH improvement was a foot-gun that had already produced
+    wrong install advice more than once. `hybrid` now resolves a model
+    whenever an extra imports.
+
+    The old gate's stated reason — the shared factory would flip
+    write-dedup Jaccard->cosine — was real and is answered rather than
+    ignored: `handlers.write._resolve_dedup_thresholds` reads
+    `semantic_dedup` itself now, pinned by
+    `test_tombstone_dedup.py::test_write_dedup_ignores_a_model_resolved_for_search`.
+
+    Both directions stay pinned, just inverted: the docs must not
+    re-acquire the opt-in claim, and they must keep saying `semantic_dedup`
+    is about writes.
     """
     root = Path(__file__).resolve().parents[1]
-    api_text = (root / "docs" / "api.md").read_text(encoding="utf-8")
-    internals_text = (root / "docs" / "internals.md").read_text(encoding="utf-8")
-    # Direction 1: the stale extra-is-sufficient claims are gone.
-    assert "+ semantic when the `[embeddings]` extra is installed" not in api_text, (
-        "docs/api.md hybrid bullet has drifted back to claiming the "
-        "`[embeddings]` extra alone adds the semantic leg; the model "
-        "factory never consults installation status without the "
-        "config-level opt-in."
-    )
-    assert "requires the `[embeddings]` extra)" not in api_text, (
-        "docs/api.md semantic bullet has drifted back to the "
-        "extra-is-sufficient claim; per-call mode='semantic' under "
-        "the default config errors even with the extra installed."
-    )
-    assert "plus semantic when the embeddings extra is installed)" not in internals_text
-    assert "add the semantic third leg with one extra" not in internals_text, (
-        "docs/internals.md has drifted back to claiming one extra adds the "
-        "semantic leg; the config-level opt-in is also required."
-    )
-    # Direction 2: both surfaces name the config-level opt-in knobs.
+
+    # Whitespace-collapsed: these are prose docs, so a phrase legitimately
+    # wraps across a line. Matching raw text would make the guard depend on
+    # where a paragraph happened to break rather than on what it says.
+    def _flat(path: str) -> str:
+        return re.sub(r"\s+", " ", (root / "docs" / path).read_text(encoding="utf-8"))
+
+    api_text = _flat("api.md")
+    internals_text = _flat("internals.md")
+
+    # Direction 1: the opt-in-required claim must not come back.
     for name, text in (
         ("docs/api.md", api_text),
         ("docs/internals.md", internals_text),
     ):
-        assert 'search_mode = "semantic"' in text, (
-            f"{name} no longer names the `search_mode` config opt-in "
-            "that gates semantic participation."
+        assert "plus a config opt-in" not in text, (
+            f"{name} has drifted back to requiring a config opt-in for the "
+            "semantic leg; installing an embeddings extra is the whole opt-in."
         )
+        assert "the extra alone is not enough" not in text, (
+            f"{name} has drifted back to the extra-is-not-enough claim."
+        )
+
+    # Direction 2: both surfaces say installation is what enables it, and
+    # that `semantic_dedup` is not the lever.
+    assert "installing it is the whole opt-in" in api_text, (
+        "docs/api.md no longer states that installing the extra is what "
+        "enables the semantic leg."
+    )
+    assert "installing it is the whole opt-in" in internals_text, (
+        "docs/internals.md no longer states that installing the extra is "
+        "what enables the semantic leg."
+    )
+    for name, text in (
+        ("docs/api.md", api_text),
+        ("docs/internals.md", internals_text),
+    ):
         assert "semantic_dedup" in text, (
-            f"{name} no longer names the `semantic_dedup` config "
-            "opt-in that gates semantic participation."
+            f"{name} no longer mentions `semantic_dedup`. It still exists and "
+            "still changes behaviour — silently dropping it is how a reader "
+            "concludes it is the search knob again."
         )
-    # api.md additionally qualifies the per-call override: it picks the
-    # ranker but cannot bypass the model gate.
-    assert "does not bypass the model gate" in api_text, (
-        "docs/api.md no longer qualifies 'per-call override beats "
-        "config' against the model gate; unqualified, it reads as if "
-        "mode='semantic' works under the default config."
+    assert "WRITE-time dedup only" in api_text, (
+        "docs/api.md no longer scopes `semantic_dedup` to write-time dedup; "
+        "unscoped, it reads as a retrieval gate."
     )
 
 

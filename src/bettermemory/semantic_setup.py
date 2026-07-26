@@ -108,7 +108,33 @@ def _semantic_model_configured(config: Config) -> bool:
     installed — that answer costs a load attempt. ``True`` here means
     "the config asks for a model", not "a model will be returned".
     """
-    return bool(config.behavior.semantic_dedup) or _search_mode_needs_model(config)
+    if bool(config.behavior.semantic_dedup) or _search_mode_needs_model(config):
+        return True
+    # `hybrid` (the package default) fuses a semantic leg when one is
+    # handed to it, and MEASURED it is worth a lot: on a 190-memory store
+    # over a 20-question gold set authored document-first, adding the leg
+    # took recall@1 from 10% to 30% on questions as asked and from 65% to
+    # 80% on re-queried ones — three times the cold-query hit rate, and
+    # 15 points on top of the caller-side query guidance, which is the
+    # part no prompt wording can recover because it is the caller
+    # GUESSING the store's vocabulary.
+    #
+    # So installing an embeddings extra is now sufficient to get it.
+    # Requiring `semantic_dedup = true` as well made the extra a no-op
+    # for the default mode — a documented foot-gun that cost two
+    # sessions' worth of wrong install advice — and it opted the user
+    # into an unrelated write-time behaviour change to buy a search
+    # improvement. `handlers.write._resolve_dedup_thresholds` now reads
+    # `semantic_dedup` directly, so resolving here no longer reaches the
+    # write path.
+    #
+    # Gated on the extra actually importing, and that is load-bearing:
+    # without it every default install would attempt a load and take
+    # `get_model`'s install-hint WARNING on a config that asked for
+    # nothing. Silence for the no-extra user is the whole point.
+    if (config.behavior.search_mode or "hybrid") == "hybrid":
+        return _embeddings_extra_importable()
+    return False
 
 
 def _semantic_rank_leg_active(config: Config) -> bool:

@@ -1395,19 +1395,26 @@ def test_retrieval_discrimination_does_not_skip_on_a_merely_installed_extra(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """REGRESSION. The first shipped version of this check skipped whenever
-    an embeddings extra was importable, which is not the same question.
+    """REGRESSION, now guarding the OTHER half of the same question.
 
-    Under the DEFAULT `search_mode = "hybrid"` with `semantic_dedup =
-    false`, `_semantic_model_configured` never opens, so the factory
-    returns None and ranking is purely lexical NO MATTER what is
-    installed. Skipping there reported `ok` for precisely the config that
-    most needs the warning. The skip now runs through
-    `_semantic_rank_leg_active`, which also requires the config to route
-    the model into ranking — so an installed-but-unrouted extra must
-    still be probed and still warn.
+    The first shipped version skipped whenever an extra was importable,
+    which was wrong then: under `hybrid` with `semantic_dedup = false`
+    the factory returned None and ranking stayed lexical no matter what
+    was installed, so skipping reported `ok` for precisely the config
+    that most needed the warning.
+
+    Hybrid now DOES resolve a model once an extra is importable, so the
+    configuration in that old test no longer exists — an installed extra
+    IS a routed one. What still must not silence the check is a mode the
+    handler never hands a model to. `keyword` is that case: the extra is
+    importable and `semantic_dedup` is on, so a model loads for the WRITE
+    path, yet `handlers.search.memory_search` passes `semantic_model=None`
+    under keyword and ranking is lexical. The check must warn.
+
+    The invariant is unchanged and is the point: skip on whether a
+    semantic leg actually SCORES A SEARCH, never on whether a model
+    exists somewhere in the process.
     """
-    # Both extras importable, yet the default config routes neither.
     monkeypatch.setattr(
         "bettermemory.semantic_setup._embeddings_extra_importable",
         lambda: True,
@@ -1424,11 +1431,11 @@ def test_retrieval_discrimination_does_not_skip_on_a_merely_installed_extra(
         "ops",
         [f"{shared} sentinel{i:02d}kryptonite zzq{i:02d}plutonium" for i in range(20)],
     )
-    cfg = _config_for(tmp_path, search_mode="hybrid", semantic_dedup=False)
+    cfg = _config_for(tmp_path, search_mode="keyword", semantic_dedup=True)
     diag = _check_retrieval_discrimination(tmp_path, cfg)
     assert diag.status == "warn", (
-        "an importable-but-unrouted extra must not silence the check — "
-        "ranking is still lexical-only in this configuration"
+        "a model loaded for the write path must not silence the check — "
+        "keyword ranking never receives it, so retrieval is still lexical"
     )
     assert diag.details["scopes"], "the probe must actually have run"
 

@@ -412,7 +412,21 @@ def _resolve_dedup_thresholds(
     same write chain and need the identical triple; keeping it in one
     place stops the two gates from silently drifting apart.
     """
-    semantic_model = deps._semantic_model_factory(deps.config)
+    # Ask for the model ONLY when this consumer wants it. The factory is
+    # shared with retrieval, and retrieval now resolves a model whenever an
+    # embeddings extra is installed — so taking whatever the factory hands
+    # back would silently switch write-dedup from Jaccard to cosine for
+    # anyone who installed the extra to improve SEARCH and never opted into
+    # semantic dedup. Worse, the thresholds below stay Jaccard-natural in
+    # that case, so it would score cosine against 0.75/0.40 — a similarity
+    # scale the numbers were never calibrated for. `semantic_dedup` is this
+    # gate's own flag; read it here rather than inferring intent from
+    # whether some other consumer caused a load.
+    semantic_model = (
+        deps._semantic_model_factory(deps.config)
+        if deps.config.behavior.semantic_dedup
+        else None
+    )
     # Gate the COSINE-calibrated thresholds on the RESOLVED model, not on
     # the `semantic_dedup` flag alone. When `semantic_dedup=true` but the
     # embeddings extra isn't installed, the factory returns None (one
@@ -420,7 +434,7 @@ def _resolve_dedup_thresholds(
     # it cosine thresholds (0.85/0.65) would silently neuter dedup, since
     # Jaccard rarely reaches 0.85. Passing None lets `find_similar` pick the
     # Jaccard-natural 0.75/0.40.
-    if semantic_model is not None and deps.config.behavior.semantic_dedup:
+    if semantic_model is not None:
         high_threshold: float | None = deps.config.behavior.semantic_high_threshold
         medium_threshold: float | None = deps.config.behavior.semantic_medium_threshold
     else:
