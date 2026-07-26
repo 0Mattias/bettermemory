@@ -166,6 +166,54 @@ def extract_claims(tree_root: Path, subdir: str) -> list[Claim]:
 # ---------------------------------------------------------------------------
 
 
+# One parse per FILE, not per claim. A file defining forty symbols yields
+# forty claims, and re-parsing it forty times per tree made `compile` 30%
+# of the corpus run (measured on scipy: 15,982 parses behind 10,305
+# `label_claim` calls, 45s of 150s). Keyed on the tree root, which is a
+# fresh `mkdtemp` per repository, so a key can never outlive the tree it
+# names and collide with the next repo's identical rel_paths. Caches the
+# two derived lookups rather than the AST — same answers, a fraction of
+# the resident size.
+_TOPLEVEL_CACHE: dict[tuple[str, str], tuple[frozenset[str], dict[str, str | None]]] = {}
+
+
+def _toplevel_index(
+    path: Path, tree_root: Path, rel_path: str
+) -> tuple[frozenset[str], dict[str, str | None]] | None:
+    """Top-level def/class names and constant literals, or None if unparsable."""
+    key = (str(tree_root), rel_path)
+    cached = _TOPLEVEL_CACHE.get(key)
+    if cached is not None:
+        return cached
+    try:
+        parsed = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+    except (SyntaxError, ValueError, RecursionError):
+        # See `extract_claims`: a NUL byte raised ValueError before 3.12,
+        # and deep nesting raises RecursionError. A file that no longer
+        # parses cannot support a claim about a symbol it defines, so
+        # "false" is the right label — but it must be a LABEL, not an
+        # uncaught exception that kills the run on repository nine of
+        # fifteen.
+        return None
+    symbols = frozenset(
+        node.name
+        for node in parsed.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+    )
+    literals: dict[str, str | None] = {}
+    for node in parsed.body:
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target = node.targets[0]
+            if isinstance(target, ast.Name):
+                # `setdefault`, not assignment: the uncached form returned
+                # on the FIRST matching Assign, so a name rebound at module
+                # level must keep resolving to its first binding.
+                literals.setdefault(target.id, _literal_of(node.value))
+    index = (symbols, literals)
+    _TOPLEVEL_CACHE[key] = index
+    return index
+
+
 def label_claim(claim: Claim, tree_root: Path) -> str:
     """Re-evaluate a claim against a tree. Returns still_true | false.
 
@@ -178,32 +226,15 @@ def label_claim(claim: Claim, tree_root: Path) -> str:
         return "still_true" if path.exists() else "false"
     if not path.exists():
         return "false"
-    try:
-        parsed = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
-    except (SyntaxError, ValueError, RecursionError):
-        # See `extract_claims`: a NUL byte raised ValueError before 3.12,
-        # and deep nesting raises RecursionError. A file that no longer
-        # parses cannot support a claim about a symbol it defines, so
-        # "false" is the right label — but it must be a LABEL, not an
-        # uncaught exception that kills the run on repository nine of
-        # fifteen.
+    index = _toplevel_index(path, tree_root, claim.rel_path)
+    if index is None:
         return "false"
+    symbols, literals = index
     if claim.kind == "symbol":
-        for node in parsed.body:
-            if (
-                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-                and node.name == claim.name
-            ):
-                return "still_true"
+        return "still_true" if claim.name in symbols else "false"
+    if claim.name not in literals:
         return "false"
-    for node in parsed.body:
-        if isinstance(node, ast.Assign) and len(node.targets) == 1:
-            target = node.targets[0]
-            if isinstance(target, ast.Name) and target.id == claim.name:
-                return (
-                    "still_true" if _literal_of(node.value) == claim.value else "false"
-                )
-    return "false"
+    return "still_true" if literals[claim.name] == claim.value else "false"
 
 
 # ---------------------------------------------------------------------------
@@ -1143,7 +1174,16 @@ def memoized_git_reads() -> Generator[dict[str, int]]:
             for path, values in index.items():
                 if path.startswith(prefix):
                     stamps.extend(values)
-        return sorted(stamps)
+        # Sort on the instant, not the datetime. `%aI` keeps each author's
+        # own UTC offset, so the stamps carry thousands of DISTINCT tzinfo
+        # objects (17,100 in a sample of scipy's) and CPython's
+        # same-tzinfo fast path never fires — every one of the O(n log n)
+        # comparisons then makes a Python-level `utcoffset()` call. One key
+        # per element instead: 12,958 of these sorts were 84s of a 150s
+        # scipy run; measured 7x faster on that data with the ordering
+        # bit-for-bit identical (both are the absolute instant, and sort
+        # stability breaks ties the same way).
+        return sorted(stamps, key=lambda stamp: stamp.timestamp())
 
     try:
         for name, func in originals.items():
@@ -1175,6 +1215,11 @@ def collect_rows(
     available — an aggregate that cannot be decomposed hides exactly the
     kind of single-repo artifact this corpus exists to escape.
     """
+    # The parse cache is keyed by tree root, so entries from the previous
+    # repository can never be READ here — but they would sit resident for
+    # the whole corpus. Dropping them per repo keeps the ceiling at one
+    # repository's files instead of thirty.
+    _TOPLEVEL_CACHE.clear()
     commits_touching = commit_counts_touching(repo, t0, t1, subdir)
     index = build_binding_index(window_diff_text(repo, t0, t1, subdir))
 

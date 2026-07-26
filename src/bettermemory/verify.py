@@ -1698,7 +1698,7 @@ def resolve_commit_drift_count(
     # mismatch at the source instead of capping it after the fact.
     if since.tzinfo is None:
         since = since.replace(tzinfo=timezone.utc)
-    idx = bisect.bisect_right(sorted(touching), since)
+    idx = bisect.bisect_right(touching, since)
     return len(touching) - idx
 
 
@@ -1783,18 +1783,19 @@ def compute_commit_drift(
     #      so a commit landing in the same UTC second as `last_verified_at`
     #      counted as drift on memory_show but not on the bisect_right
     #      (strictly-greater, microsecond) path the other two use.
-    # `commit_author_timestamps` returns timezone-aware datetimes; sort
-    # ascending so `bisect_right` yields the first index strictly after the
+    # `commit_author_timestamps` returns timezone-aware datetimes already
+    # ascending, so `bisect_right` yields the first index strictly after the
     # verify instant. Equal-instant commits fall before the cut (no drift),
-    # matching the health rollup and per-hit search count exactly.
+    # matching the health rollup and per-hit search count exactly. The sort
+    # lives at the source because THIS function runs once per memory: doing
+    # it here re-sorted the repo's whole history per row.
     timestamps = commit_author_timestamps(cwd_path)
     if timestamps is None:
         return None
     if last_verified_at.tzinfo is None:
         last_verified_at = last_verified_at.replace(tzinfo=timezone.utc)
-    timestamps_sorted = sorted(timestamps)
-    idx = bisect.bisect_right(timestamps_sorted, last_verified_at)
-    count = len(timestamps_sorted) - idx
+    idx = bisect.bisect_right(timestamps, last_verified_at)
+    count = len(timestamps) - idx
     # Claim-anchored narrowing. Anchor derivation is pure CPU (bounded
     # regex over the body) and runs unconditionally so an untethered
     # memory reads consistently as not-applicable; the git-backed

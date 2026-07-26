@@ -721,6 +721,52 @@ def test_commit_author_timestamps_returns_all_commits(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_commit_author_timestamps_returns_ascending(tmp_path: Path) -> None:
+    """Every caller `bisect_right`s this list, so ascending is a CONTRACT.
+
+    Authored out of chronological order so git's own emit order (newest
+    commit first, i.e. Mar, Jan, Feb here) is neither ascending nor a
+    reversal of it — a function that forgot to sort cannot pass by luck.
+    """
+    _init_repo(tmp_path)
+    _make_commit(tmp_path, "b", when=datetime(2026, 2, 1, 12, tzinfo=timezone.utc))
+    _make_commit(tmp_path, "a", when=datetime(2026, 1, 1, 12, tzinfo=timezone.utc))
+    _make_commit(tmp_path, "c", when=datetime(2026, 3, 1, 12, tzinfo=timezone.utc))
+    timestamps = commit_author_timestamps(tmp_path)
+    assert timestamps is not None
+    assert timestamps == sorted(timestamps), "must be ascending for bisect_right"
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_commit_author_timestamps_touching_pathspecs_returns_ascending(
+    tmp_path: Path,
+) -> None:
+    """Same contract for the path-filtered variant.
+
+    `resolve_commit_drift_count` bisects this directly; when only the
+    unfiltered source was sorted, this one silently returned git's
+    newest-first order and the bisect read against a descending list.
+
+    Needs real file commits — `_make_commit` makes EMPTY ones, which no
+    pathspec filter can match.
+    """
+    _init_repo(tmp_path)
+    for i, when in enumerate(
+        (
+            datetime(2026, 2, 1, 12, tzinfo=timezone.utc),
+            datetime(2026, 1, 1, 12, tzinfo=timezone.utc),
+            datetime(2026, 3, 1, 12, tzinfo=timezone.utc),
+        )
+    ):
+        (tmp_path / "f.txt").write_text(f"rev {i}\n")
+        subprocess.run(["git", "add", "f.txt"], cwd=tmp_path, check=True)
+        _make_commit(tmp_path, f"touch {i}", when=when)
+    timestamps = commit_author_timestamps_touching_pathspecs(tmp_path, ["f.txt"])
+    assert timestamps is not None and len(timestamps) == 3
+    assert timestamps == sorted(timestamps), "must be ascending for bisect_right"
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
 def test_commit_author_timestamps_returns_none_on_empty_repo(tmp_path: Path) -> None:
     """A freshly-init'd repo with no commits — `git log HEAD` exits
     non-zero and we surface that as None, not an empty list. The empty-list

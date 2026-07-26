@@ -985,6 +985,15 @@ def commits_since_touching_paths(
     return _commits_touching_pathspecs_impl(cwd, since, pathspecs, toplevel=toplevel)
 
 
+def _instant(stamp: datetime) -> float:
+    """Absolute-instant sort key for timezone-aware author timestamps.
+
+    One `utcoffset()` per element instead of one per comparison. See
+    `commit_author_timestamps` for why that matters here.
+    """
+    return stamp.timestamp()
+
+
 def commit_author_timestamps(cwd: Path | None) -> list[datetime] | None:
     """All author timestamps from the HEAD history of `cwd`'s repo.
 
@@ -995,11 +1004,23 @@ def commit_author_timestamps(cwd: Path | None) -> list[datetime] | None:
     and we surface that as None. Lines that fail to parse are skipped
     individually rather than poisoning the whole result.
 
-    Sort order is whatever git emits (newest-first by default) — callers
-    that want sorted-ascending for bisect should sort explicitly. Used
-    by the health rollup to count commits-since for many memories from
-    one git invocation; the per-memory `commits_since` would otherwise
-    pay a fork+exec for every row.
+    Returned ASCENDING, ready to `bisect_right`. Every caller wants that
+    order and none wants git's; leaving the sort to them meant the
+    per-memory `compute_commit_drift` re-sorted the repo's whole history
+    on every row, which the rot benchmark measured at 38ms x 2,163 calls
+    = 82s of a 90s scipy run. Sorting here happens once per git
+    invocation, beside the fork+exec that already dominates the call.
+
+    Sorting on the instant, not the datetime: `%aI` preserves each
+    author's own UTC offset, so the list carries thousands of DISTINCT
+    tzinfo objects and CPython's same-tzinfo comparison fast path never
+    fires — without the key every comparison makes a Python-level
+    `utcoffset()` call. Same ordering either way; both are the absolute
+    instant.
+
+    Used by the health rollup to count commits-since for many memories
+    from one git invocation; the per-memory `commits_since` would
+    otherwise pay a fork+exec for every row.
     """
     if cwd is None:
         return None
@@ -1018,7 +1039,10 @@ def commit_author_timestamps(cwd: Path | None) -> list[datetime] | None:
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=timezone.utc)
         out.append(ts)
-    return out if out else None
+    if not out:
+        return None
+    out.sort(key=_instant)
+    return out
 
 
 def commit_author_timestamps_touching_pathspecs(
@@ -1052,7 +1076,8 @@ def commit_author_timestamps_touching_pathspecs(
       needed: an empty author-date log IS the "no spec ever appeared in
       history" answer, so one git call answers both questions.
     - ``[ts, ...]`` — author timestamps (timezone-aware) of the touching
-      commits, in git's emit order (newest-first); sort before bisect. A
+      commits, sorted ASCENDING and ready to `bisect_right` — same
+      contract as `commit_author_timestamps`, for the same reason. A
       since-DELETED cited file still lands here: its removal is itself a
       commit that touched it, so it stays in the log — the real-not-phantom
       signal a drift anchor needs.
@@ -1090,7 +1115,14 @@ def commit_author_timestamps_touching_pathspecs(
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=timezone.utc)
         out.append(ts)
-    return out or None
+    if not out:
+        # Non-empty stdout that parsed to nothing is a git oddity, not an
+        # answer. `None` (not `[]`) keeps it from minting the phantom
+        # not-applicable exemption — the clean-empty case already returned
+        # `[]` above, off `empty_ok`. Same split as the old `out or None`.
+        return None
+    out.sort(key=_instant)
+    return out
 
 
 # ---------------------------------------------------------------------------

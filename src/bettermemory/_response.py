@@ -505,7 +505,6 @@ class ResponseBuilder:
         timestamps = commit_author_timestamps(cwd_path)
         if timestamps is None:
             return
-        timestamps_sorted = sorted(timestamps)
         # Resolve the repo root ONCE for the whole search — the per-hit
         # anchor resolution below would otherwise pay a `git rev-parse`
         # fork+exec per hit. None is tolerated (the resolver re-derives),
@@ -551,8 +550,8 @@ class ResponseBuilder:
             # commits strictly after the verify timestamp. Equal-timestamp
             # commits are not counted as drift, matching the health
             # rollup's semantics.
-            idx = bisect.bisect_right(timestamps_sorted, since)
-            count = len(timestamps_sorted) - idx
+            idx = bisect.bisect_right(timestamps, since)
+            count = len(timestamps) - idx
             # Narrow to commits that touched an anchor (mirrors memory_show
             # / the expand_top block), so stable-claim memories don't nag
             # here. None means the anchors all escape this repo — the
