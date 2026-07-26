@@ -974,41 +974,24 @@ BASELINES: dict[str, Any] = {
 }
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Grade the staleness verdict against git-derived ground truth."
-    )
-    parser.add_argument("--repo", default=str(Path(__file__).resolve().parents[2]))
-    parser.add_argument("--subdir", default="src")
-    parser.add_argument("--days", type=int, default=60, help="How far back t0 sits.")
-    parser.add_argument(
-        "--t0",
-        default=None,
-        help=(
-            "Pin t0 to an explicit commit. Without this, t0 is resolved from "
-            "--days against the WALL CLOCK and therefore slides between runs, "
-            "which silently confounds any before/after comparison."
-        ),
-    )
-    parser.add_argument("--json", action="store_true")
-    args = parser.parse_args()
+def collect_rows(
+    repo: Path, subdir: str, t0: str, t1: str, origin_repo: str
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Everything one repository contributes to the corpus.
 
-    repo = Path(args.repo).resolve()
-    # t0 is reported as a full sha in every report, pinned or not: a result
-    # whose window cannot be reconstructed is not reproducible, and
-    # `--until=N days ago` moves every time the clock does.
-    if args.t0:
-        t0 = _git(repo, "rev-parse", args.t0)
-    else:
-        t0 = _git(repo, "log", f"--until={args.days} days ago", "-1", "--format=%H")
-    t1 = _git(repo, "rev-parse", "HEAD")
-    if not t0:
-        print(f"no commit {args.days} days back in {repo}", file=sys.stderr)
-        return 1
-    origin_repo = _git(repo, "config", "--get", "remote.origin.url")
+    Split out from `main` so a multi-repo corpus can POOL rows rather than
+    average per-repo rates. The distinction matters: averaging rates gives
+    a ten-claim repository the same weight as a thousand-claim one, and
+    the significance tests would then be computed on a contingency table
+    that describes no actual population. Pooling keeps every claim one
+    observation, which is what Fisher and the permutation test assume.
 
-    commits_touching = commit_counts_touching(repo, t0, t1, args.subdir)
-    index = build_binding_index(window_diff_text(repo, t0, t1, args.subdir))
+    Each row is tagged with its repo so per-repo breakdowns stay
+    available — an aggregate that cannot be decomposed hides exactly the
+    kind of single-repo artifact this corpus exists to escape.
+    """
+    commits_touching = commit_counts_touching(repo, t0, t1, subdir)
+    index = build_binding_index(window_diff_text(repo, t0, t1, subdir))
 
     workdir = Path(tempfile.mkdtemp(prefix="bm-rot-"))
     tree0 = workdir / "t0"
@@ -1028,7 +1011,7 @@ def main() -> int:
             check=True,
             capture_output=True,
         )
-        claims = extract_claims(tree0, args.subdir)
+        claims = extract_claims(tree0, subdir)
     finally:
         subprocess.run(
             ["git", "-C", str(repo), "worktree", "remove", "--force", str(tree0)],
@@ -1078,6 +1061,7 @@ def main() -> int:
                     empty_anchor_literals += 1
             rows.append(
                 {
+                    "repo": origin_repo or str(repo),
                     "kind": claim.kind,
                     "mode": mode,
                     "truth": truth,
@@ -1091,14 +1075,13 @@ def main() -> int:
                 }
             )
 
-    report: dict[str, Any] = {
+    meta = {
         "repo": origin_repo or str(repo),
+        "subdir": subdir,
         # Full shas, not abbreviations: the window has to be reconstructable
         # from the published artifact alone.
         "t0": t0,
         "t1": t1,
-        "t0_pinned": bool(args.t0),
-        "days": args.days,
         "claims": len(claims),
         "files_changed_in_window": len(commits_touching),
         "diff_index": {
@@ -1122,6 +1105,62 @@ def main() -> int:
             "resolved_rate": _rate(len(rows) - unresolved_citations, len(rows)),
             "empty_anchor_literals": empty_anchor_literals,
         },
+    }
+    return rows, meta
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Grade the staleness verdict against git-derived ground truth."
+    )
+    parser.add_argument("--repo", default=str(Path(__file__).resolve().parents[2]))
+    parser.add_argument("--subdir", default="src")
+    parser.add_argument("--days", type=int, default=60, help="How far back t0 sits.")
+    parser.add_argument(
+        "--t0",
+        default=None,
+        help=(
+            "Pin t0 to an explicit commit. Without this, t0 is resolved from "
+            "--days against the WALL CLOCK and therefore slides between runs, "
+            "which silently confounds any before/after comparison."
+        ),
+    )
+    parser.add_argument(
+        "--t1",
+        default=None,
+        help=(
+            "Pin t1 to an explicit commit. Defaults to HEAD, which moves every "
+            "time you commit — pinning BOTH ends is what makes a published run "
+            "reproducible."
+        ),
+    )
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args()
+
+    repo = Path(args.repo).resolve()
+    # BOTH ends are reported as full shas, pinned or not: a result whose
+    # window cannot be reconstructed is not reproducible. `--until=N days
+    # ago` moves every time the clock does, and HEAD moves every time the
+    # author commits — the second one bit during this benchmark's own
+    # development, when a re-run differed from the published JSON in exactly
+    # one field because a commit had landed in between.
+    if args.t0:
+        t0 = _git(repo, "rev-parse", args.t0)
+    else:
+        t0 = _git(repo, "log", f"--until={args.days} days ago", "-1", "--format=%H")
+    t1 = _git(repo, "rev-parse", args.t1 or "HEAD")
+    if not t0:
+        print(f"no commit {args.days} days back in {repo}", file=sys.stderr)
+        return 1
+    origin_repo = _git(repo, "config", "--get", "remote.origin.url")
+
+    rows, meta = collect_rows(repo, args.subdir, t0, t1, origin_repo)
+
+    report: dict[str, Any] = {
+        **meta,
+        "t0_pinned": bool(args.t0),
+        "t1_pinned": bool(args.t1),
+        "days": args.days,
         "modes": {},
     }
     for mode in _MODES:
@@ -1210,7 +1249,14 @@ def main() -> int:
         print()
 
     print(f"repo {report['repo']}")
-    pinned = "pinned" if report["t0_pinned"] else "CLOCK-RELATIVE, slides between runs"
+    ends = []
+    if not report["t0_pinned"]:
+        ends.append("t0 CLOCK-RELATIVE")
+    if not report["t1_pinned"]:
+        ends.append("t1 = HEAD")
+    pinned = (
+        "both ends pinned" if not ends else ", ".join(ends) + " — slides between runs"
+    )
     print(
         f"t0 {report['t0'][:12]} -> t1 {report['t1'][:12]}  ({args.days} days, {pinned})"
     )

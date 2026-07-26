@@ -1,9 +1,8 @@
 {
   "repo": "https://github.com/0Mattias/bettermemory.git",
+  "subdir": "src",
   "t0": "2b9b07b33b368bc6181a2f02d65e8cdf9b1623d9",
   "t1": "388b5be75472fe39899b95670a12d690bffc3a20",
-  "t0_pinned": true,
-  "days": 30,
   "claims": 820,
   "files_changed_in_window": 72,
   "diff_index": {
@@ -19,6 +18,9 @@
     "resolved_rate": 1.0,
     "empty_anchor_literals": 0
   },
+  "t0_pinned": true,
+  "t1_pinned": true,
+  "days": 30,
   "modes": {
     "drift_only_relative_cite": {
       "path": {
