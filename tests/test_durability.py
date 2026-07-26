@@ -43,58 +43,38 @@ def test_word_boundary_new_in_news() -> None:
     assert all(h.marker != "the new" for h in hits)
 
 
-def test_six_char_hex_does_not_trigger_sha_marker() -> None:
-    """SHA detection requires 7+ chars (git short-SHA default)."""
-    body = "The colour value abc123 is blue."  # 6 chars.
-    assert find_transient_markers(body) == []
-
-
 @pytest.mark.parametrize(
-    "number",
+    "body",
     [
-        "1700000000",  # Unix epoch (10 digits).
-        "1234567",  # smallest 7-digit run.
-        "8005551212",  # phone-number-shaped id.
-        "4042",  # too short anyway, but decimal.
-        "9999999999",  # large numeric id.
+        # The referential majority: 66 of the 79 firing bodies in the
+        # dogfood store looked like these.
+        "Look at commit a1b2c3d for the change.",
+        "The fix landed in 68aff13; the tag v3.15.1 points at it.",
+        "A3 Predictive Intelligence (commit 0e63d2b) introduced the engine.",
+        f"Pinned to commit {'a' * 40} for the refactor.",
+        # git-describe output — the retired companion pattern's shape.
+        "The deployed build is v3.7.1-5-g874b0b0, two commits past the tag.",
+        "The image is tagged 2.4.0-12-ge9a3f1c in the registry.",
+        # A machine-written ledger field: structurally unfixable by
+        # rephrasing, which is the shape _TITLECASE_SKIP_MARKERS already
+        # documents as disqualifying for a marker.
+        "<!-- audit-loop-state v3 --> last_audited_sha: e3e4ba5 empty_ticks: 0",
+        # Hex-shaped identifiers that are not commits at all — the
+        # incidental class the retired detector also blocked.
+        "The machine-id " + "0123456789abcdef" * 2 + " identifies the host.",
+        "Restic snapshot id 57edeb37 holds the pre-crash state.",
+        "The prod KMS key is 1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d (eu-north-1).",
     ],
 )
-def test_all_decimal_number_does_not_trigger_sha_marker(number: str) -> None:
-    """A purely-decimal 7+ digit token is not a commit hash. Digits are a
-    subset of the hex class, so the matched run must contain at least one
-    a-f letter — otherwise durable numbers (epochs, phone numbers, ids,
-    error codes) fail closed against the very content the gate admits."""
-    body = f"The recorded value {number} is the canonical reference."
-    hits = find_transient_markers(body)
-    assert all(not h.marker.startswith("sha:") for h in hits), (
-        f"all-decimal {number!r} must not be flagged as a SHA, "
-        f"got {[h.marker for h in hits]}"
-    )
+def test_commit_citation_is_not_transient(body: str) -> None:
+    """A commit SHA is an immutable, verifiable anchor — not state.
 
-
-def test_uppercase_hex_does_not_trigger_sha_marker() -> None:
-    """ULIDs (and other uppercase hex IDs) shouldn't be misread as SHAs."""
-    body = "Memory id 01HXYZABCDEF identifies the entry."
-    hits = find_transient_markers(body)
-    assert all(not h.marker.startswith("sha:") for h in hits)
-
-
-def test_lowercase_uuid_does_not_trigger_sha_marker() -> None:
-    """Hyphens are word boundaries, so the >=7-char hex segments of a
-    lowercase UUID would match _SHA_RE on their own — but a UUID is a
-    permanent identifier (KMS key, tenant id), not branch state."""
-    body = (
-        "The prod KMS key for the backups bucket is "
-        "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d (eu-north-1)."
-    )
-    assert find_transient_markers(body) == []
-
-
-def test_32_hex_machine_id_does_not_trigger_sha_marker() -> None:
-    """A maximal exactly-32-hex run is MD5 / machine-id / gist-id length —
-    a durable artifact identifier, never a git ref."""
-    machine_id = "0123456789abcdef" * 2  # 32 hex chars.
-    body = f"The machine-id {machine_id} identifies the host."
+    The write gate must not treat one as transient. This is the behaviour
+    change the SHA detector's retirement bought, and the guard against any
+    future hex-shaped detector quietly reintroducing it: 87% of that
+    detector's firings on the live store were citations like these, and
+    45 of its 47 blocks were overridden.
+    """
     assert find_transient_markers(body) == []
 
 
@@ -297,48 +277,35 @@ def test_phrase_match_is_case_insensitive() -> None:
     assert any(h.marker == "currently" for h in hits)
 
 
-def test_seven_char_sha_fires() -> None:
-    body = "Look at commit a1b2c3d for the change."
+def test_a_commit_citation_adds_no_marker_to_a_body_that_already_fires() -> None:
+    """The hex contributes nothing even when the body IS transient.
+
+    "main is at <sha>" is the one class the retired detector legitimately
+    caught. What still blocks that body is the hedging word around the
+    hash, not the hash — which is why removing the hex detector cost so
+    little, and where the residual coverage for branch pointers now lives.
+    """
+    body = "Currently main is at 68aff13."
+    assert {h.marker for h in find_transient_markers(body)} == {"currently"}
+
+
+def test_sha_marker_name_is_read_side_only() -> None:
+    """`SHA_MARKER` is an archive key, not a marker: no producer, live fold.
+
+    Deleting the constant and its fold would look like tidying orphaned
+    code and would silently shatter 92 historical events across 54 rows,
+    making the override rate that justified the retirement unreproducible
+    from the store.
+    """
+    body = (
+        "Shipped across a1b2c3d, 68aff13, 9431b4d, 58a4fa4 and f581121 "
+        "over the release window."
+    )
     hits = find_transient_markers(body)
-    sha_hits = [h for h in hits if h.marker.startswith("sha:")]
-    assert sha_hits, "expected SHA hit"
-    assert sha_hits[0].marker == SHA_MARKER
+    assert not any(h.marker.startswith("sha:") for h in hits)
 
-
-def test_forty_char_sha_fires() -> None:
-    sha = "a" * 40
-    body = f"Pinned to commit {sha} for the refactor."
-    hits = find_transient_markers(body)
-    assert any(h.marker.startswith("sha:") for h in hits)
-
-
-def test_forty_one_char_hex_does_not_fire() -> None:
-    """Above the SHA upper bound — large hex blobs shouldn't trip."""
-    body = "Hash digest " + ("a" * 41) + " is in the cache."
-    hits = find_transient_markers(body)
-    # The 41-char run has no \b at position 40, so no 40-char prefix
-    # match either — the regex only considers maximal hex runs.
-    assert all(not h.marker.startswith("sha:") for h in hits)
-
-
-@pytest.mark.parametrize(
-    ("body", "sha"),
-    [
-        (
-            "The deployed build is v3.7.1-5-g874b0b0, two commits past the tag.",
-            "874b0b0",
-        ),
-        ("The image is tagged 2.4.0-12-ge9a3f1c in the registry.", "e9a3f1c"),
-    ],
-)
-def test_git_describe_sha_fires(body: str, sha: str) -> None:
-    """git-describe output embeds the hash behind a literal 'g', which
-    removes the \\b — the dedicated pattern still buckets it under
-    SHA_MARKER, and the hash itself travels in the snippet."""
-    hits = find_transient_markers(body)
-    sha_hits = [h for h in hits if h.marker == SHA_MARKER]
-    assert sha_hits, f"expected {SHA_MARKER!r}, got {[h.marker for h in hits]}"
-    assert sha in sha_hits[0].snippet
+    # ...but the read-side fold still folds.
+    assert canonical_marker("sha:874b0b0") == SHA_MARKER
 
 
 @pytest.mark.parametrize(
@@ -602,42 +569,6 @@ def test_multiple_distinct_markers_each_reported() -> None:
     markers = {h.marker for h in hits}
     assert "today" in markers
     assert "currently" in markers
-
-
-def test_multiple_shas_reported_once_under_one_marker() -> None:
-    """Five SHAs in a row collapse to one bucket — reading 5 entries adds
-    no signal beyond 'you're putting branch state in memory'."""
-    body = (
-        "Branch is at a1b2c3d, parent of e4f5a6b, sibling of c7d8e9f, "
-        "cherry-picked from b1a2c3d, into trunk b7e8f9a."
-    )
-    hits = find_transient_markers(body)
-    sha_hits = [h for h in hits if h.marker.startswith("sha:")]
-    assert len(sha_hits) == 1
-
-
-def test_different_bodies_share_one_sha_marker_name() -> None:
-    """The bucketing that `marker_stats` actually reads.
-
-    Collapsing within a body was already covered; collapsing ACROSS them
-    was not, and that is the half the aggregation keys on. While the name
-    carried the hash, every write minted a fresh row, so the SHA class
-    could never accumulate the override evidence that decides whether the
-    marker earns its slot.
-    """
-    first = find_transient_markers("Shipped in a1b2c3d, see the tag.")
-    second = find_transient_markers("Reverted by e4f5a6b later that day.")
-
-    names = {h.marker for h in first + second if h.marker.startswith("sha:")}
-    assert names == {SHA_MARKER}, f"SHA marker name is not stable: {names}"
-
-
-def test_sha_hash_survives_in_the_snippet() -> None:
-    """The name is canonical, so the snippet is what carries the hash —
-    the caller still gets told which token tripped the gate."""
-    hits = find_transient_markers("Pinned to a1b2c3d for the refactor.")
-    sha_hit = next(h for h in hits if h.marker == SHA_MARKER)
-    assert "a1b2c3d" in sha_hit.snippet
 
 
 @pytest.mark.parametrize(

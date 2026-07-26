@@ -28,7 +28,7 @@ only see what these tools surface.
 | Decide | Rule |
 |---|---|
 | Search? | shared-context reference or ambiguity → yes. Otherwise no. |
-| Write? | something durable just entered the conversation → yes. Don't wait for "remember that". State, timestamps, or commit-SHA-like tokens → no (durability check will reject; rephrase to the durable level-up form). |
+| Write? | something durable just entered the conversation → yes. Don't wait for "remember that". State or timestamps → no (durability check will reject; rephrase to the durable level-up form). A commit SHA is an anchor, not state — cite it freely. |
 | Category? | claim about the user → `user-inference` (always pending). Atmospheric / no verifiable claims → `ambient`. Else → `fact`. |
 | Outcome? | retrieval shaped reply → silence (settles as `applied` at turn end). Off-topic / wrong → explicit `ignored` / `contradicted` / `corrected`. |
 | Verify? | `staleness_verdict != "fresh"` → `path_drift.missing` on the hit lists what rotted; memory_update those, memory_verify the rest with `verified_paths`. |
@@ -132,8 +132,8 @@ Triggers:
 
 Structural guardrails do the policing — aggressive writing is safe:
 - Durability check rejects transient state ("currently", "today I",
-  "we just", commit-SHA-like tokens). Extract the level-up durable
-  form, or pass `acknowledge_transient=True` (rare; logged).
+  "we just"). Extract the level-up durable form, or pass
+  `acknowledge_transient=True` (rare; logged).
 - Credential check rejects secret-shaped tokens (API keys, PEM
   private keys, JWTs, `password=…`): describe the secret, don't
   embed it, or pass `acknowledge_credential=True` (logged, kind

@@ -53,6 +53,77 @@ emission sites now share, replacing a re-implementation in
 `_response.attach_commit_drift_counts` that three separate "mirror the
 gate in verify.py" comments had been warning about.
 
+### Removed — the commit-SHA transient marker, and the rubber-stamp it trained
+
+The durability module has carried a tuning protocol since it was
+written: *"a high override rate is a signal that a marker is producing
+too many false positives and should be removed … tune against real
+traffic, not vibes."* This release executes it for the first time, and
+the marker it removes is the one that detected commit hashes. A memory
+body may now cite a commit without the write gate objecting.
+
+The telemetry that condemned it, from the dogfood event log: **47 fires
+against 45 overrides**. Read that as 45 of 47 blocks overridden —
+`override_rate` divides by fires *plus* overrides, so its 0.489 is 97.8%
+of the 0.500 that metric can reach when every block is answered. The
+same metric pooled across the phrase markers is 0.161. Of the 47 blocks,
+36 were answered by an explicit `acknowledge_transient=True` in the same
+session, **median gap 25 seconds**; a further 9 overrides have no
+preceding block at all, because the caller had started pre-acknowledging
+before being asked — 7 of those in the final fortnight. That is not a
+gate. It is a speed bump that taught its caller the override reflex,
+which the marker-list comment names as worse than having no marker.
+
+The corpus agrees from the other side. Of 210 accepted bodies, 79
+contained text the detector fires on: **66 referential** ("the fix
+landed in 68aff13"), **10 positional** ("main is at 68aff13"), **3
+incidental** — a restic snapshot id, a Cloudflare build id, a container
+image tag, none of them commits at all. Only the positional class was
+ever the target, and 2 of those 10 were already caught by another marker
+in the same body, so 8 firings in 79 were catches nothing else would
+make. Meanwhile 64 of the 79 bodies carry `verified_commits`
+attestations: this project's own verification system treats commit
+identity as a durable anchor, and the write gate was arguing with it and
+losing 45 times out of 47.
+
+One of the ten genuine catches is a machine-written loop ledger
+(`last_audited_sha: e3e4ba5`). A structured field cannot be rephrased,
+which is precisely the shape the title-case skip list already documents
+as disqualifying — every fire on it could only ever train the override.
+
+Two paths had no override valve at all, and there the marker was not a
+gate but a data-loss valve. In the proposal extractor a sentence like
+"I prefer to cite the commit that introduced a regression, e.g. a1b2c3d,
+in the postmortem" was discarded outright while the identical sentence
+without the hash was captured; the LLM consolidation path raised. Both
+now keep the sentence.
+
+Removed with the detector: the git-describe companion pattern (zero
+occurrences across the 210 live bodies), and the UUID mask and 32-hex
+skip, which existed only to stop durable identifiers — tenant UUIDs, KMS
+key ids, MD5 artifact hashes — from failing closed against a scan that
+no longer runs.
+
+**Kept deliberately, and it looks like dead code:** the `SHA_MARKER`
+name, `canonical_marker` and the legacy-name fold. They read the
+append-only event log, never a candidate body, and they are what folds 92
+historical events (54 distinct raw names, 21 of them singletons) into the
+single row quoted above. Deleting them as leftovers would make the
+evidence for this removal unreproducible from the store. The constant now
+carries a tombstone comment saying so, and a test pins the split.
+
+**The honest cost.** A body whose only transient signal is a bare branch
+pointer — "main is at 68aff13", "head 1dc5bfe", "prod runs main@ed415c5"
+— now commits unremarked. Every hedged or dated spelling of the same
+fact still fires ("currently", "as of `<date>`", "the latest", "commits
+ahead"); what is uncovered is specifically the terse, unhedged pointer.
+The read side does **not** rescue it: `compute_commit_drift` anchors on
+paths, and a pure branch pointer has none, so the leg returns `None` —
+which is exactly the case that never demotes. The calendar leg is the
+only backstop for that shape. The right repair is read-side, resolving a
+body-cited SHA against the repo at verification time rather than a regex
+judging English, and it is deliberately not in this release.
+
 ## 3.29.0 - 2026-07-26
 
 Almost no new feature, and one reversal. This window is one thing:

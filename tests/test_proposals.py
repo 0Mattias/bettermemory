@@ -87,6 +87,27 @@ def test_extract_rejects_transient_state() -> None:
     )
 
 
+def test_extract_keeps_a_sentence_that_cites_a_commit() -> None:
+    """The transient gate has no override valve on this path.
+
+    A sentence reaching `extract_proposals` is dropped outright when a
+    marker fires — there is no `acknowledge_transient` equivalent here, so
+    a false positive is silent data loss rather than a 25-second detour.
+    While the commit-SHA detector existed, this sentence was discarded and
+    the identical sentence without the hash was captured.
+    """
+    with_sha = extract_proposals(
+        "I prefer to cite the commit that introduced a regression, "
+        "e.g. a1b2c3d, in the postmortem.",
+        now=_NOW,
+    )
+    without_sha = extract_proposals(
+        "I prefer to cite the commit that introduced a regression in the postmortem.",
+        now=_NOW,
+    )
+    assert len(with_sha) == len(without_sha) == 1
+
+
 def test_extract_rejects_sentences_without_a_durable_marker() -> None:
     assert (
         extract_proposals("The weather today is quite pleasant outside.", now=_NOW)

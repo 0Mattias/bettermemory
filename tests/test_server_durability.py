@@ -96,10 +96,12 @@ async def test_multiple_markers_all_reported(
     )
     assert res["status"] == "transient_warning"
     markers = {m["marker"] for m in res["markers"]}
-    # At least three distinct markers should fire.
+    # Two distinct markers fire. The commit hash in the same sentence is
+    # deliberately not one of them — that detector was retired; see
+    # `durability.SHA_MARKER`.
     assert "today" in markers
     assert "we just" in markers
-    assert any(m.startswith("sha:") for m in markers)
+    assert not any(m.startswith("sha:") for m in markers)
 
 
 async def test_marker_response_includes_snippet(

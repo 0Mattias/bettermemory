@@ -337,11 +337,21 @@ class MarkerStats:
 
     @property
     def override_rate(self) -> float:
-        """Fraction of fires the caller chose to override.
+        """Overrides as a fraction of ALL events for this marker.
+
+        Note the denominator: `total` is fires PLUS overrides, and a blocked
+        write that the caller then re-issues with `acknowledge_transient`
+        logs one of each. So a marker whose every block is answered scores
+        0.500, not 1.000 — the practical ceiling is half, and a rate near it
+        means near-total rubber-stamping rather than "about half the time".
+        Read a headline figure against 0.500, not against 1.0; to recover
+        the blocks-overridden fraction, compare `override_count` with
+        `fire_count` directly.
 
         High value = caller routinely rubber-stamps `acknowledge_transient`,
         which is the signal that the marker is producing too many false
-        positives. Trim it.
+        positives. Trim it — `durability.SHA_MARKER` is the worked example
+        of that trim, and of what its closed row looked like beforehand.
         """
         return self.override_count / self.total if self.total > 0 else 0.0
 

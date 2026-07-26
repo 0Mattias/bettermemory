@@ -25,6 +25,11 @@ Telemetry: every fire AND every override is logged to `.events.jsonl`. A
 high override rate is a signal that a marker is producing too many false
 positives and should be removed; a low fire rate is a signal we should
 expand the list. Tune against real traffic, not vibes.
+
+That protocol has been executed once, and the retirement it produced is
+the worked example: see the `SHA_MARKER` comment below for what the
+commit-SHA detector's own event log said about it, and what had to be
+kept afterwards so the evidence stays readable.
 """
 
 from __future__ import annotations
@@ -32,7 +37,6 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass
-from itertools import chain
 
 
 # ---------------------------------------------------------------------------
@@ -148,44 +152,43 @@ TRANSIENT_PHRASE_MARKERS: tuple[str, ...] = (
 )
 
 
-# Bare hex strings that look like commit SHAs (7-40 hex chars at a word
-# boundary). Conservative lower bound: 7 is the git short-SHA default. The
-# upper bound stops it from matching long unrelated hex blobs (sha-512
-# digests, hex-encoded keys). Lowercase only — git short SHAs are
-# conventionally lowercase, and locking on case avoids false positives on
-# uppercase identifiers like ULIDs (which use 0-9A-Z but not a-f).
+# RETIRED marker name — read-side only. Nothing produces it any more.
 #
-# The leading lookahead requires at least one a-f letter inside the run, so
-# a purely-decimal token (a Unix epoch like 1700000000, a phone number, a
-# large numeric id, an error code) can't masquerade as a SHA. Digits are a
-# subset of the hex class, so without this guard those durable numbers would
-# fail closed against exactly the content the gate is meant to admit.
+# The commit-SHA detector was removed after its own telemetry condemned it,
+# executing the tuning protocol this module's docstring has carried since it
+# was written ("a high override rate is a signal that a marker is producing
+# too many false positives and should be removed").
 #
-# Two further exemptions, same rationale (durable identifiers must not fail
-# closed): UUIDs are masked out before the scan (see _UUID_RE), and maximal
-# exactly-32-hex runs are skipped in the scan loop — that's MD5 /
-# machine-id / gist-id length, never a git ref (git emits 7-12 char short
-# SHAs and 40-char full SHAs).
-_SHA_RE = re.compile(r"\b(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b")
-
-
-# `git describe` output (v3.7.1-5-g874b0b0) embeds the abbreviated hash
-# behind a literal 'g'; 'g' is a word character outside [0-9a-f], so
-# _SHA_RE's \b can never anchor there even though the string is the most
-# common machine-generated spelling of pure branch state. The lookbehind
-# keeps the bare hex as the match, so it buckets under the same marker as
-# any other SHA.
-_DESCRIBE_SHA_RE = re.compile(r"(?<=-g)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b")
-
-
-# The marker NAME must not carry the SHA. `health.marker_stats` aggregates
-# by marker name to answer one question — "is this marker's override rate
-# high enough to drop it?" — and a name containing the hash makes every
-# firing its own row, so the class can never accumulate the evidence that
-# answer needs. Measured on a real store before this was fixed: 89 SHA
-# events smeared across 52 rows, largest n = 5, pooled override rate 0.49
-# against 0.17 for the phrase markers. The offending SHA is still shown to
-# the caller — it travels in the match's `snippet`, not in its name.
+# The write-side record, closed: 47 fires, 45 overrides. Read that as 45 of
+# 47 blocks overridden — `MarkerStats.override_rate` divides by fires PLUS
+# overrides, so its 0.489 is 97.8% of the 0.500 that metric can reach when
+# every block is answered. Pooled across the phrase markers the same metric
+# is 0.161 (52 fires / 10 overrides), so this marker ran 3.0x the rest of
+# the list. 36 of the 47 blocks were answered by an explicit override in the
+# same session, median gap 25 seconds. A further 9 of the 45 overrides have
+# no preceding block at all — the caller had begun passing
+# `acknowledge_transient=True` pre-emptively, 7 of those in the final
+# fortnight. That is the rubber-stamp the marker-list comment above calls
+# worse than not having the marker.
+#
+# The corpus said the same thing from the other side. Of 210 accepted bodies
+# in the dogfood store, 79 contained text this detector fired on: 66
+# referential ("the fix landed in 68aff13"), 10 positional ("main is at
+# 68aff13"), 3 incidental (a restic snapshot id, a Cloudflare build id, a
+# container image tag). Only the positional class was ever the target, and 2
+# of those 10 were already caught by another marker in the same body — so 8
+# firings in 79 were catches nothing else would make. 64 of the 79 bodies
+# carry `verified_commits` attestations: this project's own verification
+# system treats commit identity as a durable anchor, and the write gate was
+# arguing with it and losing.
+#
+# The name survives because `canonical_marker` folds 92 historical events
+# (54 distinct raw names, 21 of them singletons) onto it. Do NOT wire it
+# back into `find_transient_markers`: new fires would mix into that closed
+# row and destroy the evidence above. A future SHA-shaped detector needs a
+# new name and its own telemetry — and the better home for the one class
+# this did catch is read-side, where a body-cited SHA is a resolvable commit
+# rather than a regex judging English.
 SHA_MARKER = "sha:<commit>"
 
 
@@ -202,28 +205,21 @@ def canonical_marker(marker: str) -> str:
     Read-side only: the event log is append-only and is NOT rewritten.
     Aggregations key on the marker name, so without this fold every SHA
     event written before the bucketing fix stays its own row forever and
-    the class the fix exists to make measurable reads as 52 singletons.
+    the class the fix exists to make measurable reads as singletons.
+
+    The detector that minted these names is gone, so this is now pure
+    archive work: the row it produces is closed at 47 fires / 45 overrides
+    and will never grow. That closed row is the evidence for the removal,
+    which is exactly why the fold must not be simplified away as dead code
+    — it has no producer left, and that is the point rather than a defect.
     """
     return SHA_MARKER if _LEGACY_SHA_MARKER_RE.match(marker) else marker
 
 
-# UUIDs (8-4-4-4-12 hex) are permanent identifiers — KMS keys, tenant ids,
-# content hashes — and structurally distinguishable from a commit SHA, but
-# hyphens are word boundaries, so each >=7-char segment of a lowercase UUID
-# would match _SHA_RE on its own. The SHA pass therefore runs over a copy
-# with UUID spans blanked out (offset-preserving, so snippets still index
-# the original text). Case-tolerant: mixed-case UUIDs still carry lowercase
-# segments that would otherwise match.
-_UUID_RE = re.compile(
-    r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}"
-    r"-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
-)
-
-
 # Dated state snapshots ("as of 2026-06-09 the cluster is on k8s 1.29")
-# are canonical transient content; bucketed under one marker like the SHA
-# loop. Bare "as of" deliberately stays unmatched: version-pinned forms
-# ("as of 2.7.0", "as of Python 3.12") are durable.
+# are canonical transient content, bucketed under one marker rather than
+# one per date. Bare "as of" deliberately stays unmatched: version-pinned
+# forms ("as of 2.7.0", "as of Python 3.12") are durable.
 _AS_OF_DATE_RE = re.compile(r"\bas of \d{4}-\d{2}-\d{2}\b", re.IGNORECASE)
 _AS_OF_DATE_MARKER = "as of <date>"
 
@@ -323,9 +319,8 @@ _TITLECASE_SKIP_MARKERS: frozenset[str] = frozenset(
 class TransientMatch:
     """One transient-marker hit against a candidate write.
 
-    `marker` is the canonical phrase from `TRANSIENT_PHRASE_MARKERS`,
-    `"sha:<7-char prefix>"` for SHA matches, or `"as of <date>"` for dated
-    state snapshots. `snippet` is up to ~40 chars
+    `marker` is the canonical phrase from `TRANSIENT_PHRASE_MARKERS`, or
+    `"as of <date>"` for dated state snapshots. `snippet` is up to ~40 chars
     of surrounding context — surfaced in the tool error so the caller can
     see exactly what tripped.
     """
@@ -445,28 +440,6 @@ def find_transient_markers(content: str) -> list[TransientMatch]:
                 snippet=_snippet_around(content, as_of.start(), as_of.end()),
             )
         )
-
-    # The SHA pass runs over a UUID-masked copy: the substitution is
-    # offset-preserving, so snippets still index the original text.
-    masked = _UUID_RE.sub(lambda m: " " * len(m.group()), content)
-    for match in chain(_SHA_RE.finditer(masked), _DESCRIBE_SHA_RE.finditer(masked)):
-        sha = match.group()
-        if len(sha) == 32:
-            # A maximal exactly-32-hex run is MD5 / machine-id / gist-id
-            # length — a durable artifact identifier, never a git ref.
-            continue
-        # Bucket all SHA hits under one canonical marker so a body listing
-        # five commit SHAs doesn't produce five entries — one is enough to
-        # tell the caller "you're putting branch state in memory". The
-        # `break` buckets within a body; the canonical NAME is what buckets
-        # across them, which is the half `marker_stats` reads.
-        hits.append(
-            TransientMatch(
-                marker=SHA_MARKER,
-                snippet=_snippet_around(content, match.start(), match.end()),
-            )
-        )
-        break
 
     return hits
 
