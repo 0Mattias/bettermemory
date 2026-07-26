@@ -1,0 +1,22 @@
+# Byte-exact benchmark inputs.
+#
+# `bench/rot/select.py` pins the corpus frame by sha256, and that hash is the
+# whole reproducibility argument: a third party with these bytes derives the
+# same repository ordering, with no API access and no trust in us. Git's EOL
+# translation breaks that — a Windows checkout rewrote the file's single LF to
+# CRLF and the hash check correctly refused it. Marking the frame binary keeps
+# the committed bytes verbatim on every platform, so the anchor is genuinely
+# platform-independent rather than platform-independent-on-Linux.
+bench/rot/frame/*.json -text
+
+# DELIBERATELY ABSENT: any `*.py diff=python` rule.
+#
+# Git's default funcname heuristic — not the Python driver — is what produces
+# the `@@ ... @@` section headings this repository's history contains, and
+# `bench/rot`'s claim-level detector is documented against that behaviour. It
+# does not READ those headings (they label a method-body edit inside `Store`
+# as `class Store:`, which would make a heading-keyed detector a body-churn
+# amplifier), but the measurements and the reasoning in bench/rot/README.md
+# describe the default heuristic's output. Turning on the Python driver would
+# silently change what a future reader sees when they check that reasoning
+# against `git log -p`.

@@ -228,7 +228,7 @@ def label_claim(claim: Claim, tree_root: Path) -> str:
 #      legitimate.
 #
 # Deliberately NOT used: git's `@@ ... @@ <section heading>`. This repo ships
-# no `.gitattributes`, so git falls back to its default funcname heuristic,
+# no Python diff driver, so git falls back to its default funcname heuristic,
 # which yields headings like `class Store:` (136x in the 60-day window),
 # `__all__ = [` (61x) and `def add_subparser(` (84x). Every method-body edit
 # inside `Store` reports `class Store:`, so a heading-keyed detector is a

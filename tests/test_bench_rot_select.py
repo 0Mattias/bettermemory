@@ -56,6 +56,42 @@ def test_frame_is_pinned_by_hash_and_loads_in_rank_order() -> None:
     )
 
 
+def test_the_frame_is_protected_from_eol_translation() -> None:
+    """The hash anchor has to survive a checkout on any platform.
+
+    It did not: a Windows CI run rewrote the frame's single LF to CRLF,
+    changing the bytes and so the sha256, and `load_frame` correctly
+    refused the file. The hash check was right — the FRAME was
+    platform-dependent, which makes "a third party derives the same
+    ordering from these bytes" true only on Linux and macOS.
+
+    `.gitattributes` marks the frame binary so git stores and checks it
+    out verbatim. Both halves are pinned: the attribute must be set, and
+    the working file must actually be free of CRLF.
+    """
+    raw = select.FRAME_PATH.read_bytes()
+    assert b"\r\n" not in raw, (
+        "the frame file has CRLF line endings — git translated it on "
+        "checkout and its sha256 no longer matches the published anchor"
+    )
+
+    # Only ACTIVE rules count. The file's own commentary names the rule it
+    # deliberately omits, so a naive substring check reads that prose as
+    # the rule being present.
+    rules = [
+        line.strip()
+        for line in (_ROOT / ".gitattributes").read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    assert "bench/rot/frame/*.json -text" in rules, (
+        "the rule keeping the frame byte-exact across platforms is gone"
+    )
+    assert not any("diff=python" in rule for rule in rules), (
+        "a Python diff driver would change git's `@@` section headings, "
+        "which bench/rot/README.md's reasoning is written against"
+    )
+
+
 def test_a_changed_frame_file_is_refused(tmp_path: Path) -> None:
     """If the bytes change it is a different frame, and its numbers are not
     comparable to the published ones. Failing loudly is the only safe

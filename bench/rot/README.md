@@ -269,8 +269,8 @@ quietly becoming a second copy of the oracle:
    detector structured truth the product never has, and would make the
    value comparison privileged rather than fair.
 
-Deliberately unused: git's `@@ … @@` section headings. This repo ships no
-`.gitattributes`, so git falls back to its default funcname heuristic, which
+Deliberately unused: git's `@@ … @@` section headings. This repo sets no
+Python diff driver, so git falls back to its default funcname heuristic, which
 labels hunks `class Store:` (136×), `__all__ = [` (61×) and
 `def add_subparser(` (84×). Every method-body edit inside `Store` would
 report `class Store:`, making a heading-keyed detector a body-churn
