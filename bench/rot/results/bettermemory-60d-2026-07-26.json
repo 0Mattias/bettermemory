@@ -1,6 +1,32 @@
 {
+  "baselines": {
+    "always_flag": {
+      "actually_false": 26,
+      "alerts_per_catch": 26.0,
+      "base_rate": 0.0385,
+      "false_alarm_rate": 1.0,
+      "fisher_p": 1.0,
+      "flag_rate": 1.0,
+      "n": 675,
+      "precision": 0.0385,
+      "unflagged_stale_rate": 0.0,
+      "youden_j": 0.0
+    },
+    "never_flag": {
+      "actually_false": 26,
+      "alerts_per_catch": null,
+      "base_rate": 0.0385,
+      "false_alarm_rate": 0.0,
+      "fisher_p": null,
+      "flag_rate": 0.0,
+      "n": 675,
+      "precision": null,
+      "unflagged_stale_rate": 1.0,
+      "youden_j": 0.0
+    }
+  },
   "bettermemory_version": "3.29.0",
-  "claims": 674,
+  "claims": 675,
   "date": "2026-07-26",
   "days": 60,
   "files_changed_in_window": 82,
@@ -13,131 +39,167 @@
     "drift_only_absolute_cite": {
       "ALL": {
         "actually_false": 26,
-        "base_rate": 0.0386,
-        "false_alarm_rate": 0.966,
+        "alerts_per_catch": 25.1,
+        "base_rate": 0.0385,
+        "false_alarm_rate": 0.9661,
+        "fisher_p": 0.4155,
         "flag_rate": 0.9674,
-        "n": 674,
+        "n": 675,
         "path_drift_flags": 0,
-        "precision": 0.0399,
-        "unflagged_stale_rate": 0.0
+        "precision": 0.0398,
+        "unflagged_stale_rate": 0.0,
+        "youden_j": 0.0339
       },
       "literal": {
         "actually_false": 20,
+        "alerts_per_catch": 5.5,
         "base_rate": 0.177,
         "false_alarm_rate": 0.957,
+        "fisher_p": 0.4535,
         "flag_rate": 0.9646,
         "n": 113,
         "path_drift_flags": 0,
         "precision": 0.1835,
-        "unflagged_stale_rate": 0.0
+        "unflagged_stale_rate": 0.0,
+        "youden_j": 0.043
       },
       "path": {
         "actually_false": 0,
+        "alerts_per_catch": null,
         "base_rate": 0.0,
         "false_alarm_rate": 0.9091,
+        "fisher_p": null,
         "flag_rate": 0.9091,
         "n": 77,
         "path_drift_flags": 0,
         "precision": 0.0,
-        "unflagged_stale_rate": null
+        "unflagged_stale_rate": null,
+        "youden_j": null
       },
       "symbol": {
         "actually_false": 6,
+        "alerts_per_catch": 79.0,
         "base_rate": 0.0124,
         "false_alarm_rate": 0.977,
+        "fisher_p": 0.8708,
         "flag_rate": 0.9773,
-        "n": 484,
+        "n": 485,
         "path_drift_flags": 0,
         "precision": 0.0127,
-        "unflagged_stale_rate": 0.0
+        "unflagged_stale_rate": 0.0,
+        "youden_j": 0.023
       }
     },
     "drift_only_relative_cite": {
       "ALL": {
         "actually_false": 26,
-        "base_rate": 0.0386,
-        "false_alarm_rate": 0.966,
+        "alerts_per_catch": 25.1,
+        "base_rate": 0.0385,
+        "false_alarm_rate": 0.9661,
+        "fisher_p": 0.4155,
         "flag_rate": 0.9674,
-        "n": 674,
+        "n": 675,
         "path_drift_flags": 0,
-        "precision": 0.0399,
-        "unflagged_stale_rate": 0.0
+        "precision": 0.0398,
+        "unflagged_stale_rate": 0.0,
+        "youden_j": 0.0339
       },
       "literal": {
         "actually_false": 20,
+        "alerts_per_catch": 5.5,
         "base_rate": 0.177,
         "false_alarm_rate": 0.957,
+        "fisher_p": 0.4535,
         "flag_rate": 0.9646,
         "n": 113,
         "path_drift_flags": 0,
         "precision": 0.1835,
-        "unflagged_stale_rate": 0.0
+        "unflagged_stale_rate": 0.0,
+        "youden_j": 0.043
       },
       "path": {
         "actually_false": 0,
+        "alerts_per_catch": null,
         "base_rate": 0.0,
         "false_alarm_rate": 0.9091,
+        "fisher_p": null,
         "flag_rate": 0.9091,
         "n": 77,
         "path_drift_flags": 0,
         "precision": 0.0,
-        "unflagged_stale_rate": null
+        "unflagged_stale_rate": null,
+        "youden_j": null
       },
       "symbol": {
         "actually_false": 6,
+        "alerts_per_catch": 79.0,
         "base_rate": 0.0124,
         "false_alarm_rate": 0.977,
+        "fisher_p": 0.8708,
         "flag_rate": 0.9773,
-        "n": 484,
+        "n": 485,
         "path_drift_flags": 0,
         "precision": 0.0127,
-        "unflagged_stale_rate": 0.0
+        "unflagged_stale_rate": 0.0,
+        "youden_j": 0.023
       }
     },
     "shipped_default": {
       "ALL": {
         "actually_false": 26,
-        "base_rate": 0.0386,
+        "alerts_per_catch": 26.0,
+        "base_rate": 0.0385,
         "false_alarm_rate": 1.0,
+        "fisher_p": 1.0,
         "flag_rate": 1.0,
-        "n": 674,
+        "n": 675,
         "path_drift_flags": 0,
-        "precision": 0.0386,
-        "unflagged_stale_rate": 0.0
+        "precision": 0.0385,
+        "unflagged_stale_rate": 0.0,
+        "youden_j": 0.0
       },
       "literal": {
         "actually_false": 20,
+        "alerts_per_catch": 5.7,
         "base_rate": 0.177,
         "false_alarm_rate": 1.0,
+        "fisher_p": 1.0,
         "flag_rate": 1.0,
         "n": 113,
         "path_drift_flags": 0,
         "precision": 0.177,
-        "unflagged_stale_rate": 0.0
+        "unflagged_stale_rate": 0.0,
+        "youden_j": 0.0
       },
       "path": {
         "actually_false": 0,
+        "alerts_per_catch": null,
         "base_rate": 0.0,
         "false_alarm_rate": 1.0,
+        "fisher_p": null,
         "flag_rate": 1.0,
         "n": 77,
         "path_drift_flags": 0,
         "precision": 0.0,
-        "unflagged_stale_rate": null
+        "unflagged_stale_rate": null,
+        "youden_j": null
       },
       "symbol": {
         "actually_false": 6,
+        "alerts_per_catch": 80.8,
         "base_rate": 0.0124,
         "false_alarm_rate": 1.0,
+        "fisher_p": 1.0,
         "flag_rate": 1.0,
-        "n": 484,
+        "n": 485,
         "path_drift_flags": 0,
         "precision": 0.0124,
-        "unflagged_stale_rate": 0.0
+        "unflagged_stale_rate": 0.0,
+        "youden_j": 0.0
       }
     }
   },
   "repo": "https://github.com/0Mattias/bettermemory.git",
-  "t0": "0c131b922044",
-  "t1": "d7830a38e290"
+  "t0": "b982ad0c2a1e",
+  "t1": "b4dcdd2f18e7"
 }

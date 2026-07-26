@@ -59,6 +59,7 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import math
 import subprocess
 import sys
 import tempfile
@@ -250,6 +251,76 @@ def _rate(num: int, den: int) -> float | None:
     return round(num / den, 4) if den else None
 
 
+def fisher_one_sided(tp: int, fn: int, fp: int, tn: int) -> float | None:
+    """Right-tail Fisher exact p for a 2x2 detector table.
+
+    Answers the only question that makes a detection number mean anything:
+    could a detector that flagged at THIS RATE, but chose at random, have
+    caught at least this many? At a 4% base rate a 97% flag rate catches
+    everything by construction, so a raw recall figure is not evidence.
+    Hand-rolled via `math.comb` rather than adding a scipy dependency to a
+    bench script.
+    """
+    n_false = tp + fn
+    n_flagged = tp + fp
+    total = tp + fn + fp + tn
+    if not total or not n_false or not n_flagged:
+        return None
+    upper = min(n_false, n_flagged)
+    denom = math.comb(total, n_false)
+    if denom == 0:
+        return None
+    tail = sum(
+        math.comb(n_flagged, i) * math.comb(total - n_flagged, n_false - i)
+        for i in range(tp, upper + 1)
+    )
+    return round(tail / denom, 4)
+
+
+def youden_j(tp: int, fn: int, fp: int, tn: int) -> float | None:
+    """TPR - FPR. Exactly 0.0 for EVERY constant classifier.
+
+    `always_flag` scores TPR=1, FPR=1 -> J=0; `never_flag` scores 0-0 -> J=0.
+    That property is the whole reason this is the primary metric: it makes
+    "flag everything and claim perfect recall" arithmetically worthless,
+    rather than something prose has to argue against.
+    """
+    if not (tp + fn) or not (fp + tn):
+        return None
+    return round(tp / (tp + fn) - fp / (fp + tn), 4)
+
+
+def _detector_stats(sel: list[dict[str, Any]], flag: Any) -> dict[str, Any]:
+    """Score one detector over one slice. `flag` maps a row to a decision."""
+    tp = sum(1 for r in sel if r["truth"] == "false" and flag(r))
+    fn = sum(1 for r in sel if r["truth"] == "false" and not flag(r))
+    fp = sum(1 for r in sel if r["truth"] == "still_true" and flag(r))
+    tn = sum(1 for r in sel if r["truth"] == "still_true" and not flag(r))
+    return {
+        "n": len(sel),
+        "actually_false": tp + fn,
+        "base_rate": _rate(tp + fn, len(sel)),
+        "flag_rate": _rate(tp + fp, len(sel)),
+        "unflagged_stale_rate": _rate(fn, tp + fn),
+        "false_alarm_rate": _rate(fp, fp + tn),
+        "precision": _rate(tp, tp + fp),
+        # Never report J without these two beside it. J says whether the
+        # detector beats a coin; p says whether that margin is real; and
+        # alerts_per_catch is what the user actually lives with.
+        "youden_j": youden_j(tp, fn, fp, tn),
+        "fisher_p": fisher_one_sided(tp, fn, fp, tn),
+        "alerts_per_catch": round((tp + fp) / tp, 1) if tp else None,
+    }
+
+
+# Constant classifiers. Any detector that cannot beat these has not been
+# shown to work, however good its recall looks in isolation.
+BASELINES: dict[str, Any] = {
+    "always_flag": lambda r: True,
+    "never_flag": lambda r: False,
+}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Grade the staleness verdict against git-derived ground truth."
@@ -341,26 +412,19 @@ def main() -> int:
                 for r in rows
                 if r["mode"] == mode and (kind == "ALL" or r["kind"] == kind)
             ]
-            false_claims = [r for r in sel if r["truth"] == "false"]
-            true_claims = [r for r in sel if r["truth"] == "still_true"]
-            flagged = [r for r in sel if r["flagged"]]
-            block[kind] = {
-                "n": len(sel),
-                "actually_false": len(false_claims),
-                "base_rate": _rate(len(false_claims), len(sel)),
-                "flag_rate": _rate(len(flagged), len(sel)),
-                "path_drift_flags": sum(1 for r in sel if r["path_drift"] > 0),
-                "unflagged_stale_rate": _rate(
-                    sum(1 for r in false_claims if not r["flagged"]), len(false_claims)
-                ),
-                "false_alarm_rate": _rate(
-                    sum(1 for r in true_claims if r["flagged"]), len(true_claims)
-                ),
-                "precision": _rate(
-                    sum(1 for r in flagged if r["truth"] == "false"), len(flagged)
-                ),
-            }
+            stats = _detector_stats(sel, lambda r: r["flagged"])
+            stats["path_drift_flags"] = sum(1 for r in sel if r["path_drift"] > 0)
+            block[kind] = stats
         report["modes"][mode] = block
+
+    # Score the constant classifiers on the same claims. If the shipped
+    # detector cannot beat these, the recall number is an artifact of its
+    # flag rate and not evidence that it works.
+    baselines: dict[str, Any] = {}
+    for name, flag in BASELINES.items():
+        sel = [r for r in rows if r["mode"] == _MODES[0]]
+        baselines[name] = _detector_stats(sel, flag)
+    report["baselines"] = baselines
 
     if args.json:
         print(json.dumps(report, indent=2))
@@ -374,12 +438,12 @@ def main() -> int:
         for mode, block in report["modes"].items():
             print(f"[{mode}]")
             print(
-                "| class   |    n | false | base | flagged | unflagged_stale "
-                "| false_alarm | prec |"
+                "| class   |    n | false | flagged | unflagged_stale | prec "
+                "|      J | Fisher p | alerts/catch |"
             )
             print(
-                "|---------|------|-------|------|---------|-----------------"
-                "|-------------|------|"
+                "|---------|------|-------|---------|-----------------|------"
+                "|--------|----------|--------------|"
             )
             for kind in (*CLAIM_CLASSES, "ALL"):
                 s = block[kind]
@@ -387,13 +451,27 @@ def main() -> int:
                 def pc(v: float | None) -> str:
                     return "  n/a" if v is None else f"{100 * v:>4.0f}%"
 
+                jv = "   n/a" if s["youden_j"] is None else f"{s['youden_j']:>6.3f}"
+                pv = "     n/a" if s["fisher_p"] is None else f"{s['fisher_p']:>8.3f}"
+                ac = (
+                    "         n/a"
+                    if s["alerts_per_catch"] is None
+                    else f"{s['alerts_per_catch']:>12.1f}"
+                )
                 print(
                     f"| {kind:<7} | {s['n']:>4} | {s['actually_false']:>5} "
-                    f"| {pc(s['base_rate'])} | {pc(s['flag_rate'])}   "
-                    f"| {pc(s['unflagged_stale_rate'])}            "
-                    f"| {pc(s['false_alarm_rate'])}       | {pc(s['precision'])} |"
+                    f"| {pc(s['flag_rate'])}   | {pc(s['unflagged_stale_rate'])}"
+                    f"            | {pc(s['precision'])} | {jv} | {pv} | {ac} |"
                 )
             print()
+        print("[baselines — constant classifiers on the same claims]")
+        for name, s in report["baselines"].items():
+            jv = "n/a" if s["youden_j"] is None else f"{s['youden_j']:.3f}"
+            print(
+                f"  {name:<12} flag_rate={s['flag_rate']}  "
+                f"unflagged_stale={s['unflagged_stale_rate']}  J={jv}"
+            )
+        print()
     return 0
 
 

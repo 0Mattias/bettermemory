@@ -182,6 +182,53 @@ def test_unchanged_literal_is_not_drift(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_a_constant_classifier_scores_zero_on_the_primary_metric() -> None:
+    """Youden's J is the primary metric precisely because it cannot be
+    gamed by flagging everything. Both constant classifiers must score
+    exactly 0.0 — if that ever stops being true, the metric has stopped
+    doing the one job it was chosen for."""
+    assert rot.youden_j(tp=10, fn=0, fp=90, tn=0) == 0.0  # always_flag
+    assert rot.youden_j(tp=0, fn=10, fp=0, tn=90) == 0.0  # never_flag
+    # A detector with genuine discrimination must beat both.
+    assert rot.youden_j(tp=9, fn=1, fp=10, tn=80) > 0.5
+
+
+def test_perfect_recall_at_a_high_flag_rate_is_not_significant() -> None:
+    """The error this benchmark shipped in its first version: 0% miss rate
+    was reported as an achievement when a flag-everything detector earns
+    the same score by construction. Fisher against a rate-matched random
+    detector is what distinguishes them, so it is pinned here."""
+    caught_all_by_flagging_all = rot.fisher_one_sided(tp=26, fn=0, fp=628, tn=21)
+    assert caught_all_by_flagging_all is not None
+    assert caught_all_by_flagging_all > 0.05, (
+        "catching everything by flagging everything must NOT read as significant"
+    )
+    genuinely_discriminating = rot.fisher_one_sided(tp=20, fn=6, fp=10, tn=639)
+    assert genuinely_discriminating is not None
+    assert genuinely_discriminating < 0.001
+
+
+def test_readme_never_reports_a_miss_rate_without_its_counterweights() -> None:
+    """A prose ratchet, in the style this project already uses on its docs.
+
+    The first version of the rot README led with "the verdict never
+    misses" and a 0% unflagged-stale rate, which is what `always_flag`
+    scores. Any future edit that reintroduces a bare miss-rate claim
+    without J, a significance test and alerts-per-catch nearby is
+    reproducing the exact framing error the benchmark was built to expose.
+    """
+    readme = (_ROOT / "bench" / "rot" / "README.md").read_text(encoding="utf-8")
+    lowered = readme.lower()
+    if "unflagged-stale" in lowered or "unflagged_stale" in lowered:
+        for required in ("youden", "fisher", "alerts/catch", "always_flag"):
+            assert required.lower() in lowered, (
+                f"rot README reports a miss rate without {required!r} — a "
+                "flag-everything detector scores a perfect miss rate, so the "
+                "number is meaningless without its counterweights"
+            )
+    assert "never misses" not in lowered
+
+
 def test_relative_citations_get_no_path_checking_at_all(tmp_path: Path) -> None:
     """A product property, pinned here because the benchmark cannot show it.
 

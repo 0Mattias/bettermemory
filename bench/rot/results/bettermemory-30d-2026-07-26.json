@@ -1,4 +1,30 @@
 {
+  "baselines": {
+    "always_flag": {
+      "actually_false": 15,
+      "alerts_per_catch": 54.7,
+      "base_rate": 0.0183,
+      "false_alarm_rate": 1.0,
+      "fisher_p": 1.0,
+      "flag_rate": 1.0,
+      "n": 820,
+      "precision": 0.0183,
+      "unflagged_stale_rate": 0.0,
+      "youden_j": 0.0
+    },
+    "never_flag": {
+      "actually_false": 15,
+      "alerts_per_catch": null,
+      "base_rate": 0.0183,
+      "false_alarm_rate": 0.0,
+      "fisher_p": null,
+      "flag_rate": 0.0,
+      "n": 820,
+      "precision": null,
+      "unflagged_stale_rate": 1.0,
+      "youden_j": 0.0
+    }
+  },
   "bettermemory_version": "3.29.0",
   "claims": 820,
   "date": "2026-07-26",
@@ -13,131 +39,167 @@
     "drift_only_absolute_cite": {
       "ALL": {
         "actually_false": 15,
+        "alerts_per_catch": 48.7,
         "base_rate": 0.0183,
         "false_alarm_rate": 0.8894,
+        "fisher_p": 0.1757,
         "flag_rate": 0.8915,
         "n": 820,
         "path_drift_flags": 0,
         "precision": 0.0205,
-        "unflagged_stale_rate": 0.0
+        "unflagged_stale_rate": 0.0,
+        "youden_j": 0.1106
       },
       "literal": {
         "actually_false": 14,
+        "alerts_per_catch": 8.6,
         "base_rate": 0.0959,
         "false_alarm_rate": 0.803,
+        "fisher_p": 0.0555,
         "flag_rate": 0.8219,
         "n": 146,
         "path_drift_flags": 0,
         "precision": 0.1167,
-        "unflagged_stale_rate": 0.0
+        "unflagged_stale_rate": 0.0,
+        "youden_j": 0.197
       },
       "path": {
         "actually_false": 0,
+        "alerts_per_catch": null,
         "base_rate": 0.0,
         "false_alarm_rate": 0.8,
+        "fisher_p": null,
         "flag_rate": 0.8,
         "n": 85,
         "path_drift_flags": 0,
         "precision": 0.0,
-        "unflagged_stale_rate": null
+        "unflagged_stale_rate": null,
+        "youden_j": null
       },
       "symbol": {
         "actually_false": 1,
+        "alerts_per_catch": 543.0,
         "base_rate": 0.0017,
         "false_alarm_rate": 0.9218,
+        "fisher_p": 0.9219,
         "flag_rate": 0.9219,
         "n": 589,
         "path_drift_flags": 0,
         "precision": 0.0018,
-        "unflagged_stale_rate": 0.0
+        "unflagged_stale_rate": 0.0,
+        "youden_j": 0.0782
       }
     },
     "drift_only_relative_cite": {
       "ALL": {
         "actually_false": 15,
+        "alerts_per_catch": 48.7,
         "base_rate": 0.0183,
         "false_alarm_rate": 0.8894,
+        "fisher_p": 0.1757,
         "flag_rate": 0.8915,
         "n": 820,
         "path_drift_flags": 0,
         "precision": 0.0205,
-        "unflagged_stale_rate": 0.0
+        "unflagged_stale_rate": 0.0,
+        "youden_j": 0.1106
       },
       "literal": {
         "actually_false": 14,
+        "alerts_per_catch": 8.6,
         "base_rate": 0.0959,
         "false_alarm_rate": 0.803,
+        "fisher_p": 0.0555,
         "flag_rate": 0.8219,
         "n": 146,
         "path_drift_flags": 0,
         "precision": 0.1167,
-        "unflagged_stale_rate": 0.0
+        "unflagged_stale_rate": 0.0,
+        "youden_j": 0.197
       },
       "path": {
         "actually_false": 0,
+        "alerts_per_catch": null,
         "base_rate": 0.0,
         "false_alarm_rate": 0.8,
+        "fisher_p": null,
         "flag_rate": 0.8,
         "n": 85,
         "path_drift_flags": 0,
         "precision": 0.0,
-        "unflagged_stale_rate": null
+        "unflagged_stale_rate": null,
+        "youden_j": null
       },
       "symbol": {
         "actually_false": 1,
+        "alerts_per_catch": 543.0,
         "base_rate": 0.0017,
         "false_alarm_rate": 0.9218,
+        "fisher_p": 0.9219,
         "flag_rate": 0.9219,
         "n": 589,
         "path_drift_flags": 0,
         "precision": 0.0018,
-        "unflagged_stale_rate": 0.0
+        "unflagged_stale_rate": 0.0,
+        "youden_j": 0.0782
       }
     },
     "shipped_default": {
       "ALL": {
         "actually_false": 15,
+        "alerts_per_catch": 54.7,
         "base_rate": 0.0183,
         "false_alarm_rate": 1.0,
+        "fisher_p": 1.0,
         "flag_rate": 1.0,
         "n": 820,
         "path_drift_flags": 0,
         "precision": 0.0183,
-        "unflagged_stale_rate": 0.0
+        "unflagged_stale_rate": 0.0,
+        "youden_j": 0.0
       },
       "literal": {
         "actually_false": 14,
+        "alerts_per_catch": 10.4,
         "base_rate": 0.0959,
         "false_alarm_rate": 1.0,
+        "fisher_p": 1.0,
         "flag_rate": 1.0,
         "n": 146,
         "path_drift_flags": 0,
         "precision": 0.0959,
-        "unflagged_stale_rate": 0.0
+        "unflagged_stale_rate": 0.0,
+        "youden_j": 0.0
       },
       "path": {
         "actually_false": 0,
+        "alerts_per_catch": null,
         "base_rate": 0.0,
         "false_alarm_rate": 1.0,
+        "fisher_p": null,
         "flag_rate": 1.0,
         "n": 85,
         "path_drift_flags": 0,
         "precision": 0.0,
-        "unflagged_stale_rate": null
+        "unflagged_stale_rate": null,
+        "youden_j": null
       },
       "symbol": {
         "actually_false": 1,
+        "alerts_per_catch": 589.0,
         "base_rate": 0.0017,
         "false_alarm_rate": 1.0,
+        "fisher_p": 1.0,
         "flag_rate": 1.0,
         "n": 589,
         "path_drift_flags": 0,
         "precision": 0.0017,
-        "unflagged_stale_rate": 0.0
+        "unflagged_stale_rate": 0.0,
+        "youden_j": 0.0
       }
     }
   },
   "repo": "https://github.com/0Mattias/bettermemory.git",
   "t0": "2b9b07b33b36",
-  "t1": "d7830a38e290"
+  "t1": "b4dcdd2f18e7"
 }

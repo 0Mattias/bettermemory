@@ -38,37 +38,56 @@ Three arms are reported because they answer different questions:
 
 ## Results — bettermemory's own history, 2026-07-26
 
-`drift_only_relative_cite`, aggregated over all claim classes:
+`drift_only_relative_cite`, 60-day window:
 
-| window | claims | actually false | base rate | flagged | unflagged-stale | false alarm | precision |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 60 days | 674 | 26 | 3.9% | **96.7%** | **0%** | 96.6% | **4.0%** |
-| 30 days | 820 | 15 | 1.8% | **89.2%** | **0%** | 88.9% | **2.1%** |
+| class | n | false | flagged | unflagged-stale | precision | **J** | **Fisher p** | **alerts/catch** |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| path | 77 | 0 | 91% | n/a | 0% | n/a | n/a | n/a |
+| symbol | 485 | 6 | 98% | 0% | 1% | 0.023 | **0.871** | 79.0 |
+| literal | 113 | 20 | 96% | 0% | 18% | 0.043 | **0.454** | 5.5 |
+| **ALL** | 675 | 26 | 97% | 0% | 4% | **0.034** | **0.415** | 25.1 |
 
-Per class, 60-day window:
+Constant classifiers on the same claims:
 
-| class | n | false | flagged | false alarm | precision |
-| --- | --- | --- | --- | --- | --- |
-| path | 77 | 0 | 91% | 91% | 0% |
-| symbol | 484 | 6 | 98% | 98% | 1% |
-| literal | 113 | 20 | 96% | 96% | 18% |
-
-`shipped_default` flags **100%** of claims in every class and both
-windows, which is what a 400-day-old anchor is supposed to do.
+| detector | flag rate | unflagged-stale | **J** |
+| --- | --- | --- | --- |
+| `always_flag` | 100% | **0%** | **0.000** |
+| `never_flag` | 0% | 100% | **0.000** |
+| `shipped_default` | 100% | **0%** | **0.000** |
 
 ## What this says
 
-**The verdict never misses.** `unflagged_stale_rate` is 0% in every
-class and both windows — no claim that had actually gone false was served
-as `fresh`. For a product whose stated job is refusing to let a rotted
-memory be quoted back at you, that is the number it needed to hit.
+**The 0% miss rate is an artifact, not an achievement.** `always_flag`
+also scores 0% unflagged-stale, because a detector that flags everything
+cannot miss anything. Reported alone, that number is not evidence the
+mechanism works — which is exactly how the first version of this document
+reported it, and why the table above now carries J, Fisher p and
+alerts-per-catch in the same row.
 
-**It never misses because it flags almost everything.** Precision is
-2–4%. A user working in this repository would see
-`spot_check_recommended` on roughly nineteen memories in twenty, and
-roughly nineteen of those twenty flags would be on claims that were still
-perfectly true. A signal that fires that often does not carry
-information; it trains the reader to ignore it.
+**The verdict is not statistically distinguishable from flagging at
+random at the same rate.** One-sided Fisher exact against a rate-matched
+random detector gives **p = 0.415** (60d) and **p = 0.176** (30d).
+Youden's J — `TPR − FPR`, exactly 0.0 for every constant classifier — is
+**0.034**. The margin over a coin is real in sign and negligible in size,
+and on this corpus it is not significant.
+
+**At its shipped default the product is a constant function.**
+`shipped_default` flags 100% of claims in every class and both windows:
+J = 0.000, Fisher p = 1.000, arithmetically identical to `always_flag`.
+The 400-day anchor makes the calendar leg fire on everything, so the
+drift legs cannot contribute. That is a defect, not a configuration
+choice, and it is the most actionable finding here.
+
+**The signal that exists lives entirely in one small class.** Symbol
+claims are 72% of the corpus and carry none of it — J = 0.023 at
+**p = 0.871**, which is 79 alerts per genuine catch. Literals are 17% of
+the corpus and hold what little discrimination there is (5.5 alerts per
+catch; p = 0.056 in the 30-day window, the only cell approaching
+significance). Aggregates hide this completely.
+
+**What a user actually experiences: 25 alerts per real catch.**
+`always_flag` on the same corpus costs 25.9. The differentiator, as
+shipped, costs the user essentially what flagging everything would cost.
 
 **Every single flag came from `commit_drift`.** `path_drift` fired
 exactly zero times across all 674 claims, in every arm
@@ -139,14 +158,25 @@ that barely drifts; the axis that drifts most has no detector at all.
 
 ## What would actually improve the verdict
 
-Nothing here is a proposal to weaken the signal — a 0%
-unflagged-stale rate is worth protecting. The problem is that
-`commit_drift` answers "did this file change?" when the useful question
-is "did the thing this memory cites change?". Both harder questions are
-answerable with the same git data the harness already reads: whether the
-cited *symbol* appears in the diff hunks, or whether the cited literal's
-line changed. Either would cut the false-alarm rate without touching
-recall on the classes that matter.
+The target is **J**, not recall. Recall is already 1.0 and worthless at
+this flag rate; the work is raising discrimination without giving it back.
 
-That is a design direction this benchmark now exists to grade, rather
-than a change to make on intuition.
+1. **Fix the default operating point.** `shipped_default` being a
+   constant function is a defect. A calendar leg that fires on everything
+   older than 30 days makes the drift legs unreachable in exactly the
+   configuration most users run.
+2. **Make `commit_drift` ask the right question.** It currently answers
+   "did this file change?" when the useful question is "did the thing this
+   memory cites change?" — whether the cited *symbol* appears in the diff
+   hunks, or whether the cited literal's line moved. Both are answerable
+   from git data this harness already reads. Aim it at the symbol class:
+   72% of claims, p = 0.871, 79 alerts per catch.
+3. **Get statistical power.** 26 positives cannot resolve a small effect.
+   A multi-repo corpus targeting ≥150 positives — and including
+   repositories that actually delete files, so `path_drift` gets its first
+   real test after 0 flags in 675 claims — is what makes any of these
+   numbers conclusive rather than suggestive.
+
+Each is now gradeable: change it, re-run, and read J and p. That is the
+first time this project has been able to say that about its headline
+feature, and it is worth more than the number itself.
