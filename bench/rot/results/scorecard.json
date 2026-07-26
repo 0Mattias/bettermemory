@@ -1,0 +1,72 @@
+[
+  {
+    "id": "P1",
+    "prediction": "path_drift (absolute arm) flags >=95% of claims whose file is gone and <=2% of claims whose file survives; MISSED if TPR < 0.90",
+    "verdict": "hit",
+    "facts": {
+      "tpr": 0.9565,
+      "false_alarm_rate": 0.0
+    }
+  },
+  {
+    "id": "P2",
+    "prediction": "relative arm: EXACTLY ZERO path-drift flags; MISSED if any non-zero",
+    "verdict": "hit",
+    "facts": {
+      "relative_arm_flag_rate": 0.0
+    }
+  },
+  {
+    "id": "P3",
+    "prediction": "incumbent pooled flag rate in [0.35, 0.80] and alerts/catch in [4, 15]; macro-J < 0.15; MISSED if macro-J >= 0.15",
+    "verdict": "MISSED",
+    "facts": {
+      "flag_rate": 0.7784,
+      "alerts_per_catch": 3.4,
+      "youden_j": 0.2875,
+      "flag_rate_in_band": true,
+      "alerts_in_band": false
+    }
+  },
+  {
+    "id": "P4",
+    "prediction": "pooled symbol-class AUROC of the commit count in [0.50, 0.65]; MISSED if >= 0.70",
+    "verdict": "hit",
+    "facts": {
+      "symbol_auroc": 0.5446,
+      "symbol_auroc_p": 5e-05,
+      "n_positives": 6705
+    }
+  },
+  {
+    "id": "P5",
+    "prediction": "THE RETRACTION BRANCH \u2014 claim_level_strict stops matching oracle_replica on symbol claims: pooled symbol precision <= 0.97 with >= 5 false positives. MISSED if precision is exactly 1.000",
+    "verdict": "MISSED",
+    "facts": {
+      "symbol_precision": 0.9999,
+      "symbol_j": 1.0,
+      "oracle_replica_j": 1.0,
+      "false_positives": 1
+    }
+  },
+  {
+    "id": "P6",
+    "prediction": "pooled claims per non-excluded .py file in [4.0, 9.0] (bettermemory measured 8.8); MISSED if outside",
+    "verdict": "hit",
+    "facts": {
+      "claims_per_file": 8.963,
+      "symbol_share": 0.8339
+    }
+  },
+  {
+    "id": "P7",
+    "prediction": ">=8 stratum-D qualifiers; and per the addendum, D-PRUNED is the headline. MISSED if fewer than 8 pruned repositories",
+    "verdict": "MISSED",
+    "facts": {
+      "d_total": 7,
+      "d_pruned": 7,
+      "d_relocated": 0,
+      "walked_to_rank": 767
+    }
+  }
+]

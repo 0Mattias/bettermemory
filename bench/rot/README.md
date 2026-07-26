@@ -3,6 +3,12 @@
 The first accuracy measurement of `staleness_verdict` — the mechanism the
 README leads with, and the one that had none.
 
+Two runs are reported. A single-repository pilot on bettermemory's own
+history, and a **pre-registered 30-repository corpus** (37,635 claims,
+8,627 positives) that supersedes the pilot's aggregates and retracts one of
+its roadmap items outright. If you read one section, read
+[the scorecard](#the-scorecard-4-of-7-hit).
+
 ```sh
 venv/bin/python bench/rot/run.py --days 60
 venv/bin/python bench/rot/run.py --days 30 --json
@@ -104,10 +110,14 @@ signal was throwing it away by asking "did this file change?" instead of
 **This is why nothing here has been shipped into `verify.py`.** A corpus
 where the target is diff-decidable cannot distinguish a genuine detector
 from a well-dressed oracle replay, so J = 1.000 is not evidence a user would
-feel. The multi-repo corpus in item 3 below — repositories neither party
-chose, with enough positives to resolve a small effect — is the thing that
-would make that call safe. Building the detector measured the size of the
-prize; it did not earn it.
+feel. Building the detector measured the size of the prize; it did not earn
+it.
+
+> **Superseded in part.** This paragraph then named the multi-repo corpus
+> as the thing that would make shipping safe. It was built, and it did not:
+> on 30 repositories and 37,635 claims the strict tier is *still*
+> arithmetically identical to `oracle_replica`. The corpus was never the
+> binding constraint — see [P5](#p5-fired-and-the-pre-committed-reading-is-a-retraction).
 
 ### Two smaller findings that only the continuous score could state
 
@@ -158,6 +168,8 @@ significance). Aggregates hide this completely.
 **What a user actually experiences: 25 alerts per real catch.**
 `always_flag` on the same corpus costs 25.9. The differentiator, as
 shipped, costs the user essentially what flagging everything would cost.
+**On the 30-repository corpus this is 3.4** — much better, and still four
+fifths of all claims flagged, against 1.0 for the claim-level tier.
 
 **Every single flag came from `commit_drift`.** `path_drift` fired
 exactly zero times across all 675 claims, in every arm
@@ -189,11 +201,154 @@ So `commit_drift` is doing all the work, and it knows only that
 claims — where nothing at all went false — were still flagged 91% of the
 time.
 
-**The detectable class is the one that rots least.** Path claims had a 0%
-base rate — nothing was deleted. Literal claims, which `path_drift`
-structurally cannot see even when cited absolutely, had an 18% base rate,
-the highest by far. The one axis with a purpose-built detector is the axis
-that barely drifts; the axis that drifts most has no detector at all.
+~~**The detectable class is the one that rots least.**~~ **REVERSED BY THE
+CORPUS.** On bettermemory, path claims had a 0% base rate (nothing is ever
+deleted here) against literals at 18%, which read as "the one axis with a
+purpose-built detector is the axis that barely drifts". Across 30
+repositories the ordering flips: **path claims rot MOST — a 30.8% base
+rate**, ahead of literals (30.3%) and symbols (21.4%). The purpose-built
+detector is aimed at the right class after all; the finding was an artifact
+of measuring a project that only adds. What stands is the narrower point
+that `path_drift` cannot see it in the default citation style (P2).
+
+## Results — 30 repositories nobody chose, 2026-07-26
+
+The multi-repo corpus called for above. Frame, draw and seven falsifiable
+predictions were committed in `PREREGISTRATION.md` **before** any
+repository was screened; `scorecard.py` grades each one mechanically off
+the results JSON, so hit/MISSED is computed rather than narrated.
+
+180-day windows, PyPI-download frame walked to rank 767, **30 repositories,
+37,635 claims, 8,627 false** (22.9% base rate against bettermemory's 3.9%).
+Zero repositories failed to run.
+
+```sh
+venv/bin/python bench/rot/corpus.py     # clone, run, pool
+venv/bin/python bench/rot/scorecard.py  # grade P1-P7
+```
+
+### The scorecard: 4 of 7 hit
+
+| | prediction | result | |
+| --- | --- | --- | --- |
+| **P1** | `path_drift` (absolute arm) TPR ≥ 0.90 | TPR **0.957**, false-alarm rate **0.000** | hit |
+| **P2** | relative arm flags **exactly zero** | **0.000** across all 37,635 claims | hit |
+| **P3** | pooled macro-J < 0.15 | **0.2875** | **MISSED** |
+| **P4** | symbol AUROC in [0.50, 0.65] | **0.5446** (p = 5e-05, 6,705 positives) | hit |
+| **P5** | `claim_level_strict` symbol precision ≤ 0.97 | **0.9999** — one false positive in 6,705 | **MISSED** |
+| **P6** | claims per `.py` file in [4.0, 9.0] | **8.96** | hit |
+| **P7** | ≥ 8 stratum-D qualifiers | **7** | **MISSED** |
+
+**The shipped signal (`commit_drift`, file-level), pooled:**
+
+| class | n | false | flagged | precision | **J** | **alerts/catch** | AUROC |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| path | 5,272 | 1,625 | 68% | 45% | 0.457 | 2.2 | 0.674 |
+| symbol | 31,382 | 6,705 | 80% | 27% | 0.260 | 3.7 | 0.545 |
+| literal | 981 | 297 | 75% | 40% | 0.360 | 2.5 | 0.669 |
+| **ALL** | **37,635** | **8,627** | **78%** | **29%** | **0.2875** | **3.4** | 0.555 |
+
+**The claim-level detectors, same claims:**
+
+| detector | class | flagged | precision | **J** | **alerts/catch** |
+| --- | --- | --- | --- | --- | --- |
+| strict | symbol | 21% | **99.99%** | **1.000** | 1.0 |
+| strict | **ALL** | 23% | 99.93% | **0.991** | **1.0** |
+| weak | symbol | 23% | 92.5% | 0.978 | 1.1 |
+| weak | **ALL** | 24% | 94.0% | **0.973** | **1.1** |
+| `oracle_replica` *(peeks)* | ALL | — | — | **1.000** | — |
+
+Repo-level paired comparison, the unit no single large repository can
+carry: `claim_weak` beats the incumbent on alerts-per-catch in **19
+repositories, loses in 0**, ties in 7 (sign test p < 0.001).
+
+### P5 fired, and the pre-committed reading is a retraction
+
+`claim_level_strict` scores **J = 1.000 on symbol claims — precision
+0.9999, exactly one false positive in 6,705 — arithmetically identical to
+`oracle_replica`**, which peeks at the label. That is the same tie the
+single-repo run produced, reproduced at **55x the claim count on thirty
+repositories neither party chose.**
+
+The pre-registration committed to this reading in advance, and it is
+honoured here rather than renegotiated:
+
+> it would mean the claim classes are diff-decidable *in general*, that
+> the corpus was never the problem, and that the roadmap's "get
+> statistical power" item is answered in the **negative** and must be
+> retracted rather than celebrated.
+
+**So it is retracted.** More repositories were the wrong instrument. The
+circularity is not a small-n artifact and not a property of this project's
+history — it is inherent to grading *structural* claims against
+*structural* ground truth, because the diff between two trees is very
+nearly the answer to "did this symbol survive". No corpus of git
+repositories can separate the two. The next evidence has to be a different
+**kind**: real memory bodies rather than synthesised claims, or
+user-visible outcomes rather than structural labels.
+
+What survives is what survived before, now on a real population: the
+**contrast**. 3.4 alerts per catch becomes 1.0, and the weak tier — which
+does *not* collapse onto the oracle, at 94% precision — costs 1.1, winning
+in 19 repositories and losing in none.
+
+### P3 fired: the published 0.034 was a property of one repository
+
+Pooled macro-J is **0.2875**, an order of magnitude above bettermemory's
+own 0.034, so the aggregate conclusion is softened in place above rather
+than left standing. The direction is worth stating plainly: **the shipped
+signal looks considerably better on a normal population than on this
+project.** Alerts-per-catch is 3.4 against 25.1 here — below the predicted
+[4, 15] band, i.e. better than predicted. bettermemory took 189 commits in
+two weeks and is unusually churny; `commit_drift` fires on any touched
+file, so this repository was close to a worst case.
+
+That does not rescue the mechanism. J = 0.2875 with 78% of all claims
+flagged is still a detector that alarms on four fifths of the corpus, and
+the claim-level tier gets J = 0.99 at a quarter of the flag rate.
+
+### P1 and P2: the path leg finally got a real test, and the default still gets nothing
+
+675 zero-deletion claims could never test `path_drift`. Against 8,627 real
+deletions it flags **95.7% of claims whose file is gone with a 0.0%
+false-alarm rate and 100% precision** — an existence check scoring well at
+existence checking, reported as such.
+
+P2 is the informative half, and it is now demonstrated rather than argued
+from a unit test: in the relative-citation arm `path_drift` fired
+**exactly zero times across all 37,635 claims**, with thousands of genuine
+deletions in front of it. `detect_path_drift` excludes relative paths by
+design, so **the citation style a developer naturally writes gets no path
+protection at all, even when there is finally something to catch.**
+
+### P7 fired: stratum D is underpowered, and it is published that way
+
+Only **7** repositories cleared the deletion gate against a floor of 8, so
+per the pre-registration this corpus is published as **underpowered on the
+class the deletion gate existed to create** — with no re-draw, no widened
+frame, and no extension of the walk. Re-drawing after seeing a property of
+the sample is how a pre-registration becomes decoration.
+
+The addendum's D-split turned out to be moot, in a way worth recording.
+All **seven** repositories it named as wholesale package relocations
+(`griffe`, `narwhals`, `dbt-core`, `fastmcp`, `modal-client`, `chardet`,
+`httpx2`) were screened into D and then finalised into **R** by the
+deletion-spread gate — a wholesale move lands in one or two commits, below
+`MIN_DELETION_COMMITS`. So `D-relocated` is empty, the split never had to
+be applied by hand, and an existing gate had already been doing the work
+the addendum proposed to do manually. That reclassification is also *why*
+D fell from 15 to 7, which is what made P7 miss.
+
+### One place the scorecard is weaker than the prediction it grades
+
+P6 predicted two things: claims per file in [4.0, 9.0], **and** that the
+symbol share would fall below 72%. Density landed at 8.96 and the
+prediction is graded **hit** — but the symbol share is **83.4%**, well
+above the 72% it predicted to undercut. Only the density clause carries a
+`MISSED if` threshold, so `scorecard.py` cannot see the half it got wrong.
+That is a defect in how P6 was written, recorded here rather than quietly
+enjoyed, and the graded-hit stands because changing a threshold after
+seeing the number is the exact move this document exists to prevent.
 
 ## Caveats, including one that softens the headline
 
@@ -205,18 +360,26 @@ that barely drifts; the axis that drifts most has no detector at all.
   is invisible to this harness — the same class the product itself cannot
   see. The true base rate is higher than measured and the true precision
   correspondingly better; by how much is unknown.
-- **n = 1 repository, and an unusually churny one.** bettermemory took
-  189 commits in the two weeks before this run, so nearly every file in
-  `src/` was touched in both windows. `commit_drift` fires on any touched
-  file, so a high flag rate is partly a property of *this* repo. A calmer
-  codebase would show a lower flag rate and better precision. Running
-  this across a set of pinned third-party repositories is the obvious and
-  necessary next step, and until it happens these numbers describe one
-  project rather than the mechanism in general.
-- **The path leg is untested here, not vindicated.** Zero deletions in
-  the window means this run says nothing about how well `path_drift`
-  performs when there is something to catch. A repository that actually
-  removes files is needed before any claim about it is supported.
+- ~~**n = 1 repository, and an unusually churny one.**~~ **ANSWERED, AND
+  THE SUSPICION WAS RIGHT.** The 30-repository corpus puts pooled J at
+  0.2875 against this project's 0.034, and alerts-per-catch at 3.4 against
+  25.1 — bettermemory (189 commits in two weeks) was close to a worst case,
+  and the shipped signal looks materially better on a normal population.
+  The single-repo aggregate above should be read as one churny project, not
+  as the mechanism.
+- ~~**The path leg is untested here, not vindicated.**~~ **TESTED.**
+  Against 8,627 real deletions it flags 95.7% of gone-file claims at a 0.0%
+  false-alarm rate — and fires **exactly zero times** in the relative-
+  citation arm, which is the default style. See P1/P2 above.
+- **The corpus is widely-depended-on Python packages, not Python code.**
+  Heavily-downloaded packages are mature, well-staffed and conservative
+  about deletion; the frame says so up front. Private, under-maintained
+  code — what this product most often runs against — is unrepresented by
+  construction, and the ≥20-deletions gate on stratum D selects on a
+  quantity correlated with the outcome, so every prevalence figure here is
+  higher than the wild.
+- **Stratum D is underpowered: 7 qualifiers against a pre-registered floor
+  of 8.** Published as such, with no re-draw.
 - ~~**`commit_drift` is modelled as a boolean.** The harness records 1 for
   any file changed in the window rather than a true commit count.~~
   **RETRACTED** — `commit_counts_touching` now emits real per-path commit
@@ -246,13 +409,25 @@ this flag rate; the work is raising discrimination without giving it back.
    alerts per catch becomes 2.0 at the same zero miss rate. But its strict
    tier is arithmetically identical to `oracle_replica`, so this corpus
    cannot certify it. The finding is the *size of the gap*, not the score.
-3. **Get statistical power.** 26 positives cannot resolve a small effect,
-   and — now the sharper reason — a corpus whose claims are diff-decidable
-   cannot tell a real detector from an oracle replay. A multi-repo corpus
-   targeting ≥150 positives, including repositories that actually delete
-   files so `path_drift` gets its first real test after 0 flags in 675
-   claims, is what would let the claim-level detector be shipped on
-   evidence rather than on a ceiling.
+3. ~~**Get statistical power.**~~ **RETRACTED — DONE, AND IT ANSWERED IN
+   THE NEGATIVE.** The corpus was built (30 repositories, 37,635 claims,
+   8,627 positives — 330x the target) and `claim_level_strict` is *still*
+   arithmetically identical to `oracle_replica` on symbol claims: J = 1.000,
+   one false positive in 6,705. Power was never the binding constraint. A
+   corpus of git repositories cannot certify this detector at any size,
+   because grading structural claims against structural ground truth makes
+   the tree-diff nearly a sufficient statistic for the oracle's own
+   question. This item is closed as a dead end, exactly as
+   `PREREGISTRATION.md` committed to closing it if P5 missed.
+4. **Get evidence of a different KIND.** The only remaining route. Either
+   grade against **real memory bodies** rather than machine-generated ones
+   — `citation_resolved_rate` is 100% here *by construction*, while
+   `bench/claims.py` measures the real checkable/judgement split at roughly
+   64/36, so real-world performance is bounded by J_resolved x
+   resolution_rate and only the first factor has ever been measured — or
+   grade against **user-visible outcomes** rather than structural labels.
+   Both are harder than another corpus. That is the point: the cheap axis
+   is exhausted.
 
 ## What the claim-level detector is, and what stops it cheating
 
