@@ -1,0 +1,69 @@
+{
+  "bettermemory_version": "3.29.0",
+  "claude_mem_version": "13.12.4",
+  "date": "2026-07-26",
+  "machine": {
+    "machine": "arm64",
+    "os": "Darwin 25.5.0"
+  },
+  "protocol": "2025-06-18",
+  "ratio_full_bytes": 4.845,
+  "results": [
+    {
+      "bytes_per_tool": 2112,
+      "full_bytes": 38009,
+      "full_chars": 38009,
+      "input_schema_bytes": 7096,
+      "label": "bettermemory (shipped default)",
+      "name_description_bytes": 28604,
+      "name_description_chars": 28604,
+      "tool_count": 18,
+      "tools": [
+        "episode_handoff",
+        "episode_promote",
+        "episode_search",
+        "episode_write",
+        "memory_audit_turn",
+        "memory_list",
+        "memory_record_use",
+        "memory_remove",
+        "memory_scope_disable",
+        "memory_scope_enable",
+        "memory_scope_overview",
+        "memory_search",
+        "memory_show",
+        "memory_update",
+        "memory_verify",
+        "memory_write",
+        "memory_write_cancel",
+        "memory_write_confirm"
+      ]
+    },
+    {
+      "bytes_per_tool": 560,
+      "full_bytes": 7845,
+      "full_chars": 7845,
+      "input_schema_bytes": 4823,
+      "label": "claude-mem 13.12.4 (default)",
+      "name_description_bytes": 2827,
+      "name_description_chars": 2827,
+      "tool_count": 14,
+      "tools": [
+        "build_corpus",
+        "get_observations",
+        "important_workflow",
+        "list_corpora",
+        "prime_corpus",
+        "query_corpus",
+        "rebuild_corpus",
+        "reprime_corpus",
+        "search",
+        "session_start_context",
+        "smart_outline",
+        "smart_search",
+        "smart_unfold",
+        "timeline"
+      ]
+    }
+  ]
+}
