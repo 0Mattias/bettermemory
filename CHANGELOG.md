@@ -7,29 +7,35 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
-## 3.29.0 - 2026-07-30
+## 3.29.0 - 2026-07-26
 
-Almost no new feature. This window is one thing: making the project's
-claims about itself checkable, and repairing what that check found. The
-headline is a data-loss regression this same window introduced and then
-caught — `sync` refusals that fired *after* mutating the user's index —
-but the durable output is machinery. Four times a manual sweep for false
-prose was replaced by a test that re-derives the claim, and three times
-that machinery was then audited and found weaker than its own docstring.
+Almost no new feature, and one reversal. This window is one thing:
+making the project's claims about itself checkable, and repairing what
+that check found. The headline is a data-loss regression this same
+window introduced and then caught — `sync` refusals that fired *after*
+mutating the user's index — but the durable output is machinery. Four
+times a manual sweep for false prose was replaced by a test that
+re-derives the claim, and three times that machinery was then audited
+and found weaker than its own docstring.
 
 The genuinely new capability is two ratchets pointed at the store's own
 honesty: `doctor` can now measure whether a store can still be *found* by
 the questions a model asks, and whether the attestations underneath its
 freshness signals point at files that carry the claims they attest.
-Neither was checked by anything before.
+Neither was checked by anything before. The first of those measurements
+is also what forced the reversal: installing `bettermemory[embeddings]`
+now actually enables semantic search, where the extra used to be inert
+unless you also opted into an unrelated write-time flag.
 
 Minor rather than patch: `patterns.clusterable_episodes` is new public
 API, three response shapes gain keys (`episodes_clustered`,
 `gc_deferred`, `pending_rows_on_disk`), and `doctor` reports two new
 check names (`retrieval_discrimination`, `attestation_anchors`) in its
 text and `--json` output.
-`SCHEMA_VERSION` is unchanged, no tool gains or loses a parameter, and
-the shipped default ranking is byte-stable — the new check only reads.
+`SCHEMA_VERSION` is unchanged and no tool gains or loses a parameter. A
+default install with no embeddings extra ranks byte-identically to
+3.28.0 — the new checks only read. An install that *has* an embeddings
+extra does not, and that is the one change here a user will feel.
 
 ### Fixed — `sync` could destroy uncommitted work
 
