@@ -180,7 +180,7 @@ def _report(**over: object) -> dict:
         ],
         "walked_to_rank": 767,
     }
-    report.update(over)  # type: ignore[arg-type]
+    report.update(over)
     return report
 
 

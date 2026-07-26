@@ -174,7 +174,9 @@ def extract_claims(tree_root: Path, subdir: str) -> list[Claim]:
 # names and collide with the next repo's identical rel_paths. Caches the
 # two derived lookups rather than the AST — same answers, a fraction of
 # the resident size.
-_TOPLEVEL_CACHE: dict[tuple[str, str], tuple[frozenset[str], dict[str, str | None]]] = {}
+_TOPLEVEL_CACHE: dict[
+    tuple[str, str], tuple[frozenset[str], dict[str, str | None]]
+] = {}
 
 
 def _toplevel_index(
