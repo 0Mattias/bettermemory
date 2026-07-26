@@ -1130,18 +1130,29 @@ def memoized_git_reads() -> Generator[dict[str, int]]:
         calls["hits"] += 1
         stamps: list[datetime] = []
         for spec in pathspecs:
-            stamps.extend(index.get(spec, ()))
-            if spec and not spec.endswith("/"):
-                prefix = spec + "/"
-                for path, values in index.items():
-                    if path.startswith(prefix):
-                        stamps.extend(values)
+            exact = index.get(spec)
+            if exact is not None:
+                # A path is a file OR a directory in git, never both, so an
+                # exact hit needs no prefix scan. Skipping it matters: the
+                # scan is O(paths in history) and this is the common case,
+                # which made the first attempt slower than the per-path git
+                # calls it replaced.
+                stamps.extend(exact)
+                continue
+            prefix = spec.rstrip("/") + "/"
+            for path, values in index.items():
+                if path.startswith(prefix):
+                    stamps.extend(values)
         return sorted(stamps)
 
     try:
         for name, func in originals.items():
             setattr(_verify, name, _memoize(func))
-        setattr(_verify, "commit_author_timestamps_touching_pathspecs", _touching)
+        # Memoized too, not just replaced: the index makes one CALL cheap,
+        # memoization makes the thousands of repeat calls free.
+        setattr(
+            _verify, "commit_author_timestamps_touching_pathspecs", _memoize(_touching)
+        )
         yield calls
     finally:
         for name, func in originals.items():

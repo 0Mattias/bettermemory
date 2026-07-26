@@ -63,14 +63,28 @@ def _git(repo: Path, *args: str) -> str:
 
 
 def clone(entry: dict[str, Any], root: Path) -> Path | None:
-    """Partial clone at the pinned window. Returns the path, or None."""
+    """Full clone at the pinned window. Returns the path, or None.
+
+    A `--filter=blob:none` partial clone was the obvious choice and was
+    MEASURED TO BE WRONG here. The harness checks out two full worktrees
+    per repository, so a partial clone has to lazy-fetch every blob in
+    both trees; each fetch lands loose objects, git's automatic GC kicks
+    in, and the run spends its time in `repack`/`pack-objects` rather
+    than in the benchmark. Observed directly on scipy: no progress, no
+    `git log` running, and a repack storm underneath.
+
+    A full clone downloads more once and then touches the network zero
+    times. `gc.auto=0` keeps git from deciding to repack mid-run whatever
+    the object count looks like.
+    """
     target = root / entry["full_name"].replace("/", "__")
     if not (target / ".git").exists():
         result = subprocess.run(
             [
                 "git",
+                "-c",
+                "gc.auto=0",
                 "clone",
-                "--filter=blob:none",
                 "--no-checkout",
                 "--quiet",
                 f"https://github.com/{entry['full_name']}.git",
@@ -81,6 +95,11 @@ def clone(entry: dict[str, Any], root: Path) -> Path | None:
         )
         if result.returncode != 0:
             return None
+        subprocess.run(
+            ["git", "-C", str(target), "config", "gc.auto", "0"],
+            capture_output=True,
+            check=False,
+        )
     # The pinned shas must exist in what we fetched; a force-push since
     # screening would otherwise silently move the window.
     for sha in (entry["t0"], entry["t1"]):
