@@ -173,8 +173,12 @@ traffic, not vibes."* This release executes it for the first time, and
 the marker it removes is the one that detected commit hashes. A memory
 body may now cite a commit without the write gate objecting.
 
-The telemetry that condemned it, from the dogfood event log: **47 fires
-against 45 overrides**. Read that as 45 of 47 blocks overridden —
+The telemetry that condemned it, from the dogfood event log at the moment
+the call was made: **47 fires against 45 overrides**. (The row is not
+frozen at that figure — it still accepts events from any server process
+running pre-3.30.0 code, so a live rollup may read a little higher until
+those restart. What cannot grow again is the class.) Read the record as 45
+of 47 blocks overridden —
 `override_rate` divides by fires *plus* overrides, so its 0.489 is 97.8%
 of the 0.500 that metric can reach when every block is answered. The
 same metric pooled across the phrase markers is 0.161. Of the 47 blocks,

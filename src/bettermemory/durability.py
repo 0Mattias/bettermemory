@@ -159,8 +159,14 @@ TRANSIENT_PHRASE_MARKERS: tuple[str, ...] = (
 # was written ("a high override rate is a signal that a marker is producing
 # too many false positives and should be removed").
 #
-# The write-side record, closed: 47 fires, 45 overrides. Read that as 45 of
-# 47 blocks overridden — `MarkerStats.override_rate` divides by fires PLUS
+# The write-side record the decision was taken on: 47 fires, 45 overrides.
+# It is not quite frozen at that. The row keeps accepting events from any
+# server process still running pre-3.30.0 code — including, on the store
+# this was measured against, the very session that removed the detector —
+# so a live rollup may read a few higher until every such process restarts.
+# What can never grow again is the class: no build after this one produces
+# the name. Read the record as 45 of 47 blocks overridden —
+# `MarkerStats.override_rate` divides by fires PLUS
 # overrides, so its 0.489 is 97.8% of the 0.500 that metric can reach when
 # every block is answered. Pooled across the phrase markers the same metric
 # is 0.161 (52 fires / 10 overrides), so this marker ran 3.0x the rest of
@@ -207,11 +213,13 @@ def canonical_marker(marker: str) -> str:
     event written before the bucketing fix stays its own row forever and
     the class the fix exists to make measurable reads as singletons.
 
-    The detector that minted these names is gone, so this is now pure
-    archive work: the row it produces is closed at 47 fires / 45 overrides
-    and will never grow. That closed row is the evidence for the removal,
-    which is exactly why the fold must not be simplified away as dead code
-    — it has no producer left, and that is the point rather than a defect.
+    The detector that minted these names is gone, so this is now archive
+    work: no build after 3.30.0 produces the marker, and the row the fold
+    assembles is the evidence for that removal (47 fires / 45 overrides at
+    the moment it was decided; a live rollup may read slightly higher until
+    every pre-3.30.0 server process has restarted). That row is exactly why
+    the fold must not be simplified away as dead code — it has no producer
+    left, and that is the point rather than a defect.
     """
     return SHA_MARKER if _LEGACY_SHA_MARKER_RE.match(marker) else marker
 
