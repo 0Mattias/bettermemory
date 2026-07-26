@@ -34,10 +34,20 @@ _HERE = Path(__file__).resolve().parent
 
 
 def _load(name: str) -> Any:
-    spec = importlib.util.spec_from_file_location(name, _HERE / f"{name}.py")
+    """Import a sibling bench module by path.
+
+    The registered key must MATCH the spec name: `@dataclass` resolves
+    `sys.modules[cls.__module__]` while processing the class, so a module
+    executed under one name and registered under another blows up inside
+    dataclasses with an unhelpful AttributeError. The `rot_` prefix is
+    also load-bearing — `select` is a stdlib module, and registering ours
+    under that name would shadow it for everything in the process.
+    """
+    key = f"rot_{name}"
+    spec = importlib.util.spec_from_file_location(key, _HERE / f"{name}.py")
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
-    sys.modules[f"rot_{name}"] = module
+    sys.modules[key] = module
     spec.loader.exec_module(module)
     return module
 

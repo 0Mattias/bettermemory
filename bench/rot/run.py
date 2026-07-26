@@ -1065,9 +1065,83 @@ def memoized_git_reads() -> Generator[dict[str, int]]:
 
         return wrapper
 
+    # ONE PASS INSTEAD OF ONE PER PATH. Plain memoization cannot help the
+    # path-filtered log, because every claim cites a DIFFERENT path, so
+    # every call is a cache miss: `git log --format=%aI HEAD -- <one file>`
+    # walks the repository's whole history, once per file. On scipy — 564
+    # files, ~35k commits — that is hours, and it is the reason the first
+    # corpus run had to be killed.
+    #
+    # The same information comes from a single `--name-only` pass over the
+    # history, indexed by path. Same source (`%aI` author dates, same
+    # HEAD), same answers, one walk instead of hundreds. `resolve_
+    # commit_drift_count` is untouched and still does the bisect, so the
+    # shipped policy is unchanged; only the query plan is.
+    path_index: dict[Path, dict[str, list[datetime]] | None] = {}
+
+    def _build_index(cwd: Path) -> dict[str, list[datetime]] | None:
+        out = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(cwd),
+                "log",
+                f"--format={_COMMIT_MARK}%aI",
+                "--name-only",
+                "--no-renames",
+                "HEAD",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if out.returncode != 0:
+            return None
+        index: dict[str, list[datetime]] = {}
+        stamp: datetime | None = None
+        for line in out.stdout.split("\n"):
+            if line.startswith(_COMMIT_MARK):
+                try:
+                    stamp = datetime.fromisoformat(line[1:].strip())
+                except ValueError:
+                    stamp = None
+                continue
+            path = line.strip()
+            if path and stamp is not None:
+                index.setdefault(path, []).append(stamp)
+        return index
+
+    def _touching(
+        cwd: Path | None, pathspecs: Any, *, toplevel: Path | None = None
+    ) -> list[datetime] | None:
+        if cwd is None:
+            return originals["commit_author_timestamps_touching_pathspecs"](
+                cwd, pathspecs, toplevel=toplevel
+            )
+        if cwd not in path_index:
+            path_index[cwd] = _build_index(cwd)
+        index = path_index[cwd]
+        if index is None:
+            # Never under-count on infrastructure failure: fall back to the
+            # shipped implementation rather than inventing an empty answer.
+            return originals["commit_author_timestamps_touching_pathspecs"](
+                cwd, pathspecs, toplevel=toplevel
+            )
+        calls["hits"] += 1
+        stamps: list[datetime] = []
+        for spec in pathspecs:
+            stamps.extend(index.get(spec, ()))
+            if spec and not spec.endswith("/"):
+                prefix = spec + "/"
+                for path, values in index.items():
+                    if path.startswith(prefix):
+                        stamps.extend(values)
+        return sorted(stamps)
+
     try:
         for name, func in originals.items():
             setattr(_verify, name, _memoize(func))
+        setattr(_verify, "commit_author_timestamps_touching_pathspecs", _touching)
         yield calls
     finally:
         for name, func in originals.items():
