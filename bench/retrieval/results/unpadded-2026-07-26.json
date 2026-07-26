@@ -1,0 +1,61 @@
+{
+  "above_threshold": false,
+  "bettermemory_version": "3.29.0",
+  "commit": "e8e35b1",
+  "corpus_size": 188,
+  "date": "2026-07-26",
+  "index_threshold": 500,
+  "machine": {
+    "cores": 12,
+    "cpu": "arm",
+    "machine": "arm64",
+    "os": "Darwin 25.5.0",
+    "python": "3.13.13"
+  },
+  "notes": [],
+  "padded": false,
+  "results": [
+    {
+      "arm": "lexical",
+      "n": 20,
+      "probe": "asked",
+      "recall_at_1": 0.4,
+      "recall_at_5": 0.65
+    },
+    {
+      "arm": "lexical",
+      "n": 20,
+      "probe": "requery",
+      "recall_at_1": 0.95,
+      "recall_at_5": 1.0
+    },
+    {
+      "arm": "lexical",
+      "n": 20,
+      "probe": "control",
+      "recall_at_1": 0.45,
+      "recall_at_5": 0.6
+    },
+    {
+      "arm": "semantic",
+      "n": 20,
+      "probe": "asked",
+      "recall_at_1": 0.65,
+      "recall_at_5": 0.8
+    },
+    {
+      "arm": "semantic",
+      "n": 20,
+      "probe": "requery",
+      "recall_at_1": 1.0,
+      "recall_at_5": 1.0
+    },
+    {
+      "arm": "semantic",
+      "n": 20,
+      "probe": "control",
+      "recall_at_1": 0.6,
+      "recall_at_5": 0.85
+    }
+  ]
+}
