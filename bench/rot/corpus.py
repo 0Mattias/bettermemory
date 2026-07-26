@@ -1,0 +1,303 @@
+"""Run the drawn corpus and score it against the pre-registration.
+
+Takes `corpus.json` from `screen.py`, clones each survivor at its pinned
+shas, finalises the stratum with the deletion-spread gate that needs
+history, runs the harness per repository, and POOLS the rows.
+
+    venv/bin/python bench/rot/corpus.py --corpus bench/rot/corpus.json
+
+POOLING, NOT AVERAGING. Per-repo rates averaged together give a ten-claim
+repository the same weight as a thousand-claim one, and the significance
+tests would then describe no actual population. Every claim is one
+observation. The per-repo breakdown is kept beside the pooled numbers,
+because an aggregate that cannot be decomposed hides exactly the
+single-repo artifact this corpus exists to escape.
+
+Clones are `--filter=blob:none`: the harness needs the full COMMIT
+history (`compute_commit_drift` reads every author timestamp) but only
+two trees' worth of blobs, so a partial clone fetches what the two
+worktree checkouts actually touch and skips the rest.
+"""
+
+from __future__ import annotations
+
+import argparse
+import importlib.util
+import json
+import math
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+_HERE = Path(__file__).resolve().parent
+
+
+def _load(name: str) -> Any:
+    spec = importlib.util.spec_from_file_location(name, _HERE / f"{name}.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[f"rot_{name}"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+run = _load("run")
+select = _load("select")
+
+
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(repo), *args], capture_output=True, text=True, check=False
+    ).stdout.strip()
+
+
+def clone(entry: dict[str, Any], root: Path) -> Path | None:
+    """Partial clone at the pinned window. Returns the path, or None."""
+    target = root / entry["full_name"].replace("/", "__")
+    if not (target / ".git").exists():
+        result = subprocess.run(
+            [
+                "git",
+                "clone",
+                "--filter=blob:none",
+                "--no-checkout",
+                "--quiet",
+                f"https://github.com/{entry['full_name']}.git",
+                str(target),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            return None
+    # The pinned shas must exist in what we fetched; a force-push since
+    # screening would otherwise silently move the window.
+    for sha in (entry["t0"], entry["t1"]):
+        if _git(target, "cat-file", "-t", sha) != "commit":
+            return None
+    return target
+
+
+def deletion_spread(repo: Path, entry: dict[str, Any]) -> tuple[int, int]:
+    """(commits, directories) that deleted a non-excluded .py in the window.
+
+    Needs history, so it cannot run at screen time. Twenty files removed
+    in one commit is ONE event, not twenty independent observations —
+    counting it as twenty is pseudo-replication.
+    """
+    out = _git(
+        repo,
+        "log",
+        "--format=\x01%H",
+        "--diff-filter=D",
+        "--name-only",
+        "--no-renames",
+        f"{entry['t0']}..{entry['t1']}",
+    )
+    commits: set[str] = set()
+    directories: set[str] = set()
+    sha = ""
+    for line in out.splitlines():
+        if line.startswith("\x01"):
+            sha = line[1:]
+            continue
+        path = line.strip()
+        if not path.endswith(".py") or select.is_excluded_path(path):
+            continue
+        subdir = entry.get("subdir") or ""
+        if subdir and not path.startswith(subdir + "/"):
+            continue
+        commits.add(sha)
+        directories.add(path.rsplit("/", 1)[0] if "/" in path else ".")
+    return len(commits), len(directories)
+
+
+def sign_test(wins: int, losses: int) -> float | None:
+    """Two-sided exact binomial p for a paired repo-level comparison.
+
+    The repo, not the claim, is the unit here: it asks whether the
+    claim-level detector beats the file-level one in MORE REPOSITORIES
+    than a coin would, which no single large repository can carry.
+    """
+    n = wins + losses
+    if not n:
+        return None
+    tail = sum(math.comb(n, k) for k in range(min(wins, losses) + 1))
+    return round(min(1.0, 2 * tail / (2**n)), 5)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Run and score the corpus.")
+    parser.add_argument("--corpus", default=str(_HERE / "corpus.json"))
+    parser.add_argument("--clones", default=str(Path.home() / ".cache" / "bm-rot"))
+    parser.add_argument("--out", default=str(_HERE / "results" / "multirepo.json"))
+    args = parser.parse_args()
+
+    corpus = json.loads(Path(args.corpus).read_text())
+    root = Path(args.clones)
+    root.mkdir(parents=True, exist_ok=True)
+
+    entries = [e for s in select.STRATA for e in corpus["strata"][s]]
+    pooled: list[dict[str, Any]] = []
+    per_repo: list[dict[str, Any]] = []
+    failures: list[dict[str, str]] = []
+
+    for i, entry in enumerate(entries, start=1):
+        label = entry["full_name"]
+        print(f"[{i}/{len(entries)}] {label}", flush=True)
+        repo = clone(entry, root)
+        if repo is None:
+            failures.append({"repo": label, "why": "clone_or_sha_unavailable"})
+            continue
+        commits, directories = deletion_spread(repo, entry)
+        stratum = (
+            "D"
+            if (
+                entry.get("deleted_py_files", 0) >= select.MIN_DELETED_PY_FILES
+                and commits >= select.MIN_DELETION_COMMITS
+                and directories >= select.MIN_DELETION_DIRECTORIES
+            )
+            else "R"
+        )
+        try:
+            rows, meta = run.collect_rows(
+                repo,
+                entry["subdir"],
+                entry["t0"],
+                entry["t1"],
+                f"https://github.com/{label}.git",
+            )
+        except Exception as error:
+            failures.append({"repo": label, "why": f"{type(error).__name__}: {error}"})
+            continue
+
+        for row in rows:
+            row["stratum"] = stratum
+        pooled.extend(rows)
+
+        arm = [r for r in rows if r["mode"] == run._MODES[0]]
+        summary = {
+            "repo": label,
+            "rank": entry["rank"],
+            "stratum": stratum,
+            "screened_stratum": entry.get("stratum"),
+            "deletion_commits": commits,
+            "deletion_directories": directories,
+            **{
+                k: meta[k]
+                for k in ("subdir", "t0", "t1", "claims", "claims_false_at_t0")
+            },
+            "file_level": run._detector_stats(
+                arm, lambda r: r["flagged"], score=lambda r: r["commit_drift"]
+            ),
+            "claim_weak": run._detector_stats(
+                arm, lambda r: r["claim_weak"], score=lambda r: r["cite_commits"]
+            ),
+            "claim_strict": run._detector_stats(
+                arm, lambda r: r["claim_strict"], score=lambda r: r["cite_commits"]
+            ),
+        }
+        per_repo.append(summary)
+        print(
+            f"    {stratum}  {meta['claims']} claims, "
+            f"{summary['file_level']['actually_false']} false, "
+            f"alerts/catch {summary['file_level']['alerts_per_catch']} -> "
+            f"{summary['claim_weak']['alerts_per_catch']}",
+            flush=True,
+        )
+
+    # Pooled scoring, on the informative arm.
+    arm = [r for r in pooled if r["mode"] == run._MODES[0]]
+    detectors = {
+        "file_level_incumbent": (lambda r: r["flagged"], lambda r: r["commit_drift"]),
+        "claim_level_strict": (
+            lambda r: r["claim_strict"],
+            lambda r: r["cite_commits"],
+        ),
+        "claim_level_weak": (lambda r: r["claim_weak"], lambda r: r["cite_commits"]),
+        "path_drift_only": (lambda r: r["path_drift"] > 0, lambda r: r["path_drift"]),
+    }
+    pooled_stats: dict[str, Any] = {}
+    for name, (flag, score) in detectors.items():
+        block = {}
+        for kind in (*run.CLAIM_CLASSES, "ALL"):
+            sel = [r for r in arm if kind == "ALL" or r["kind"] == kind]
+            block[kind] = run._detector_stats(sel, flag, score=score)
+        pooled_stats[name] = block
+    pooled_stats["oracle_replica"] = {
+        "ALL": run._detector_stats(arm, run.BASELINES["oracle_replica"])
+    }
+    for constant in ("always_flag", "never_flag"):
+        pooled_stats[constant] = {
+            "ALL": run._detector_stats(arm, run.BASELINES[constant])
+        }
+
+    # Absolute arm, where path drift can actually fire.
+    absolute = [r for r in pooled if r["mode"] == run._MODES[1]]
+    path_absolute = {
+        kind: run._detector_stats(
+            [r for r in absolute if kind == "ALL" or r["kind"] == kind],
+            lambda r: r["path_drift"] > 0,
+        )
+        for kind in (*run.CLAIM_CLASSES, "ALL")
+    }
+
+    # Repo-level paired comparison on alerts-per-catch.
+    wins = losses = ties = 0
+    for summary in per_repo:
+        a = summary["file_level"]["alerts_per_catch"]
+        b = summary["claim_weak"]["alerts_per_catch"]
+        if a is None or b is None:
+            continue
+        if b < a:
+            wins += 1
+        elif b > a:
+            losses += 1
+        else:
+            ties += 1
+
+    report = {
+        "frame_sha256": corpus["frame_sha256"],
+        "walked_to_rank": corpus["walked_to_rank"],
+        "window_days": corpus["window_days"],
+        "repos_scored": len(per_repo),
+        "repos_failed": failures,
+        "strata_counts": {
+            s: sum(1 for r in per_repo if r["stratum"] == s) for s in select.STRATA
+        },
+        "pooled_claims": len(arm),
+        "pooled_false": sum(1 for r in arm if r["truth"] == "false"),
+        "python": sys.version.split()[0],
+        "pooled": pooled_stats,
+        "path_drift_absolute_arm": path_absolute,
+        "repo_level_paired": {
+            "claim_weak_better": wins,
+            "file_level_better": losses,
+            "tied": ties,
+            "sign_test_p": sign_test(wins, losses),
+        },
+        "per_repo": per_repo,
+    }
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(report, indent=2))
+
+    print(f"\npooled {len(arm)} claims, {report['pooled_false']} false")
+    for name in ("file_level_incumbent", "claim_level_weak", "claim_level_strict"):
+        s = pooled_stats[name]["ALL"]
+        print(
+            f"  {name:<22} J={s['youden_j']}  alerts/catch={s['alerts_per_catch']}  "
+            f"prec={s['precision']}  AUROC={s['auroc']}"
+        )
+    print(
+        f"  oracle_replica         J={pooled_stats['oracle_replica']['ALL']['youden_j']}"
+    )
+    print(
+        f"  repo-level paired: {wins}-{losses}-{ties}, p={report['repo_level_paired']['sign_test_p']}"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

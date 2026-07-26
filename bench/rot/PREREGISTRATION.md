@@ -125,6 +125,49 @@ screened candidates reach stratum D. **MISSED if** < 8 stratum-D
 qualifiers are found — published as underpowered, with no widening of the
 frame and no extension of the walk to rescue it.
 
+## Addendum, written after the draw and before any detector was run
+
+The corpus was drawn (walked to rank 767, D=15 / R=15) and then inspected
+before a single detector number existed. One property of stratum D was
+not anticipated by the rules above and is declared here, with the
+timestamp it deserves: **this text was committed before `corpus.py` ran
+for the first time.**
+
+**Seven of the fifteen D repositories are wholesale PACKAGE RELOCATIONS,
+not prunings.** `mkdocstrings/griffe` moved `src/griffe/` to `packages/`
+between its window ends: 46 of 46 files "deleted", while the repository's
+total `.py` count went *up*, 86 → 90. The same signature — deleted equal
+to the entire elected subdir — appears for `narwhals`, `dbt-core`,
+`fastmcp`, `modal-client`, `chardet`, and `httpx2`.
+
+The deletions are real in the only sense the oracle cares about: a memory
+citing `src/griffe/loader.py` after that move **is** stale, and
+`label_claim` is right to say so. But relocation and pruning are
+different phenomena, and conflating them would flatter every path-aware
+detector for a trivial reason — when 100% of a repository's claims go
+false at once, `path_drift` and `claim_level_strict` are perfect by
+construction, exactly the way `oracle_replica` is.
+
+The judges' review of the selection design flagged a "≥50% relocation
+cut" as a threshold with no sensitivity arm. It was **not implemented**,
+and that is a gap in the rules above, not a discovery made afterwards to
+explain a result.
+
+**So D is reported split, and the split is defined here, before the
+numbers exist:**
+
+- **D-relocated** — every non-excluded `.py` under the elected subdir is
+  absent at t1. Reported, never used as the headline.
+- **D-pruned** — partial deletion. **This is the D headline**, and the
+  stratum against which P1 and P3 are scored.
+
+If D-pruned turns out to hold fewer than 8 repositories, the corpus is
+published as underpowered on the class the deletion gate existed to
+create — with no re-draw, no widened frame, and no extension of the walk.
+
+The draw itself is **not** revised. Re-drawing after seeing a property of
+the sample is how a pre-registration becomes decoration.
+
 ## What is not claimed
 
 - The oracle sees **structural** change only. A function whose behaviour
