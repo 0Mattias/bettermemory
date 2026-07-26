@@ -32,6 +32,29 @@ from bettermemory.session import SessionState
 from bettermemory.store import Store
 
 
+@pytest.fixture(autouse=True)
+def _lexical_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep this module on the lexical legs whatever is installed.
+
+    Everything here tests the FTS5 index — prefilter behaviour, the
+    empty-match fallback, filename drift — and it uses "which hits come
+    back" as the observable, including "none". A fused semantic leg
+    breaks that observable by construction: cosine ranks the whole
+    candidate pool and never returns nothing, so on a three-memory
+    fixture SOMETHING always surfaces, however unrelated.
+
+    Since `hybrid` began resolving a model from a merely-installed
+    extra, that made these assertions depend on the environment — and
+    worse, on WHICH model: the torch leg happened to keep the expected
+    order while the fastembed leg did not, so the same code passed one
+    CI job and failed its sibling. Pinning importability off restores
+    what these tests were always written against.
+    """
+    monkeypatch.setattr(
+        "bettermemory.semantic_setup._embeddings_extra_importable", lambda: False
+    )
+
+
 @pytest.fixture
 def memory_dir(tmp_path: Path) -> Path:
     return tmp_path / "memories"

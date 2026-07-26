@@ -441,9 +441,7 @@ def test_factory_hybrid_resolves_a_model_once_an_extra_is_installed(
         "bettermemory.semantic_setup._embeddings_extra_importable", lambda: True
     )
     sentinel = object()
-    monkeypatch.setattr(
-        "bettermemory.semantic.get_model", lambda *a, **k: sentinel
-    )
+    monkeypatch.setattr("bettermemory.semantic.get_model", lambda *a, **k: sentinel)
     cfg = _behavior_config(search_mode="hybrid", semantic_dedup=False)
     assert _semantic_model_or_none(cfg) is sentinel
 
