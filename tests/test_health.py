@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 
+from bettermemory.durability import SHA_MARKER
 from bettermemory.health import (
     MarkerStats,
     _edit_distance_within,
@@ -1490,6 +1491,31 @@ def test_marker_fires_and_overrides_aggregate() -> None:
     assert by_marker["currently"].override_count == 1
     assert by_marker["today i"].fire_count == 1
     assert by_marker["today i"].override_count == 0
+
+
+def test_legacy_per_sha_marker_names_pool_into_one_row() -> None:
+    """The rollup answers "is this marker's override rate high enough to
+    drop it?", and events predating the bucketing fix carry the hash in
+    the marker name. Unfolded, each commit is its own row with n=1 and the
+    question is unanswerable for the highest-volume marker class.
+    """
+    events = [
+        _event("write", status="transient_warning", markers=["sha:874b0b0"]),
+        _event("write", status="transient_warning", markers=["sha:e9a3f1c"]),
+        _event("write", status="transient_warning", markers=[SHA_MARKER]),
+        _event(
+            "write",
+            status="committed",
+            id=generate_ulid(),
+            markers_acknowledged=["sha:a1b2c3d"],
+        ),
+    ]
+    report = compute_health([], events, now=_utc(2026, 5, 1))
+    by_marker = {m.marker: m for m in report.marker_stats}
+
+    assert [m for m in by_marker if m.startswith("sha:")] == [SHA_MARKER]
+    assert by_marker[SHA_MARKER].fire_count == 3
+    assert by_marker[SHA_MARKER].override_count == 1
 
 
 def test_marker_override_rate() -> None:

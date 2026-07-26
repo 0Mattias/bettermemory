@@ -44,6 +44,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+from .durability import canonical_marker
 from .events import _event_id_list, iter_all_events
 from .models import Category, Memory, first_summary_line
 from .origin import (
@@ -1246,10 +1247,14 @@ class _StatsAccumulator:
         # `for marker in <scalar>` raises TypeError, and a bare string
         # would shred into per-character marker rows. `_event_id_list`
         # gives list-passthrough / lone-string -> [value] / else [].
+        # `canonical_marker` folds pre-bucketing SHA names (`sha:874b0b0`)
+        # onto the canonical one. Without it the fires and overrides this
+        # rollup exists to compare stay split across a row per commit, and
+        # the highest-volume marker class in the store reads as noise.
         for marker in _event_id_list(ev.get("markers")):
-            self._marker_fires[marker] += 1
+            self._marker_fires[canonical_marker(marker)] += 1
         for marker in _event_id_list(ev.get("markers_acknowledged")):
-            self._marker_overrides[marker] += 1
+            self._marker_overrides[canonical_marker(marker)] += 1
 
     def _handle_turn_audited(self, ev: dict[str, Any]) -> None:
         # Denominator bookkeeping for the silent-miss rate. Buffered
@@ -1902,7 +1907,6 @@ def _compute_commit_drift_debt(
     timestamps = commit_author_timestamps(cwd_path)
     if timestamps is None:
         return None
-    timestamps_sorted = sorted(timestamps)
     # Resolve the repo root once for the whole rollup — the per-memory
     # anchor resolution below would otherwise pay a `git rev-parse`
     # fork+exec per drifting memory.
@@ -1942,8 +1946,8 @@ def _compute_commit_drift_debt(
         # cut. Equal timestamps fall before the cut on bisect_right
         # semantics, which is what we want — a verify call that lands
         # at the same instant as a commit doesn't count as drift.
-        idx = bisect.bisect_right(timestamps_sorted, since)
-        count = len(timestamps_sorted) - idx
+        idx = bisect.bisect_right(timestamps, since)
+        count = len(timestamps) - idx
         # Narrow to commits that actually touched the memory's claim
         # anchors — mirrors memory_show and the memory_search top-hit
         # surface (_response.py). Without this the rollup nagged on
@@ -2753,7 +2757,6 @@ def curation_counts(
         cwd_path = Path(caller_origin.cwd)
         timestamps = commit_author_timestamps(cwd_path)
         if timestamps is not None:
-            timestamps_sorted = sorted(timestamps)
             # One rev-parse for the whole pass; the per-memory anchor
             # resolution below reuses it.
             toplevel = repo_toplevel(cwd_path)
@@ -2778,8 +2781,8 @@ def curation_counts(
                 anchors = commit_drift_anchor_paths(m.body, m.verified_paths)
                 if not anchors:
                     continue
-                idx = bisect.bisect_right(timestamps_sorted, verified_at)
-                count = len(timestamps_sorted) - idx
+                idx = bisect.bisect_right(timestamps, verified_at)
+                count = len(timestamps) - idx
                 if count > 0:
                     resolved = resolve_commit_drift_count(
                         cwd=cwd_path,

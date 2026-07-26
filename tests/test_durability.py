@@ -5,7 +5,9 @@ from __future__ import annotations
 import pytest
 
 from bettermemory.durability import (
+    SHA_MARKER,
     TRANSIENT_PHRASE_MARKERS,
+    canonical_marker,
     find_transient_markers,
 )
 
@@ -300,7 +302,7 @@ def test_seven_char_sha_fires() -> None:
     hits = find_transient_markers(body)
     sha_hits = [h for h in hits if h.marker.startswith("sha:")]
     assert sha_hits, "expected SHA hit"
-    assert sha_hits[0].marker == "sha:a1b2c3d"
+    assert sha_hits[0].marker == SHA_MARKER
 
 
 def test_forty_char_sha_fires() -> None:
@@ -320,22 +322,23 @@ def test_forty_one_char_hex_does_not_fire() -> None:
 
 
 @pytest.mark.parametrize(
-    ("body", "sha_marker"),
+    ("body", "sha"),
     [
         (
             "The deployed build is v3.7.1-5-g874b0b0, two commits past the tag.",
-            "sha:874b0b0",
+            "874b0b0",
         ),
-        ("The image is tagged 2.4.0-12-ge9a3f1c in the registry.", "sha:e9a3f1c"),
+        ("The image is tagged 2.4.0-12-ge9a3f1c in the registry.", "e9a3f1c"),
     ],
 )
-def test_git_describe_sha_fires(body: str, sha_marker: str) -> None:
+def test_git_describe_sha_fires(body: str, sha: str) -> None:
     """git-describe output embeds the hash behind a literal 'g', which
-    removes the \\b — the dedicated pattern still buckets it under sha:."""
+    removes the \\b — the dedicated pattern still buckets it under
+    SHA_MARKER, and the hash itself travels in the snippet."""
     hits = find_transient_markers(body)
-    assert any(h.marker == sha_marker for h in hits), (
-        f"expected {sha_marker!r}, got {[h.marker for h in hits]}"
-    )
+    sha_hits = [h for h in hits if h.marker == SHA_MARKER]
+    assert sha_hits, f"expected {SHA_MARKER!r}, got {[h.marker for h in hits]}"
+    assert sha in sha_hits[0].snippet
 
 
 @pytest.mark.parametrize(
@@ -611,6 +614,53 @@ def test_multiple_shas_reported_once_under_one_marker() -> None:
     hits = find_transient_markers(body)
     sha_hits = [h for h in hits if h.marker.startswith("sha:")]
     assert len(sha_hits) == 1
+
+
+def test_different_bodies_share_one_sha_marker_name() -> None:
+    """The bucketing that `marker_stats` actually reads.
+
+    Collapsing within a body was already covered; collapsing ACROSS them
+    was not, and that is the half the aggregation keys on. While the name
+    carried the hash, every write minted a fresh row, so the SHA class
+    could never accumulate the override evidence that decides whether the
+    marker earns its slot.
+    """
+    first = find_transient_markers("Shipped in a1b2c3d, see the tag.")
+    second = find_transient_markers("Reverted by e4f5a6b later that day.")
+
+    names = {h.marker for h in first + second if h.marker.startswith("sha:")}
+    assert names == {SHA_MARKER}, f"SHA marker name is not stable: {names}"
+
+
+def test_sha_hash_survives_in_the_snippet() -> None:
+    """The name is canonical, so the snippet is what carries the hash —
+    the caller still gets told which token tripped the gate."""
+    hits = find_transient_markers("Pinned to a1b2c3d for the refactor.")
+    sha_hit = next(h for h in hits if h.marker == SHA_MARKER)
+    assert "a1b2c3d" in sha_hit.snippet
+
+
+@pytest.mark.parametrize(
+    ("stored", "expected"),
+    [
+        ("sha:874b0b0", SHA_MARKER),  # pre-fix name, hash in the marker
+        ("sha:1234567", SHA_MARKER),  # all-digit sha[:7] prefix
+        (SHA_MARKER, SHA_MARKER),  # idempotent on the canonical name
+        ("currently", "currently"),  # phrase markers pass through
+        ("as of <date>", "as of <date>"),
+        ("sha:874b0b", "sha:874b0b"),  # too short to be a sha[:7] name
+        ("sha:zzzzzzz", "sha:zzzzzzz"),  # not hex
+    ],
+)
+def test_canonical_marker_folds_only_legacy_sha_names(
+    stored: str, expected: str
+) -> None:
+    """Read-side fold for events written before the marker was bucketed.
+
+    The event log is append-only and never rewritten, so without this the
+    pre-fix history stays shattered a row per commit forever.
+    """
+    assert canonical_marker(stored) == expected
 
 
 # ---------------------------------------------------------------------------

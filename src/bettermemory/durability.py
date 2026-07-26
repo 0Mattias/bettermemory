@@ -173,9 +173,38 @@ _SHA_RE = re.compile(r"\b(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b")
 # behind a literal 'g'; 'g' is a word character outside [0-9a-f], so
 # _SHA_RE's \b can never anchor there even though the string is the most
 # common machine-generated spelling of pure branch state. The lookbehind
-# keeps the bare hex as the match, so the sha:<prefix> marker format is
-# unchanged.
+# keeps the bare hex as the match, so it buckets under the same marker as
+# any other SHA.
 _DESCRIBE_SHA_RE = re.compile(r"(?<=-g)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b")
+
+
+# The marker NAME must not carry the SHA. `health.marker_stats` aggregates
+# by marker name to answer one question — "is this marker's override rate
+# high enough to drop it?" — and a name containing the hash makes every
+# firing its own row, so the class can never accumulate the evidence that
+# answer needs. Measured on a real store before this was fixed: 89 SHA
+# events smeared across 52 rows, largest n = 5, pooled override rate 0.49
+# against 0.17 for the phrase markers. The offending SHA is still shown to
+# the caller — it travels in the match's `snippet`, not in its name.
+SHA_MARKER = "sha:<commit>"
+
+
+# Events written before SHA_MARKER existed carry the hash in the name
+# (`sha:874b0b0`) — seven chars of `sha[:7]`, all-digit prefixes included.
+# The canonical name is not itself of this shape, so the fold below is
+# idempotent.
+_LEGACY_SHA_MARKER_RE = re.compile(r"^sha:[0-9a-f]{7}$")
+
+
+def canonical_marker(marker: str) -> str:
+    """Fold a stored event's marker name onto its current canonical form.
+
+    Read-side only: the event log is append-only and is NOT rewritten.
+    Aggregations key on the marker name, so without this fold every SHA
+    event written before the bucketing fix stays its own row forever and
+    the class the fix exists to make measurable reads as 52 singletons.
+    """
+    return SHA_MARKER if _LEGACY_SHA_MARKER_RE.match(marker) else marker
 
 
 # UUIDs (8-4-4-4-12 hex) are permanent identifiers — KMS keys, tenant ids,
@@ -428,10 +457,12 @@ def find_transient_markers(content: str) -> list[TransientMatch]:
             continue
         # Bucket all SHA hits under one canonical marker so a body listing
         # five commit SHAs doesn't produce five entries — one is enough to
-        # tell the caller "you're putting branch state in memory".
+        # tell the caller "you're putting branch state in memory". The
+        # `break` buckets within a body; the canonical NAME is what buckets
+        # across them, which is the half `marker_stats` reads.
         hits.append(
             TransientMatch(
-                marker=f"sha:{sha[:7]}",
+                marker=SHA_MARKER,
                 snippet=_snippet_around(content, match.start(), match.end()),
             )
         )
@@ -441,7 +472,9 @@ def find_transient_markers(content: str) -> list[TransientMatch]:
 
 
 __all__ = [
+    "SHA_MARKER",
     "TRANSIENT_PHRASE_MARKERS",
     "TransientMatch",
+    "canonical_marker",
     "find_transient_markers",
 ]
