@@ -92,7 +92,9 @@ Every retrieval carries `staleness_verdict`:
   current.
 - `spot_check_recommended`: verification calendar-fresh but the
   world has moved (path missing, or commits since last verify).
-- `spot_check_required`: verification.status is `never` or `stale`.
+- `spot_check_required`: verification.status is `never`, or `stale`
+  with no measurement to stand the calendar down. A `stale` memory
+  whose commit-drift leg measured zero reads `fresh`.
 
 When the verdict isn't fresh, the hit already carries the
 actionable detail. `path_drift.missing` (when present) lists the

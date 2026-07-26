@@ -45,9 +45,15 @@ Three arms are reported because they answer different questions:
   paths by design, so the citation style alone decides whether the path
   leg can ever fire.
 - **`shipped_default`** anchors 400 days ago, past
-  `DEFAULT_VERIFICATION_STALE_DAYS`. A deliberate worst case showing what
-  the calendar leg alone does; not a claim about typical usage, since
-  real memories get re-verified.
+  `DEFAULT_VERIFICATION_STALE_DAYS`. It exists to answer "what does a
+  user who has not re-verified in a year actually get?".
+  Until 3.30.0 the answer was "an alert on everything" — see the
+  constant-function finding below, which this arm is what surfaced.
+  Since the fix it scores **identically to `drift_only_relative_cite`**,
+  and that convergence is the point: the calendar leg no longer erases
+  the drift legs, so the arm with the calendar disabled and the arm with
+  it maximally expired now agree. Kept as the regression guard for
+  exactly that (`test_the_shipped_default_is_not_a_constant_function`).
 
 ## Results — bettermemory's own history, 2026-07-26
 
@@ -78,8 +84,15 @@ Reference classifiers on the same claims:
 | --- | --- | --- | --- |
 | `always_flag` | 100% | **0%** | **0.000** |
 | `never_flag` | 0% | 100% | **0.000** |
-| `shipped_default` | 100% | **0%** | **0.000** |
+| `shipped_default` *(pre-3.30.0)* | 100% | **0%** | **0.000** |
+| `shipped_default` *(3.30.0, same window)* | 96.7% | 0% | **0.034** |
 | `oracle_replica` *(peeks at the label)* | 3.85% | 0% | **1.000** |
+
+Both `shipped_default` rows are real measurements of this same 675-claim
+window; the first is what the product scored before the constant-function
+defect was fixed and is kept so the fix is auditable rather than
+retroactive. The committed JSON under `results/` carries the 3.30.0
+numbers.
 
 ## The claim-level detector reaches 1.000, and that is not a win
 
@@ -151,12 +164,27 @@ Youden's J — `TPR − FPR`, exactly 0.0 for every constant classifier — is
 **0.034**. The margin over a coin is real in sign and negligible in size,
 and on this corpus it is not significant.
 
-**At its shipped default the product is a constant function.**
-`shipped_default` flags 100% of claims in every class and both windows:
-J = 0.000, Fisher p = 1.000, arithmetically identical to `always_flag`.
-The 400-day anchor makes the calendar leg fire on everything, so the
-drift legs cannot contribute. That is a defect, not a configuration
-choice, and it is the most actionable finding here.
+**~~At its shipped default the product is a constant function.~~ FIXED
+IN 3.30.0 — and this was the most actionable finding the benchmark
+produced.** As measured here, `shipped_default` flagged 100% of claims
+in every class and both windows: J = 0.000, Fisher p = 1.000,
+arithmetically identical to `always_flag`. The cause was in
+`compute_staleness_verdict`, not in the anchor: a `never`/`stale`
+verification status pre-empted **both** drift inputs outright, so past
+the 30-day window the calendar leg fired on everything and the drift
+legs could not contribute. The fix lets a measured-zero commit leg —
+"no commit touched anything this memory cites since its own last
+verification" — stand the calendar leg down, while `None` ("the leg
+could not ask") deliberately still does not. Re-measured on this exact
+pinned window, `shipped_default` moves to **J = 0.034 at a 96.7% flag
+rate (60d)** and **J = 0.111 at 89.2% (30d)**, converging exactly onto
+`drift_only_relative_cite`.
+
+Read that honestly: the default operating point is no longer a constant
+function, but J = 0.034 is the *same weak signal the informative arm
+always had*. The defect that has been removed is the calendar leg
+erasing the measurement — not the mediocrity of the measurement, which
+is a separate and still-open problem (item 4 below).
 
 **The signal that exists lives entirely in one small class.** Symbol
 claims are 72% of the corpus and carry none of it — J = 0.023 at
@@ -399,10 +427,20 @@ seeing the number is the exact move this document exists to prevent.
 The target is **J**, not recall. Recall is already 1.0 and worthless at
 this flag rate; the work is raising discrimination without giving it back.
 
-1. **Fix the default operating point.** `shipped_default` being a
-   constant function is a defect. A calendar leg that fires on everything
-   older than 30 days makes the drift legs unreachable in exactly the
-   configuration most users run.
+1. ~~**Fix the default operating point.**~~ **DONE IN 3.30.0, AND IT WAS
+   A ONE-BRANCH BUG RATHER THAN A TUNING PROBLEM.** The diagnosis blamed
+   the 400-day anchor; the actual cause was that
+   `compute_staleness_verdict` let a `never`/`stale` status pre-empt both
+   drift inputs, so no anchor value could have reached the drift legs.
+   Fixed by letting a measured-zero commit leg stand the calendar leg
+   down (and only that leg: `None` means "could not ask", and path
+   existence alone is too weak — of 15 missing-path alerts raised from
+   body prose on the live store, ~0 were real drift, against 3 of 3 for
+   anchored attestations). `shipped_default` now scores identically to
+   `drift_only_relative_cite` on both windows. **What this did NOT do is
+   raise the ceiling**: J goes 0.000 -> 0.034 (60d) and 0.000 -> 0.111
+   (30d) because the default now *reaches* the existing signal, not
+   because the signal improved. Item 4 remains the real work.
 2. ~~**Make `commit_drift` ask the right question.**~~ **DONE, AND THE
    ANSWER WAS NOT A NUMBER TO SHIP.** The claim-level detector is built
    (`build_binding_index`, `claim_level_drift`) and measured above: 25.1

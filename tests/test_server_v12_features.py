@@ -354,6 +354,19 @@ async def test_memory_search_expand_top_recomputes_verdict_on_drift(
 # `spot_check_recommended` or `fresh`); removing "never" flips the
 # corresponding `[never]` parametrise cases. The membership guard also
 # fails in either case.
+#
+# SCOPE NOTE, 3.30.0. "Every member forces `spot_check_required`" is no
+# longer unconditionally true for `stale`, and these tests must not be
+# read as claiming it is. A calendar-stale memory whose commit-drift
+# leg returns a MEASURED ZERO now demotes to `fresh` — see
+# `verify.compute_staleness_verdict` for why, and
+# `tests/test_verify.py::test_verdict_ladder` for the full cell-by-cell
+# contract. What keeps every case below valid is the fixture: these
+# memories are written into a temp store with no origin repo the caller
+# shares, so `compute_commit_drift` returns `None` ("the leg could not
+# ask"), which is exactly the input that does NOT demote. So the tests
+# still pin the raise path — they pin it for the silent-leg case, which
+# is the common one and the one where the loud signal matters.
 
 # Hardcoded so a deletion from `_VERDICT_RAISE_STATUSES` causes the
 # corresponding parametrise case to fail (parametrising off the

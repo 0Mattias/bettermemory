@@ -14,6 +14,7 @@ the ones where a careless checker would get the label backwards:
 from __future__ import annotations
 
 import importlib.util
+import json
 import random
 import subprocess
 import sys
@@ -229,6 +230,64 @@ def test_readme_never_reports_a_miss_rate_without_its_counterweights() -> None:
                 "number is meaningless without its counterweights"
             )
     assert "never misses" not in lowered
+
+
+def test_the_shipped_default_is_not_a_constant_function() -> None:
+    """The regression guard for the 3.30.0 verdict fix.
+
+    Before it, `verification.status in {"never", "stale"}` pre-empted
+    both drift inputs, so the `shipped_default` arm — anchored 400 days
+    back, past the freshness window — flagged 100% of claims in every
+    class and both windows: J = 0.000, arithmetically identical to
+    `always_flag`. The drift legs that carry all the discrimination
+    were unreachable in the configuration most users run.
+
+    The invariant that says the pre-emption is gone is arm CONVERGENCE:
+    `shipped_default` must now score exactly what
+    `drift_only_relative_cite` scores, because the only difference
+    between them is a calendar anchor that no longer erases the
+    measurement. Pinned on the committed results rather than by
+    re-running the corpus, so the guard costs nothing in CI — the JSON
+    is the published artifact, and if a future edit reintroduces the
+    pre-emption the two arms separate again and this fails.
+    """
+    results = _ROOT / "bench" / "rot" / "results"
+    published = sorted(results.glob("bettermemory-*d-*.json"))
+    assert published, "no committed rot results to guard"
+    for path in published:
+        report = json.loads(path.read_text(encoding="utf-8"))
+        shipped = report["modes"]["shipped_default"]
+        drift_only = report["modes"]["drift_only_relative_cite"]
+        assert shipped == drift_only, (
+            f"{path.name}: the shipped default diverged from the "
+            "calendar-disabled arm — the calendar leg is pre-empting the "
+            "drift legs again, which is what made the verdict a constant "
+            "function"
+        )
+        assert shipped["ALL"]["flag_rate"] < 1.0, (
+            f"{path.name}: the shipped default flags every claim — that is "
+            "`always_flag` with extra steps, not a detector"
+        )
+
+
+def test_a_silent_commit_leg_is_not_reported_as_a_measured_zero() -> None:
+    """`verdict_for` must hand the verdict `None`, not `0`, when
+    `compute_commit_drift` declined to emit.
+
+    Since 3.30.0 the two inputs mean opposite things to the rollup: a
+    measured zero stands the calendar leg down on a stale memory, while
+    `None` ("the leg could not ask") deliberately does not. The bench
+    row still records an int for schema stability, so the conflation is
+    invisible unless pinned — and it would manufacture a false green
+    inside the very instrument that measures the guard against false
+    greens.
+    """
+    source = (_ROOT / "bench" / "rot" / "run.py").read_text(encoding="utf-8")
+    body = source.split("def verdict_for(", 1)[1].split("\ndef ", 1)[0]
+    assert "commit_drift_count=count if drift_status is not None else None" in body, (
+        "verdict_for no longer distinguishes a silent commit leg from a "
+        "measured zero when computing the verdict"
+    )
 
 
 def test_relative_citations_get_no_path_checking_at_all(tmp_path: Path) -> None:

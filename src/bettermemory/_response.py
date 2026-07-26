@@ -40,15 +40,12 @@ from .time_utils import isoformat_utc as _isoformat_utc
 from .time_utils import isoformat_utc_optional as _isoformat_utc_optional
 from .time_utils import parse_event_ts
 from .verify import (
-    _VERDICT_FRESH,
-    _VERDICT_RAISE_STATUSES,
-    _VERDICT_RECOMMENDED,
-    _VERDICT_REQUIRED,
     commit_drift_anchor_paths,
     compute_staleness_verdict,
     compute_verification_status,
     detect_path_drift,
     resolve_commit_drift_count,
+    verdict_from_signals,
 )
 
 
@@ -590,24 +587,23 @@ class ResponseBuilder:
             # actually applicable.
             verification_dict = hit_dict["verification"]
             verification_status = verification_dict["status"]
-            # Mirror the gate in `compute_staleness_verdict` — same
-            # closed-protocol whitelist, single source of truth. Silent
-            # divergence here would let `memory_search`'s top hit
-            # surface a different verdict than `memory_show` does for
-            # the same stale memory.
-            verdict_required = verification_status in _VERDICT_RAISE_STATUSES
-            # Mirror the tier strings ``compute_staleness_verdict``
-            # emits at ``verify.py`` — same closed-protocol output, one
-            # source of truth. A rename of any tier in ``verify.py``
-            # that didn't reach this recompute would silently desync
-            # the ``memory_search`` top-hit verdict from the
-            # ``memory_show`` verdict for the same memory.
-            if verdict_required:
-                hit_dict["staleness_verdict"] = _VERDICT_REQUIRED
-            elif count > 0 or hit_dict.get("path_drift_missing", 0) > 0:
-                hit_dict["staleness_verdict"] = _VERDICT_RECOMMENDED
-            else:
-                hit_dict["staleness_verdict"] = _VERDICT_FRESH
+            # Call the shared primitive rather than restating the
+            # ladder. This site used to re-implement it against the
+            # same two module-level constants, guarded only by a pair
+            # of "mirror the gate in verify.py" comments — which is
+            # exactly the arrangement that let a semantic change reach
+            # one surface and not the other, so `memory_search`'s top
+            # hit could report a different verdict than `memory_show`
+            # for the same memory. `count` is a real measured integer
+            # here (the `resolved is None` branch above already
+            # `continue`d), so the stale-demotion arm gets the input it
+            # needs rather than a None that would read as "couldn't
+            # ask".
+            hit_dict["staleness_verdict"] = verdict_from_signals(
+                status=verification_status,
+                path_drift_missing=hit_dict.get("path_drift_missing", 0),
+                commit_drift_count=count,
+            )
 
     def attach_depends_on_resolved(  # type: ignore[no-untyped-def]
         self,

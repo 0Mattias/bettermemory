@@ -7,6 +7,52 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## Unreleased
+
+### Fixed — the staleness verdict was a constant function at the shipped default
+
+`staleness_verdict` is the field this project tells consumers to branch
+on first, and past the freshness window it was not a signal at all.
+`compute_staleness_verdict` let a `never`/`stale` verification status
+pre-empt **both** drift inputs, so every memory older than
+`verification_stale_days` (default 30) reported `spot_check_required`
+no matter what path drift and commit drift actually found. The legs
+carrying all of the discrimination were unreachable in exactly the
+configuration most users run.
+
+`bench/rot` had already measured the consequence and named it the most
+actionable finding it produced: the `shipped_default` arm flagged 100%
+of claims in every class and both windows, Youden's J = 0.000 —
+arithmetically identical to a detector that flags everything.
+
+A calendar-stale memory now reads `fresh` when its commit-drift leg
+returns a **measured zero**: no commit touched anything the memory
+cites since its own `last_verified_at`. That is the question the
+calendar leg is a crude proxy for, so the measurement wins and the
+proxy yields — which is the division of labour `compute_commit_drift`
+already documented from the other side ("calendar staleness remains the
+backstop for that class"). Three guards keep the demotion from becoming
+a false green: `never` never demotes (no anchor, so no "since when"),
+`commit_drift_count is None` never demotes (the leg could not ask —
+this is what keeps preference and lesson memories loud), and path
+existence alone never demotes (on the live store, ~0 of 15 missing-path
+alerts raised from body prose were real drift, against 3 of 3 for
+anchored attestations). Drift still raises the verdict exactly as
+before.
+
+Re-measured on the same pinned windows, `shipped_default` moves from
+J = 0.000 to **0.034 (60d)** and **0.111 (30d)**, converging exactly
+onto the arm that had the calendar leg disabled — that convergence is
+now a regression test. The other arms, the claim-level detectors and
+the reference baselines reproduce identically. The ceiling did not
+move: the default now *reaches* the existing weak signal rather than
+the signal getting better.
+
+`verify.verdict_from_signals` is new public API — the primitive both
+emission sites now share, replacing a re-implementation in
+`_response.attach_commit_drift_counts` that three separate "mirror the
+gate in verify.py" comments had been warning about.
+
 ## 3.29.0 - 2026-07-26
 
 Almost no new feature, and one reversal. This window is one thing:

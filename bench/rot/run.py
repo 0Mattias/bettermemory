@@ -788,10 +788,20 @@ def verdict_for(
     )
     commits = commits_touching.get(claim.rel_path, 0)
     count = commits if drift_status is not None else 0
+    # The ROW keeps an int (`count`) so the scoring schema is unchanged,
+    # but the VERDICT must receive `None` when the commit leg was silent.
+    # The two are not the same input: since 3.30.0 a measured zero stands
+    # the calendar leg down on a stale memory, while `None` — "the leg
+    # could not ask" — deliberately does not. Passing 0 for both would
+    # manufacture exactly the false green the demotion's guard exists to
+    # prevent, and would do it inside the instrument that is supposed to
+    # measure the guard. Harmless before that change (the calendar
+    # pre-empted every drift input, so 0 and None were indistinguishable
+    # here); load-bearing after it.
     verdict = compute_staleness_verdict(
         verification=verification,
         path_drift_missing=len(drift.missing),
-        commit_drift_count=count,
+        commit_drift_count=count if drift_status is not None else None,
     )
     return verdict, len(drift.missing), count
 

@@ -46,9 +46,11 @@ from bettermemory.verify import (
     _normalize_for_compare,
     commit_drift_anchor_paths,
     compute_commit_drift,
+    compute_staleness_verdict,
     compute_verification_status,
     detect_path_drift,
     resolve_commit_drift_count,
+    verdict_from_signals,
 )
 
 from .conftest import set_git_discovery_ceiling
@@ -1180,6 +1182,190 @@ def test_verification_status_is_immutable_dataclass() -> None:
     except _dc.FrozenInstanceError:
         return
     raise AssertionError("VerificationStatus should be frozen")
+
+
+# ---------------------------------------------------------------------------
+# verdict_from_signals — the rollup ladder, and the stale-demotion carve-out
+# ---------------------------------------------------------------------------
+#
+# Until 3.30.0 a `never`/`stale` verification status pre-empted both
+# drift inputs outright, which made the verdict a CONSTANT FUNCTION at
+# the shipped default: every memory past the 30-day window read
+# `spot_check_required` regardless of what the drift legs found.
+# `bench/rot` measured it as arithmetically identical to `always_flag`
+# (flag rate 100%, Youden's J = 0.000 in every class and both windows).
+#
+# The ladder now lets a MEASUREMENT override the calendar PROXY, and
+# these tests pin both halves of that — the demotion, and every guard
+# that stops it from becoming a false green. The guards are the
+# load-bearing part: a demotion that fired on absent evidence would be
+# the exact defect class the verdict exists to expose.
+#
+# Negative control: deleting the `commit_drift_count == 0` condition
+# from the final branch (i.e. demoting on any clean stale memory) flips
+# `test_verdict_stale_does_not_demote_when_commit_leg_silent` and
+# `test_verdict_stale_does_not_demote_on_path_evidence_alone` from
+# passing to failing; deleting the `status == "never"` early return
+# flips `test_verdict_never_never_demotes`.
+
+
+@pytest.mark.parametrize(
+    ("status", "path_missing", "commit_count", "expected"),
+    [
+        # Calendar-fresh: unchanged in every combination.
+        ("fresh", 0, 0, "fresh"),
+        ("fresh", 0, None, "fresh"),
+        ("fresh", 0, 3, "spot_check_recommended"),
+        ("fresh", 2, None, "spot_check_recommended"),
+        # `never`: no anchor exists, so nothing can stand the calendar down.
+        ("never", 0, None, "spot_check_required"),
+        ("never", 0, 0, "spot_check_required"),
+        ("never", 2, 0, "spot_check_required"),
+        # `stale`: demotes ONLY on a measured-zero commit leg.
+        ("stale", 0, 0, "fresh"),
+        ("stale", 0, None, "spot_check_required"),
+        ("stale", 0, 3, "spot_check_required"),
+        ("stale", 2, 0, "spot_check_required"),
+    ],
+)
+def test_verdict_ladder(
+    status: str, path_missing: int, commit_count: int | None, expected: str
+) -> None:
+    """Pin the full cross-product of the three signals.
+
+    Table-driven rather than one test per branch because the ladder's
+    correctness IS the interaction — reading the eleven rows together
+    is what shows that the only cell which moved is
+    `stale`/no-path-drift/commit-zero."""
+    assert (
+        verdict_from_signals(
+            status=status,
+            path_drift_missing=path_missing,
+            commit_drift_count=commit_count,
+        )
+        == expected
+    )
+
+
+def test_verdict_stale_demotes_on_measured_zero_commit_drift() -> None:
+    """The fix itself: a memory well past its freshness window whose
+    anchored paths saw ZERO commits since its own last verification
+    reads `fresh`.
+
+    This is the branch that stops the shipped default from being a
+    constant function. `commit_drift_count == 0` is not "we didn't
+    look" — `compute_commit_drift` returns None for that — it is
+    "we counted commits touching this memory's own claim anchors since
+    its `last_verified_at`, and there were none"."""
+    now = datetime.now(timezone.utc)
+    stale = compute_verification_status(now - timedelta(days=400), now=now)
+    assert stale.status == "stale"
+    assert (
+        compute_staleness_verdict(
+            verification=stale, path_drift_missing=0, commit_drift_count=0
+        )
+        == "fresh"
+    )
+
+
+def test_verdict_stale_does_not_demote_when_commit_leg_silent() -> None:
+    """`None` means the leg could not ask — no origin repo, caller in a
+    different repo, git unreachable, or no claim anchor landing here.
+
+    Absence of evidence is not evidence of freshness. This is the
+    branch that keeps preference/lesson/reflection memories — the ~36%
+    of real bodies `bench/claims.py` grades as judgement rather than
+    checkable claim — pinned at `spot_check_required`, which is the
+    class `compute_commit_drift` explicitly exempts and hands to the
+    calendar backstop."""
+    now = datetime.now(timezone.utc)
+    stale = compute_verification_status(now - timedelta(days=400), now=now)
+    assert (
+        compute_staleness_verdict(
+            verification=stale, path_drift_missing=0, commit_drift_count=None
+        )
+        == "spot_check_required"
+    )
+
+
+def test_verdict_stale_does_not_demote_on_path_evidence_alone() -> None:
+    """Path existence must not lower the verdict on its own.
+
+    "The cited file still exists" answers a weaker question than
+    "nothing touched it since you checked", and the 2026-07-26 store
+    sweep put a number on how much weaker: of 15 missing-path alerts
+    raised from paths scraped out of body prose, ~0 were real drift,
+    against 3 of 3 for anchored attestations. So a clean path leg with
+    a silent commit leg stays `spot_check_required`."""
+    now = datetime.now(timezone.utc)
+    stale = compute_verification_status(now - timedelta(days=400), now=now)
+    # Clean path leg (nothing missing), commit leg silent.
+    assert (
+        verdict_from_signals(
+            status=stale.status, path_drift_missing=0, commit_drift_count=None
+        )
+        == "spot_check_required"
+    )
+
+
+def test_verdict_never_never_demotes() -> None:
+    """`never` is unconditional, belt-and-braces against a future
+    `compute_commit_drift` that learns to emit a count without a
+    `last_verified_at` anchor. Without an anchor there is no "since
+    when", so a zero count would be meaningless rather than
+    reassuring."""
+    now = datetime.now(timezone.utc)
+    never = compute_verification_status(None, now=now)
+    assert never.status == "never"
+    assert (
+        compute_staleness_verdict(
+            verification=never, path_drift_missing=0, commit_drift_count=0
+        )
+        == "spot_check_required"
+    )
+
+
+def test_verdict_drift_still_raises_a_stale_memory() -> None:
+    """The demotion must not weaken the raise path: a stale memory with
+    real drift on either leg stays at `spot_check_required`, not the
+    milder `spot_check_recommended` a calendar-fresh memory would get."""
+    now = datetime.now(timezone.utc)
+    stale = compute_verification_status(now - timedelta(days=400), now=now)
+    for missing, count in ((1, 0), (0, 5), (3, 9)):
+        assert (
+            compute_staleness_verdict(
+                verification=stale,
+                path_drift_missing=missing,
+                commit_drift_count=count,
+            )
+            == "spot_check_required"
+        )
+
+
+def test_compute_staleness_verdict_delegates_to_primitive() -> None:
+    """`compute_staleness_verdict` must stay a thin wrapper.
+
+    The two emission sites (`verify.compute_staleness_verdict` and
+    `_response.attach_commit_drift_counts`) previously restated the
+    ladder against shared constants, guarded only by "mirror the gate
+    above" comments — the arrangement that lets a semantic change reach
+    one surface and not the other. Sharing the primitive is what makes
+    them structurally incapable of diverging; this pins that they still
+    agree cell-for-cell."""
+    now = datetime.now(timezone.utc)
+    for stamp in (None, now - timedelta(days=1), now - timedelta(days=400)):
+        verification = compute_verification_status(stamp, now=now)
+        for missing in (0, 2):
+            for count in (None, 0, 4):
+                assert compute_staleness_verdict(
+                    verification=verification,
+                    path_drift_missing=missing,
+                    commit_drift_count=count,
+                ) == verdict_from_signals(
+                    status=verification.status,
+                    path_drift_missing=missing,
+                    commit_drift_count=count,
+                )
 
 
 # ---------------------------------------------------------------------------
