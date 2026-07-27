@@ -59,3 +59,4 @@ htmlcov/
 # sha256 in the runner and in every result file, so the corpus is
 # reproducible without being vendored into the repository.
 bench/longmemeval/data/
+bench/longmemeval/results/*.log
