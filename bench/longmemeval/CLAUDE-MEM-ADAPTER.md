@@ -104,19 +104,42 @@ as a 35 GB-RAM mitigation — but publishing a lexical-only number as
 *the* claude-mem result would be indefensible. Both Chroma states go
 side by side, as the pre-registration commits to.
 
+## The MCP server drives cleanly — probed, not assumed
+
+`plugin/scripts/mcp-server.cjs` runs under **plain node** (no bun), speaks
+JSON-RPC over stdio, and honours `CLAUDE_MEM_DATA_DIR` for full sandbox
+isolation. A probe with a temp data dir returns:
+
+```
+INIT OK: {"name":"claude-mem","version":"13.12.4"}
+[SETTINGS] Created settings file with defaults: <tmp>/settings.json
+TOOLS (14)
+```
+
+So the read side can be driven exactly as a real client drives it. That
+settles **which entry point is canonical**: the advertised step-1 tool is
+**`search`** ("Step 1: Search memory. Returns index with IDs"), followed
+by `timeline` and `get_observations`. `observation_search` is *not*
+exposed. Use `search`.
+
+**`observation_add` is absent from the 14**, confirming the recon note
+that it is filtered out unless the runtime is Postgres "server" mode. So
+**ingest cannot go through MCP** and must be out-of-band — `SessionStore`
+under bun, or the HTTP API. That is not a workaround, it is the same
+shape as the bettermemory side, where ingest goes through `Store.write`
+rather than the `memory_write` handler. Both systems are written to
+out-of-band and read through their real query path, and both halves of
+that must be disclosed together.
+
 ## Open questions before this can run
 
 1. **Chroma arm logistics.** The semantic arm needs a ChromaDB instance
    per question-store, or one instance partitioned per question. Cost and
    isolation are both unresolved, and per-question isolation matters as
-   much here as it does for bettermemory.
-2. **Which search entry point is canonical.** `observation_search` and
-   `search` are both advertised MCP tools. Driving the MCP server over
-   stdio (`plugin/scripts/mcp-server.cjs`, plain CJS, no Bun needed) is
-   more faithful to what a user gets than calling the store function
-   directly; calling directly is more controllable. The faithful option
-   should win unless it proves impossible, and the choice must be
-   recorded before numbers exist.
+   much here as it does for bettermemory. **This is the big one** — 500
+   isolated vector stores is the expensive part of the whole benchmark.
+2. ~~Which search entry point is canonical~~ — **RESOLVED: `search`**, per
+   the probe above.
 3. **Ranking semantics.** Their order clause uses `observations_fts.rank`
    with date-ordering alternatives. Whichever is default must be used and
    named — picking the ordering that flatters us would be the same
@@ -127,6 +150,12 @@ side by side, as the pre-registration commits to.
    VALUES('rebuild')`. Bulk-inserting 124,361 rows and rebuilding once is
    almost certainly right, but it must be verified that the triggers do
    not double-index.
+5. **Whether `search` returns enough to reach a session id.** It returns
+   "an index with IDs"; the mapping from observation id to
+   `memory_session_id` then comes from `get_observations` or from the DB
+   directly. Which one is used changes nothing about the labels but must
+   be recorded, and the retrieval depth has to be set in the same terms
+   as bettermemory's `RETRIEVAL_DEPTH = 200`.
 
 ## What must not happen
 
