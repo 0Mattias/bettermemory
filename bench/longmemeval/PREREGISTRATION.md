@@ -193,6 +193,30 @@ round index. **Items-written vs rounds-offered is reported for the
 claude-mem arm too**, and a non-zero shortfall there is a real finding
 rather than the by-construction zero that made P5 vacuous on our side.
 
+**2b. The harness WIDENS claude-mem's default date window, and without
+that they score zero for a reason unrelated to retrieval.**
+`performChromaSemanticSearch` applies `Date.now() - RECENCY_WINDOW_MS`
+(90 days) whenever the caller passes no explicit range, and drops every
+match older than that *before* the store lookup. LongMemEval's corpus is
+dated **2023-05**, roughly three years old, so the unmodified default
+discards 100% of semantic matches and the arm reads 0.0 on all 500
+questions. The harness therefore passes `dateStart=2020-01-01` /
+`dateEnd=2030-01-01`.
+
+This is declared rather than quietly applied because it is the single
+most consequential knob in the claude-mem arm. bettermemory has no
+comparable recency filter, so there is nothing symmetric to apply on our
+side — the asymmetry is that their product has a sensible default for
+live use which a historical benchmark corpus violates. **Publishing the
+un-widened 0.0 would not be a weak result for a competitor, it would be
+a false accusation**, and any future reader who finds this window in
+their source is entitled to ask why we did not.
+
+(The parameters are `dateStart`/`dateEnd`. `startDate`/`endDate` are
+accepted and silently ignored — worth recording, since a harness that
+used the wrong spelling would produce exactly the false zero described
+above while appearing to have handled it.)
+
 **3. Ingest cannot go through MCP; retrieval can and does.**
 `observation_add` is filtered out of the 14 advertised tools unless the
 runtime is Postgres "server" mode, so writes go through `SessionStore`
