@@ -1281,3 +1281,123 @@ async def test_memory_health_commit_drift_debt_excludes_untethered(
     # the anchored memory (lockstep between the two health surfaces).
     overview = await _call(server, "memory_scope_overview")
     assert overview["curation_pending"]["drifted"] == 1
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+async def test_a_sha_citing_fresh_memory_reads_fresh_on_both_surfaces(
+    server_with_fake_origin, memory_dir: Path, tmp_path: Path
+) -> None:
+    """Commit SHAs cited in a body move no verdict, on any surface.
+
+    The read-side commit-SHA leg — resolve a body-cited SHA, ask whether
+    it still exists, whether it is still an ancestor of HEAD, and how many
+    commits have landed since — was designed and measured on 2026-07-26
+    and REJECTED. Against the live 211-body store the distance rule fired
+    on 34 of 34 SHA-carrying in-repo memories (min 3 commits, median 188,
+    max 685; nothing at zero, so no threshold quiets it): Youden's
+    J = 0.000, arithmetically ``always_flag``. The memories it would have
+    flipped were exactly the SHA carriers already reading fresh, so
+    "verdict is fresh AND the body holds a hex token" reproduced its whole
+    output with no git calls at all. Across 4,647 merged pull requests in
+    29 repositories, 3,573 head SHAs end up unreachable from the default
+    branch — and all 3,573 belong to work that MERGED, so under squash and
+    rebase merge the signal's dominant firing mode is "the change you
+    described shipped". Full record: the ``SHA_MARKER`` tombstone in
+    ``src/bettermemory/durability.py``.
+
+    This is the BEHAVIOURAL pin, and it is deliberately at handler level.
+    ``test_verdict_from_signals_takes_exactly_three_signals`` in
+    ``tests/test_verify.py`` pins the rollup's signature, but a primitive
+    test cannot fail for the most likely re-opening: a leg wired only into
+    ``ResponseBuilder.attach_commit_drift_counts``, the search-side
+    recompute that derives its own count and calls the ladder itself. That
+    route leaves memory_show untouched and desyncs the two surfaces, which
+    is why the equality assertion below is load-bearing rather than
+    decorative.
+
+    Mutation guide, in the discipline 58a4fa4 established — wiring any SHA
+    rule into ``drifty`` flips the first assertion; wiring it into the
+    demotion tail flips the second; wiring it into the search recompute
+    alone flips only the equality.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    _commit_at(repo, "anchor", when=datetime(2025, 1, 1, tzinfo=timezone.utc))
+    ancestor = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()[:7]
+
+    origin = Origin(cwd=str(repo), repo=_REMOTE, branch="main")
+    server = server_with_fake_origin(origin)
+
+    # Three token shapes, covering every rule that was rejected:
+    #   `ancestor`  — a real commit, reachable, hundreds of commits back by
+    #                 the end of this test (the DISTANCE rule's population);
+    #   `deadbee`   — resolves nowhere (the EXISTENCE rule's population, and
+    #                 the shape both live false positives took: a moved
+    #                 release tag and a foreign repository's commit);
+    #   the 32-char hex — incidental non-commit content of exactly the kind
+    #                 the write-side corpus found (a restic snapshot id, a
+    #                 container image digest).
+    written = await _call(
+        server,
+        "memory_write",
+        content=(
+            "durable thing about widgets in notes.md — the fix landed in "
+            f"{ancestor}, superseding deadbee, and the image digest was "
+            "d41d8cd98f00b204e9800998ecf8427e"
+        ),
+        scopes=["tools"],
+    )
+    await _call(server, "memory_verify", id=written["id"])
+
+    async def _verdicts() -> tuple[str, str]:
+        shown = await _call(server, "memory_show", id=written["id"])
+        raw = await _call(
+            server, "memory_search", query="widgets durable", expand_top=False
+        )
+        searched = None
+        for hit in _unwrap(raw):
+            if hit["id"] == written["id"]:
+                searched = hit["staleness_verdict"]
+                break
+        assert searched is not None, "the memory must surface in its own search"
+        return shown["staleness_verdict"], searched
+
+    show_verdict, search_verdict = await _verdicts()
+    assert show_verdict == "fresh", (
+        "a freshly-verified memory citing commit SHAs must read fresh — a "
+        "SHA rule wired into `drifty` raises it. See the SHA_MARKER "
+        "tombstone in src/bettermemory/durability.py."
+    )
+    assert search_verdict == "fresh"
+    assert show_verdict == search_verdict
+
+    # Advance the repo well past the cited commit, touching a file the memory
+    # does not cite. The distance from `ancestor` to HEAD is now large — the
+    # rejected rule's whole population — while genuine claim-anchored drift
+    # stays absent.
+    for i in range(4):
+        _commit_at(
+            repo,
+            f"unrelated {i}",
+            when=datetime(2099, 1, 2 + i, tzinfo=timezone.utc),
+        )
+
+    show_verdict, search_verdict = await _verdicts()
+    assert show_verdict == "fresh", (
+        "commits landing after the verify must not move the verdict via a "
+        "cited SHA — only claim-anchored path drift may. A SHA rule in the "
+        "demotion tail flips this."
+    )
+    assert search_verdict == "fresh"
+    assert show_verdict == search_verdict, (
+        "memory_show and memory_search disagree — the classic re-opening "
+        "route is a leg added only to ResponseBuilder."
+        "attach_commit_drift_counts, which this equality exists to catch."
+    )

@@ -73,9 +73,9 @@ Memory is a snapshot; it does not auto-refresh. Every retrieval carries a derive
 
 - `"fresh"`: verification fresh AND no drift. Body claims are presumed current.
 - `"spot_check_recommended"`: verification calendar-fresh but the world has moved (path missing, or repo has commits since the last verify). Quick check before relying.
-- `"spot_check_required"`: `verification.status` is `"never"` or `"stale"`. Pre-empts the drift inputs because the verification anchor itself is missing or expired.
+- `"spot_check_required"`: the verification anchor is missing (`"never"`), or it is expired (`"stale"`) and no measurement is available to stand the calendar leg down. A `"stale"` memory whose commit-drift leg actually ran and returned zero reads `"fresh"` instead — the measurement wins, the calendar proxy yields. The leg returning `None` (it could not ask) is not a measurement and does not demote.
 
-When the verdict isn't `"fresh"`, the hit already carries the actionable detail. `path_drift.missing` (when present) lists the body-cited paths that no longer exist — `memory_update` those directly, no memory_show round-trip needed. The remaining un-drifted claims (`path_drift.verified` plus the rest of the body) can be attested with `memory_verify(id, verified_paths=[…], verified_commits=[…], verified_versions=[…])`; the server uses these to short-circuit later drift signals. `memory_update` resets `last_verified_at`, so verify again after fixing drifted prose to close the loop.
+When the verdict isn't `"fresh"`, the hit already carries the actionable detail. `path_drift.missing` (when present) lists the body-cited paths that no longer exist — `memory_update` those directly, no memory_show round-trip needed. The remaining un-drifted claims (`path_drift.verified` plus the rest of the body) can be attested with `memory_verify(id, verified_paths=[…])`; paths are the attestation the drift legs read back, both against the memory's own worktree and as the anchor narrowing the commit-drift count. `verified_commits` and `verified_versions` are recorded for the audit trail and echoed back, but nothing on the read path resolves them — a commit attestation is provenance for the next reader, not a signal. `memory_update` resets `last_verified_at`, so verify again after fixing drifted prose to close the loop.
 
 ## When to write
 

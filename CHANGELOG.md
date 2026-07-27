@@ -9,6 +9,75 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+### Changed — the read-side repair 3.30.0 promised was measured, and it is a dead end
+
+3.30.0 retired the write-side commit-SHA transient marker and said the
+better home for the one class it caught was read-side, "where a body-cited
+SHA is a resolvable commit rather than a regex judging English." That
+sentence is shipped history and stays where it is; this entry is the
+correction, in the register `0fdf436` established — correct forward, don't
+rewrite the record.
+
+The proposed leg was to resolve a cited SHA at verification time: does the
+commit still exist, is it still an ancestor of HEAD, how many commits
+since. Designed and measured against the live 211-body dogfood store and
+the 30-repository corpus behind `bench/rot`. All three rules fail on
+arithmetic.
+
+**Distance** (commits since the cited SHA) fires on **34 of 34**
+SHA-carrying in-repo memories — min 3 commits, median 188, max 685, not one
+token sitting at zero, so there is no threshold at which it goes quiet.
+Youden's **J = 0.000**: arithmetically `always_flag`, the same pathology
+this release cycle already found in the default operating point. And the
+memories it would flip are exactly the SHA carriers already reading fresh,
+so "the verdict is fresh and the body holds a hex token" reproduces its
+entire output with no git calls at all. **Existence** changes zero verdicts,
+and both its live fires are on permanently-true history — a release tag
+moved during the 2.7.1 incident, and another repository's commit quoted
+here. **Ancestry** fires zero times — every cited SHA that resolves here is
+an ancestor of HEAD, 88 of 88 — and its answer is a property of local
+`git gc` rather than of the project: the same SHA
+resolves on the forge forever, resolves in the author's checkout until it
+is pruned, and never resolves in a fresh clone.
+
+The corpus is what actually condemns it, and it inverts the premise. Across
+4,647 merged pull requests in 29 repositories, **3,573 head SHAs end up
+unreachable from the default branch — and all 3,573 belong to work that
+merged.** Under squash and rebase merge, "the commit you cited is gone" is
+the signature of successful integration, not of rot. J = 0.231 pooled, 0.053
+median, and exactly 0.000 in 11 of 28 repositories. Worth stating plainly:
+bettermemory commits straight to main and reads 88 of 88 cited SHAs
+reachable, so testing this locally would have shown a harmless 0% false
+positive rate on a signal that is `always_flag` in eleven real repositories
+— the mirror of `bench/rot` finding this repo a near-worst case for drift.
+
+**The honest cost, not dropped:** the bare unhedged branch pointer 3.30.0
+named as newly uncovered *stays* uncovered, and the calendar leg remains its
+only backstop. The measured population is about one memory in 211. A larger
+one would be new evidence, and the item would legitimately re-open — which
+is why the record is a tombstone and two tests rather than a deletion.
+
+### Fixed — four model-facing sites said `verified_commits` feeds the drift legs
+
+It does not, and never has: `verify.py` reads the field zero times. The
+claim appeared in the `memory_verify` tool description, the always-loaded
+system-prompt addendum and its `docs/system_prompt.md` mirror, the plugin
+skill, and a `memory_health` recommendation telling the model to
+"re-anchor" with it. `docs/api.md` went further and advised attesting
+commits *instead of* paths — steering the model away from the one
+attestation the read path actually resolves.
+
+The correction is a split, not a blanket: `verified_paths` **is** read back
+— checked against the memory's own worktree, and used as the anchor that
+narrows the commit-drift count — while `verified_commits` and
+`verified_versions` are provenance for the next reader. Replacing one
+falsehood with its mirror would have cost every path-attested memory its
+only anchor.
+
+Also fixed in passing: the plugin skill still described `spot_check_required`
+as pre-empting the drift inputs, which `58a4fa4` removed in this same
+release cycle.
+
 ## 3.30.0 - 2026-07-26
 
 The window where the instruments turned on the product. 3.29.0 built

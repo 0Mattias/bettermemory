@@ -192,9 +192,80 @@ TRANSIENT_PHRASE_MARKERS: tuple[str, ...] = (
 # (54 distinct raw names, 21 of them singletons) onto it. Do NOT wire it
 # back into `find_transient_markers`: new fires would mix into that closed
 # row and destroy the evidence above. A future SHA-shaped detector needs a
-# new name and its own telemetry — and the better home for the one class
-# this did catch is read-side, where a body-cited SHA is a resolvable commit
-# rather than a regex judging English.
+# new name and its own telemetry.
+#
+# THE READ-SIDE REPAIR THIS COMMENT USED TO PROMISE WAS MEASURED, AND IT IS A
+# DEAD END. The clause that stood here said the better home for the one class
+# this detector caught was read-side, "where a body-cited SHA is a resolvable
+# commit rather than a regex judging English". Designed and measured
+# 2026-07-26 against the live 211-body dogfood store and the 30-repository
+# corpus behind `bench/rot`. Three candidate rules, each rejected on
+# arithmetic rather than on judgement:
+#
+#   DISTANCE (commits since the cited SHA > 0) fires on 34 of 34 in-repo
+#   SHA-carrying memories — min 3 commits, median 188, max 685, not one token
+#   sitting at zero, so there is no threshold at which it goes quiet.
+#   TPR = FPR = 1.000, Youden's J = 0.000: arithmetically `always_flag`, the
+#   pathology `test_the_shipped_default_is_not_a_constant_function` in
+#   `tests/test_bench_rot.py` exists to prevent and that condemned the old
+#   default operating point. Worse, the 8 memories it would flip are exactly
+#   the SHA carriers currently reading fresh — so "verdict is fresh AND the
+#   body holds a hex token" reproduces its entire output with zero git calls.
+#   The forks would contribute no bits.
+#
+#   EXISTENCE (the cited SHA no longer resolves) fires on 2 memories, neither
+#   currently fresh, so it changes zero verdicts — and both fires are on
+#   permanently-true history: a release tag moved during the 2.7.1 incident,
+#   and a foreign repository's commit quoted here.
+#
+#   ANCESTRY (resolves, but is unreachable from HEAD) fires 0 times: every
+#   cited SHA that resolves here is an ancestor of HEAD, 88 of 88. Its answer
+#   is a property of local `git gc`, not of the project — the same SHA
+#   resolves on the forge forever, resolves in the author's own checkout
+#   until it is pruned, and never resolves in a fresh clone. A verdict that
+#   flips on gc timing is not measuring rot.
+#
+# THE PREMISE THIS COMMENT ASSERTED IS EMPTY. The cost note said a pure
+# branch pointer carries no path anchor, so the read side returns None for
+# it. Bodies with a SHA token AND an empty `commit_drift_anchor_paths`: 0 of
+# 211. All six pointer spellings that cost note named carry 9 to 13 path
+# anchors each.
+#
+# THE ATTESTED ARM IS NOT A RESCUE, and the `verified_paths` precedent does
+# not transfer to commits. `last_verified_at` slides on every verify, while
+# `verified_commits` only replaces when it is re-passed: 15 of 86 attested
+# rows already lag the timestamp, one-sided, by up to 408 commits on an
+# 867-commit repo. The list names the commit a memory is ABOUT, not the
+# commit it was CHECKED at, so it is not a verification boundary. For paths
+# the attestation claims the same thing the check measures; for commits it
+# does not.
+#
+# WHERE THE HAZARD IS COMMON, THE POLARITY IS INVERTED. Across 4,647 merged
+# pull requests in 29 corpus repositories, 3,573 head SHAs are unreachable
+# from the default branch afterwards — and all 3,573 belong to work that
+# MERGED. Under squash and rebase merge, "the commit you cited is gone" is
+# the signature of successful integration, not of rot. J = 0.231 pooled,
+# 0.053 median, and exactly 0.000 in 11 of 28 repositories.
+#
+# THE HONEST COST, kept here rather than quietly dropped: the bare unhedged
+# branch pointer named as newly uncovered STAYS uncovered, and the calendar
+# leg remains its only backstop. The measured population is about one memory
+# in 211 — if someone finds a larger one, that is new evidence and this item
+# legitimately re-opens. The instrument's limits belong here too: n=1 store,
+# n=1 repo, and on this axis bettermemory is a structural BEST case (88 of 88
+# cited SHAs reachable, commits straight to main) — the mirror of `bench/rot`
+# finding it a near-worst case for drift. The corpus is what condemns the
+# signal; the store only confirms the corpus is not contradicted locally.
+#
+# Three routes back in are pinned shut: the verdict signature by
+# `test_verdict_from_signals_takes_exactly_three_signals` in
+# `tests/test_verify.py`; cross-surface agreement by
+# `test_a_sha_citing_fresh_memory_reads_fresh_on_both_surfaces` in
+# `tests/test_server_commit_drift.py`, which is the one that actually fires
+# — it was mutation-checked against a leg wired only into the search-side
+# recompute, the route the signature pin cannot see; and the batching /
+# per-token-fork route by `test_commit_drift_count_git_cost_shape` in the
+# same file. Re-opening needs new EVIDENCE, not a new implementation.
 SHA_MARKER = "sha:<commit>"
 
 

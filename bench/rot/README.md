@@ -466,6 +466,34 @@ this flag rate; the work is raising discrimination without giving it back.
    grade against **user-visible outcomes** rather than structural labels.
    Both are harder than another corpus. That is the point: the cheap axis
    is exhausted.
+5. ~~**Resolve body- or attestation-cited commit SHAs read-side.**~~
+   **MEASURED AND REJECTED 2026-07-26.** The repair `1a2d88e` promised
+   when it retired the write-side commit-SHA marker: ask whether a cited
+   commit still exists, is still an ancestor of HEAD, and how far HEAD has
+   moved since. All three rules fail on arithmetic, not on judgement. The
+   *distance* rule fires on **34 of 34** SHA-carrying in-repo memories in
+   the live store (min 3 commits, median 188, max 685 — nothing at zero,
+   so no threshold quiets it): **J = 0.000**, arithmetically `always_flag`,
+   and the memories it would flip are exactly the SHA carriers already
+   reading fresh, so a zero-git predictor reproduces its whole output.
+   *Existence* changes zero verdicts and both its live fires are on
+   permanently-true history. *Ancestry* fires zero times, and its answer is
+   a property of local `git gc` rather than of the project. The corpus is
+   what condemns it: across 4,647 merged pull requests in 29 of these 30
+   repositories, **3,573 head SHAs end up unreachable from the default
+   branch — and all 3,573 belong to work that MERGED**, so under squash and
+   rebase merge the signal's dominant firing mode is "the change you
+   described shipped". J = 0.231 pooled, 0.053 median, and exactly 0.000 in
+   11 of 28 repositories. Note the instrument's shape: this is **a first
+   instance of** the real-memory-bodies evidence item 4 asks for, not that
+   instrument — item 4 stays fully open, because closing one candidate
+   signal against one store is not closing the axis. `CLAIM_CLASSES` is
+   pre-registered as `('path', 'symbol', 'literal')` with no commit class
+   and no oracle, and adding one lands straight on the `oracle_replica`
+   objection that closed item 3: "does this commit exist in this repo" is
+   decided by the same git data any label would come from. Full record and
+   the honest cost of the class left uncovered: the `SHA_MARKER` tombstone
+   in `src/bettermemory/durability.py`.
 
 ## What the claim-level detector is, and what stops it cheating
 

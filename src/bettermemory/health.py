@@ -1846,9 +1846,11 @@ def _compute_recommendations(report: "HealthReport") -> list["Recommendation"]:
                     "before recent commits landed."
                 ),
                 action=(
-                    "memory_verify(id, verified_commits=[...]) to re-anchor "
-                    "if claims still hold; memory_update where the body "
-                    "needs to track the new code."
+                    "memory_verify(id, verified_paths=[...]) to re-anchor "
+                    "if claims still hold — paths are what this count is "
+                    "narrowed by, and any verify slides the boundary "
+                    "forward; memory_update where the body needs to track "
+                    "the new code."
                 ),
                 count=report.commit_drift_debt.total_drifted,
                 memory_ids=[

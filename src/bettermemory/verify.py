@@ -2004,6 +2004,17 @@ def verdict_from_signals(
     that a one-site edit would desync `memory_search`'s top hit from
     `memory_show` for the same memory; sharing the primitive is the
     fix those comments were asking for.
+
+    **There are three signals by decision, not by accident.** A fourth —
+    resolving body-cited or attested commit SHAs read-side — was designed
+    and measured on 2026-07-26 and rejected: it fires on 34 of 34
+    SHA-carrying in-repo memories, Youden's J = 0.000, and the memories it
+    would flip are exactly the ones already reading fresh, so a zero-git
+    predictor reproduces its whole output. The full record, including the
+    honest cost of leaving that class uncovered, is the `SHA_MARKER`
+    tombstone in `src/bettermemory/durability.py`; the count is pinned by
+    `test_verdict_from_signals_takes_exactly_three_signals` in
+    `tests/test_verify.py`.
     """
     drifty = path_drift_missing > 0 or (
         commit_drift_count is not None and commit_drift_count > 0

@@ -96,8 +96,9 @@ actionable detail. `path_drift.missing` (when present) lists the
 body-cited paths that no longer exist — memory_update those
 directly. The remaining un-drifted claims (`path_drift.verified`
 + the rest of the body) you can attest with memory_verify(id,
-verified_paths=[…], verified_commits=[…], verified_versions=[…])
-— the server uses these to short-circuit later drift signals.
+verified_paths=[…]) — paths are the attestation the drift legs
+read back. `verified_commits` / `verified_versions` are recorded
+as provenance for the next reader; nothing resolves them.
 A `missing` path that is ABSENT ON PURPOSE (remote host, other
 platform, cited as not-the-location) is not drift: attest it with
 memory_verify(id, verified_absent_paths=[…]) and it moves to

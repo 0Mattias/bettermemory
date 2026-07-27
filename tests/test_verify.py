@@ -3194,3 +3194,56 @@ def test_route_check_is_structurally_last_in_the_not_exists_block() -> None:
         "earlier, a prose-glued candidate reads as a route on its "
         "manufactured tail and skips the prefix-existence fallback"
     )
+
+
+def test_verdict_from_signals_takes_exactly_three_signals() -> None:
+    """The staleness rollup has three inputs BY DECISION, not by accident.
+
+    A fourth — resolving body-cited or attested commit SHAs read-side —
+    was designed and measured on 2026-07-26 and rejected on arithmetic.
+    The distance rule (commits since the cited SHA > 0) fired on 34 of 34
+    SHA-carrying in-repo memories in the dogfood store, min 3 / median
+    188 / max 685 commits, not one token at zero: Youden's J = 0.000,
+    arithmetically ``always_flag``. The memories it would have flipped
+    were exactly the SHA carriers already reading fresh, so a zero-git
+    predictor reproduced its entire output. The existence rule changed
+    zero verdicts and both its fires were on permanently-true history;
+    the ancestry rule fired zero times and its answer is a property of
+    local ``git gc`` rather than of the project.
+
+    This is a signature pin, deliberately, and not a behavioural one:
+    ``compute_staleness_verdict`` takes no Memory, so an attestation list
+    has no channel into the call and any value-level assertion here would
+    be a tautology that passes against its own mutation. The behavioural
+    counterpart lives at handler level in
+    ``test_a_sha_citing_fresh_memory_reads_fresh_on_both_surfaces`` in
+    ``tests/test_server_commit_drift.py``, which catches the route this
+    one cannot — a leg wired only into the search-side recompute.
+
+    Deleting this test is the intended way to re-open the item. Bring new
+    EVIDENCE, not a new implementation: the full record, including the
+    honest cost of the class left uncovered, is the ``SHA_MARKER``
+    tombstone in ``src/bettermemory/durability.py`` and item 5 of
+    ``bench/rot/README.md``'s "What would actually improve the verdict".
+    """
+    import inspect
+
+    expected = {"status", "path_drift_missing", "commit_drift_count"}
+    params = inspect.signature(verdict_from_signals).parameters
+    assert set(params) == expected, (
+        f"verdict_from_signals grew a signal: {set(params) ^ expected}. The "
+        "read-side commit-SHA leg was measured and rejected (J = 0.000, "
+        "fires 34/34) — see the SHA_MARKER tombstone in "
+        "src/bettermemory/durability.py before adding a fourth."
+    )
+    assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in params.values()), (
+        "the three signals are keyword-only so a positional add cannot slip in"
+    )
+
+    rollup = inspect.signature(compute_staleness_verdict).parameters
+    assert set(rollup) == {
+        "verification",
+        "path_drift_missing",
+        "commit_drift_count",
+    }, f"compute_staleness_verdict grew a signal: {set(rollup)}"
+    assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in rollup.values())
