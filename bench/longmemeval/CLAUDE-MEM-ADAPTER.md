@@ -228,6 +228,28 @@ not the `cm__claude-mem` collection-naming oddity (a fresh store from a
 neutral cwd reproduced it identically). Both looked convincing. Neither
 survived a control.
 
+## Project isolation — verified, not assumed
+
+The harness runs **one worker for all 500 questions**, isolating each
+haystack by `project = <question_id>` rather than by data directory (a
+per-question directory would cost a ~20 s worker boot each). That makes
+isolation load-bearing: a leak across projects would silently inflate
+every score, because another question's sessions would be available as
+distractors *or* as accidental matches.
+
+Measured against the live 500-project store, ground truth read straight
+from their SQLite:
+
+```
+projects in store: 500
+queries with hits: 8, observations returned: 71, CROSS-PROJECT LEAKS: 0
+isolation: HOLDS
+```
+
+Every returned observation belonged to the project queried. This is a
+harness-validity check, not a claude-mem result — but it is the kind of
+assumption that, left untested, turns a whole benchmark into fiction.
+
 ## The phrase-query defect, now confirmed BEHAVIOURALLY
 
 With a working FTS path (`/api/search/observations`), the defect
