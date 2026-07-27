@@ -1,0 +1,144 @@
+{
+  "corpus": "longmemeval_s_cleaned.json",
+  "scored": 500,
+  "instances": 500,
+  "retrieval_depth": 200,
+  "ingest": {
+    "rounds_offered": 124361,
+    "items_written": 124361,
+    "shortfall": 0.0
+  },
+  "chroma": {
+    "embedded": 70537,
+    "complete": false
+  },
+  "notes": [
+    "ingest bypasses claude-mem's hook pipeline (SessionStore.importObservation); their observations_fts spans six columns and their own pipeline fills all six via LLM extraction \u2014 this harness fills `text` only, which may UNDERSTATE claude-mem. See PREREGISTRATION.md addendum 2.",
+    "semantic arm passes explicit dateStart=2020-01-01/dateEnd=2030-01-01; without it their default 90-day recency window discards every match on this historical corpus and the arm scores 0.0 for reasons unrelated to retrieval.",
+    "CHROMA BACKFILL INCOMPLETE \u2014 70,537 of 124,361 observations embedded when querying began. The semantic arm is scoring a partially built index and its number is NOT a claude-mem result."
+  ],
+  "results": [
+    {
+      "arm": "semantic",
+      "n": 500,
+      "seconds": 358.9,
+      "empty_result_questions": 210,
+      "macro": {
+        "1": 0.3442,
+        "5": 0.5413,
+        "10": 0.5638
+      },
+      "micro": {
+        "1": 0.2658,
+        "5": 0.4852,
+        "10": 0.5148
+      },
+      "ceiling": {
+        "1": 0.6442,
+        "5": 0.999,
+        "10": 1.0
+      },
+      "by_type": {
+        "knowledge-update": {
+          "1": 0.3526,
+          "5": 0.7244,
+          "10": 0.75
+        },
+        "multi-session": {
+          "1": 0.2365,
+          "5": 0.5581,
+          "10": 0.6028
+        },
+        "single-session-assistant": {
+          "1": 0.7143,
+          "5": 0.7143,
+          "10": 0.7143
+        },
+        "single-session-preference": {
+          "1": 0.6333,
+          "5": 0.8333,
+          "10": 0.8333
+        },
+        "single-session-user": {
+          "1": 0.6143,
+          "5": 0.6857,
+          "10": 0.7
+        },
+        "temporal-reasoning": {
+          "1": 0.084,
+          "5": 0.2024,
+          "10": 0.2199
+        }
+      },
+      "type_n": {
+        "single-session-user": 70,
+        "multi-session": 133,
+        "single-session-preference": 30,
+        "temporal-reasoning": 133,
+        "knowledge-update": 78,
+        "single-session-assistant": 56
+      }
+    },
+    {
+      "arm": "lexical",
+      "n": 500,
+      "seconds": 357.6,
+      "empty_result_questions": 499,
+      "macro": {
+        "1": 0.001,
+        "5": 0.001,
+        "10": 0.001
+      },
+      "micro": {
+        "1": 0.0011,
+        "5": 0.0011,
+        "10": 0.0011
+      },
+      "ceiling": {
+        "1": 0.6442,
+        "5": 0.999,
+        "10": 1.0
+      },
+      "by_type": {
+        "knowledge-update": {
+          "1": 0.0064,
+          "5": 0.0064,
+          "10": 0.0064
+        },
+        "multi-session": {
+          "1": 0.0,
+          "5": 0.0,
+          "10": 0.0
+        },
+        "single-session-assistant": {
+          "1": 0.0,
+          "5": 0.0,
+          "10": 0.0
+        },
+        "single-session-preference": {
+          "1": 0.0,
+          "5": 0.0,
+          "10": 0.0
+        },
+        "single-session-user": {
+          "1": 0.0,
+          "5": 0.0,
+          "10": 0.0
+        },
+        "temporal-reasoning": {
+          "1": 0.0,
+          "5": 0.0,
+          "10": 0.0
+        }
+      },
+      "type_n": {
+        "single-session-user": 70,
+        "multi-session": 133,
+        "single-session-preference": 30,
+        "temporal-reasoning": 133,
+        "knowledge-update": 78,
+        "single-session-assistant": 56
+      }
+    }
+  ]
+}

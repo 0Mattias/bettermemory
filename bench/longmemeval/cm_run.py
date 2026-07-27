@@ -193,7 +193,7 @@ class Worker:
         shutil.rmtree(self.cwd, ignore_errors=True)
 
     def await_chroma_backfill(
-        self, expected: int, *, timeout: float = 7200.0, quiet_for: float = 90.0
+        self, expected: int, *, timeout: float = 28800.0, quiet_for: float = 900.0
     ) -> tuple[int, bool]:
         """Block until ChromaDB has embedded the ingested corpus.
 
@@ -209,6 +209,14 @@ class Worker:
         Returns (embedded, complete). `complete` is False when the count
         plateaued below `expected` or the timeout hit — the caller must
         surface that instead of quietly scoring a partial index.
+
+        `quiet_for` is 15 MINUTES, not seconds-scale, and that is
+        deliberate. The worker backfills in periodic cycles with real
+        gaps between them, and the rate decays as collections grow (~10/s
+        early, ~5/s late across 500 projects). A 90 s plateau threshold
+        looked generous and still tripped at 70,537 of 124,361 on the
+        first full run — the guard correctly refused to publish, but the
+        run was wasted. Patience here is cheaper than a re-run.
         """
         import sqlite3
 
