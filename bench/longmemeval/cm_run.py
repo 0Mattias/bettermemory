@@ -192,6 +192,53 @@ class Worker:
                 self.proc.kill()
         shutil.rmtree(self.cwd, ignore_errors=True)
 
+    def await_chroma_backfill(
+        self, expected: int, *, timeout: float = 7200.0, quiet_for: float = 90.0
+    ) -> tuple[int, bool]:
+        """Block until ChromaDB has embedded the ingested corpus.
+
+        THIS IS NOT OPTIONAL AND IT IS NOT A PERFORMANCE TWEAK. The
+        worker backfills Chroma asynchronously after boot. A fixed sleep
+        (the first version used 20 s for 10,104 observations) means most
+        projects are queried before they have been embedded, every one of
+        those returns empty, and the arm reports a near-zero score that
+        looks like a product defect and is entirely an artifact of this
+        harness. Publishing that number would be a false accusation, so
+        readiness is measured rather than assumed.
+
+        Returns (embedded, complete). `complete` is False when the count
+        plateaued below `expected` or the timeout hit — the caller must
+        surface that instead of quietly scoring a partial index.
+        """
+        import sqlite3
+
+        chroma_db = self.data_dir / "chroma" / "chroma.sqlite3"
+        deadline = time.time() + timeout
+        last_count = -1
+        last_change = time.time()
+        while time.time() < deadline:
+            count = 0
+            if chroma_db.exists():
+                try:
+                    con = sqlite3.connect(f"file:{chroma_db}?mode=ro", uri=True)
+                    count = con.execute("SELECT count(*) FROM embeddings").fetchone()[0]
+                    con.close()
+                except Exception:
+                    count = last_count if last_count > 0 else 0
+            if count >= expected:
+                return count, True
+            if count != last_count:
+                last_count = count
+                last_change = time.time()
+                print(
+                    f"  chroma backfill {count:,}/{expected:,}",
+                    file=sys.stderr,
+                )
+            elif time.time() - last_change > quiet_for:
+                return count, False
+            time.sleep(10)
+        return max(last_count, 0), False
+
 
 def semantic_sessions(w: Worker, project: str, question: str) -> list[str]:
     """Unified endpoint. Returns ranked distinct session ids."""
@@ -309,6 +356,7 @@ def main() -> int:
         )
 
     ingest_stats = {"rounds_offered": 0, "items_written": 0}
+    meta_chroma: dict[str, object] = {"embedded": 0, "complete": False}
     id_maps: dict[str, dict[int, str]] = {}
 
     print(f"ingesting {len(corpus)} questions into {data_dir} ...", file=sys.stderr)
@@ -336,8 +384,21 @@ def main() -> int:
         print("starting worker ...", file=sys.stderr)
         w.start()
         print(f"worker healthy on :{w.port}", file=sys.stderr)
-        # Chroma backfill is asynchronous; give it room before querying.
-        time.sleep(20)
+        # Measured, never assumed — see await_chroma_backfill's docstring.
+        embedded, complete = w.await_chroma_backfill(ingest_stats["items_written"])
+        print(
+            f"chroma: {embedded:,}/{ingest_stats['items_written']:,} embedded "
+            f"({'complete' if complete else 'INCOMPLETE'})",
+            file=sys.stderr,
+        )
+        meta_chroma = {"embedded": embedded, "complete": complete}
+        if not complete:
+            notes.append(
+                f"CHROMA BACKFILL INCOMPLETE — {embedded:,} of "
+                f"{ingest_stats['items_written']:,} observations embedded when "
+                "querying began. The semantic arm is scoring a partially built "
+                "index and its number is NOT a claude-mem result."
+            )
 
         for arm in arms:
             res = ArmResult(arm=arm)
@@ -392,6 +453,7 @@ def main() -> int:
         "instances": total,
         "retrieval_depth": RETRIEVAL_DEPTH,
         "ingest": {**ingest_stats, "shortfall": round(shortfall, 5)},
+        "chroma": meta_chroma,
         "notes": notes,
     }
 

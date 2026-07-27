@@ -1,0 +1,84 @@
+{
+  "corpus": "longmemeval_s_cleaned.json",
+  "scored": 40,
+  "instances": 500,
+  "retrieval_depth": 200,
+  "ingest": {
+    "rounds_offered": 10104,
+    "items_written": 10104,
+    "shortfall": 0.0
+  },
+  "chroma": {
+    "embedded": 10104,
+    "complete": true
+  },
+  "notes": [
+    "ingest bypasses claude-mem's hook pipeline (SessionStore.importObservation); their observations_fts spans six columns and their own pipeline fills all six via LLM extraction \u2014 this harness fills `text` only, which may UNDERSTATE claude-mem. See PREREGISTRATION.md addendum 2.",
+    "semantic arm passes explicit dateStart=2020-01-01/dateEnd=2030-01-01; without it their default 90-day recency window discards every match on this historical corpus and the arm scores 0.0 for reasons unrelated to retrieval.",
+    "SUBSET \u2014 first 40 of 500, not a stratified sample. Question-type mix is skewed; not publishable."
+  ],
+  "results": [
+    {
+      "arm": "semantic",
+      "n": 40,
+      "seconds": 3.2,
+      "empty_result_questions": 0,
+      "macro": {
+        "1": 0.875,
+        "5": 0.95,
+        "10": 0.95
+      },
+      "micro": {
+        "1": 0.875,
+        "5": 0.95,
+        "10": 0.95
+      },
+      "ceiling": {
+        "1": 1.0,
+        "5": 1.0,
+        "10": 1.0
+      },
+      "by_type": {
+        "single-session-user": {
+          "1": 0.875,
+          "5": 0.95,
+          "10": 0.95
+        }
+      },
+      "type_n": {
+        "single-session-user": 40
+      }
+    },
+    {
+      "arm": "lexical",
+      "n": 40,
+      "seconds": 3.3,
+      "empty_result_questions": 40,
+      "macro": {
+        "1": 0.0,
+        "5": 0.0,
+        "10": 0.0
+      },
+      "micro": {
+        "1": 0.0,
+        "5": 0.0,
+        "10": 0.0
+      },
+      "ceiling": {
+        "1": 1.0,
+        "5": 1.0,
+        "10": 1.0
+      },
+      "by_type": {
+        "single-session-user": {
+          "1": 0.0,
+          "5": 0.0,
+          "10": 0.0
+        }
+      },
+      "type_n": {
+        "single-session-user": 40
+      }
+    }
+  ]
+}
