@@ -177,7 +177,78 @@ free of external dependencies — it shells out to `uvx` and downloads
 `chroma-mcp` on first use, which is worth stating whenever this
 benchmark's "$0, no key" property is described.
 
-## OPEN BLOCKER: `/api/search` returns zero for every query
+## RESOLVED: it was a default 90-day recency window, not a defect
+
+**The blocker below is solved, and the cause was ours to find, not
+claude-mem's to answer for.** `performChromaSemanticSearch` applies a
+default recency filter when the caller supplies no date range:
+
+```js
+v ? (…user range…) : _ = Date.now() - ms.RECENCY_WINDOW_MS
+…
+.filter(E => E.meta?.created_at_epoch != null && (!_ || E.meta.created_at_epoch >= _))
+```
+
+LongMemEval's corpus is dated **2023-05-20 → 2023-05-31**, roughly three
+years old. Chroma was returning matches the whole time; the 90-day window
+discarded every one of them before they reached the store lookup. The
+FTS5 fallback did not rescue it either, because that branch is guarded on
+`n.platformSource` being set.
+
+The parameters are **`dateStart` / `dateEnd`** — not `startDate`/`endDate`
+(silently ignored, still zero) and not `start`/`end`. With them supplied,
+the unified endpoint returns rows, and the JSON carries
+`memory_session_id` directly, which is exactly what the attribution rule
+consumes.
+
+**End-to-end proof**, instance `e47becba`, question *"What degree did I
+graduate with?"*, evidence session `answer_280352e9`:
+
+```
+total observations returned: 20
+distinct sessions (ranked): 12
+  1. sharegpt_QZMeA7V_17
+  2. answer_280352e9   <== EVIDENCE
+  ...
+recall@5 = 1.0
+```
+
+**This has to be declared in the protocol, because without it
+claude-mem scores 0.0 on every question for a reason that has nothing to
+do with retrieval quality.** A benchmark that shipped that number would
+be worse than useless — it would be a false accusation. bettermemory has
+no comparable recency filter, so there is nothing symmetric to apply on
+our side; the disclosure is simply that their default window is
+incompatible with a historical corpus and the harness widens it
+explicitly.
+
+Also worth carrying forward: **the first hypothesis was wrong twice.**
+It was not the phrase-query defect (single tokens failed too), and it was
+not the `cm__claude-mem` collection-naming oddity (a fresh store from a
+neutral cwd reproduced it identically). Both looked convincing. Neither
+survived a control.
+
+## The phrase-query defect, now confirmed BEHAVIOURALLY
+
+With a working FTS path (`/api/search/observations`), the defect
+reproduces with a clean control rather than by reading source:
+
+| query | result |
+| --- | --- |
+| `degree` | **1 hit** ×2 rows |
+| `kitchen pantry` | **1 hit** |
+| `pantry kitchen` | **0 hits** |
+| `organize my kitchen pantry` | **1 hit** |
+| `graduate degree` | **0 hits** |
+| `What degree did I graduate with?` | **0 hits** |
+
+`kitchen pantry` versus `pantry kitchen` is the decisive pair: identical
+tokens, reversed order, 1 versus 0. That is a phrase query, not an AND.
+The practical consequence for this benchmark is that natural-language
+questions essentially never match in the FTS-only arm, because a
+question's exact wording is never a contiguous substring of its evidence.
+
+## ~~OPEN BLOCKER~~ (resolved above): `/api/search` returned zero for every query
 
 This is unresolved and is the thing standing between here and a
 claude-mem number.
