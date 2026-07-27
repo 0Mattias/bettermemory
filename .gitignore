@@ -60,3 +60,4 @@ htmlcov/
 # reproducible without being vendored into the repository.
 bench/longmemeval/data/
 bench/longmemeval/results/*.log
+bench/longmemeval/vendor/
