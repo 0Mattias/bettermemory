@@ -131,6 +131,84 @@ rather than the `memory_write` handler. Both systems are written to
 out-of-band and read through their real query path, and both halves of
 that must be disclosed together.
 
+## Built and working: ingest
+
+`cm_ingest.js` (runs under **bun**; `SessionStore` requires `bun:sqlite`)
+reads a JSON job on stdin and writes one observation per round with
+`memory_session_id` set to the LongMemEval session id. Verified on
+instance `e47becba`:
+
+```
+{"sessions_written":53,"rounds_offered":277,"items_written":277,"shortfall":0}
+```
+
+The 277 rows land with the right `project`, the right
+`memory_session_id`, and `observations_fts` is populated (277 rows).
+**Their exact search SQL returns rows against it** —
+`SELECT count(*) FROM observations o JOIN observations_fts ON
+observations_fts.rowid = o.id WHERE observations_fts MATCH '"degree"'`
+→ 2. So open question 4 is answered: bulk insert followed by
+`rebuildObservationsFTSIndex()` indexes correctly and does not
+double-index.
+
+## CORRECTION: Chroma is ON by default, not off
+
+The pre-registration's arm table implies Chroma-disabled is a mode you
+opt into. **It is the other way round.** On first boot the worker
+*installs and connects Chroma by itself*:
+
+```
+[CHROMA_MCP] Prewarming chroma-mcp uvx environment {command=uvx, ...
+             --from chroma-mcp==0.2.6 chroma-mcp --help}
+[CHROMA_MCP] Connecting to chroma-mcp via MCP stdio (--client-type persistent
+             --data-dir <dataDir>/chroma)
+[CHROMA_SYNC] Smart backfill complete {project=longmemeval}
+```
+
+It also **picks up bulk-imported rows without any hook involvement**: all
+277 observations were embedded, carrying `project`, `memory_session_id`,
+`doc_type` and `sqlite_id` in their Chroma metadata. So the semantic arm
+does not need a separate ingest path — the same `cm_ingest.js` feeds both.
+
+Two consequences. The crossed-arms design still stands, but the *labels*
+were wrong: their default is the semantic arm, and FTS5-only is the
+fallback that the phrase-query defect lives in. And a Chroma run is not
+free of external dependencies — it shells out to `uvx` and downloads
+`chroma-mcp` on first use, which is worth stating whenever this
+benchmark's "$0, no key" property is described.
+
+## OPEN BLOCKER: `/api/search` returns zero for every query
+
+This is unresolved and is the thing standing between here and a
+claude-mem number.
+
+`GET /api/search?query=…&format=json` returns
+`{"observations":[],"sessions":[],"prompts":[],"totalResults":0}` for
+every probe tried — including single words that demonstrably match.
+Established so far:
+
+- Not a data problem. 277 observations present, correct project,
+  `observations_fts` populated, all 277 embedded in Chroma with correct
+  metadata.
+- Not an index problem. Their own JOIN query returns 2 rows for
+  `'"degree"'` executed directly against the SQLite file.
+- Not the DB-path problem. `/api/observations` on the same worker returns
+  the imported rows, so the worker is reading the right database.
+- **Not the phrase-query defect.** This was the first hypothesis and the
+  controls killed it: `degree` — a single token, immune to phrase
+  wrapping — returns zero through the API while `MATCH '"degree"'`
+  returns 2 in SQL. Whatever this is, it is upstream of the quoting.
+- Not obviously a filter. Dropping `project`, adding `type=observation`,
+  and varying `limit` all return zero.
+- The search path emits **no log lines at all** at
+  `CLAUDE_MEM_LOG_LEVEL=debug`, which is itself a clue.
+
+Next probe: construct the `SessionSearch` class directly against the
+database file in a bun script and call `searchObservations` with the same
+arguments the route builds, to isolate routing from search logic. Using
+an internal for *debugging* is fine; the published arm still goes through
+the real `search` tool.
+
 ## Open questions before this can run
 
 1. **Chroma arm logistics.** The semantic arm needs a ChromaDB instance
