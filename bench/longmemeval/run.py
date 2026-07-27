@@ -163,7 +163,9 @@ def rounds_of(session: list[dict[str, Any]]) -> list[str]:
     return out
 
 
-def build_question_store(root: Path, inst: dict[str, Any]) -> tuple[dict[str, str], int]:
+def build_question_store(
+    root: Path, inst: dict[str, Any]
+) -> tuple[dict[str, str], int]:
     """Write one instance's haystack. Returns (memory id -> session id, items).
 
     The session id is NEVER placed in the body or the scopes. It would be
@@ -191,7 +193,9 @@ def build_question_store(root: Path, inst: dict[str, Any]) -> tuple[dict[str, st
 # ---------------------------------------------------------------------------
 
 
-def distinct_sessions(ranked_ids: list[str], id_to_session: dict[str, str]) -> list[str]:
+def distinct_sessions(
+    ranked_ids: list[str], id_to_session: dict[str, str]
+) -> list[str]:
     """Collapse an item ranking to distinct sessions, first occurrence wins."""
     seen: list[str] = []
     known = set()
@@ -358,8 +362,7 @@ def _format_text(rows: list[ArmResult], meta: dict[str, Any]) -> str:
             f"{r.rounds_offered:,} rounds offered "
             f"({100 * (1 - r.items_written / max(1, r.rounds_offered)):.2f}% shortfall), "
             f"{r.dup_session_questions} questions with duplicate session ids, "
-            f"{r.seconds:.0f}s"
-            + (f", depth-truncated at {trunc}" if trunc else "")
+            f"{r.seconds:.0f}s" + (f", depth-truncated at {trunc}" if trunc else "")
         )
 
     for note in meta.get("notes", []):
