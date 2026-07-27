@@ -53,3 +53,9 @@ htmlcov/
 
 # throwaway venv for the live comparative eval lane (tests/eval/run_live.sh)
 .eval-venv/
+
+# LongMemEval corpora (bench/longmemeval). 265MB for _s and 2.6GB for _m,
+# fetched from HuggingFace by bench/longmemeval/run.py --fetch. Pinned by
+# sha256 in the runner and in every result file, so the corpus is
+# reproducible without being vendored into the repository.
+bench/longmemeval/data/

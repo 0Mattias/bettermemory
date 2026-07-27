@@ -196,6 +196,64 @@ dedup collapsing near-identical conversational filler. **MISSED if**
 under 2% in both, meaning the bypass changed little and the confound
 above is smaller than stated.
 
+## Addendum — written after reading the schema, before any retrieval ran
+
+The corpus was downloaded and its structure inspected before a single
+retrieval call existed. **This text was committed before `run.py` did.**
+Three properties were not anticipated by the rules above, and correcting
+them afterwards would be how a pre-registration becomes decoration — so
+they are declared here with the timestamp they deserve.
+
+**1. `recall@k` needed a sharper definition than "recall@k", and the
+distribution of evidence counts is why.** Evidence sessions per question
+in the oracle file: **1 → 176, 2 → 250, 3 → 41, 4 → 19, 5 → 11, 6 → 3**.
+So 324 of 500 questions require two or more sessions. The metric is
+therefore fixed as:
+
+> **recall@k = |retrieved evidence sessions ∩ evidence sessions| /
+> |evidence sessions|**, computed per question over the top-*k* **distinct**
+> sessions, then **macro-averaged** across questions.
+
+with one consequence stated before it can be spun: for any question where
+|evidence| > k, recall@k is **bounded below 1 by construction**. At k=5
+that ceiling binds on the 3 six-evidence questions; at k=1 it binds on
+324 of 500. Per-k ceilings are published alongside each figure, and the
+headline k is **5**. Micro-averaged figures are reported too, because
+macro-averaging over questions with wildly different evidence counts is a
+choice and not an obviously correct one.
+
+**2. The oracle variant contains no distractors at all, so it cannot
+produce a number.** Sessions-per-question is *exactly* the evidence-count
+distribution above — the two are identical. `longmemeval_oracle.json` is
+the evidence sessions and nothing else, so any retriever that is not
+actively broken scores ~1.0 and the corpus cannot discriminate. It is
+used **solely to validate adapter plumbing** — ingest, the item→session
+mapping, the scorer — and **no oracle figure may be published as a
+result.** The headline corpus is `longmemeval_s_cleaned.json`.
+
+**3. Abstention questions are absent from the oracle file, and the ~30
+figure above is not yet confirmed for the scored corpus.** Zero questions
+carry the `_abs` suffix and zero have an empty `answer_session_ids` —
+consistent with abstention questions being excluded from an evidence-only
+file, since they have no evidence to include. The exclusion rule stated
+above stands, but the **count** it applies to must be measured on
+`longmemeval_s_cleaned.json` and published, not carried over from the
+paper's prose.
+
+**Also pinned: the distributed corpus is not the one the paper
+measured.** The live artifacts are `longmemeval_s_cleaned.json` and
+`longmemeval_m_cleaned.json` — a *cleaned* revision published after the
+paper. Checksums are recorded in `run.py` and in every result file, and
+any comparison to a number printed in the paper must name this
+discrepancy rather than assume the corpora are identical.
+
+Verified while reading, and worth recording because the adapter depends
+on it: `haystack_session_ids`, `haystack_dates` and `haystack_sessions`
+are index-aligned in all 500 instances (zero mismatches), every
+`answer_session_ids` entry is a subset of its own haystack (zero
+orphans), and every turn carries exactly `role` / `content` /
+`has_answer`.
+
 ## What is not claimed
 
 - **Not helpfulness.** Recall is not usefulness. A retrieved session can
