@@ -155,6 +155,52 @@ this document. Until they are, the predictions below are deliberately
 *relative* — which arm wins and by how much — because a pre-registered
 absolute interval invented from memory is worse than none.
 
+## Addendum 2 — declared before the claude-mem arm is built
+
+Written after reading `claude-mem@13.12.4`'s shipped SQLite layer and
+probing its MCP server, and **before any claude-mem number exists.**
+
+**1. The enrichment asymmetry, and it cuts AGAINST us — say it as loudly
+as their FTS defect.** claude-mem's `observations_fts` index spans **six**
+columns: `title`, `subtitle`, `narrative`, `text`, `facts`, `concepts`.
+Their real pipeline populates all of them by running an LLM extraction
+over a session before storage. This harness writes the raw conversational
+round into `text` and leaves the other five empty, because the
+alternative is worse in three ways: it costs an API key at write time
+(the exact autonomy property this project publishes against), it makes
+the run non-$0 and non-deterministic, and **it would mean authoring a
+competitor's extraction step ourselves** — the vendor-adapter problem
+that disqualified LongMemCode.
+
+So the arms are symmetric in *input* — both systems receive the identical
+raw round — and asymmetric in *how much of each system's design is
+exercised*. bettermemory stores prose bodies natively and loses nothing.
+claude-mem is built to search enriched fields and gets one of six
+populated.
+
+**This may understate claude-mem, and no result may be published without
+stating it beside the number.** A reader who learns this from the source
+rather than from us is entitled to discard the whole artifact. The
+symmetric-looking alternative — enriching for them — is rejected on the
+record above, not overlooked.
+
+**2. `importObservation` dedups on `(memory_session_id, title,
+created_at_epoch)`.** Unlike bettermemory's `Store.write`, which performs
+no dedup at all, claude-mem's import path *will* silently collapse rounds
+that share those three values. Each round is therefore given a distinct
+title and a distinct `created_at_epoch` derived from its session date and
+round index. **Items-written vs rounds-offered is reported for the
+claude-mem arm too**, and a non-zero shortfall there is a real finding
+rather than the by-construction zero that made P5 vacuous on our side.
+
+**3. Ingest cannot go through MCP; retrieval can and does.**
+`observation_add` is filtered out of the 14 advertised tools unless the
+runtime is Postgres "server" mode, so writes go through `SessionStore`
+directly while reads go through the real `search` tool over stdio. This
+is the same shape as our side (`Store.write` for ingest, the real search
+path for retrieval), and both halves are disclosed together or not at
+all.
+
 ## Predictions
 
 **P1 — the crossed arms are the whole story, and claude-mem's spread is
