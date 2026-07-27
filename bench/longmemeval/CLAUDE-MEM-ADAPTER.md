@@ -270,6 +270,34 @@ The practical consequence for this benchmark is that natural-language
 questions essentially never match in the FTS-only arm, because a
 question's exact wording is never a contiguous substring of its evidence.
 
+### The index is fine. The query construction is what breaks.
+
+Reporting "claude-mem FTS: 0.0%" without this next measurement would be
+technically true and substantively misleading, so it was run before the
+number was written down. 25 questions, same live store, three query
+forms:
+
+| query form | recall@5 hits |
+| --- | --- |
+| raw question | **0 / 25** |
+| stopwords stripped | **0 / 25** |
+| best single content word | **25 / 25** |
+
+**Their FTS index contains exactly the right content — a single keyword
+finds the evidence session in every one of 25 cases.** Nothing is wrong
+with the ingest, the tokenisation, or the index. What fails is that any
+multi-word query is wrapped into a phrase and then requires contiguity.
+
+Note the middle row, which is the one that closes the fairness question:
+stripping stopwords does **not** rescue it. There is no realistic query
+reformulation that recovers this short of reducing the question to a
+single word, so the 0.0 is not an artifact of feeding their FTS an
+unnaturally verbose query. It is what happens to any multi-word search.
+
+**How this must be reported:** as a defect in multi-word query handling
+on their FTS *fallback* path — not as "claude-mem cannot retrieve", and
+not as their headline number, since Chroma-on is what ships by default.
+
 ## ~~OPEN BLOCKER~~ (resolved above): `/api/search` returned zero for every query
 
 This is unresolved and is the thing standing between here and a
