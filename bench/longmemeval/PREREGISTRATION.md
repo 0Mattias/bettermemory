@@ -15,6 +15,7 @@ this directory exists.
 **LongMemEval** (Wu et al., ICLR 2025, arXiv:2410.10813v2 — MIT,
 `xiaowu0162/LongMemEval`). 500 human-curated questions across seven
 question types, embedded in freely-scalable synthetic chat histories.
+(**Six** types in the corpus actually distributed — see addendum item 3.)
 
 It replaces **LongMemCode**, which was retired *before* any adapter was
 written when the label-provenance question was put to it: 84.5% of its
@@ -142,6 +143,12 @@ reported as their own line. Including them would silently depress both
 systems by the same amount and make the headline look harder-won than it
 is.
 
+> **SUPERSEDED by addendum item 3, and left standing so the correction is
+> visible.** This paragraph was written from the paper's prose. The
+> distributed corpus contains **zero** abstention questions, so the rule
+> has nothing to apply to — and the ability it was meant to protect is
+> not measurable here at all.
+
 **Absolute levels are not anchored yet.** The paper publishes recall
 figures for its own indexing strategies, and those have not been read into
 this document. Until they are, the predictions below are deliberately
@@ -231,14 +238,44 @@ used **solely to validate adapter plumbing** — ingest, the item→session
 mapping, the scorer — and **no oracle figure may be published as a
 result.** The headline corpus is `longmemeval_s_cleaned.json`.
 
-**3. Abstention questions are absent from the oracle file, and the ~30
-figure above is not yet confirmed for the scored corpus.** Zero questions
-carry the `_abs` suffix and zero have an empty `answer_session_ids` —
-consistent with abstention questions being excluded from an evidence-only
-file, since they have no evidence to include. The exclusion rule stated
-above stands, but the **count** it applies to must be measured on
-`longmemeval_s_cleaned.json` and published, not carried over from the
-paper's prose.
+**3. There are no abstention questions in the distributed corpus at all,
+and that costs this instrument one of the abilities it was chosen for.**
+Measured on `longmemeval_s_cleaned.json`: **zero** questions carry the
+`_abs` suffix and **zero** have an empty `answer_session_ids`. The six
+non-abstention types sum to exactly 500 (knowledge-update 78,
+multi-session 133, single-session-assistant 56, single-session-preference
+30, single-session-user 70, temporal-reasoning 133). The paper describes
+500 questions *including* 30 false-premise abstention items; the cleaned
+release ships 500 questions containing **none**.
+
+The exclusion rule written above is therefore moot — there is nothing to
+exclude — but the honest consequence is larger than a dropped rule and is
+recorded rather than quietly dropped: **Abstention was named as one of
+the reasons to prefer this benchmark, and it is not measurable on the
+artifact that is actually distributed.** Four scored abilities remain
+(information extraction, multi-session reasoning, knowledge updates,
+temporal reasoning). Any writeup that lists five abilities because the
+paper lists five would be describing a corpus this project never ran.
+
+**4. Thirteen questions repeat a session id inside their own haystack.**
+`haystack_session_ids` is not unique within those instances, which
+directly touches the attribution rule since scoring collapses to
+*distinct* sessions. Handling is fixed here: session ids are deduped on
+ingest, a repeated id maps to the union of its rounds, and the 13
+affected questions are flagged in the result file so their contribution
+can be isolated. They are **not** dropped — silently discarding
+inconvenient instances is how a corpus gets tuned.
+
+**5. The whole benchmark sits below the index threshold, so it measures
+the same regime `bench/retrieval/` does.** Per-question haystacks hold
+38–62 sessions (median 48) and 198–308 rounds (median 245, 123,249
+rounds in total). With one store per question and one item per round,
+every store lands near 245 items — comfortably under
+`_INDEX_THRESHOLD_DEFAULT` (500). So retrieval ranks the full store and
+production's SQLite bm25 prefilter never engages. This is the identical
+caveat `bench/retrieval/README.md` raises about its own unpadded runs,
+and it means **neither directory has yet measured the above-threshold
+regime that a large real store would hit.**
 
 **Also pinned: the distributed corpus is not the one the paper
 measured.** The live artifacts are `longmemeval_s_cleaned.json` and
