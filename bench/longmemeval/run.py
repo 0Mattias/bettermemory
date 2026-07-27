@@ -433,7 +433,12 @@ def main() -> int:
             corpus,
             arm=arm,
             semantic_model=semantic_model if arm == "semantic" else None,
-            progress=not args.quiet and not args.json,
+            # Progress goes to stderr and the report to stdout, so a
+            # --json run can still say where it is. Gating this on
+            # `not args.json` bought nothing and made a 27-minute run
+            # opaque enough that its liveness had to be inferred by
+            # sampling temp directories.
+            progress=not args.quiet,
         )
         for arm in arms
     ]
