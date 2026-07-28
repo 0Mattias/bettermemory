@@ -22,12 +22,40 @@ attribution rule, the metric, and five falsifiable predictions, and it
 was committed before the corpus was downloaded. Two of those predictions
 are scored **MISSED** below, one of them against a shipped default.
 
-## Status: half an artifact
+## The headline: parity, not victory
 
-**The claude-mem arms are not implemented.** Everything below measures
-bettermemory alone and licenses **no comparative claim** — the runner
-prints that on every invocation so a number cannot escape this file
-looking like a head-to-head. Item (e) is not done.
+On third-party ground, against labels neither party authored,
+**bettermemory and claude-mem retrieve about equally well.**
+
+| system / arm | @1 | @5 | @10 |
+| --- | --- | --- | --- |
+| bettermemory lexical | 52.5% | 89.3% | 94.4% |
+| bettermemory semantic | **56.2%** | **91.8%** | 95.6% |
+| claude-mem lexical | 0.1% | 0.1% | 0.1% |
+| claude-mem semantic | 54.2% | 91.6% | **96.9%** |
+
+Best arm against best arm, macro recall@5: **91.8% vs 91.6% — a
++0.2-point difference.** At recall@1 we are ahead by 2.0. At recall@10
+**they are ahead by 1.3.** Per question type the two trade places:
+
+| question type | bettermemory | claude-mem | Δ | n |
+| --- | --- | --- | --- | --- |
+| single-session-assistant | 100.0% | 100.0% | — | 56 |
+| single-session-preference | 96.7% | 96.7% | — | 30 |
+| temporal-reasoning | 86.1% | 86.2% | −0.1 | 133 |
+| knowledge-update | 98.1% | 95.5% | +2.6 | 78 |
+| single-session-user | 97.1% | 92.9% | +4.3 | 70 |
+| multi-session | 86.7% | **89.3%** | **−2.6** | 133 |
+
+**This is the answer to build-order item (e), and it is not the answer
+the build order was hoping for.** Item (e) existed to establish that
+bettermemory out-retrieves claude-mem on neutral ground. It does not. It
+ties. Any competitive claim this project makes has to rest somewhere
+other than retrieval recall — see "What this means" below.
+
+Run validity, since three earlier runs were discarded for exactly this:
+`chroma: {"embedded": 124361, "complete": true}`, ingest shortfall
+0.000%, **zero questions returning empty** in the semantic arm.
 
 ## Results — bettermemory 3.30.0, `longmemeval_s_cleaned.json`
 
@@ -73,11 +101,39 @@ slower for +2.5 points pooled.
 
 | # | prediction | outcome |
 | --- | --- | --- |
-| P1 | claude-mem's arm spread exceeds ours by ≥10 pts | **UNSCORED** — claude-mem not implemented |
+| P1 | claude-mem's arm spread exceeds ours by ≥10 pts | **HELD — +89.0** (91.5 vs 2.5) |
 | P2 | semantic beats lexical at @5 by >5 and <25 pts | **MISSED — +2.5** |
 | P3 | multi-session ≥15 pts below the other types | **MISSED — 5.5 pts** (the good branch) |
-| P4 | we do *not* win knowledge-update | **UNSCORED**, but its reasoning strengthened |
+| P4 | we do *not* win knowledge-update | **HELD — +2.6 pts** |
 | P5 | ≥2% of offered rounds lost to dedup | **MISSED — 0.000%**, and badly posed |
+
+### P4 held, and it is the prediction that earned its keep
+
+P4 was written to stop a future overclaim by us: knowledge-update is this
+project's differentiating axis, so the temptation is to point at that
+column as proof the correctness machinery works. Measured: **98.1% vs
+95.5%, a 2.6-point difference** — well inside the 10-point band that
+pre-registered a non-win.
+
+The reasoning behind it is now empirically confirmed rather than merely
+argued. Recall@k asks whether the evidence session comes back. It cannot
+ask whether the store *knows a fact was superseded*, which is the actual
+claim. Both systems retrieve a superseded fact perfectly well. **Anyone
+citing a knowledge-update recall number as evidence of bettermemory's
+verification mechanism is misreading this benchmark**, and the
+pre-registration said so before the number existed.
+
+### P1 held, but read what it actually measures
+
+Their arm spread is 91.5 points against our 2.5. That is not a statement
+about retrieval quality — it is the phrase-query defect, and it is
+config sensitivity rather than a headline. Their FTS **index is
+correct**: a single content word retrieves the evidence session in 25 of
+25 sampled questions. Any multi-word query is wrapped into an FTS5
+phrase and requires contiguity, so it returns nothing, and stripping
+stopwords does not rescue it. Report it as a defect in multi-word query
+handling on their *fallback* path — Chroma-on is what ships by default,
+and on that path they score 91.6%.
 
 ### P2 is the finding, and it is against us
 
@@ -180,9 +236,63 @@ would be misreading its own benchmark.
   judge and an API key, which collides with the autonomy criterion.
 - **Staleness accuracy.** See P4. `bench/rot/` owns that axis.
 
+## What this means for the competitive case
+
+Item (e) was commissioned to prove bettermemory out-retrieves claude-mem
+on ground neither party authored. **It measured a tie.** That result is
+kept as the headline rather than buried under the per-class rows where
+we win three and lose one.
+
+Two consequences follow, and both are more useful than a win would have
+been:
+
+1. **Retrieval is not the differentiator.** Two systems with entirely
+   different architectures — memory files plus SQLite FTS5 and an
+   optional embedding model, versus observations plus ChromaDB — land
+   within 0.2 points of each other on 500 third-party questions. That is
+   a strong hint that session-level recall on this kind of corpus is
+   near saturation for any competent design, and that competing on it is
+   competing on a solved axis.
+2. **The correctness axis is where the claim has to live**, and this
+   instrument is structurally blind to it (see P4). `bench/rot/` owns
+   that, on a 30-repository corpus, where claude-mem scores a structural
+   **N/A** because it has no `verified_at`, no `superseded_by`, and no
+   lifecycle verb but DELETE. The defensible sentence is "we verify and
+   here is the measured accuracy," not "we retrieve better."
+
+## Three discarded runs, and why they are worth recording
+
+Every one of these produced a number that flattered bettermemory, and
+none survived:
+
+| run | claude-mem @5 | why it was void |
+| --- | --- | --- |
+| first 40-question | 7.5% | 20 s fixed sleep; index barely built |
+| full 500 (#1) | 54.1% | Chroma 57% built, 210/500 empty |
+| **full 500 (#2)** | **91.6%** | valid — index 100%, 0 empty |
+
+The middle row is the one to keep in mind. It would have published a
+**+37.7-point win** over a competitor. The margin was almost entirely a
+half-built vector index on this machine. It was caught because
+`await_chroma_backfill` measures readiness and marks the run
+`complete: false`, not because the number looked wrong — 54% was
+perfectly plausible.
+
+**The dominant failure mode in a comparative benchmark is not
+mismeasuring yourself, it is mismeasuring the competitor in your own
+favour.** Three for three here. The invalid artifact is retained as
+`results/claude-mem-full500-INVALID-partial-index.json`.
+
 ## Next
 
-1. The claude-mem arms — `POST /api/memory/save` for ingest, both Chroma
-   states, published side by side.
-2. An above-threshold arm, which would close a caveat both retrieval
-   directories currently share.
+1. **An above-threshold arm.** Per-question stores hold ~249 items
+   against a 500-item index threshold, so bm25 prefiltering never
+   engages. Neither retrieval directory has measured the regime a large
+   real store would hit, and it is the most likely place for the tie to
+   break in either direction.
+2. **Enrichment parity.** claude-mem's `observations_fts` spans six
+   columns its own pipeline fills by LLM extraction; this harness fills
+   one. Their 91.6% is therefore a floor, not a ceiling — see
+   PREREGISTRATION.md addendum 2.
+3. Not a judged QA arm. It needs a GPT-4o judge and an API key, which
+   collides with the autonomy criterion this project publishes against.
