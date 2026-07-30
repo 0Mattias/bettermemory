@@ -769,6 +769,105 @@ class TestApplyIngestPlan:
         assert active[row.written_id].category == Category.USER_INFERENCE
 
 
+class TestApplyIngestPlanContentGates:
+    """`apply_ingest_plan` runs the shared `CONTENT_GATES` chain.
+
+    Before the `apply_write_gates` extraction this path called
+    `store.write` directly and ran NO write policy at all: a pasted
+    credential, a transient marker, or a duplicate of a tombstoned memory
+    imported silently. These tests pin that the shared chain now fires
+    here, and — just as importantly — that the one gate ingest bypasses on
+    purpose still stays bypassed (see the class below).
+    """
+
+    def test_credential_in_source_file_is_skipped_not_written(
+        self, source_root: Path, store: Store
+    ) -> None:
+        """The gate ingest most needed. An auto-memory file is authored by
+        the user, but authorship is not a claim about content — a secret
+        pasted mid-session rides into the file and the store is
+        plain-markdown that `sync` pushes across hosts."""
+        _write_auto_memory(
+            source_root,
+            "leaky",
+            description="deploy notes",
+            body="The deploy token is sk-ant-api03-AA00bbCCddEEffGGhhIIjjKKllMMnnOOpp",
+        )
+        plan = compute_ingest_plan(
+            source_root,
+            existing_memories=store.load_all(),
+            existing_tombstones=store.load_tombstones(),
+        )
+        apply_ingest_plan(plan, store)
+        [row] = plan.rows
+        assert row.written_id is None
+        assert row.action == "skip_invalid"
+        assert "credential" in (row.reason or "")
+        # The decisive assertion: nothing reached the durable store.
+        assert store.load_all() == []
+
+    def test_transient_marker_in_source_file_is_skipped(
+        self, source_root: Path, store: Store
+    ) -> None:
+        _write_auto_memory(
+            source_root,
+            "fleeting",
+            description="current state",
+            body="We just switched the queue over to Redis this afternoon.",
+        )
+        plan = compute_ingest_plan(
+            source_root,
+            existing_memories=store.load_all(),
+            existing_tombstones=store.load_tombstones(),
+        )
+        apply_ingest_plan(plan, store)
+        [row] = plan.rows
+        assert row.action == "skip_invalid"
+        assert "transient" in (row.reason or "")
+        assert store.load_all() == []
+
+    def test_clean_row_still_writes(self, source_root: Path, store: Store) -> None:
+        """The gates must not become a blanket refusal — the ordinary
+        import path stays open. Without this, every assertion above would
+        also pass if `apply_write_gates` rejected unconditionally."""
+        _write_auto_memory(
+            source_root,
+            "ordinary",
+            description="the parser lives in ingest.py",
+            body="Auto-memory files are read from the project memory dir.",
+        )
+        plan = compute_ingest_plan(
+            source_root,
+            existing_memories=store.load_all(),
+            existing_tombstones=store.load_tombstones(),
+        )
+        apply_ingest_plan(plan, store)
+        [row] = plan.rows
+        assert row.action == "write"
+        assert row.written_id is not None
+        assert len(store.load_all()) == 1
+
+    def test_gate_skip_reason_names_the_status(
+        self, source_root: Path, store: Store
+    ) -> None:
+        """The row reason carries the gate's own `status` vocabulary, so an
+        operator reading `render_ingest_text` sees the same word
+        `memory_write` would have returned rather than a paraphrase."""
+        _write_auto_memory(
+            source_root,
+            "leaky2",
+            body="token: ghp_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHHIIII",
+        )
+        plan = compute_ingest_plan(
+            source_root,
+            existing_memories=store.load_all(),
+            existing_tombstones=store.load_tombstones(),
+        )
+        apply_ingest_plan(plan, store)
+        [row] = plan.rows
+        assert (row.reason or "").startswith("write gate refused: ")
+
+
 # ---------------------------------------------------------------------------
 # apply_ingest_plan — origin capture (honest-evidence gate)
 # ---------------------------------------------------------------------------

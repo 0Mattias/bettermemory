@@ -60,6 +60,8 @@ from typing import Any, Literal
 from . import _frontmatter as fm
 from ._decorators import best_effort
 from ._fsutil import atomic_write_bytes
+from .config import Config
+from .handlers.write import CONTENT_GATES, apply_write_gates
 from .models import (
     Category,
     Confidence,
@@ -493,12 +495,66 @@ def compute_ingest_plan(
 # ---------------------------------------------------------------------------
 
 
+def _gate_deps(store: Store, config: "Config | None") -> Any:
+    """Build the `GateDeps` the content gates run against.
+
+    `config=None` means "the caller didn't thread one" — the CLI always
+    does, but library callers and a good deal of the test suite construct a
+    plan with a bare `Store`. Falling back to `Config()` defaults is the
+    only safe reading: the alternative (skip the gates when no config
+    arrived) would make the chokepoint opt-in, which is the exact shape of
+    the bug this closes. Defaults are conservative — semantic dedup off, so
+    the fallback is the cheap lexical path, never a surprise model load.
+    """
+    from .handlers.write import GateBundle
+
+    return GateBundle.for_store(store, config if config is not None else Config())
+
+
+def _gate_context(payload: dict[str, Any]) -> Any:
+    """A `GateContext` with every `acknowledge_*` override left False.
+
+    Ingest is unattended: there is no one to offer an override to, so a
+    gate hit is final. `groundedness_check` stays off because the gate is
+    opt-in even on the MCP path and there is no `source_transcript` here —
+    the auto-memory file IS the source.
+    """
+    from .handlers.write import GateContext
+
+    return GateContext(
+        payload=payload,
+        force=False,
+        acknowledge_transient=False,
+        acknowledge_scope_mismatch=False,
+        acknowledge_ungrounded=False,
+        acknowledge_credential=False,
+        groundedness_check=False,
+        source_transcript=None,
+    )
+
+
+def _gate_skip_reason(decision: Any) -> str:
+    """Render a gate decision as an ingest row `reason`.
+
+    Keeps the gate's own `status` (`credential_warning`, `duplicate`,
+    `transient_warning`, …) so the operator sees which policy fired and can
+    match it against the same vocabulary `memory_write` returns, rather than
+    a paraphrase that drifts from it.
+    """
+    response = getattr(decision, "response", None) or {}
+    status = response.get("status", "rejected")
+    detail = response.get("hint") or response.get("reason") or ""
+    text = f"write gate refused: {status}"
+    return f"{text} — {detail}" if detail else text
+
+
 def apply_ingest_plan(
     plan: IngestPlan,
     store: Store,
     *,
     recorder: Any | None = None,
     cwd: Path | None = None,
+    config: "Config | None" = None,
 ) -> IngestPlan:
     """Execute every ``action="write"`` row in the plan.
 
@@ -557,18 +613,38 @@ def apply_ingest_plan(
         and _session_evidence_matches_cwd(plan.source_root, cwd)
     ):
         origin = capture(cwd).model_copy(update={"branch": None})
+    gate_deps = _gate_deps(store, config)
     for row in plan.rows:
         if row.action != "write":
             continue
+        payload: dict[str, Any] = {
+            "content": row.body,
+            "scopes": row.scopes,
+            "confidence": Confidence.MEDIUM,
+            "source": Source.EXPLICIT,
+            "origin": origin,
+            "category": row.category,
+        }
+        # Content gates, on a path that previously ran none of them. An
+        # auto-memory file is authored by the user, which is why the
+        # confirmation gate stays bypassed here (see `CONTENT_GATES`) — but
+        # authorship is not a claim about content. A pasted API key, a
+        # "we just switched to X" transient, or a duplicate of a memory the
+        # user already removed is exactly as unwanted arriving through
+        # ingest as through `memory_write`, and this batch has nobody to
+        # offer an `acknowledge_*` override to, so a hit is a hard skip.
+        # Reusing the row's own `skip_invalid` channel means rejections
+        # surface in `render_ingest_text` next to every other skip reason
+        # rather than needing a second reporting path.
+        if gate_deps is not None:
+            gc = _gate_context(payload)
+            decision = apply_write_gates(gate_deps, gc, gates=CONTENT_GATES)
+            if decision is not None:
+                row.action = "skip_invalid"
+                row.reason = _gate_skip_reason(decision)
+                continue
         try:
-            memory = store.write(
-                content=row.body,
-                scopes=row.scopes,
-                confidence=Confidence.MEDIUM,
-                source=Source.EXPLICIT,
-                origin=origin,
-                category=row.category,
-            )
+            memory = store.write(**payload)
             row.written_id = memory.id
             if recorder is not None:
                 recorder.record(

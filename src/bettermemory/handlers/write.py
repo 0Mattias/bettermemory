@@ -38,8 +38,9 @@ those tools complete the pending-write lifecycle this module owns.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from ..credentials import find_credential_markers
 from ..durability import find_transient_markers
@@ -61,6 +62,9 @@ from ._shared import (
 
 if TYPE_CHECKING:
     from .._handlers import ToolHandlers
+    from .._response import ResponseBuilder
+    from ..config import Config
+    from ..store import Store
 
 log = logging.getLogger("bettermemory.handlers.write")
 
@@ -230,7 +234,7 @@ GateResult = Continue | Reject | Pending
 class WriteGate:
     """Common base; subclasses override ``evaluate``."""
 
-    def evaluate(self, deps: "ToolHandlers", gc: GateContext) -> GateResult:
+    def evaluate(self, deps: "GateDeps", gc: GateContext) -> GateResult:
         raise NotImplementedError
 
 
@@ -246,7 +250,7 @@ class CredentialGate(WriteGate):
     detector `kind` and a redacted snippet, never the value.
     """
 
-    def evaluate(self, deps: "ToolHandlers", gc: GateContext) -> GateResult:
+    def evaluate(self, deps: "GateDeps", gc: GateContext) -> GateResult:
         gc.credential_hits = find_credential_markers(gc.payload["content"])
         if not gc.credential_hits or gc.acknowledge_credential:
             return Continue()
@@ -288,7 +292,7 @@ class TransientGate(WriteGate):
     on the most actionable axis.
     """
 
-    def evaluate(self, deps: "ToolHandlers", gc: GateContext) -> GateResult:
+    def evaluate(self, deps: "GateDeps", gc: GateContext) -> GateResult:
         gc.transient_hits = find_transient_markers(gc.payload["content"])
         if not gc.transient_hits or gc.acknowledge_transient:
             return Continue()
@@ -320,7 +324,7 @@ class ScopeMismatchGate(WriteGate):
     """Reject bodies whose path / project-name citations don't match
     the declared scope list (unless `acknowledge_scope_mismatch`)."""
 
-    def evaluate(self, deps: "ToolHandlers", gc: GateContext) -> GateResult:
+    def evaluate(self, deps: "GateDeps", gc: GateContext) -> GateResult:
         if gc.acknowledge_scope_mismatch:
             return Continue()
         existing_memories = deps.store.load_all()
@@ -367,7 +371,7 @@ class GroundednessGate(WriteGate):
     auto-extract memories from conversation.
     """
 
-    def evaluate(self, deps: "ToolHandlers", gc: GateContext) -> GateResult:
+    def evaluate(self, deps: "GateDeps", gc: GateContext) -> GateResult:
         if not gc.groundedness_check:
             return Continue()
         if gc.source_transcript is None or gc.acknowledge_ungrounded:
@@ -403,7 +407,7 @@ class GroundednessGate(WriteGate):
 
 
 def _resolve_dedup_thresholds(
-    deps: "ToolHandlers",
+    deps: "GateDeps",
 ) -> tuple[Any, float | None, float | None]:
     """Shared setup for both dedup gates: the semantic model plus the
     high/medium overlap thresholds (None unless semantic dedup is on).
@@ -451,7 +455,7 @@ class DedupActiveGate(WriteGate):
     Skipped when `force=True`.
     """
 
-    def evaluate(self, deps: "ToolHandlers", gc: GateContext) -> GateResult:
+    def evaluate(self, deps: "GateDeps", gc: GateContext) -> GateResult:
         if gc.force:
             return Continue()
         semantic_model, high_threshold, medium_threshold = _resolve_dedup_thresholds(
@@ -497,7 +501,7 @@ class DedupTombstoneGate(WriteGate):
     Skipped when `force=True`.
     """
 
-    def evaluate(self, deps: "ToolHandlers", gc: GateContext) -> GateResult:
+    def evaluate(self, deps: "GateDeps", gc: GateContext) -> GateResult:
         if gc.force:
             return Continue()
         semantic_model, high_threshold, medium_threshold = _resolve_dedup_thresholds(
@@ -548,7 +552,7 @@ class PendingGate(WriteGate):
     structurally enforced regardless of config: misattribution sticks
     and the user gets the veto."""
 
-    def evaluate(self, deps: "ToolHandlers", gc: GateContext) -> GateResult:
+    def evaluate(self, deps: "GateDeps", gc: GateContext) -> GateResult:
         category_enum: Category = gc.payload["category"]
         if deps.config.behavior.require_write_confirmation:
             return Pending(pending_reason="config")
@@ -575,6 +579,162 @@ _WRITE_GATES: tuple[WriteGate, ...] = (
     DedupTombstoneGate(),
     PendingGate(),
 )
+
+
+# ---------------------------------------------------------------------------
+# The chokepoint: one chain, every write path
+# ---------------------------------------------------------------------------
+#
+# `_WRITE_GATES` used to be reachable only from `memory_write` below, which
+# made the write policy a property of ONE entry point rather than of the
+# store. Three other paths reached `Store.write` directly and each carried a
+# different subset of the policy: `ingest.apply_ingest_plan` ran no gates at
+# all, `consolidate._apply_llm_proposal` hand-reimplemented four of them
+# (and had already drifted), and `handlers.proposals.accept_proposal`
+# mirrored the credential gate alone. `apply_write_gates` is the single
+# entry point all four now share.
+#
+# What deliberately stays OUT of this function: recorder events,
+# `_corroborate_duplicate`, and SessionState staging. Those need `recorder`
+# and `state`, which the non-MCP callers don't have and shouldn't grow — so
+# this returns a DECISION and the caller owns the side effects. That split
+# is what lets one chain serve four callers with four different failure
+# modes (MCP response dict / skipped ingest row / raised RuntimeError).
+#
+# This layer sits strictly ABOVE `Store.write`. It does not touch the
+# `_locked` / `_atomic_write_post` path — the TOCTOU rationale documented at
+# `store.py:443-450` and `1798-1830` is load-bearing and eight mutators
+# share it.
+
+
+class GateDeps(Protocol):
+    """The four dependencies the gate chain actually reads.
+
+    Narrower than `ToolHandlers` on purpose. `ToolHandlers` satisfies this
+    structurally with no changes, and non-MCP callers can satisfy it with
+    `GateBundle` instead of constructing a server-shaped object — which is
+    what previously pushed `ingest` and `consolidate` into hand-rolling
+    policy rather than calling into it.
+
+    `_semantic_model_factory` is declared as a callable ATTRIBUTE, not a
+    method, because that is what `ToolHandlers` actually holds
+    (`_handlers.py:367` assigns the factory to the instance). Declaring it
+    `def` here would type-check against a bound method and quietly exclude
+    the very class this protocol exists to describe.
+    """
+
+    store: Store
+    config: Config
+    responses: ResponseBuilder
+    _semantic_model_factory: Callable[[Config], Any]
+
+
+class GateBundle:
+    """`GateDeps` for callers that hold a `Store` but no `ToolHandlers`.
+
+    `responses` is a real `ResponseBuilder` rather than a stub: the gates
+    build their rejection payloads eagerly, and a caller that discards the
+    payload (ingest keeps only `reason`) still benefits from the shaping
+    being identical to what the MCP surface would have returned. One
+    rejection shape, one place to change it.
+    """
+
+    def __init__(
+        self,
+        *,
+        store: Store,
+        config: Config,
+        responses: ResponseBuilder,
+        semantic_model_factory: Callable[[Config], Any],
+    ) -> None:
+        self.store = store
+        self.config = config
+        self.responses = responses
+        self._semantic_model_factory = semantic_model_factory
+
+    @classmethod
+    def for_store(
+        cls,
+        store: Store,
+        config: Config,
+        *,
+        semantic_model: Any | None = None,
+    ) -> GateBundle:
+        """Build a bundle from the two things every caller already has.
+
+        `semantic_model` short-circuits the factory for callers that have
+        already paid to load a model (`consolidate_llm` loads one per run,
+        and re-loading it per proposal would mean a model init per write).
+        Passing None keeps the config-driven default, including the Jaccard
+        fallback when the `semantic` extra isn't installed.
+        """
+        from .._response import ResponseBuilder
+        from ..semantic_setup import _semantic_model_or_none
+
+        factory: Callable[[Config], Any]
+        if semantic_model is not None:
+            factory = lambda _config: semantic_model  # noqa: E731
+        else:
+            factory = _semantic_model_or_none
+        return cls(
+            store=store,
+            config=config,
+            responses=ResponseBuilder(
+                stale_after_days=config.behavior.verification_stale_days
+            ),
+            semantic_model_factory=factory,
+        )
+
+
+# The gates that judge CONTENT — everything except the confirmation
+# handshake. `PendingGate` is the one gate whose correctness depends on the
+# caller having a human to ask, so it is not part of this subset.
+#
+# Splitting the tuple rather than always running the whole chain is a
+# deliberate answer to a real finding: the non-MCP writers' deviations from
+# `memory_write` are not all oversights. `apply_ingest_plan` bypasses
+# `PendingGate` ON PURPOSE — the source file it reads is the user's own
+# authored `memory/*.md`, so "the source file is itself the user's act of
+# commit" (contract locked by
+# `tests/test_ingest.py::test_user_inference_lands_in_active_store_not_pending`).
+# Forcing confirmation there would break a reasoned, tested behaviour in the
+# name of consistency. What ingest genuinely lacked was the CONTENT
+# judgement — a credential, a transient marker, or a duplicate in an
+# authored file is still all three of those things.
+#
+# So each caller names the subset its situation justifies, and the reason
+# lives at the call site. A caller that wants the full chain passes nothing.
+CONTENT_GATES: tuple[WriteGate, ...] = tuple(
+    g for g in _WRITE_GATES if not isinstance(g, PendingGate)
+)
+
+
+def apply_write_gates(
+    deps: GateDeps,
+    gc: GateContext,
+    *,
+    gates: tuple[WriteGate, ...] = _WRITE_GATES,
+) -> Reject | Pending | None:
+    """Run a write-gate chain. Returns the first non-`Continue` decision.
+
+    - `Reject` — refuse the write; `.response` is the caller-facing dict and
+      `.event_kwargs` the audit payload the caller should record.
+    - `Pending` — the write needs user confirmation before it commits. Only
+      reachable when `gates` includes `PendingGate`.
+    - `None` — every gate passed; the caller may commit.
+
+    `gates` defaults to the full chain so the MCP path cannot silently lose
+    a gate; batch callers pass `CONTENT_GATES` and document why at the call
+    site. Note that the escape hatches (`acknowledge_credential` and
+    friends) are `GateContext` fields, not gate behaviour — an unattended
+    caller that leaves them False gets the hard refusal it wants without
+    needing its own copy of the check.
+    """
+    for gate in gates:
+        result = gate.evaluate(deps, gc)
+        if isinstance(result, (Reject, Pending)):
+            return result
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -673,20 +833,18 @@ async def memory_write(
     )
 
     pending_decision: Pending | None = None
-    for gate in _WRITE_GATES:
-        result = gate.evaluate(deps, gc)
-        if isinstance(result, Reject):
-            # Recurrence-as-evidence: a duplicate rejection IS the stored
-            # claim re-entering a conversation. Record the corroboration
-            # on the matched memory (once per session per memory) before
-            # the reject event goes out, so the event carries the id.
-            if result.response.get("status") == "duplicate":
-                _corroborate_duplicate(deps, state, result)
-            deps.recorder.record("write", **result.event_kwargs)
-            return result.response
-        if isinstance(result, Pending):
-            pending_decision = result
-            break
+    decision = apply_write_gates(deps, gc)
+    if isinstance(decision, Reject):
+        # Recurrence-as-evidence: a duplicate rejection IS the stored
+        # claim re-entering a conversation. Record the corroboration
+        # on the matched memory (once per session per memory) before
+        # the reject event goes out, so the event carries the id.
+        if decision.response.get("status") == "duplicate":
+            _corroborate_duplicate(deps, state, decision)
+        deps.recorder.record("write", **decision.event_kwargs)
+        return decision.response
+    if isinstance(decision, Pending):
+        pending_decision = decision
 
     # Capture which markers (if any) were overridden by
     # `acknowledge_transient` — feeds the override-rate signal in the

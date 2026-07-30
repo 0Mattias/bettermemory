@@ -194,7 +194,11 @@ def _cli_ingest(
             max_bytes=ctx.config.telemetry.max_bytes,
             log_queries_verbatim=ctx.config.telemetry.log_queries_verbatim,
         )
-        apply_ingest_plan(plan, store, recorder=recorder)
+        # Thread the real config, not the `Config()` fallback: the
+        # allowed-scopes list and the dedup thresholds the content gates
+        # read are user knobs, and the CLI is the one caller that always
+        # has them resolved.
+        apply_ingest_plan(plan, store, recorder=recorder, config=ctx.config)
 
     if json_out:
         sys.stdout.write(_json.dumps(plan.to_dict(), indent=2) + "\n")
