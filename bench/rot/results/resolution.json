@@ -1,0 +1,15 @@
+{
+  "store": "/Users/mattias/.claude-memory",
+  "total": 216,
+  "checkable": 143,
+  "bare": 73,
+  "parsed": 0,
+  "unparsed": 216,
+  "parse_rate": 0.0,
+  "checkable_but_unparsed": 143,
+  "by_kind": {},
+  "control_parsed": 3,
+  "control_total": 3,
+  "resolution_rate": null,
+  "resolution_rate_status": "UNDEFINED \u2014 parse_claim_citation reads three anchored synthetic sentence templates, so real prose cannot match by construction. Not a measurement of claim quality."
+}
