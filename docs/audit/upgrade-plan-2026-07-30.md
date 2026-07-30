@@ -748,6 +748,8 @@ provably cannot tombstone any of them.
 
 ### Phase 4 — Retrieval spend (M; only measured wins)
 
+Entry brief for this phase: `docs/audit/phase4-entry-2026-07-30.md` (verified at `bbc7672`).
+
 **C2. Read-side diversification. BENCH-GATED, with a prerequisite.**
 Prerequisite first: the longmemeval runner emits `by_type` aggregates
 only — the +3.2 rescue table is not reproducible from `results/`. Add
