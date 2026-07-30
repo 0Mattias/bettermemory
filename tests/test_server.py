@@ -2007,9 +2007,63 @@ async def test_memory_verify_caps_verified_lists_at_handler_boundary(
         )
 
     # The record survived both rejections and still verifies with a sane list.
-    ok = await _call(server, "memory_verify", id=mid, verified_paths=["/proj/real.py"])
+    # The path must EXIST: `memory_verify` refuses attestations naming paths
+    # this machine cannot stat, so a fabricated one would make this positive
+    # control fail for a reason that has nothing to do with the caps.
+    real = str(Path(__file__).resolve())
+    ok = await _call(server, "memory_verify", id=mid, verified_paths=[real])
     assert ok["verified"] == mid
-    assert ok["verified_paths"] == ["/proj/real.py"]
+    assert ok["verified_paths"] == [real]
+
+
+async def test_memory_verify_refuses_unstattable_attestation(server: Any) -> None:
+    """`mark_verified` performed no verification of any kind — it stamped
+    `last_verified_at` and copied the caller's lists verbatim — so a model
+    could attest a path it never checked and the memory would then read
+    `fresh` on evidence that did not exist. The read side cannot catch this
+    alone: an absolute attested path is only existence-checked when the body
+    also names it, so an attestation the prose never references is inert.
+
+    The refusal is at the handler, not `Store.mark_verified`: the store is
+    the persistence primitive, and `memory_verify` is the only production
+    caller that passes attestations at all."""
+    res = await _call(
+        server, "memory_write", content="a fact about the build", scopes=["tools"]
+    )
+    mid = res["id"]
+
+    with pytest.raises(Exception, match="do not exist on this machine"):
+        await _call(
+            server, "memory_verify", id=mid, verified_paths=["/no/such/path.py"]
+        )
+
+    # The refusal is total — no partial freshness bump on the record.
+    shown = await _call(server, "memory_show", id=mid)
+    assert shown.get("last_verified_at") in (None, "")
+
+    # Control: a real path still verifies, so this is not a blanket refusal.
+    ok = await _call(
+        server, "memory_verify", id=mid, verified_paths=[str(Path(__file__).resolve())]
+    )
+    assert ok["verified"] == mid
+
+
+async def test_memory_verify_absent_paths_exempt_from_existence_check(
+    server: Any,
+) -> None:
+    """`verified_absent_paths` attests intentional ABSENCE, so non-existence
+    IS the claim. Applying the existence check to it would invert the escape
+    hatch the error message itself recommends into a permanent failure."""
+    res = await _call(
+        server, "memory_write", content="no vendor dir in this tree", scopes=["tools"]
+    )
+    ok = await _call(
+        server,
+        "memory_verify",
+        id=res["id"],
+        verified_absent_paths=["/deliberately/absent"],
+    )
+    assert ok["verified"] == res["id"]
 
 
 async def test_episode_write_is_invisible_to_memory_iterators(server: Any) -> None:
@@ -4001,7 +4055,10 @@ async def test_verify_stale_snapshot_returns_structured_stale_response(
             server,
             "memory_verify",
             id=written["id"],
-            verified_paths=["/some/path"],
+            # A real path: the handler's attestation-existence check runs
+            # before `mark_verified`, so a fabricated one would be refused
+            # there and the patched CAS this test exercises would never run.
+            verified_paths=[str(Path(__file__).resolve())],
         )
 
     assert res["status"] == "stale"
@@ -4733,28 +4790,36 @@ async def test_memory_update_confidence_only_preserves_last_verified_at(
 
 
 async def test_memory_update_content_clears_verified_attestation(
-    server: Any,
+    server: Any, tmp_path: Path
 ) -> None:
     """Body edits invalidate the structured attestation in lockstep with
     last_verified_at. Carrying verified_paths / verified_commits /
     verified_versions forward across a body rewrite would let a later
-    memory_search read e.g. verified_paths=['/etc/foo'] against new
-    prose that no longer mentions /etc/foo, suppressing the path-drift
-    signal it should have produced."""
+    memory_search read a stale attested path against new prose that no
+    longer mentions it, suppressing the path-drift signal it should have
+    produced.
+
+    The attested path is a real file: `memory_verify` refuses paths it
+    cannot stat, and `/etc/foo` — the previous literal — is a documentation
+    PLACEHOLDER, which is now refused outright as a fabricated
+    attestation."""
+    extant = tmp_path / "claimed.conf"
+    extant.write_text("k = v\n", encoding="utf-8")
+    cited = extant.as_posix()
     written = await _call(
-        server, "memory_write", content="claim about /etc/foo", scopes=["tools"]
+        server, "memory_write", content=f"claim about {cited}", scopes=["tools"]
     )
     await _call(
         server,
         "memory_verify",
         id=written["id"],
-        verified_paths=["/etc/foo"],
+        verified_paths=[cited],
         verified_commits=["abc1234"],
         verified_versions=["1.2.3"],
         verified_absent_paths=["/data/remote-only"],
     )
     pre = await _call(server, "memory_show", id=written["id"])
-    assert pre["verified_paths"] == ["/etc/foo"]
+    assert pre["verified_paths"] == [cited]
     assert pre["verified_commits"] == ["abc1234"]
     assert pre["verified_versions"] == ["1.2.3"]
     assert pre["verified_absent_paths"] == ["/data/remote-only"]
@@ -4769,19 +4834,22 @@ async def test_memory_update_content_clears_verified_attestation(
 
 
 async def test_memory_update_scope_only_preserves_verified_attestation(
-    server: Any,
+    server: Any, tmp_path: Path
 ) -> None:
     """Scope / confidence / category / links edits don't touch the body's
     claims; the structured attestation must survive alongside
     last_verified_at."""
+    extant = tmp_path / "claimed.conf"
+    extant.write_text("k = v\n", encoding="utf-8")
+    cited = extant.as_posix()
     written = await _call(
-        server, "memory_write", content="claim about /etc/foo", scopes=["tools"]
+        server, "memory_write", content=f"claim about {cited}", scopes=["tools"]
     )
     await _call(
         server,
         "memory_verify",
         id=written["id"],
-        verified_paths=["/etc/foo"],
+        verified_paths=[cited],
         verified_versions=["1.2.3"],
     )
     pre = await _call(server, "memory_show", id=written["id"])
@@ -4794,7 +4862,7 @@ async def test_memory_update_scope_only_preserves_verified_attestation(
     )
     post = await _call(server, "memory_show", id=written["id"])
     assert post["last_verified_at"] == pre["last_verified_at"]
-    assert post["verified_paths"] == ["/etc/foo"]
+    assert post["verified_paths"] == [cited]
     assert post["verified_versions"] == ["1.2.3"]
 
 
@@ -5746,7 +5814,10 @@ _DESC_BUDGET_PRESSURE = _DESC_BUDGET_CEILING - 100
 _DESC_BASELINE = {
     "episode_handoff": 1560,
     "episode_promote": 1597,
-    "episode_search": 3071,
+    # Re-measured 2026-07-30: 3071 -> 2064 after the proportionality trim
+    # (18 recorded calls across 544 sessions against ~3.2 KB billed every
+    # turn). Rationale moved to docs/api.md; every pinned cue kept.
+    "episode_search": 2064,
     "episode_write": 2350,
     "memory_audit_turn": 1365,
     "memory_list": 454,

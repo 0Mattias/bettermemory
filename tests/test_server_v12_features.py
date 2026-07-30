@@ -1499,41 +1499,63 @@ async def test_scope_mismatch_silent_when_no_project_scopes(server: Any) -> None
 # ---------------------------------------------------------------------------
 
 
-async def test_verify_accepts_structured_claims(server: Any, memory_dir: Path) -> None:
+def _extant_path(tmp_path: Path, name: str = "attested.txt") -> str:
+    """A path that EXISTS on every platform, in POSIX form.
+
+    `memory_verify` refuses attestations naming paths the attesting machine
+    cannot stat, so these tests can no longer use a realistic-looking
+    literal. `/etc/hosts` was the previous choice and it exists on Linux and
+    macOS but not on windows-latest — which is what made it a CI failure
+    rather than a local one. `as_posix()` keeps the string free of
+    backslashes so it survives YAML frontmatter round-tripping unescaped,
+    which the raw-text assertion below depends on.
+    """
+    target = tmp_path / name
+    target.write_text("attested\n", encoding="utf-8")
+    return target.as_posix()
+
+
+async def test_verify_accepts_structured_claims(
+    server: Any, memory_dir: Path, tmp_path: Path
+) -> None:
+    extant = _extant_path(tmp_path)
     res = await _call(
         server,
         "memory_write",
-        content="The hosts file lives at /etc/hosts on macOS.",
+        content=f"The config file lives at {extant} on this host.",
         scopes=["tools"],
     )
     verified = await _call(
         server,
         "memory_verify",
         id=res["id"],
-        verified_paths=["/etc/hosts"],
+        verified_paths=[extant],
         verified_versions=["macOS-15.0"],
     )
-    assert verified["verified_paths"] == ["/etc/hosts"]
+    assert verified["verified_paths"] == [extant]
     assert verified["verified_versions"] == ["macOS-15.0"]
 
 
-async def test_verify_persists_structured_claims(server: Any, memory_dir: Path) -> None:
+async def test_verify_persists_structured_claims(
+    server: Any, memory_dir: Path, tmp_path: Path
+) -> None:
+    extant = _extant_path(tmp_path)
     res = await _call(
         server,
         "memory_write",
-        content="The hosts file lives at /etc/hosts.",
+        content=f"The config file lives at {extant}.",
         scopes=["tools"],
     )
     await _call(
         server,
         "memory_verify",
         id=res["id"],
-        verified_paths=["/etc/hosts"],
+        verified_paths=[extant],
     )
     files = list(memory_dir.glob("*.md"))
     raw = files[0].read_text(encoding="utf-8")
     assert "verified_paths" in raw
-    assert "/etc/hosts" in raw
+    assert extant in raw
 
 
 async def test_show_after_verify_marks_path_verified(
@@ -1561,31 +1583,35 @@ async def test_show_after_verify_marks_path_verified(
 
 
 async def test_verify_passing_none_preserves_prior_lists(
-    server: Any,
+    server: Any, tmp_path: Path
 ) -> None:
     """Calling memory_verify a second time without verified_paths
     preserves the previously-attested list — None means 'no change',
     not 'clear'."""
+    extant = _extant_path(tmp_path)
     res = await _call(server, "memory_write", content="A claim.", scopes=["tools"])
     await _call(
         server,
         "memory_verify",
         id=res["id"],
-        verified_paths=["/etc/hosts"],
+        verified_paths=[extant],
     )
     after_no_arg = await _call(server, "memory_verify", id=res["id"])
-    assert after_no_arg["verified_paths"] == ["/etc/hosts"]
+    assert after_no_arg["verified_paths"] == [extant]
 
 
-async def test_verify_passing_empty_list_clears_prior(server: Any) -> None:
+async def test_verify_passing_empty_list_clears_prior(
+    server: Any, tmp_path: Path
+) -> None:
     """An explicit empty list is the 'clear' signal — distinct from
     None."""
+    extant = _extant_path(tmp_path)
     res = await _call(server, "memory_write", content="A claim.", scopes=["tools"])
     await _call(
         server,
         "memory_verify",
         id=res["id"],
-        verified_paths=["/etc/hosts"],
+        verified_paths=[extant],
     )
     cleared = await _call(server, "memory_verify", id=res["id"], verified_paths=[])
     assert cleared["verified_paths"] == []

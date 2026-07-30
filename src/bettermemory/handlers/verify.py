@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from .._response import isoformat, isoformat_optional
 from ..store import ConcurrentUpdateError, MemoryNotFoundError, TombstonedError
+from ..verify import unverifiable_attestations
 from ._shared import Context, _NOTE_MAX_LEN, _advance_turn
 
 if TYPE_CHECKING:
@@ -49,7 +50,7 @@ DESC_MEMORY_VERIFY = (
     "- `verified_paths` (optional list of strings): the ONLY "
     "attestation the drift legs read — checked against the memory's "
     "own worktree, and the anchor narrowing commit drift. Prefer it "
-    "when the memory cites paths.\n"
+    "when the memory cites paths. Paths absent here are REFUSED.\n"
     "- `verified_commits` / `verified_versions` (optional lists): "
     "audit trail only; nothing on the read path resolves them.\n"
     "- `verified_absent_paths` (optional): attest paths "
@@ -119,6 +120,43 @@ async def memory_verify(
         raise ValueError(str(exc)) from exc
     except MemoryNotFoundError as exc:
         raise ValueError(str(exc)) from exc
+
+    # An attestation naming a path this machine cannot see is not evidence.
+    # Before this check, `mark_verified` performed no verification of any
+    # kind — it stamped `last_verified_at` and copied the caller's lists
+    # verbatim — so a caller could attest a path that never existed and the
+    # memory would then read `fresh`, with the freshness resting on nothing.
+    # The read side cannot recover this on its own: an ABSOLUTE attested
+    # path is only ever existence-checked when the body also names it (see
+    # `_normalize_attestations` in `verify.py`), so an attestation the prose
+    # never references stays inert forever.
+    #
+    # Refuse rather than silently drop the bad entries: this tool's own
+    # description instructs the caller to attest specific files, so a
+    # caller whose list is wrong needs to learn that, not get a success
+    # response covering fewer paths than it claimed.
+    #
+    # `verified_absent_paths` is deliberately exempt — it attests
+    # intentional ABSENCE, so non-existence is the claim being made.
+    #
+    # The READ side stays lenient on purpose (see
+    # `unverifiable_attestations`): a memory attested on one host and
+    # synced to another legitimately names paths the reader lacks. Only the
+    # moment of attestation, where the caller asserts it looked, can demand
+    # existence — which is also why this is the handler's job and not
+    # `Store.mark_verified`'s.
+    if verified_paths:
+        unseen = unverifiable_attestations(
+            verified_paths,
+            worktree_root=(snapshot.origin.worktree_root if snapshot.origin else None),
+        )
+        if unseen:
+            raise ValueError(
+                f"cannot attest {len(unseen)} path(s) that do not exist on this "
+                f"machine: {', '.join(unseen)}. Attest only paths you actually "
+                "checked here; if a path is intentionally absent, pass it as "
+                "verified_absent_paths instead."
+            )
 
     try:
         memory = deps.store.mark_verified(

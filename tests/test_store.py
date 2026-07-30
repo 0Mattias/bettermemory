@@ -1723,7 +1723,9 @@ def test_mark_verified_first_verify_of_legacy_band_record_succeeds(
     assert len(reloaded.body) >= 1_046_000  # still band-sized, just now attested
 
 
-def test_mark_verified_rejects_growth_into_reserved_band(store: Store) -> None:
+def test_mark_verified_rejects_growth_into_reserved_band(
+    store: Store, tmp_path: Path
+) -> None:
     """Invariant restored (the data-loss seam): a verify whose caller-controlled
     verified_* additions would GROW a record admitted just under the write cap up
     into the reserved band `(_MAX_WRITE_BYTES, _MAX_FILE_BYTES]` is REJECTED.
@@ -1748,7 +1750,19 @@ def test_mark_verified_rejects_growth_into_reserved_band(store: Store) -> None:
     # the exact seam: at the flat read cap the growth is admitted (minting the
     # un-maintainable band record); at max(write-cap, current-size) it is
     # rejected. Well within the handler's 64 x 1024 per-list limits.
-    big_paths = ["/repo/src/" + ("y" * 490) for _ in range(10)]  # ~5 KB of paths
+    #
+    # The paths must EXIST: `mark_verified` refuses attestations the attesting
+    # machine cannot stat, and that check runs before the re-dump, so fabricated
+    # filler would make this test pass on the wrong error and stop covering the
+    # band seam at all. Built as nested long components because a single 490-char
+    # filename exceeds NAME_MAX on every filesystem this runs on.
+    big_paths: list[str] = []
+    for i in range(10):
+        leaf = tmp_path / f"{i:02d}{'a' * 198}" / ("b" * 200) / ("c" * 80)
+        leaf.parent.mkdir(parents=True, exist_ok=True)
+        leaf.write_text("filler\n")
+        big_paths.append(str(leaf))
+    assert all(len(p) > 400 for p in big_paths)  # ~5 KB of paths in total
     with pytest.raises(ValueError, match="(?i)shrink"):
         store.mark_verified(mem.id, verified_paths=big_paths)
 
@@ -2295,3 +2309,65 @@ def test_episode_write_admits_band_body_at_read_cap(memory_dir: Path) -> None:
     loaded = est.list_by_session("sess1")
     assert [e.id for e in loaded] == [ep.id]
     assert len(loaded[0].body) >= 1_046_000
+
+
+# ---------------------------------------------------------------------------
+# mark_verified — attestations must be checkable on the attesting machine
+# ---------------------------------------------------------------------------
+
+
+def test_mark_verified_does_not_itself_check_path_existence(store: Store) -> None:
+    """The LAYER SPLIT, pinned deliberately. Refusing an attestation whose
+    path cannot be stat'd is the `memory_verify` HANDLER's job (see
+    `tests/test_server.py::test_memory_verify_refuses_unstattable_attestation`),
+    NOT this primitive's.
+
+    Two reasons, and both bite if someone "helpfully" moves the check down
+    here. First, `Store.mark_verified` is the persistence primitive, matching
+    `Store.write`'s split: the store enforces structural limits, policy sits
+    above it — and exactly one production caller passes attestations at all
+    (`web.py` passes none), so there is no second attesting caller for a
+    handler-level check to miss. Second, the concurrency and cap suites use
+    `verified_paths` as an opaque marker to exercise CAS and size seams;
+    enforcing existence here breaks four concurrency tests and roughly
+    eighteen call sites for no gain in coverage.
+
+    So this asserts the primitive stays dumb."""
+    memory = store.write(content="Config lives at `/no/such/file.toml`.", scopes=["t"])
+    verified = store.mark_verified(memory.id, verified_paths=["/no/such/file.toml"])
+    assert verified.last_verified_at is not None
+    assert verified.verified_paths == ["/no/such/file.toml"]
+
+
+def test_mark_verified_accepts_paths_that_exist(store: Store, tmp_path: Path) -> None:
+    """The control. Without it every assertion above would also pass if the
+    check had become a blanket refusal of all attestations."""
+    real = tmp_path / "present.py"
+    real.write_text("x = 1\n")
+    memory = store.write(content=f"The module lives at `{real}`.", scopes=["t"])
+    verified = store.mark_verified(memory.id, verified_paths=[str(real)])
+    assert verified.last_verified_at is not None
+    assert verified.verified_paths == [str(real)]
+
+
+def test_mark_verified_absent_paths_are_exempt(store: Store) -> None:
+    """`verified_absent_paths` attests intentional ABSENCE, so
+    non-existence IS the claim. Applying the existence check to it would
+    invert the escape hatch into a permanent failure."""
+    memory = store.write(content="No `vendor/` directory in this tree.", scopes=["t"])
+    verified = store.mark_verified(
+        memory.id, verified_absent_paths=["/deliberately/absent"]
+    )
+    assert verified.last_verified_at is not None
+    assert verified.verified_absent_paths == ["/deliberately/absent"]
+
+
+def test_mark_verified_skips_unanchored_relative_attestation(store: Store) -> None:
+    """A relative attestation with no `origin.worktree_root` to anchor it
+    cannot be resolved, and could-not-ask must never manufacture a negative
+    verdict — the same distinction `compute_commit_drift` draws by returning
+    None. So it passes rather than being reported as missing."""
+    memory = store.write(content="Lives at `src/pkg/mod.py`.", scopes=["t"])
+    assert memory.origin is None or memory.origin.worktree_root is None
+    verified = store.mark_verified(memory.id, verified_paths=["src/pkg/mod.py"])
+    assert verified.last_verified_at is not None

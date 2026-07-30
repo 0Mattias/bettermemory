@@ -744,6 +744,16 @@ class Store:
                 and existing.last_verified_at != expected_last_verified_at
             ):
                 raise ConcurrentUpdateError(memory_id, existing.updated)
+            # NOTE on where the attestation-existence check lives: NOT here.
+            # `mark_verified` is the low-level persistence primitive and
+            # performs no judgement, matching `Store.write`'s split (the
+            # store enforces structural limits; policy lives above it).
+            # Refusing an unstattable `verified_paths` entry is the
+            # `memory_verify` HANDLER's job — see `handlers/verify.py`.
+            # Exactly one production caller passes attestations at all
+            # (`web.py` calls this with none), so the chokepoint argument
+            # that justified `apply_write_gates` does not apply: there is
+            # no second attesting caller to bypass the handler.
             update: dict[str, object] = {"last_verified_at": utcnow()}
             if verified_paths is not None:
                 update["verified_paths"] = list(verified_paths)

@@ -3247,3 +3247,103 @@ def test_verdict_from_signals_takes_exactly_three_signals() -> None:
         "commit_drift_count",
     }, f"compute_staleness_verdict grew a signal: {set(rollup)}"
     assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in rollup.values())
+
+
+# ---------------------------------------------------------------------------
+# unverifiable_attestations — the placeholder hole, and the shapes that stay
+# exempt on purpose
+# ---------------------------------------------------------------------------
+
+
+class TestUnverifiableAttestations:
+    """Write-side attestation check. The first version of this reused
+    `_normalize_candidate` wholesale and inherited its PROSE heuristics,
+    which silently exempted documentation placeholders — so
+    `verified_paths=["/etc/foo"]` sailed through and still stamped the
+    memory `fresh`. That is precisely the fabricated attestation the check
+    exists to stop, so placeholders are refused ahead of the validator."""
+
+    def test_documentation_placeholder_is_refused(self) -> None:
+        from bettermemory.verify import unverifiable_attestations
+
+        for placeholder in ("/etc/foo", "/foo/bar", "/path/to/thing.py"):
+            assert unverifiable_attestations([placeholder]) == [placeholder], (
+                f"{placeholder} must be refused — it is stat-able and never "
+                "names a real file, so attesting it is fabrication"
+            )
+
+    def test_unstattable_shapes_stay_exempt(self) -> None:
+        """A shape claim is not a concrete path, so it can be neither
+        present nor absent. Refusing these would manufacture a failure out
+        of a caller naming a pattern."""
+        from bettermemory.verify import unverifiable_attestations
+
+        for shape in (
+            "/var/log/app/*.log",  # glob
+            "/opt/{service}/data",  # template
+            "https://example.com/x",  # URL
+            "user@host:/srv/thing",  # SSH remote
+            "//server/share",  # SMB
+            "/healthz",  # single-segment route
+        ):
+            assert unverifiable_attestations([shape]) == [], (
+                f"{shape} is a shape claim, not a stat-able path"
+            )
+
+    def test_real_path_passes_and_missing_concrete_path_is_refused(
+        self, tmp_path: Path
+    ) -> None:
+        from bettermemory.verify import unverifiable_attestations
+
+        real = tmp_path / "here.toml"
+        real.write_text("x = 1\n", encoding="utf-8")
+        assert unverifiable_attestations([str(real)]) == []
+        gone = str(tmp_path / "gone.toml")
+        assert unverifiable_attestations([gone]) == [gone]
+
+    def test_windows_drive_paths_are_treated_as_absolute(self) -> None:
+        """Runs on every platform, and would have caught the CI-only bug.
+
+        `_is_absolute_attestation` originally tested only
+        `startswith(("/", "~"))`, so a drive-absolute path counted as
+        RELATIVE and — with no worktree to anchor it — hit the unanchored
+        skip. Every absolute attestation on Windows was therefore exempt and
+        the check was inert there, while all four POSIX jobs stayed green.
+
+        Asserted through the classifier rather than through a stat so the
+        expectation is identical on POSIX and Windows: the drive form must
+        be recognised as anchored. Both spellings matter — `as_posix()`
+        emits `C:/...`, the OS emits `C:\\...`."""
+        from bettermemory.verify import _is_absolute_attestation
+
+        for anchored in ("C:/Users/me/thing.toml", "C:\\Users\\me\\thing.toml"):
+            assert _is_absolute_attestation(anchored), anchored
+        # And the POSIX anchors it already handled.
+        for anchored in ("/etc/thing.conf", "~/notes.md"):
+            assert _is_absolute_attestation(anchored), anchored
+        # A genuinely relative path stays relative — it needs an anchor.
+        for rel in ("src/pkg/mod.py", "notes.md"):
+            assert not _is_absolute_attestation(rel), rel
+
+    def test_unstattable_drive_path_is_refused_unanchored(self) -> None:
+        """The behavioural consequence: a drive path that cannot be stat'd
+        is REFUSED even with no worktree_root, because it needs none. On
+        POSIX no `C:` drive exists, so this exercises the same branch
+        Windows does."""
+        from bettermemory.verify import unverifiable_attestations
+
+        gone = "C:/Users/nobody/definitely-not-here.toml"
+        assert unverifiable_attestations([gone]) == [gone]
+
+    def test_relative_attestation_needs_an_anchor(self, tmp_path: Path) -> None:
+        """Unanchored means "could not ask", and could-not-ask must never
+        manufacture a negative verdict — the same rule
+        `compute_commit_drift` follows by returning None. With an anchor the
+        check becomes real."""
+        from bettermemory.verify import unverifiable_attestations
+
+        assert unverifiable_attestations(["src/pkg/gone.py"]) == []
+        refused = unverifiable_attestations(
+            ["src/pkg/gone.py"], worktree_root=str(tmp_path)
+        )
+        assert refused and refused[0].endswith("gone.py")

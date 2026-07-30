@@ -731,6 +731,108 @@ def _check_anchored_attestations(
             missing.append(resolved)
 
 
+def _is_absolute_attestation(s: str) -> bool:
+    """True when `s` is already anchored and needs no worktree to resolve.
+
+    Mirrors `_normalize_candidate`'s own accepted anchors, and must keep
+    mirroring them: a form this call treats as RELATIVE gets skipped when
+    there is no worktree to join it to, so a disagreement between the two
+    silently disables the check rather than erroring.
+
+    That is not hypothetical. The first version tested only
+    `startswith(("/", "~"))`, which classifies every Windows drive-absolute
+    path (`C:\\Users\\me\\thing.toml`, and the forward-slash spelling
+    `C:/Users/me/thing.toml` that `Path.as_posix()` produces) as relative —
+    so on Windows every absolute attestation fell through the unanchored
+    skip and the whole existence check was inert. Caught by CI on
+    windows-latest, never by a POSIX developer machine.
+
+    Deliberately NOT platform-gated: a drive path attested on Linux is
+    refused there, which is the correct reading of "attest only what you
+    checked here". The READ side stays lenient for the synced case.
+    """
+    if s.startswith(("/", "~")):
+        return True
+    # Windows drive-absolute, both separators — the same test
+    # `_normalize_candidate` applies in its own trailing branch.
+    return len(s) >= 3 and s[0].isalpha() and s[1] == ":" and s[2] in "/\\"
+
+
+def unverifiable_attestations(
+    verified_paths: tuple[str, ...] | list[str],
+    *,
+    worktree_root: str | Path | None = None,
+) -> list[str]:
+    """Which `verified_paths` the ATTESTING machine cannot see right now.
+
+    Write-side counterpart to `detect_path_drift`, and the asymmetry
+    between them is the whole point. `_normalize_for_compare` documents
+    why the READ side tolerates an attested path that isn't on disk: "it
+    could have been verified from a different machine", which is true and
+    load-bearing for `sync` — a memory attested against a path on host A
+    is legitimately read on host B where that path does not exist.
+
+    That tolerance does not transfer to the moment of attestation. A
+    caller running `memory_verify(id, verified_paths=[...])` is claiming
+    it checked reality HERE and NOW, so a path it cannot stat is not
+    evidence of anything — and `Store.mark_verified` previously accepted
+    it and stamped `last_verified_at`, which is how a memory reaches
+    `fresh` on an attestation that was never true. The read side cannot
+    recover this on its own: an ABSOLUTE attested path is only ever
+    existence-checked when the body also names it (see
+    `_normalize_attestations`' set-membership role in
+    `detect_path_drift`), so an attestation the prose never references is
+    inert forever.
+
+    Returns the offending paths in input order, resolved to the form that
+    was checked, so the caller can name them in an error. Relative paths
+    with no `worktree_root` to anchor them are SKIPPED rather than
+    reported: unanchored means "could not ask", and the project's
+    standing rule is that could-not-ask never manufactures a negative
+    verdict (the same distinction `compute_commit_drift` draws by
+    returning None).
+    """
+    root = Path(worktree_root) if worktree_root is not None else None
+    bad: list[str] = []
+    for raw in verified_paths:
+        stripped = raw.strip() if raw else ""
+        if not stripped:
+            continue
+        # Documentation placeholders (`/etc/foo`, `/path/to/thing`) are
+        # rejected by `_normalize_candidate` — correctly, for PROSE, where
+        # they illustrate path shape rather than cite a file. That veto must
+        # not carry over to an explicit attestation: these strings are
+        # perfectly stat-able, they simply never name a real file, so
+        # attesting one is definitionally the fabricated attestation this
+        # function exists to catch. Checked before `_normalize_candidate`
+        # gets a chance to silently drop them.
+        if _is_placeholder_path(stripped):
+            bad.append(stripped)
+            continue
+        if _is_absolute_attestation(stripped):
+            resolved = _normalize_candidate(stripped)
+        elif root is not None:
+            # Anchor before validating, for the reason `_anchored` gives:
+            # `_normalize_candidate` is itself the relative-path gate.
+            resolved = _normalize_candidate(str(root / stripped))
+        else:
+            continue
+        if resolved is None:
+            # Everything `_normalize_candidate` still rejects here is a
+            # shape that cannot be stat'd as a claim at all: a glob or
+            # template (`/var/log/*.log`, `/opt/{svc}/data`), a URL, an
+            # SSH remote (`user@host:/path`), an SMB share, or a
+            # single-segment route (`/healthz`). Refusing those would
+            # manufacture a failure out of a caller naming a shape; only a
+            # concrete path can be present or absent. Skipped, not refused
+            # — and the placeholder branch above is what keeps that
+            # exemption from becoming a way to launder a bogus attestation.
+            continue
+        if not _path_exists(_normalize_for_compare(resolved)):
+            bad.append(resolved)
+    return bad
+
+
 def _normalize_attestations(paths: tuple[str, ...] | list[str]) -> set[str]:
     """Trim/validate/`~`-expand an attestation list into a comparison set —
     the shared pipeline for `verified_paths` and `absent_paths` (see the
