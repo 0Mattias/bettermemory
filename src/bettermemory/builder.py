@@ -292,6 +292,17 @@ def _register_tools(
     # run-state and iteration takeaways the durability gate rejects. Always
     # registered: /loop, audit-loop and curate-loop drive episode_handoff /
     # episode_write directly, and the server instructions reference them.
+    #
+    # Gating the low-use pair (episode_search / episode_promote) out of the
+    # lean surface was evaluated 2026-07-30 and is not available, despite
+    # low recorded call volume: the shipped plugin skill instructs
+    # episode_promote, docs/system_prompt.md (always loaded) names it, the
+    # audit-loop / curate-loop commands drive both, and
+    # episode_search(swarm_id=…) is the multi-agent fan-in primitive with
+    # no substitute. Call volume measures how often the owner ran a swarm,
+    # not whether anything depends on the tool. The per-turn cost was
+    # addressed by trimming DESC_EPISODE_SEARCH instead — description
+    # prose is not part of the compatibility contract.
     mcp.tool(name="episode_write", description=DESC_EPISODE_WRITE)(
         handlers.episode_write
     )
