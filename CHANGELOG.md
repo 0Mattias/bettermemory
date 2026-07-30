@@ -9,6 +9,61 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+### Added — a number on a resident surface must now cite a committed artifact
+
+`tests/test_doc_claims.py` closes the mechanically-decidable slice of "prose
+asserts something the code does not do" — paths, symbols, test counts, line
+refs, file counts. Numbers were its one structural blind spot, and that is
+exactly where every surviving false claim had collected. `test_number_claims.py`
+closes it: a number presented as a measurement on a tool description, the
+server instructions block, README, `docs/internals.md`, or `doctor`'s prose
+must be derivable from a bench result committed to this repo.
+
+The discriminator is the word "measured", not a percent-or-bytes pattern. A
+naive shape rule false-positives on almost every number in the descriptions,
+because those are contract constants enforced by adjacent code — the episode
+frontmatter ceilings, the note and excerpt caps, the groundedness threshold —
+and a checker with false positives gets switched off. One narrow cue-free rule
+covers byte and ratio figures on the two documents that state this project's
+own footprint, because the README's cost claim carried no cue at all and a
+cue-anchored guard would have missed the defect that shipped through it. Byte
+figures a cap word actually governs are exempt, tested for *adjacency* rather
+than presence: the pre-sync README bullet said "cost ~35 KB … the description
+half of that is capped in CI", where the cap governs a different quantity one
+clause away, so a presence test would have blinded the guard to the very claim
+it was built to catch.
+
+The allowlist is empty, deliberately. The guard found two claims the
+truth-sync pass had missed, both in operator-facing `doctor` prose — a
+threshold comment citing a measured scope spread that was never captured, and
+a fix hint asserting a perfect rate on rare-term queries that no artifact
+backs, in a string the check prints to humans. Both were repaired rather than
+exempted; a guard born with its findings allowlisted protects nothing. It is
+pinned against the pre-sync tree as a fixture: 11 findings there, 0 here.
+
+### Added — the resident footprint has one number, and a ceiling on the part nothing capped
+
+Three budgets were each policed and nothing summed them: the instructions
+block, the lean description total, and the toolcost bench. The served JSON
+schemas and the plugin skill frontmatter were governed by nothing at all.
+`tests/test_resident_footprint.py` records the aggregate — instructions 1,608
++ descriptions 26,334 + inputSchemas 7,077 + outputSchemas 1,770 + skill
+frontmatter 759 = **37,548 chars** — and puts a ceiling only on the
+previously-uncapped remainder, so an edit cannot fail two budgets under two
+different recalibration rules. The skill body is excluded and the test derives
+why rather than asserting it: 13,688 chars that load on activation, not per
+turn.
+
+### Added — tests for `bench/rot/resolution.py`
+
+The newest bench module had zero coverage, and it is the one that decides
+whether this project may claim a real-world staleness-accuracy number. Its
+parser reads the anchored corpus templates and 0 of 216 real memory bodies,
+by construction — pinned now as a structural property, so a regression that
+loosens the anchors and starts "parsing" real prose fails instead of quietly
+manufacturing an accuracy figure. `resolution_rate` stays `null` (UNDEFINED,
+not zero); a flip to `0.0` fails.
+
 ### Fixed — the resident surfaces carried a measurement the project had already retired
 
 `DESC_MEMORY_SEARCH` told every model, every turn, that wording a query in

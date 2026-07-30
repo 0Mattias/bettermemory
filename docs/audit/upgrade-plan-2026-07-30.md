@@ -347,6 +347,35 @@ memory_write and ingest do).
 
 ### Phase 1 — Guards (S/M; lock Phase 0 permanently)
 
+**PHASE STATUS: DONE 2026-07-30.** A5, E4, H1 all shipped. Suite 3,818 passed
+/ 19 skipped default leg, 3,745 passed / 6 skipped / 6 deselected embeddings;
+ruff + mypy + pyright clean. Deltas from the plan:
+- **A5 found a claim Phase 0 missed** — `doctor`'s fix hint asserting "100% on
+  rare-term queries", in a string printed to operators. Phase 0 had hand-audited
+  that very string and repaired the four rates below it. The guard earned its
+  cost on its first run; both surviving claims were repaired, not allowlisted,
+  so `_ALLOWLIST` is empty at HEAD.
+- The plan (and docsguards fact pack §3) says the DESCs carry "exactly one"
+  measurement claim. **Stale**: Phase 0 removed it, so it is zero. A5 verifies
+  that rather than assuming it.
+- The `measured`-cue discriminator has a real hole the plan did not name: the
+  pre-sync README cost claim carried **no cue at all**. A5 adds one narrow
+  cue-free byte/ratio rule scoped to README + internals, with a
+  contract-constant exemption tested for ADJACENCY — a chunk-level cap test
+  looks equivalent and would have blinded the guard to that same README bullet.
+- **E4's ceiling was sized against measured param costs**, not a guess:
+  `acknowledge_user_claim` 93 + `include_bodies` 76 + `ids` 106 = 275 chars, so
+  the projected remainder after F5 and G1 is 9,881 against a 10,000 ceiling.
+  Phase 2 and Phase 7 can build on it without a recalibration.
+- Local-environment hazard worth recording: the default-leg baseline is
+  **3,779 passed / 19 skipped**, not the 8 skips this document states — the
+  11 extra are `importorskip("numpy")`, and numpy ships only with the
+  embeddings extras. The plan's baseline was measured on a venv carrying a
+  leftover numpy. Separately, iCloud renamed every file in `.venv`'s numpy to
+  a ` 2` suffix mid-session, which defeats `importorskip` (the package still
+  imports, as a namespace package) and turns clean skips into 22 failures.
+  Rebuild `.venv` before trusting any local run that looks like that.
+
 **A5. The number-pinning guard.** New test sweeping the 28 `DESC_*`
 constants (re-exported by `_handlers.py:66-93`) + README + instructions
 + `docs/internals.md` (A2 adds measured numbers there; doc-claims never

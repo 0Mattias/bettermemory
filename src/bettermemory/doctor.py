@@ -1851,11 +1851,15 @@ _DISCRIMINATION_SAMPLE = 20
 #: more about the pool size than about discrimination.
 _DISCRIMINATION_MIN_POOL = 15
 
-#: Topical-query recall@1 at or below this warns. Set from the measured
-#: spread across real scopes rather than picked: a heterogeneous scope
-#: measured ~0.71-0.81 and a highly coherent one ~0.31, so the threshold
-#: sits below the former and above the latter. It is a floor for "this
-#: scope has a retrieval problem you cannot see", not a quality target.
+#: Topical-query recall@1 at or below this warns. Calibrated against real
+#: scopes rather than picked from theory: heterogeneous scopes cleared it
+#: comfortably and a highly coherent one fell well under, so the threshold
+#: sits in the gap between the two populations. The rates behind that
+#: calibration were never captured as a committed artifact, so they are
+#: deliberately not quoted here — bench/retrieval is where a reproducible
+#: figure would live, and the per-scope rates this check reports are the
+#: ones an operator can actually check. It is a floor for "this scope has
+#: a retrieval problem you cannot see", not a quality target.
 _DISCRIMINATION_WARN_AT = 0.55
 
 #: Terms per probe query. A memory needs twice this many scorable terms to
@@ -2291,8 +2295,9 @@ def _check_retrieval_discrimination(directory: Path, cfg: Config) -> Diagnosis:
             "`bettermemory[embeddings]` is the torch one, and the choice is "
             "install weight, not capability. The default "
             '`search_mode = "hybrid"` picks the model up on its own and '
-            "fuses it as a third leg beside the two lexical ones, which keep "
-            "scoring 100% on rare-term queries. No config flag is required: "
+            "fuses it as a third leg beside the two lexical ones rather than "
+            "replacing them — the rare-term rate this check reports per "
+            "scope is theirs and stays theirs. No config flag is required: "
             "pairing this with `semantic_dedup = true` used to be needed and "
             "is not, and that flag only ever controlled WRITE-time dedup "
             "(Jaccard vs cosine) — leave it alone unless you want that. "
