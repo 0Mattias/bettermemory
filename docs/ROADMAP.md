@@ -5,6 +5,47 @@ Planned work, in rough priority order. Plans change; the
 
 ## Planned
 
+- **Write-path hardening, remaining items.** `apply_write_gates` is the
+  shared gate chain and `memory_verify` refuses unverifiable path
+  attestations (both Unreleased). Remaining:
+  1. Reconcile the private gate copies —
+     `consolidate._apply_llm_proposal` and
+     `handlers/proposals.accept_proposal` — against the shared chain.
+     Both deviate from `memory_write` deliberately, so this is policy
+     review, not a mechanical reroute.
+  2. Provenance on the read surface, after a design change: a tier
+     derived from local write events would label an injection-driven
+     write `locally-written` — its cleanest tier — so it cannot see the
+     reachable attack. Prefer recording what source material was in
+     context at write time; `groundedness_check` / `source_transcript`
+     are the existing seed.
+  3. `sync pull` trust boundary. `sync.py` pulls and re-indexes with no
+     content validation, and `SECURITY.md` does not name sync as
+     attacker-reachable. The one genuinely remote path.
+- **Standing tier.** Opt-in retrieval cannot serve knowledge whose
+  trigger condition is not knowing you need it. The `ambient` category
+  is still retrieval-gated and `memory_scope_overview` returns counts
+  only, so nothing in the product delivers unconditionally. Candidate:
+  a hard-budgeted tier delivered at session start — the delivery shape
+  `episode_handoff` already uses — under the same verification
+  discipline as the rest of the store. Prior art: Letta's core-memory
+  blocks; the differentiator is the budget and the verification.
+- **Claims-at-write.** A real-prose claim extractor is an open problem
+  only because extraction is post-hoc; the author of a memory knows
+  what it is claiming at write time. Structured claims on the
+  write/verify surface (the shape `verified_paths` already has) would
+  give `build_binding_index` real input — which the measured `weak`
+  drift tier (2.0 vs 25.1 alerts per catch, corpus-only today) needs
+  before it can ship. Backfill is one curation pass over the ~143
+  checkable live bodies.
+- **Event-time on the memory record.** Every timestamp on `Memory`
+  (`created`, `updated`, `last_verified_at`, `last_corroborated`) is
+  storage time; nothing represents when a fact is *about*, or when it
+  stops being true. `_recency_factor` is deliberately a maintenance
+  signal — a 1.1x-capped bump on `max(created, updated)` — not a
+  temporal one. Zep's Graphiti ships validity intervals and
+  point-in-time queries today, so this is a gap against shipping
+  product rather than a nicety.
 - **Encryption at rest.** An `[encrypted]` extra with `age`-backed
   per-file envelope encryption, complementing the write-time
   credential check. Not expected in 2026.
@@ -48,6 +89,14 @@ Planned work, in rough priority order. Plans change; the
 - **Non-MCP SDK / REST endpoint.** Programmatic users can `import
   bettermemory` directly — see
   [examples/programmatic_client.py](../examples/programmatic_client.py).
+- **Removing `verified_commits` / `verified_versions` in 3.x.** The
+  compatibility contract forbids removing a parameter within a major;
+  they are documented as audit-trail-only. A 4.0 question at most.
+- **Gating the low-use episode tools out of the lean surface.**
+  Evaluated against the event log; not available — the shipped plugin
+  skill, the system-prompt addendum, and the swarm fan-in path depend
+  on them. Rationale at the episode block in `builder.py`; the
+  per-turn cost was addressed by trimming `DESC_EPISODE_SEARCH`.
 
 ## Contributing
 

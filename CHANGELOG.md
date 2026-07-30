@@ -9,6 +9,60 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+### Fixed — `memory_verify` accepted attestations it could not check
+
+`Store.mark_verified` stamped `last_verified_at` and stored the caller's
+`verified_*` lists verbatim, with no check of any kind — a memory could
+read `fresh` on an attestation naming a path that never existed. The read
+side cannot catch the absolute case on its own: an attested path is only
+existence-checked when the body also names it.
+
+`memory_verify` now refuses `verified_paths` entries the attesting machine
+cannot stat. Relative entries resolve against the memory's own
+`origin.worktree_root`; documentation placeholders (`/etc/foo`,
+`/path/to/...`) are refused outright rather than inheriting the prose
+validator's exemption; Windows drive-absolute forms (`C:\...`, `C:/...`)
+are recognized as anchored. Shape claims — globs, templates, URLs, SSH
+remotes, SMB shares, single-segment routes — are exempt, since a pattern
+can be neither present nor absent, and `verified_absent_paths` is exempt
+because non-existence is its claim.
+
+The read side stays lenient on purpose: a memory attested on one host is
+legitimately read on another that lacks the path (`sync`), so the
+existence demand applies only at the moment of attestation. The check
+lives in the `memory_verify` handler; `Store.mark_verified` remains a
+policy-free persistence primitive, and a test pins that split.
+
+### Added — `apply_write_gates()`: one gate chain for every write path
+
+`_WRITE_GATES` was reachable only from `memory_write`; three other paths
+called `Store.write` directly with divergent policy subsets
+(`ingest.apply_ingest_plan` ran no gates, `consolidate._apply_llm_proposal`
+hand-reimplemented four, `handlers/proposals.accept_proposal` mirrored the
+credential gate alone). The chain is now `apply_write_gates()` behind a
+`GateDeps` protocol — satisfied structurally by `ToolHandlers`, or by
+`GateBundle` from a bare `Store` + `Config` — sitting strictly above
+`Store.write`; the locking rationale there is untouched.
+
+`ingest.apply_ingest_plan` now runs `CONTENT_GATES` (every gate except the
+confirmation handshake, which ingest bypasses deliberately: the source
+file is the user's own act of commit, a tested contract) with all
+`acknowledge_*` overrides off. Rejections surface per-row as
+`skip_invalid` in the gate's own status vocabulary; previously a pasted
+credential in an auto-memory file imported silently. The CLI threads the
+real config so the scope allowlist and dedup thresholds apply.
+`consolidate` and `accept_proposal` keep their deliberately stricter
+copies pending a policy review.
+
+### Changed — `episode_search` description trimmed to proportionate length
+
+3,165 → 2,064 chars; lean default-on total 27,437 → 26,336 of the 27,500
+ceiling. The removed prose was rationale `docs/api.md` carries in full;
+every parameter, return-shape key, and cue pinned by
+`tests/test_prompts.py` is kept. Gating low-use episode tools out of the
+lean surface was evaluated and is not available — dependencies are
+recorded at the episode block in `builder.py`.
+
 ### Changed — the read-side repair 3.30.0 promised was measured, and it is a dead end
 
 3.30.0 retired the write-side commit-SHA transient marker and said the

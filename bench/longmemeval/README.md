@@ -285,6 +285,44 @@ favour.** Three for three here. The invalid artifact is retained as
 
 ## Next
 
+0. **`temporal-reasoning` and `multi-session` are ONE failure mode, and it
+   is a top-k budget problem.** Measured 2026-07-29 by re-running this
+   directory's own ingest and `distinct_sessions` collapse per class
+   (lexical arm; reproduces the published 83.7% / 84.9% exactly):
+
+   | class | complete @5 | **partial** | total miss | n |
+   | --- | --- | --- | --- | --- |
+   | temporal-reasoning | 73.7% | **17.3%** | 9.0% | 133 |
+   | multi-session | 68.4% | **29.3%** | 2.3% | 133 |
+
+   On the partial questions the FIRST evidence session ranks #1 in 16/23
+   and 26/39; the co-evidence it drops sits at **median rank 9**, and only
+   1 of 30 / 4 of 54 fall outside the top 200 at all. So the evidence is
+   retrieved and then cut off — not a date-understanding failure and not an
+   indexing failure. It matches the question shapes: temporal-reasoning
+   here is overwhelmingly two-event span and ordering ("how many days
+   between A and B", "which happened first"), so the query carries
+   vocabulary for two events living in two different sessions, and
+   `score_memory`'s `0.5 + 0.5 * coverage` multiplier cannot be satisfied
+   by either one alone.
+
+   A re-ranker that rescues only co-evidence **already inside the top 10**
+   is worth **+3.2 pooled macro recall@5** (89.3% -> 92.5%) — larger than
+   the entire semantic-vs-lexical lift (+2.5) and with no embedding model.
+   Together these two classes are 53% of the corpus and ~89% of all
+   remaining recall@5 error. There is no read-side diversification
+   anywhere in `search.py` today: dedup runs at write time only, and RRF
+   fuses rankers that agree on the dominant sub-topic, so fusion
+   reinforces the monopoly rather than breaking it.
+
+   Prerequisite before iterating: this runner persists `by_type`
+   aggregates only, so the table above is **not reproducible from the
+   files in `results/`** — it needed a re-run. Add per-question output
+   first. Per-type ceilings also belong in the tables above; computed from
+   the corpus they are ~100% at k=5 for every class (temporal-reasoning
+   99.6%), which *strengthens* the reading that this headroom is real
+   rather than arithmetic.
+
 1. **An above-threshold arm.** Per-question stores hold ~249 items
    against a 500-item index threshold, so bm25 prefiltering never
    engages. Neither retrieval directory has measured the regime a large
