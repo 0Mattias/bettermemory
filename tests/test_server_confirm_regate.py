@@ -32,6 +32,7 @@ would hand that back), and the TTL has to be re-applied on load or the
 from __future__ import annotations
 
 import json
+import sys
 import time
 from dataclasses import dataclass, fields
 from pathlib import Path
@@ -673,8 +674,13 @@ async def test_the_sidecar_is_written_private(memory_dir: Path) -> None:
     captured text)."""
     server, _ = _boot(memory_dir)
     await _stage(server, "The user prefers tabs over spaces.")
-    mode = (memory_dir / PENDING_WRITES_FILENAME).stat().st_mode & 0o777
-    assert mode == 0o600, oct(mode)
+    sidecar = memory_dir / PENDING_WRITES_FILENAME
+    assert sidecar.exists()
+    # Windows has no POSIX mode bits — it reports 0o666 whatever we ask for.
+    # Same skip the episode-store privacy test takes.
+    if sys.platform != "win32":
+        mode = sidecar.stat().st_mode & 0o777
+        assert mode == 0o600, oct(mode)
 
 
 async def test_a_malformed_row_does_not_blind_the_rest(memory_dir: Path) -> None:
