@@ -5777,8 +5777,9 @@ def test_instructions_block_carries_load_bearing_phrases(server: Any) -> None:
 async def _lean_descriptions(tmp_path: Path) -> dict[str, str]:
     """The SHIPPING-DEFAULT (lean, full_tool_surface=False) tool descriptions,
     keyed by tool name. The lean surface is what a typical client pays in
-    context every turn, so it — not the 24-tool power-user surface — is what
-    these budget guards police."""
+    context every turn, so it — not the 27-tool full surface
+    (`test_tool_surface.py`'s `_FULL_COUNT` pins that count; this phrasing
+    is unguarded prose) — is what these budget guards police."""
     from bettermemory.builder import build_server
     from bettermemory.config import (
         BehaviorConfig,
@@ -5805,12 +5806,27 @@ _DESC_BUDGET_CEILING = 27_500
 # Soft line. Crossing it warns instead of failing, so the pressure is visible
 # to whoever caused it rather than only to whoever trips the ratchet later.
 _DESC_BUDGET_PRESSURE = _DESC_BUDGET_CEILING - 100
-# Per-tool `_lean_descriptions` lengths, measured in the commit that set the
-# ceiling above. DIAGNOSTIC ONLY: nothing asserts these, so an entry that goes
+# Per-tool `_lean_descriptions` lengths, re-measured live in the commit that
+# last moved one. DIAGNOSTIC ONLY: nothing asserts these, so an entry that goes
 # stale degrades the failure message and never the verdict, and a tool absent
 # from here is reported as new rather than raising. The recorded total is a
 # `sum()` over this table rather than a second literal, so the two cannot
-# disagree. Re-measure it in the same commit as any deliberate recalibration.
+# disagree. Re-measure in the same commit as any description edit — deferring
+# it to the next ceiling recalibration is what let all four moved rows rot,
+# and a stale row is exactly the map from "the total is over" to "the thing
+# you just typed" that `_desc_budget_breakdown` exists to draw.
+#
+# Re-measured 2026-07-30 (table total 26,238 -> 26,334; the live total moved
+# 26,336 -> 26,334 here). All FOUR rows below were stale, and only 2 chars of
+# the 96-char correction is this commit's own edit: memory_search 3467 -> 3387
+# is -78 of drift un-recorded since the table was measured at d1585d3 plus the
+# -2 edit here, retiring the unbacked 10%->65% recall pair from the `query`
+# cue. The other three moved without any edit in this commit at all:
+# memory_verify +192, across two commits — +161 in 994ed48
+# (verified_commits never fed the drift legs) and +31 in a59f640 (refusing path
+# attestations the attesting machine cannot stat); memory_scope_overview +8;
+# memory_write -24. Two commits' worth of drift behind one row is the argument
+# for the rule above: attributing it after the fact took a bisect.
 _DESC_BASELINE = {
     "episode_handoff": 1560,
     "episode_promote": 1597,
@@ -5825,12 +5841,12 @@ _DESC_BASELINE = {
     "memory_remove": 463,
     "memory_scope_disable": 231,
     "memory_scope_enable": 55,
-    "memory_scope_overview": 2812,
-    "memory_search": 3467,
+    "memory_scope_overview": 2820,
+    "memory_search": 3387,
     "memory_show": 851,
     "memory_update": 2234,
-    "memory_verify": 1625,
-    "memory_write": 3132,
+    "memory_verify": 1817,
+    "memory_write": 3108,
     "memory_write_cancel": 216,
     "memory_write_confirm": 206,
 }
@@ -6007,19 +6023,30 @@ async def test_search_desc_tells_the_caller_how_to_word_a_query(
     tmp_path: Path,
 ) -> None:
     """The `query` cue is the only guidance on this whole surface that acts
-    on retrieval's INPUT, and it is the highest-leverage line measured: on a
-    185-memory store, a 20-question gold set authored document-first in
-    caller voice retrieves at 10% recall@1 as asked and 65% re-queried in
-    concrete nouns. It sits in `memory_search`'s description rather than the
-    instructions block because it is written at the moment the caller types
-    a query, and it survives here because every other force on this file
-    pushes toward deleting it: it is the newest line, it is pure prose to a
-    byte-counting reader, and the budget ratchet 30 lines up makes "shorten
-    a description" a recurring move.
+    on retrieval's INPUT, and it is the highest-leverage line measured:
+    against `bench/retrieval/results/v2-unpadded-2026-07-26.json` — a
+    180-document synthetic corpus, 20 blind-authored questions per probe —
+    the lexical arm retrieves 35% recall@1 on questions as asked and 80%
+    re-queried in nouns the documents actually contain. That corpus is
+    easier than a real store (`bench/retrieval/README.md` says so of its own
+    numbers), so the gap between the two probes is the finding and neither
+    rate is a store's rate. The cue sits in `memory_search`'s description
+    rather than the instructions block because it is written at the moment
+    the caller types a query, and it survives here because every other force
+    on this file pushes toward deleting it: it is the newest line, it is
+    pure prose to a byte-counting reader, and the budget ratchet 30 lines up
+    makes "shorten a description" a recurring move.
+
+    The DESC carries the instruction alone. The numbers belong in
+    `handlers/search.py`'s module docstring — they are only honest with the
+    caveat above attached, and a per-turn surface cannot afford the caveat —
+    so a future edit that helpfully restores a recall figure to the cue is
+    re-opening a hole, not adding evidence. The pair this docstring used to
+    quote, 10%->65%, had no committed artifact at all.
 
     Two halves are pinned, because the measurement says only one of them
     works. The lift comes from VOCABULARY: the control arm — question words
-    stripped, content words kept — scored 10%, identical to asking outright,
+    stripped, content words kept — scores 35%, identical to asking outright,
     since the ranker already strips stopwords. A future reword that
     compressed this to "use keywords, not questions" would read as the same
     advice and buy exactly nothing, so `nouns` is pinned as the operative

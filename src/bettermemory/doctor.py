@@ -2296,9 +2296,12 @@ def _check_retrieval_discrimination(directory: Path, cfg: Config) -> Diagnosis:
             "pairing this with `semantic_dedup = true` used to be needed and "
             "is not, and that flag only ever controlled WRITE-time dedup "
             "(Jaccard vs cosine) — leave it alone unless you want that. "
-            "Measured on a 190-memory store: recall@1 10% -> 30% on "
-            "questions as asked, 65% -> 80% on re-queried ones. Weigh the "
-            "install size; this is reported, never auto-applied."
+            "Measured: recall@1 35% -> 60% on questions as asked, "
+            "80% -> 90% on re-queried ones "
+            "(bench/retrieval/results/v2-unpadded-2026-07-26.json — 180 "
+            "synthetic documents, easier than a real store, so the deltas "
+            "carry and the absolute rates do not). Weigh the install "
+            "size; this is reported, never auto-applied."
         ),
         details=details,
     )

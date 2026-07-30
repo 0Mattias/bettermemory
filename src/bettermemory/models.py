@@ -647,9 +647,11 @@ class Episode(BaseModel):
     - `body`: the full journal entry. Free-form markdown.
     - `takeaway`: optional one-sentence summary surfaced at handoff.
       When None, handoff falls back to the first line of `body`.
-    - `scopes`: free-form tags. Auto-defaulted from origin (e.g.
-      `projects:<name>`) at the handler layer when not provided, the
-      same way memory scopes are.
+    - `scopes`: free-form tags, stored exactly as passed — nothing
+      defaults them from `origin`, so omitting them stores `[]`. Valid
+      by design: `episode_handoff` groups by session_id and filters by
+      worktree, not by scope (a session's `disabled_scopes` can still
+      hide an already-tagged episode from that read).
     - `origin`: cwd / repo / branch / worktree_root snapshot at write
       time. Drives the worktree filter on `episode_handoff` so only
       episodes from the same workspace are surfaced.

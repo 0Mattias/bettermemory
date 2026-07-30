@@ -420,14 +420,18 @@ def test_factory_hybrid_resolves_a_model_once_an_extra_is_installed(
     write-time flag. That was a documented foot-gun; two sessions'
     worth of install advice got it wrong.
 
-    It was reversed on measurement, not taste. Same 190-memory store,
-    same 20-question gold set authored document-first in caller voice,
-    only the fusion changing: recall@1 went 10% -> 30% on questions as
-    asked, and 65% -> 80% on re-queried ones. That second number is the
-    one that settles it — it is 15 points ON TOP of the caller-side
+    It was reversed on measurement, not taste. Same corpus as the
+    query-guidance measurement — 180 synthetic documents, 20
+    blind-authored questions per probe, raw JSON in
+    `bench/retrieval/results/v2-unpadded-2026-07-26.json` — with only
+    the fusion changing: recall@1 went 35% -> 60% on questions as
+    asked, and 80% -> 90% on re-queried ones. That second number is the
+    one that settles it — it is 10 points ON TOP of the caller-side
     query guidance, and it is the part no prompt wording can recover,
     because what remains after the guidance is the caller guessing the
-    store's vocabulary.
+    store's vocabulary. That corpus is easier than a real store
+    (`bench/retrieval/README.md` says so of its own numbers), so the
+    deltas are the finding and neither rate is a store's rate.
 
     The original objection was real and is now answered rather than
     ignored: the factory is shared with write-dedup, so resolving here

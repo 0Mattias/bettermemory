@@ -236,6 +236,32 @@ items culled during fact-checking stay retired; nothing is missing.
 
 ### Phase 0 — Truth-sync the resident surfaces (S each; ship first)
 
+**PHASE STATUS: DONE 2026-07-30.** All items below shipped in one commit
+(`docs+desc: truth-sync the resident surfaces`). Suite green both legs
+(3,779 passed / 8 skipped default; 3,698 passed / 3 skipped / 6 deselected
+embeddings), mypy + pyright + ruff clean. Executed by a 6-lane workflow with
+a 3-lane adversarial verify pass. Deltas from the plan as written, all
+verified against artifacts:
+- A1 found **eight** live sites, not seven: `doctor`'s
+  `retrieval_discrimination` fix hint (live operator output, not a docstring)
+  and `config.py`'s `DEFAULT_CONFIG` (ships verbatim into every user's
+  `config.toml`) were the two the plan's list under-weighted. Two *derived*
+  claims were also false and are not in the plan's site list — "three times
+  the cold-query hit rate" and "+15 points on top of" — both recomputed from
+  the artifact (+25 asked, +10 re-queried).
+- `DESC_MEMORY_SEARCH` ships with **no number**; the measurement plus its
+  caveat moved to the module docstring. Net −2 chars (26,336 → 26,334).
+- A7 grew by three sites the plan did not enumerate: `eval.py`'s "19-tool
+  memory_* + 4-tool episode_*" (truly 22+5), `server.py`'s tool inventory
+  (listed 21 of 27 while claiming addendum parity), and
+  `bench/rot/corpus.py`'s docstring advertising `--filter=blob:none` clones
+  that its own `clone()` documents as measured-wrong.
+- The 3.29.0 CHANGELOG section got an **erratum** (append, not rewrite): its
+  arithmetic was internally sound, but the measurement underneath it was
+  retired, which is a different defect than the one first diagnosed.
+- A6 re-measured: `_DESC_BASELINE` was stale in all **four** rows and its own
+  explanatory note misattributed the drift across two commits; both fixed.
+
 **A1. Retire the dead recall number everywhere; teach re-query instead.**
 The sentence lives in `DESC_MEMORY_SEARCH` (`handlers/search.py:109-111`).
 The guard test (`tests/test_server.py:6006-6043`) pins "nouns" and

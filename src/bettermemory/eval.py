@@ -2317,9 +2317,9 @@ def render_widening_detail_text(report: WideningDetailReport) -> str:
 # Map from event `kind` to the MCP tool that emits it. Used by
 # `compute_tool_usage` so the rollup uses tool names rather than the
 # wire-format event kinds the recorder writes. The exact set is the
-# 19-tool memory_* + 4-tool episode_* surface listed in `server.py`'s
-# module docstring; tools without a dedicated event of their own
-# appear in `TOOLS_WITHOUT_TELEMETRY` instead.
+# 22-tool memory_* + 5-tool episode_* surface listed in `server.py`'s
+# module docstring, minus the ones without a dedicated event of their
+# own, which appear in `TOOLS_WITHOUT_TELEMETRY` instead.
 #
 # Why an explicit map rather than counting raw `kind` values: some
 # event kinds (`search_miss`, `pending_expired`) are side-effects of

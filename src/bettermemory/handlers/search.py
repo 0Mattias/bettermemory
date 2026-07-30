@@ -1,6 +1,6 @@
 """memory_search MCP tool — handler implementation + DESC.
 
-The handler is the busiest of the 25 tools: it issues use-tokens,
+The handler is the busiest of the 18 default tools: it issues use-tokens,
 attaches per-hit drift signals, optionally expands the top hit, and
 records its own event with a generous payload shape so the eval CLI
 can rebuild what the model saw.
@@ -13,17 +13,26 @@ Description-edit history:
   any parameter detail.
 - H9: `query` stopped being described as "free text". Every line above it
   told the caller how to READ a result; nothing told it how to WRITE the
-  one input that decides whether a result exists. Measured on a 185-memory
-  store over a 20-question gold set authored document-first in caller
-  voice (so the ranker never picked the labels): questions as asked
-  retrieve at 10% recall@1, the same questions re-queried in concrete
-  nouns at 65%, and an insider-vocabulary ceiling arm at 90%. The control
-  is what fixes the wording: stripping the question words and keeping the
-  content words scores 10% — byte-identical to asking, because the ranker
-  already strips stopwords. So the cue names the lever that moved
-  (vocabulary the memory would literally contain) and not the one that
-  did nothing ("use keywords, not questions"), and it names re-querying,
-  since a weak first hit is the caller's only signal that it happened.
+  one input that decides whether a result exists. So the cue names the
+  lever the measurement moved (vocabulary the memory would literally
+  contain) and not the one it showed does nothing ("use keywords, not
+  questions"), and it names re-querying, since a weak first hit is the
+  caller's only signal that its wording missed.
+
+  The measurement itself lives here rather than in the description: it is
+  only honest with a caveat attached, and a per-turn surface cannot
+  afford the caveat. Committed evidence is
+  `bench/retrieval/results/v2-unpadded-2026-07-26.json` — a 180-document
+  synthetic corpus, 20 blind-authored questions per probe. The lexical
+  arm retrieves 35% recall@1 on questions as asked and 80% re-queried in
+  nouns the documents actually contain; the control arm (question words
+  stripped, content words kept) also scores 35% — identical to asking,
+  because the ranker already strips stopwords. Only the within-corpus
+  contrast transfers: `bench/retrieval/README.md` establishes that this
+  corpus is easier than a real store, so these are not a store's rates.
+  The 10%→65% pair this block used to cite had no committed artifact
+  behind it and that bench retired it.
+
   Same pass retracted "`hybrid` for paraphrase recall" from `mode`: with
   no semantic leg configured — the package default — hybrid is RRF over
   keyword and BM25, both lexical, so that line promised the caller the
@@ -106,8 +115,8 @@ DESC_MEMORY_SEARCH = (
     "per outcome). The user already rejected this; don't re-surface "
     "unless you have new reason. OMITTED when none.\n\n"
     "Parameters:\n"
-    "- `query`: nouns a memory would contain (tool, file, error names), "
-    "not question phrasing — measured 10%→65% recall@1. Weak hits: "
+    "- `query`: nouns a memory would contain (tool, file, error names) — "
+    "vocabulary is the lever, not question phrasing. Weak hits: "
     "re-query, different nouns.\n"
     "- `scopes` (optional): filter to scope union.\n"
     "- `max_results` (default 5, cap 50).\n"

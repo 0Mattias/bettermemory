@@ -13,10 +13,11 @@ observation. The per-repo breakdown is kept beside the pooled numbers,
 because an aggregate that cannot be decomposed hides exactly the
 single-repo artifact this corpus exists to escape.
 
-Clones are `--filter=blob:none`: the harness needs the full COMMIT
-history (`compute_commit_drift` reads every author timestamp) but only
-two trees' worth of blobs, so a partial clone fetches what the two
-worktree checkouts actually touch and skips the rest.
+Clones are FULL clones, deliberately: the harness needs the whole commit
+history (`compute_commit_drift` reads every author timestamp) and checks
+out two worktrees per repository. A `--filter=blob:none` partial clone
+was tried first and measured to be wrong — see `clone`, which records
+the repack storm it caused.
 """
 
 from __future__ import annotations

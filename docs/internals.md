@@ -80,10 +80,19 @@ if it exists, else `~/.claude-memory/`.
 
 27 MCP tools; 18 register by default. Nine curation/power-user tools
 sit behind `[behavior] full_tool_surface = true`, and most of those
-have a CLI counterpart, so the default per-turn tool context stays
-small. Grouped: retrieval, writing (with a staged-confirm flow),
-lifecycle, verification, curation, session-local scope toggles, and
-episodes. Signatures, defaults, and return shapes: [api.md](api.md).
+have a CLI counterpart. Grouped: retrieval, writing (with a
+staged-confirm flow), lifecycle, verification, curation, session-local
+scope toggles, and episodes. Signatures, defaults, and return shapes:
+[api.md](api.md).
+
+That default surface is not cheap, and it is charged on every turn
+whether a memory tool is called or not. The full serialized
+`tools/list` measured 38,009 bytes — 28,604 of it names and
+descriptions, 7,096 input schemas — on 2026-07-26 at 3.29.0, which is
+4.84x claude-mem 13.12.4 at its own default. Method, fairness rules and
+the raw JSON: `bench/toolcost/README.md`. A description trim landed
+after that run, so a re-measure comes in slightly lower; CI hard-caps
+the description component so it cannot drift upward unnoticed.
 
 ## CLI
 

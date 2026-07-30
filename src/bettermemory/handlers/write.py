@@ -582,7 +582,7 @@ _WRITE_GATES: tuple[WriteGate, ...] = (
 
 
 # ---------------------------------------------------------------------------
-# The chokepoint: one chain, every write path
+# The shared chain: one policy, two of the four write paths so far
 # ---------------------------------------------------------------------------
 #
 # `_WRITE_GATES` used to be reachable only from `memory_write` below, which
@@ -591,15 +591,24 @@ _WRITE_GATES: tuple[WriteGate, ...] = (
 # different subset of the policy: `ingest.apply_ingest_plan` ran no gates at
 # all, `consolidate._apply_llm_proposal` hand-reimplemented four of them
 # (and had already drifted), and `handlers.proposals.accept_proposal`
-# mirrored the credential gate alone. `apply_write_gates` is the single
-# entry point all four now share.
+# mirrored the credential gate alone. `apply_write_gates` is where that
+# policy now lives, but only two of the four route through it: `memory_write`
+# (the full chain) and `ingest.apply_ingest_plan` (`CONTENT_GATES`).
+# `consolidate._apply_llm_proposal` and `accept_proposal` still run their own
+# subsets. Consolidate's divergence is deliberate and measured: it refuses
+# hard with no override to offer, and it scopes the transient and dedup
+# checks to the LLM-authored claim while the credential scan and the size cap
+# judge the provenance-stamped text. `accept_proposal`'s is not deliberate —
+# it runs payload validation plus a credential scan and is unconverted.
 #
 # What deliberately stays OUT of this function: recorder events,
 # `_corroborate_duplicate`, and SessionState staging. Those need `recorder`
 # and `state`, which the non-MCP callers don't have and shouldn't grow — so
 # this returns a DECISION and the caller owns the side effects. That split
-# is what lets one chain serve four callers with four different failure
-# modes (MCP response dict / skipped ingest row / raised RuntimeError).
+# is what lets one chain serve callers whose failure modes have nothing in
+# common (MCP response dict / skipped ingest row), and what converting the
+# two hand-rolled subsets would rest on (consolidate raises per cluster;
+# accept_proposal returns a status dict with the proposal left queued).
 #
 # This layer sits strictly ABOVE `Store.write`. It does not touch the
 # `_locked` / `_atomic_write_post` path — the TOCTOU rationale documented at

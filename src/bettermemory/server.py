@@ -37,8 +37,14 @@ so the consuming model sees an identical list):
 - Verification: memory_verify
 - Curation:  memory_record_use, memory_health, memory_audit_turn,
              memory_acknowledge_miss, memory_rename_scope,
-             memory_conflicts, episode_patterns
+             memory_conflicts, memory_curate, memory_proposals,
+             episode_patterns
+- Episodes:  episode_write, episode_search, episode_handoff,
+             episode_promote
 - Session:   memory_scope_disable / memory_scope_enable
+
+That is 22 ``memory_*`` plus 5 ``episode_*``; 18 of the 27 register by
+default, the rest behind ``[behavior] full_tool_surface``.
 """
 
 from __future__ import annotations

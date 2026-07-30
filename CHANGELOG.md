@@ -9,6 +9,62 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+### Fixed — the resident surfaces carried a measurement the project had already retired
+
+`DESC_MEMORY_SEARCH` told every model, every turn, that wording a query in
+nouns was worth a "measured 10%→65% recall@1". No committed artifact ever
+backed that pair. It came from an early live-store probe, and the blind
+replication built later in `bench/retrieval` measures the asked baseline at
+35%, not 10% — the bench README already said no number in that directory is
+comparable to the old figures, which is another way of saying the old figure
+had been retired everywhere except the surfaces that quote it.
+
+The same measurement family was restated at seven more sites, two of which
+were not docstrings: `doctor`'s `retrieval_discrimination` fix hint, printed
+to operators, and `config.py`'s `DEFAULT_CONFIG`, which ships verbatim into
+every user's `config.toml`. Two derived adjectives had gone false on their
+own terms as well — "three times the cold-query hit rate" and "+15 points on
+top of" describe 10→30 and 65→80, and the replacement artifact measures
+35→60 and 80→90.
+
+All eight sites now cite `bench/retrieval/results/v2-unpadded-2026-07-26.json`
+with its easier-than-a-real-store caveat, and the two measurement families
+are kept apart: query-discipline sites carry the lexical asked→re-queried
+pair (35% → 80%), embeddings-extra justification sites carry the semantic
+lift (35% → 60% asked, 80% → 90% re-queried). `DESC_MEMORY_SEARCH` itself
+now carries the instruction with **no number**: the claim is only honest
+beside its caveat, and a caveat is not what an always-resident description
+should spend characters on. The measurement lives in the module docstring
+instead. Net −2 chars on the lean budget.
+
+Also corrected in the same sweep: README and `docs/internals.md` claimed the
+default tool surface cost "~35 KB" with "the description half" capped in CI
+and that per-turn tool context "stays small" — the project's own
+`bench/toolcost` artifact measures 38,009 bytes of serialized `tools/list`,
+of which 28,604 is names and descriptions (≈75%, not half), and 4.84× a
+comparable tool. `docs/eval-results.md` carried a caveat that was false when
+written (`turn_audited` has carried `top_hits` since 3.14.0, and
+`--widening-preview` exists precisely to replay looser rules). Three stale
+in-code counts ("the 25 tools", a "24-tool power-user surface", a 19+4 tool
+split that is really 22+5), a `server.py` tool inventory missing six tools
+while claiming to mirror the system-prompt addendum, an `Episode.scopes`
+docstring describing an auto-defaulting that was never implemented, and a
+`bench/rot/corpus.py` docstring advertising partial clones that its own
+`clone()` documents as measured-wrong.
+
+### Added — `docs/incidents/` has postmortems in it
+
+The directory has advertised public postmortems since 2026-05-21 and
+contained none — an index reading "(No incidents yet.)" under a README
+promising them. Its charter was also scoped to rot bugs *reported against*
+bettermemory, which no self-found defect could satisfy. The charter now
+covers any check whose job is to tell you memory has gone wrong, reporter
+neutrality is stated, and two postmortems are written from the record:
+the staleness verdict that was arithmetically `always_flag` at shipped
+defaults (Youden's J = 0.000, fixed in `58a4fa4`), and the doctor check
+that reported green for precisely the store most needing its warning
+(fixed in `316781e`, about nine hours after it shipped).
+
 ### Fixed — `memory_verify` accepted attestations it could not check
 
 `Store.mark_verified` stamped `last_verified_at` and stored the caller's
@@ -33,7 +89,7 @@ existence demand applies only at the moment of attestation. The check
 lives in the `memory_verify` handler; `Store.mark_verified` remains a
 policy-free persistence primitive, and a test pins that split.
 
-### Added — `apply_write_gates()`: one gate chain for every write path
+### Added — `apply_write_gates()`: one gate chain, two write paths on it
 
 `_WRITE_GATES` was reachable only from `memory_write`; three other paths
 called `Store.write` directly with divergent policy subsets
@@ -50,9 +106,26 @@ file is the user's own act of commit, a tested contract) with all
 `acknowledge_*` overrides off. Rejections surface per-row as
 `skip_invalid` in the gate's own status vocabulary; previously a pasted
 credential in an auto-memory file imported silently. The CLI threads the
-real config so the scope allowlist and dedup thresholds apply.
-`consolidate` and `accept_proposal` keep their deliberately stricter
-copies pending a policy review.
+real config rather than the `Config()` fallback, so the configured dedup
+thresholds and the semantic-dedup switch reach the gates. The `[scopes]
+allowed` allowlist does not: it is enforced by `_validate_write_payload`
+in `handlers/_shared.py`, which ingest never calls — ingest builds its
+`Store.write` payload directly — so an imported row can still land in an
+unsanctioned scope, and the content-size and scope-count caps are missed
+on the same path. Ingest is the only one of the four without an allowlist
+check; `consolidate` hand-rolls its own.
+
+`consolidate` and `accept_proposal` still hand-roll their subsets, and the
+two are not comparable. `consolidate._apply_llm_proposal` diverges for
+reasons it measured: it refuses hard, because an unattended run has nobody
+to offer an `acknowledge_*` override to, and it scopes the transient and
+similarity checks to the LLM-authored claim rather than the
+provenance-stamped body — the stamp quotes the transcript verbatim, so it
+carries transient phrasing of its own, and being shared by every proposal
+citing the same turn it dominates the Jaccard sets (the measured overlap is
+recorded at the gate). `accept_proposal` is the thin one: payload
+validation plus a hand-rolled credential scan, one of the six content
+gates. Putting it on the chain is unfinished work, not a policy stance.
 
 ### Changed — `episode_search` description trimmed to proportionate length
 
@@ -1051,6 +1124,39 @@ overstated in the other direction — the entry was open at the hunt's base
   through. Sixteen tests driven in-process through the real CLI entry
   point, mutation-checked against four separate mutants. No mapping bug
   found.
+
+### Erratum (2026-07-30)
+
+The entry above is left as it shipped. Its arithmetic is internally
+sound — 10% → 30% is three times, 65% → 80% is fifteen points — but the
+measurement underneath it no longer stands. That 190-memory live-store
+pair was never captured as a committed artifact, and the blind
+replication built afterwards in `bench/retrieval` could not reproduce
+its asked-baseline: the replication measures 35% asked, not 10%, and its
+own README records that no absolute number in that directory is
+comparable to the live-store figures. The decision this entry describes
+was right, and the newer artifact still supports it; only the
+magnitudes were overstated.
+
+What the superseding artifact
+(`bench/retrieval/results/v2-unpadded-2026-07-26.json`, a synthetic
+180-document corpus, 20 questions per probe) measures for the same
+comparison, at recall@1:
+
+| | lexical | +semantic |
+|---|---|---|
+| question as asked | 35% | 60% |
+| re-queried | 80% | 90% |
+
+So +25 points on the cold query rather than a tripling, and +10 points
+on top of the query guidance rather than +15. The model-facing sites
+that had restated the retired pair — `DESC_MEMORY_SEARCH`, the
+`handlers/search.py` module docstring, `config.py`'s shipped
+`DEFAULT_CONFIG` prose, `semantic_setup.py`, and `doctor`'s
+`retrieval_discrimination` fix hint — were re-pointed at this artifact
+in the 2026-07-30 window; the resident description now carries the
+instruction with no number at all, because that claim is only honest
+next to its caveat.
 
 ## 3.28.0 - 2026-07-23
 

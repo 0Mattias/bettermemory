@@ -61,9 +61,13 @@ Reading it honestly:
   data the threshold rule wants. A counterfactual sweep
   (`bettermemory eval --threshold-sweep`) replays the 15 v1-flagged
   misses against the stricter v2/v3/v4 rules, which flag none of them
-  — so v1 isn't over-firing. (Strictly looser rules can't be
-  evaluated from the log at all; `turn_audited` doesn't carry
-  `top_hits`.)
+  — so v1 isn't over-firing. (Strictly *looser* rules are the other
+  question, and they get their own lane: `bettermemory eval
+  --widening-preview` replays them over the `turn_audited` stream,
+  which has carried a compact `top_hits` payload on every miss-capable
+  event since 3.14.0. Three labeling passes have used it; the most
+  recent is
+  [`eval/widening-labeling-2026-07-29.md`](eval/widening-labeling-2026-07-29.md).)
 - n=1. This measures one user's store, workload, and retrieval
   discipline. Run `bettermemory eval` on your own log — anomalies are
   exactly the calibration data the threshold rule needs.
@@ -103,8 +107,32 @@ Stricter rules replay over misses v1 already flagged, so this answers
 | `episode_write` | 243 | 5.0% |
 | `episode_handoff` | 50 | 1.0% |
 
-4,891 tool calls across 25 known tools — retrieval (`memory_search`,
-5.7%) is dwarfed by upkeep (audit, verify, update, record_use).
+4,891 tool calls across 25 known tools as of the 2026-07-16 snapshot
+(the registry has grown since; a re-run at HEAD enumerates 27) —
+retrieval (`memory_search`, 5.7%) is dwarfed by upkeep (audit, verify,
+update, record_use).
+
+### Corrections (2026-07-30)
+
+Two hand edits made after publication. Nothing above was regenerated:
+the tables are still the 2026-07-16 `--report` snapshot, number for
+number, and the bullets still read that same run. A re-run moves every
+count *and* the measured date, which would desynchronize the
+hand-authored narrative — including the "first silent misses" story —
+from the tables it reads.
+
+- **Looser rules are measurable after all.** The threshold-sweep
+  bullet claimed `turn_audited` doesn't carry `top_hits`, so looser
+  rules couldn't be evaluated from the log. That was already wrong when
+  this page was written — the payload has shipped on every miss-capable
+  `turn_audited` event since 3.14.0 (2026-07-03) and
+  `--widening-preview` exists to replay looser rules over it.
+  Corrected in place.
+- **"25 known tools" is a snapshot value, not a current one** —
+  annotated rather than bumped to 27, because it and the 4,891 came out
+  of the same `--report` run. The current registry size is pinned by
+  `_EXPECTED_TOOL_COUNT` in `tests/test_eval.py`, which one assertion
+  holds equal to the runtime-registered set.
 
 ## Comparative harness
 

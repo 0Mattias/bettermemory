@@ -67,11 +67,14 @@ recency_boost_half_life_days = 30
 #       keyword fallback for an explicit ask).
 #   "hybrid"  — reciprocal-rank-fusion of keyword + BM25, plus a semantic
 #       leg whenever an embeddings extra is INSTALLED. Installing it is
-#       the whole opt-in; no flag. Measured worth on a 190-memory store:
-#       recall@1 10% -> 30% on plainly-worded questions, 65% -> 80% on
-#       re-queried ones. With no extra it degrades to keyword + BM25 and
-#       never attempts a load, so users without one pay nothing and see
-#       no warning. Default since 2.6.8.
+#       the whole opt-in; no flag. Measured worth, on a 180-document
+#       synthetic bench corpus (20 questions per probe; raw JSON in
+#       bench/retrieval/results/v2-unpadded-2026-07-26.json): recall@1
+#       35% -> 60% on questions as asked, 80% -> 90% on re-queried ones.
+#       That corpus is easier than a real store — the deltas carry, the
+#       absolute rates do not. With no extra it degrades to keyword +
+#       BM25 and never attempts a load, so users without one pay nothing
+#       and see no warning. Default since 2.6.8.
 # `semantic_dedup` below is NOT part of this — it governs write-time
 # duplicate detection only. It used to double as the switch that let
 # "hybrid" load a model, which made installing the extra a no-op for the

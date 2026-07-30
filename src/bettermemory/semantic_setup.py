@@ -111,13 +111,16 @@ def _semantic_model_configured(config: Config) -> bool:
     if bool(config.behavior.semantic_dedup) or _search_mode_needs_model(config):
         return True
     # `hybrid` (the package default) fuses a semantic leg when one is
-    # handed to it, and MEASURED it is worth a lot: on a 190-memory store
-    # over a 20-question gold set authored document-first, adding the leg
-    # took recall@1 from 10% to 30% on questions as asked and from 65% to
-    # 80% on re-queried ones — three times the cold-query hit rate, and
-    # 15 points on top of the caller-side query guidance, which is the
-    # part no prompt wording can recover because it is the caller
-    # GUESSING the store's vocabulary.
+    # handed to it, and MEASURED it is worth a lot: on a 180-document
+    # blind-authored bench corpus (20 questions per probe; raw JSON in
+    # bench/retrieval/results/v2-unpadded-2026-07-26.json) adding the leg
+    # took recall@1 from 35% to 60% on questions as asked and from 80% to
+    # 90% on re-queried ones — +25 points where the caller has to guess
+    # the store's vocabulary, and +10 points ON TOP of the caller-side
+    # query guidance, which is the part no prompt wording can recover.
+    # That corpus is easier than a real store (bench/retrieval/README.md
+    # says so of its own numbers), so the deltas are the finding; the
+    # absolute rates are not a store's rates.
     #
     # So installing an embeddings extra is now sufficient to get it.
     # Requiring `semantic_dedup = true` as well made the extra a no-op

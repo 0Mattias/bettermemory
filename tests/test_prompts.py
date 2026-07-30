@@ -550,11 +550,14 @@ def test_docs_state_semantic_is_enabled_by_the_extra_alone() -> None:
     made per-call `mode="semantic"` error with the install hint.
 
     That contract lost on measurement. Fusing the semantic leg took
-    recall@1 from 10% to 30% on plainly-worded questions and from 65% to
-    80% on re-queried ones, and requiring an unrelated WRITE-time flag to
-    unlock a SEARCH improvement was a foot-gun that had already produced
-    wrong install advice more than once. `hybrid` now resolves a model
-    whenever an extra imports.
+    recall@1 from 35% to 60% on plainly-worded questions and from 80% to
+    90% on re-queried ones
+    (`bench/retrieval/results/v2-unpadded-2026-07-26.json` — 180 synthetic
+    documents, 20 blind-authored questions per probe, easier than a real
+    store, so the deltas carry and the absolute rates do not), and requiring
+    an unrelated WRITE-time flag to unlock a SEARCH improvement was a
+    foot-gun that had already produced wrong install advice more than once.
+    `hybrid` now resolves a model whenever an extra imports.
 
     The old gate's stated reason — the shared factory would flip
     write-dedup Jaccard->cosine — was real and is answered rather than
