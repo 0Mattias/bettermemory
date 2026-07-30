@@ -8,13 +8,19 @@ applies, with `--apply`) four kinds of curation:
    Bodies are compared with any `--llm --from-transcript` provenance
    stamp stripped (`_PROVENANCE_RE`) — the stamp is system boilerplate
    shared by every fact distilled from the same transcript turn, not
-   claim content. Pairs whose bodies differ in negation polarity
-   ("Use X" vs "Do not use X" — token sets collapse once stopwords
-   drop, and embedding models score negated pairs above threshold too)
-   are skipped on BOTH paths — that's a contradiction to arbitrate,
-   not a duplicate to merge. Skipped pairs above the threshold surface
-   on the report as `polarity_skipped` (suggest-only, never applied)
-   so a genuine duplicate caught by an incidental negator doesn't
+   claim content. Pairs carrying a contradiction signal — a negation
+   polarity flip ("Use X" vs "Do not use X" — token sets collapse once
+   stopwords drop, and embedding models score negated pairs above
+   threshold too) or a mutual numeric divergence ("port 5432" vs "port
+   5433") — are skipped on BOTH paths: that's a contradiction to
+   arbitrate, not a duplicate to merge. The refusal lives INSIDE
+   `_pick_keeper` (it raises `ConflictingPair`), not at the call sites,
+   so no dedup path can produce a `DedupCandidate` for such a pair
+   however it was scored — the unattended pass has no threshold at
+   which it could tombstone one side. Skipped pairs above the
+   threshold surface on the report as `polarity_skipped` (suggest-only,
+   never applied) and are lifted into the conflict queue by an applying
+   pass, so a genuine duplicate caught by an incidental negator doesn't
    vanish silently. An attested member (non-empty `verified_paths` or a set
    `last_verified_at`) beats an unattested one; otherwise the pair's
    newer-`updated` member wins. The loser is proposed for tombstoning
@@ -81,7 +87,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from ._fsutil import atomic_write_bytes, bounded_tail_read
 from .events import Recorder, iter_all_events
@@ -359,8 +365,55 @@ class ConsolidateReport:
 # ---------------------------------------------------------------------------
 
 
-def _pick_keeper(a: Memory, b: Memory) -> tuple[Memory, Memory]:
+class ConflictingPair(Exception):
+    """`_pick_keeper` refusing a pair that carries a contradiction
+    signal: there is no keeper to crown, because the pair is a
+    disagreement to arbitrate rather than a duplicate to merge.
+
+    `detector` names the signal — ``"polarity"`` or ``"numeric"``, the
+    same vocabulary `PolaritySkippedPair.detector` and the conflict
+    queue use — so the catching loop can report WHY without re-running
+    detection.
+
+    An exception rather than a sentinel return on purpose. This is the
+    fence that keeps the unattended pass off contradictions, and the
+    two dedup loops are not its only conceivable callers; a `None` a
+    future caller forgets to check would tombstone one side of a
+    contradiction silently, whereas an unhandled raise cannot be
+    mistaken for a keeper.
+    """
+
+    def __init__(self, detector: str) -> None:
+        super().__init__(f"contradiction signal ({detector}) — pair has no keeper")
+        self.detector = detector
+
+
+def _pick_keeper(
+    a: Memory,
+    b: Memory,
+    *,
+    signals_a: _BodySignals | None = None,
+    signals_b: _BodySignals | None = None,
+) -> tuple[Memory, Memory]:
     """Decide which memory wins a dedup pair.
+
+    Raises `ConflictingPair` FIRST, before any tier below runs, when
+    the two bodies carry a contradiction signal (`_conflict_signal`:
+    negation polarity flip or mutual numeric divergence). Every
+    `DedupCandidate` in this module is constructed from this function's
+    return value, so routing conflict-shaped pairs to the conflict
+    queue instead of the tombstone list is a property of the keeper
+    decision itself rather than of a check each loop remembers to make
+    — the distinction matters because the unattended
+    `run_auto_consolidate` path applies its candidates with nobody
+    reviewing the diff, and a similarity threshold is no defence
+    (the inverse-clause pair "Deploy with the blue-green strategy;
+    never do in-place." vs its swap measures Jaccard 1.0).
+
+    `signals_a` / `signals_b` are the caller's precomputed
+    `_body_signals` for the two bodies — a cache, not a gate: omitting
+    them costs one tokenisation pass per body and changes no outcome,
+    so a caller cannot disarm the fence by forgetting them.
 
     Tier 0: when exactly one member carries verification attestation
     (non-empty `verified_paths` or a set `last_verified_at`), it wins
@@ -377,6 +430,11 @@ def _pick_keeper(a: Memory, b: Memory) -> tuple[Memory, Memory]:
     both): higher ULID wins — newer creation under
     microsecond-tied writes. Returns `(keeper, duplicate)`.
     """
+    sig_a = signals_a if signals_a is not None else _body_signals(a.body)
+    sig_b = signals_b if signals_b is not None else _body_signals(b.body)
+    detector = _conflict_signal(sig_a, sig_b)
+    if detector is not None:
+        raise ConflictingPair(detector)
     a_attested = bool(a.verified_paths) or a.last_verified_at is not None
     b_attested = bool(b.verified_paths) or b.last_verified_at is not None
     if a_attested != b_attested:
@@ -565,6 +623,119 @@ def _numeric_divergence(nums_a: frozenset[str], nums_b: frozenset[str]) -> bool:
     return bool(nums_a - nums_b) and bool(nums_b - nums_a)
 
 
+# Clause boundaries for the ORDER-SENSITIVE half of the polarity guard.
+# `_has_negation` is whole-body token presence and therefore order-blind:
+# "Deploy with the blue-green strategy; never do in-place." and its exact
+# inverse both contain "never", so the whole-body rule sees matching
+# polarity while the token sets measure Jaccard 1.0 — a pair the
+# unattended 0.90 threshold could not save. Scoping negation to the
+# clause it sits in recovers the order the token sets threw away.
+#
+# Sentence/clause terminators only. Commas are deliberately NOT
+# boundaries: a negator scopes across a comma list ("do not use A, B, or
+# C"), and splitting there would file B and C as ASSERTED and invent a
+# flip against a body that agrees.
+_CLAUSE_SPLIT_RE = re.compile(r"[.;!?\n]+")
+
+
+def _clause_polarity(body: str) -> tuple[frozenset[str], frozenset[str]]:
+    """`(asserted, negated)` content tokens, scoped per clause.
+
+    A clause carrying any `_NEGATION_MARKERS` token negates every
+    content token in it; the rest are asserted. Tokenisation is the
+    dedup tokeniser (`_raw_content_token_set`) so the sets are directly
+    comparable to the ones the similarity score is computed over.
+
+    Tokens appearing on BOTH sides within one body are dropped from both
+    returned sets: a body that both asserts and negates a term ("use
+    sudo for deploys; never use sudo for backups") makes no comparable
+    polarity claim about it, and counting it would flip that body
+    against any body that merely asserts the term.
+    """
+    asserted: set[str] = set()
+    negated: set[str] = set()
+    for clause in _CLAUSE_SPLIT_RE.split(body):
+        tokens = _raw_content_token_set(clause)
+        if not tokens:
+            continue
+        if _has_negation(clause):
+            negated |= tokens
+        else:
+            asserted |= tokens
+    return frozenset(asserted - negated), frozenset(negated - asserted)
+
+
+class _BodySignals(NamedTuple):
+    """Every contradiction-guard input for ONE body, computed once.
+
+    Held per memory by the dedup loops (the pairwise comparison is
+    O(N²) and re-tokenising inside it would be too), and computed
+    on demand by `_pick_keeper` for callers that don't have them.
+    All four fields judge the provenance-stripped body — see
+    `_PROVENANCE_RE` for why the stamp is not claim content.
+    """
+
+    has_negation: bool
+    asserted: frozenset[str]
+    negated: frozenset[str]
+    numbers: frozenset[str]
+
+
+def _body_signals(body: str) -> _BodySignals:
+    """Contradiction-guard inputs for a raw (still-stamped) body."""
+    stripped = _strip_provenance(body)
+    asserted, negated = _clause_polarity(stripped)
+    return _BodySignals(
+        has_negation=_has_negation(stripped),
+        asserted=asserted,
+        negated=negated,
+        numbers=_numeric_token_set(stripped),
+    )
+
+
+def _polarity_flip(sig_a: _BodySignals, sig_b: _BodySignals) -> bool:
+    """True when two bodies disagree in negation polarity. Two rules:
+
+    1. **Whole-body**: exactly one side carries a negator at all. The
+       original guard, and still the only one that fires when the
+       negated claim shares no tokens with the other body ("It is fast"
+       vs "It is not slow").
+    2. **Clause-scoped, mutual**: each body asserts a term the other
+       negates. Mutuality mirrors `_numeric_divergence`'s rule and for
+       the same reason — a one-sided difference is usually scope, not
+       disagreement. "Run migrations with the CLI, not by hand." negates
+       its whole clause (a comma is not a boundary), so it one-sidedly
+       "negates" `cli` against a body that asserts it; requiring the
+       mirror keeps that agreeing pair merging as before, while the
+       inverse-clause pairs this rule exists for — "Always squash-merge;
+       do not rebase." vs "Never squash-merge; always rebase." — swap in
+       both directions by construction.
+
+    Documented gap: a pair where BOTH bodies carry a negator and only
+    ONE term swaps polarity passes both rules. Reaching the dedup
+    threshold at all takes near-identical token sets, which makes the
+    unmirrored shape hard to construct, but it is a gap and not a proof.
+    """
+    if sig_a.has_negation != sig_b.has_negation:
+        return True
+    return bool(sig_a.negated & sig_b.asserted) and bool(sig_b.negated & sig_a.asserted)
+
+
+def _conflict_signal(sig_a: _BodySignals, sig_b: _BodySignals) -> str | None:
+    """The detector name for a pair that must NOT be merged, or None.
+
+    The single definition of "this is a disagreement, not a duplicate",
+    consulted from inside `_pick_keeper` so both dedup paths — and any
+    future one — inherit it. Polarity is checked first: when a pair
+    trips both, the negation is the more legible frame for the reviewer.
+    """
+    if _polarity_flip(sig_a, sig_b):
+        return "polarity"
+    if _numeric_divergence(sig_a.numbers, sig_b.numbers):
+        return "numeric"
+    return None
+
+
 def _polarity_skip(
     a: Memory, b: Memory, similarity: float, method: str, detector: str = "polarity"
 ) -> PolaritySkippedPair:
@@ -593,52 +764,45 @@ def _find_dedup_jaccard(
     # a compound the pair shares must stay one token (symmetric
     # expansion of a shared compound strictly inflates Jaccard; see
     # the helper's docstring), so it can't be precomputed per memory.
-    token_sets: list[tuple[Memory, set[str], bool, frozenset[str]]] = []
+    token_sets: list[tuple[Memory, set[str], _BodySignals]] = []
     for m in memories:
-        body = _strip_provenance(m.body)
         token_sets.append(
             (
                 m,
-                _raw_content_token_set(body),
-                _has_negation(body),
-                _numeric_token_set(body),
+                _raw_content_token_set(_strip_provenance(m.body)),
+                _body_signals(m.body),
             )
         )
     out: list[DedupCandidate] = []
     skipped: list[PolaritySkippedPair] = []
     for i in range(len(token_sets)):
-        m_i, t_i, neg_i, nums_i = token_sets[i]
+        m_i, t_i, sig_i = token_sets[i]
         if not t_i:
             continue
         for j in range(i + 1, len(token_sets)):
-            m_j, t_j, neg_j, nums_j = token_sets[j]
+            m_j, t_j, sig_j = token_sets[j]
             if not t_j:
                 continue
             sim = _pairwise_content_jaccard(t_i, t_j)
             if sim < threshold:
                 continue
-            if neg_i != neg_j:
-                # Opposite polarity: stopword stripping made the
-                # negation invisible to the token sets, so a high
-                # similarity here labels a contradiction as a
-                # duplicate. Skip the candidate — the contradiction
-                # flow decides — but surface the pair: the guard also
-                # catches genuine duplicates that differ only by an
-                # incidental negator, and a bare `continue` hid them
-                # from the human-review report forever. Threshold
-                # filtering above keeps this list small.
-                skipped.append(_polarity_skip(m_i, m_j, sim, "jaccard"))
-                continue
-            if _numeric_divergence(nums_i, nums_j):
-                # Mutual numeric divergence on near-identical bodies:
-                # two claims disagreeing about a value ("port 5432" vs
-                # "5433"). Merging would tombstone one side on recency
-                # rather than truth — route to the conflict flow.
+            try:
+                keeper, duplicate = _pick_keeper(
+                    m_i, m_j, signals_a=sig_i, signals_b=sig_j
+                )
+            except ConflictingPair as conflict:
+                # A contradiction signal, not a duplicate — `_pick_keeper`
+                # refuses to crown a keeper, so no candidate exists to
+                # tombstone. Surface the pair rather than dropping it: the
+                # guards also catch genuine duplicates (an incidental
+                # negator, an added-detail number) that a reviewer should
+                # be able to wave through, and a bare `continue` hid those
+                # from the report forever. Threshold filtering above keeps
+                # the list small.
                 skipped.append(
-                    _polarity_skip(m_i, m_j, sim, "jaccard", detector="numeric")
+                    _polarity_skip(m_i, m_j, sim, "jaccard", detector=conflict.detector)
                 )
                 continue
-            keeper, duplicate = _pick_keeper(m_i, m_j)
             out.append(
                 DedupCandidate(
                     keeper_id=keeper.id,
@@ -659,11 +823,12 @@ def _find_dedup_semantic(
     cache from `bettermemory.semantic` — a consolidate run after
     normal use will hit the cache for most memories.
     """
-    # Materialize embeddings (and polarity) once per memory; the cache
-    # makes repeats cheap but we still pay the dict lookup, so a local
-    # list is faster. Embeddings (and polarity) judge the
-    # provenance-stripped body, mirroring the Jaccard path.
-    embedded: list[tuple[Memory, Any, bool, frozenset[str]]] = []
+    # Materialize embeddings (and the contradiction signals) once per
+    # memory; the cache makes repeats cheap but we still pay the dict
+    # lookup, so a local list is faster. Both judge the
+    # provenance-stripped body — `_body_signals` strips its own input —
+    # mirroring the Jaccard path.
+    embedded: list[tuple[Memory, Any, _BodySignals]] = []
     for memory in memories:
         raw_body = memory.body.strip()
         body = _strip_provenance(memory.body).strip()
@@ -681,14 +846,14 @@ def _find_dedup_semantic(
         if body != raw_body:
             updated_key += "#unstamped"
         vec = cached_embed(model, memory.id, updated_key, body)
-        embedded.append((memory, vec, _has_negation(body), _numeric_token_set(body)))
+        embedded.append((memory, vec, _body_signals(memory.body)))
 
     out: list[DedupCandidate] = []
     skipped: list[PolaritySkippedPair] = []
     for i in range(len(embedded)):
-        m_i, v_i, neg_i, nums_i = embedded[i]
+        m_i, v_i, sig_i = embedded[i]
         for j in range(i + 1, len(embedded)):
-            m_j, v_j, neg_j, nums_j = embedded[j]
+            m_j, v_j, sig_j = embedded[j]
             try:
                 sim = cosine_similarity_normalized(v_i, v_j)
             except ValueError:
@@ -700,26 +865,21 @@ def _find_dedup_semantic(
                 continue
             if sim < threshold:
                 continue
-            if neg_i != neg_j:
-                # Opposite polarity: embedding models score "Use X" /
-                # "Do not use X" well above the cosine threshold, so a
-                # high similarity here labels a contradiction as a
-                # duplicate and `consolidate --apply` would tombstone
-                # one side unreviewed. Skip the candidate — same guard
-                # as the Jaccard loop; the contradiction flow decides —
-                # but surface the pair on the report rather than
-                # dropping it silently (see the Jaccard loop's note).
-                skipped.append(_polarity_skip(m_i, m_j, sim, "semantic"))
-                continue
-            if _numeric_divergence(nums_i, nums_j):
-                # Same guard as the Jaccard loop: mutual numeric
-                # divergence is a value-level disagreement, not a
-                # paraphrase — embeddings barely notice a changed digit.
+            try:
+                keeper, duplicate = _pick_keeper(
+                    m_i, m_j, signals_a=sig_i, signals_b=sig_j
+                )
+            except ConflictingPair as conflict:
+                # Same fence as the Jaccard loop, and this path needs it
+                # just as badly: embedding models score "Use X" / "Do not
+                # use X" well above the cosine threshold and barely notice
+                # a changed digit. Surfaced, not swallowed.
                 skipped.append(
-                    _polarity_skip(m_i, m_j, sim, "semantic", detector="numeric")
+                    _polarity_skip(
+                        m_i, m_j, sim, "semantic", detector=conflict.detector
+                    )
                 )
                 continue
-            keeper, duplicate = _pick_keeper(m_i, m_j)
             out.append(
                 DedupCandidate(
                     keeper_id=keeper.id,

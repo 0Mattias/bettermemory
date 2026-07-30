@@ -168,6 +168,14 @@ _RANKER_INPUTS_DIVERGENT = frozenset(
         # price the same documents twice. `handlers.search.SearchPool`
         # carries the long form.
         "corpus_stats_provider",
+        # An OUT-parameter, not a ranking input — it collects which leg
+        # surfaced each hit and cannot change an order. Filed divergent
+        # rather than threaded because this page has nothing to file it
+        # against: `semantic_model` is already divergent above, so every
+        # hit here would report `lexical` and the chip would restate
+        # `_lexical_only_note` once per row. Thread it the day this
+        # process ranks with a model.
+        "matched_leg_out",
     }
 )
 

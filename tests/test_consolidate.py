@@ -15,13 +15,16 @@ from typing import Any
 import pytest
 
 from bettermemory.config import Config
+from bettermemory.conflicts import ConflictQueue
 from bettermemory.consolidate import (
     AUTO_CONSOLIDATE_EVENT,
     ColdScopeSuggestion,
+    ConflictingPair,
     ConsolidateReport,
     DedupCandidate,
     DemotionCandidate,
     ScopeTypoPair,
+    _find_dedup_with_skips,
     _pick_keeper,
     _write_last_run,
     consolidate,
@@ -162,6 +165,88 @@ def test_pick_keeper_ulid_breaks_all_ties() -> None:
 
 
 # ---------------------------------------------------------------------------
+# The contradiction fence — pairs that have no keeper at all
+# ---------------------------------------------------------------------------
+
+# Verbatim bodies from the 2026-07-30 audit, with the detector each must
+# trip. Their MEASURED similarity over the shipped dedup tokeniser
+# (`_pairwise_content_jaccard` over `_raw_content_token_set`): 1.0 for the
+# inverse-clause pair — its token sets are IDENTICAL, which is why no
+# threshold can be the fence — 0.75 for the both-negated pair, and 0.667
+# for the numeric pair.
+_ADVERSARIAL_PAIRS = (
+    (
+        "Deploy with the blue-green strategy; never do in-place.",
+        "Deploy with the in-place strategy; never do blue-green.",
+        "polarity",
+    ),
+    (
+        "Always squash-merge; do not rebase.",
+        "Never squash-merge; always rebase.",
+        "polarity",
+    ),
+    (
+        "The staging DB listens on port 5432.",
+        "The staging DB listens on port 5433.",
+        "numeric",
+    ),
+)
+
+
+@pytest.mark.parametrize(("body_a", "body_b", "detector"), _ADVERSARIAL_PAIRS)
+def test_pick_keeper_refuses_a_contradiction(
+    body_a: str, body_b: str, detector: str
+) -> None:
+    """The fence itself: a pair carrying a contradiction signal has no
+    keeper, so no caller can build a `DedupCandidate` for it.
+
+    Two of these three defeat the pre-3.31 guards. `_has_negation` is
+    whole-body token presence and therefore order-blind: both members of
+    the blue-green pair contain "never", so the polarity XOR saw matching
+    polarity while the token sets measured Jaccard 1.0 — above even the
+    unattended 0.90 threshold, with zero headroom. Same for the
+    squash-merge pair, where both bodies are negated.
+    """
+    with pytest.raises(ConflictingPair) as refusal:
+        _pick_keeper(_memory(body_a), _memory(body_b))
+    assert refusal.value.detector == detector
+
+
+def test_pick_keeper_refuses_without_precomputed_signals() -> None:
+    """`signals_a` / `signals_b` are a cache, not a gate.
+
+    The dedup loops pass them because the comparison is O(N²); a caller
+    that omits them must still hit the fence, or the fence is back to
+    being something a call site can forget.
+    """
+    body_a, body_b, _detector = _ADVERSARIAL_PAIRS[0]
+    with pytest.raises(ConflictingPair):
+        _pick_keeper(_memory(body_a), _memory(body_b), signals_a=None, signals_b=None)
+
+
+def test_clause_scoped_polarity_requires_a_mutual_swap() -> None:
+    """The order-sensitive rule stays off agreeing bodies.
+
+    A comma is deliberately not a clause boundary, so "…with the CLI, not
+    by hand" reads as negating its whole clause — including `cli`, which
+    the other body asserts. That one-sided difference is scope, not
+    disagreement (the same reasoning `_numeric_divergence` uses), so only
+    a swap in BOTH directions counts. Without the mutuality requirement
+    this pair would stop deduping and file a conflict nobody has to rule
+    on.
+    """
+    a = _memory(
+        "Run database migrations with the migrate CLI, not by hand on the prod host."
+    )
+    b = _memory(
+        "Do not run database migrations by hand on the prod host; use the migrate CLI."
+    )
+    candidates, skipped, _method = _find_dedup_with_skips([a, b], threshold=0.6)
+    assert skipped == []
+    assert len(candidates) == 1
+
+
+# ---------------------------------------------------------------------------
 # Dedup pass
 # ---------------------------------------------------------------------------
 
@@ -265,6 +350,27 @@ def test_semantic_dedup_skips_opposite_polarity_pair() -> None:
     )
     assert method == "semantic"
     assert len(candidates) == 1
+
+
+@pytest.mark.parametrize(("body_a", "body_b", "detector"), _ADVERSARIAL_PAIRS)
+def test_semantic_dedup_inherits_the_same_fence(
+    body_a: str, body_b: str, detector: str
+) -> None:
+    """The embedding path gets the refusal from `_pick_keeper` rather
+    than from a second copy of the checks.
+
+    Round 84's defect was precisely a guard added to one loop and not
+    the other, and the numeric detector had to be added to both by hand
+    for the same reason. With the refusal inside keeper selection there
+    is no second copy to forget. The stub model scores every pair
+    cosine 1.0, so similarity is out of the picture entirely.
+    """
+    candidates, skipped, method = _find_dedup_with_skips(
+        [_memory(body_a), _memory(body_b)], semantic_model=_FixedVectorModel()
+    )
+    assert method == "semantic"
+    assert candidates == []
+    assert [p.detector for p in skipped] == [detector]
 
 
 def test_polarity_guard_surfaces_skipped_pair_on_report(store: Store) -> None:
@@ -2477,6 +2583,65 @@ def test_auto_consolidate_dedup_keeper_retains_identity(
     original = originals[keeper.id]
     assert keeper.created == original.created
     assert keeper.body == original.body
+
+
+def test_auto_apply_cannot_tombstone_a_contradiction(tmp_path: Path) -> None:
+    """The one path that mutates the store with nobody reviewing the diff,
+    driven for real: `[consolidate] auto_apply = true` through the Stop
+    hook's `run_audit`, over a store holding all three adversarial pairs.
+
+    The control duplicate is what makes this test mean anything. It
+    proves the pass ran, cleared its debounce, stayed under the size
+    guard and was capable of tombstoning on this very run — without it a
+    consolidation that silently no-op'd (wrong config key, exception
+    swallowed by the hook's `except`) would pass with all six
+    contradictions "safe".
+
+    Only the blue-green pair (Jaccard 1.0) reaches the unattended 0.90
+    threshold at all; the other two are below it and therefore
+    uncomparable AND unmergeable. The claim under test is the whole
+    store's outcome, not one detector's: after an unattended pass, every
+    contested memory is still active.
+    """
+    from bettermemory.config import Config, ConsolidateConfig, StorageConfig
+    from bettermemory.hook import run_audit
+
+    mem_dir = tmp_path / "mem"
+    store = Store(mem_dir)
+    contested = {
+        store.write(content=body, scopes=["infrastructure"]).id
+        for body_a, body_b, _detector in _ADVERSARIAL_PAIRS
+        for body in (body_a, body_b)
+    }
+    control = {
+        store.write(content="alpha beta gamma delta epsilon zeta", scopes=["tools"]).id
+        for _ in range(2)
+    }
+    assert len(contested) == 6 and len(control) == 2
+
+    run_audit(
+        user_message="hello",
+        assistant_response="hi",
+        session_id="sess-adversarial",
+        config=Config(
+            storage=StorageConfig(directory=str(mem_dir)),
+            consolidate=ConsolidateConfig(auto_apply=True),
+        ),
+    )
+
+    events = [e for e in iter_events(mem_dir) if e["kind"] == AUTO_CONSOLIDATE_EVENT]
+    assert len(events) == 1 and events[0]["status"] == "ran"
+    assert events[0]["tombstoned"] == 1  # the control pair, and only it
+
+    active = {m.id for m in store.load_all()}
+    assert contested <= active
+    assert len(control & active) == 1
+
+    # Routed, not merely spared: the pair the pass actually compared is
+    # in the queue for a model to rule on.
+    queued = ConflictQueue(mem_dir).pending()
+    assert [row.detector for row in queued] == ["polarity"]
+    assert {queued[0].a_id, queued[0].b_id} <= contested
 
 
 # ---------------------------------------------------------------------------

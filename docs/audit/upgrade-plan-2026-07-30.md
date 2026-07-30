@@ -581,6 +581,41 @@ now; (a)/(b) measure first, fix or close-with-rationale.
 
 ### Phase 3 — Trust recut: evidence, not verdicts (M/L; the design core)
 
+**PHASE STATUS: DONE 2026-07-30.** B1 BENCH-GATE PASSED on the full 30-repo
+corpus; B2a shipped; B2b implemented-but-NOT-flipped (correctly — the
+measurement says it should not be); B3 shipped as `matched_leg` + a recut
+label; B4 and B5 shipped. Suite 4,073 passed / 16 skipped default,
+3,998 / 3 / 8 embeddings; ruff, mypy, pyright clean.
+
+**B1 measured result** (`bench/rot/results/multirepo-anchored-2026-07-30.json`,
+37,635 claims, 30 repos): the new `drift_only_relative_cite_anchored` arm
+flags 0.73% of claims at **precision 1.000, false-alarm rate 0.0,
+alerts/catch 1.0, J=0.032 pooled** (J=0.0505 on path-shaped claims, n=5,272,
+Fisher p=0.0), repo-level paired **19 wins / 0 losses / 7 ties**. The
+pre-registered `drift_only_relative_cite` arm still reads exactly 0.0, and
+`multirepo.json` + `scorecard.json` are untouched — the new arm is appended
+and separately published, so no prediction was regraded. Honest reading: the
+recall is SMALL (0.73% against a 22.9% base rate); what the arm buys is that
+a leg which fired on nothing now fires precisely on the subset it can prove.
+- **B2b stays unflipped, on evidence.** The plan's flip condition was pooled
+  alerts-per-catch >= 1.5. The commit leg's own measured cost does not meet
+  it, so `commit_drift_count` stays in the escalation disjunction; the switch
+  is isolated at one named place with a test pinning current behaviour, so a
+  future measurement can flip it without archaeology. The demotion branch is
+  untouched and separately pinned — removing it would resurrect the J=0.000
+  constant function that Phase 0's postmortem memorialises.
+- **B1 was NOT inert when first implemented**, which the AC required for a
+  bench-gated item. Caught by verification; resolved by actually running the
+  30-repo corpus rather than by adding a flag.
+- Two embeddings-only test failures were invisible to every lane (they all
+  ran the default venv): `matched_leg` legitimately reads `both` when the
+  semantic leg is installed. Marked `no_extras` rather than loosened, because
+  the exact string is what distinguishes the leg that RAN from the mode
+  requested.
+- Environment: iCloud corrupted `.venv` a second time, now `fastapi` (29 of
+  29 files renamed). It presents as 11 mypy + 6 pyright errors in `web.py`
+  and nothing else. Rebuild, do not debug.
+
 Read the trust fact pack in full first — it has 12 hazards, and B1/B2
 walk through frozen pre-registrations and signature pins.
 

@@ -349,6 +349,48 @@ deletions in front of it. `detect_path_drift` excludes relative paths by
 design, so **the citation style a developer naturally writes gets no path
 protection at all, even when there is finally something to catch.**
 
+### The anchored-relative arm, 2026-07-30: the gap above, measured shut
+
+P2 stands as graded — it describes the three arms that existed when it was
+written, and `drift_only_relative_cite` still reads exactly 0.0 in the run
+below. What follows is a **fourth arm appended after the fact**, not a
+regrade: `drift_only_relative_cite_anchored` resolves each relative citation
+against the memory's own recorded `origin.worktree_root` before checking
+whether the file exists. Artifact:
+`results/multirepo-anchored-2026-07-30.json`. The frozen `multirepo.json`
+and `scorecard.json` are untouched, so every published prediction keeps the
+grade it was given.
+
+Pooled over the same 37,635 claims:
+
+| arm | flag rate | precision | false alarms | J | alerts/catch |
+|---|---|---|---|---|---|
+| `drift_only_relative_cite` | 0.0% | — | — | 0.000 | — |
+| `drift_only_relative_cite_anchored` | 0.73% | **1.000** | **0.0%** | 0.032 | **1.0** |
+
+On path-shaped claims alone (n=5,272, base rate 30.8%) the anchored arm
+reaches J=0.0505 at precision 1.000, Fisher p=0.0. Repo-level paired across
+the corpus: **19 wins, 0 losses, 7 ties**.
+
+Read it honestly in both directions. **Zero false alarms and one alert per
+catch** is the number that matters, because the failure mode this whole
+directory exists to avoid is a detector that cries wolf — the shipped
+file-level incumbent sits at 3.4 alerts per catch with 0.2945 precision, and
+this leg is strictly better on both. But **the recall is small**: 0.73% of
+claims, against a 22.9% base rate. This is not a detector that finds most
+rot. It closes a leg that was firing on *nothing at all* and makes it fire,
+precisely, on the subset it can actually prove. The absolute-citation arm's
+J=1.0 on the same path claims is the ceiling, and the distance between them
+is simply how few claims are written as checkable relative citations.
+
+The cross-host case is the one that would have made this dangerous: a store
+synced from another machine carries a `worktree_root` that does not exist
+locally, and checking against it would mark every citation missing at once —
+`always_flag` wearing a new hat. The check fails open when the recorded root
+is absent or unstattable, which is a deliberate reversal of the bias
+`origin.py` records for files *underneath* a live worktree, scoped to the
+root's own liveness and argued at the code.
+
 ### P7 fired: stratum D is underpowered, and it is published that way
 
 Only **7** repositories cleared the deletion gate against a floor of 8, so

@@ -7,8 +7,11 @@ Four selectable rankers, dispatched by `search(mode=...)`:
   is provided. Gracefully degrades to keyword+BM25 fusion when no
   model is available, so the flipped default doesn't add a dep
   requirement. The fused score lives in a different (much smaller)
-  scale than the single-ranker scores — branch on `relevance`, not
-  raw `score`, when comparing across modes.
+  scale than the single-ranker scores, so raw `score` is not
+  comparable across modes — read `relevance` together with
+  `matched_leg` instead. `relevance` measures LEXICAL COVERAGE only,
+  which is 0 for every pure-paraphrase hit; `matched_leg` says which
+  ranker surfaced the hit and is what makes that 0 readable.
 - ``keyword`` (legacy default in 1.6.0): the original TF +
   scope-weighted + coverage + recency scorer. Cheap, deterministic,
   good on identifier-heavy queries but lacks IDF — underperforms on
@@ -1009,12 +1012,85 @@ def _strip_stopwords(tokens: list[str]) -> list[str]:
     return [t for t in tokens if t not in _STOPWORDS]
 
 
+# `matched_leg` vocabulary: WHICH RANKER surfaced a hit. Reported per hit
+# alongside `relevance` so the caller can read the label in the light of
+# how the hit was found — evidence about the retrieval, not a second
+# verdict about the memory.
+#
+# The pairing is load-bearing for a paraphrase hit. `_score_semantic`
+# deliberately reports only the query tokens that LITERALLY appear in the
+# body or scopes, so a pure-semantic hit carries `match_terms=[]`, hence
+# coverage 0.0, hence `relevance="low"`. That label is honest about
+# lexical coverage and actively misleading about the hit: the 4x-cost
+# capability the caller paid for surfaces its results under the one field
+# the tool description tells the caller to treat as noise.
+# `matched_leg="semantic"` is the missing half — low coverage on a
+# semantic-only leg is the EXPECTED reading of a match by meaning, not
+# evidence against it.
+LEG_LEXICAL = "lexical"
+LEG_SEMANTIC = "semantic"
+LEG_BOTH = "both"
+
+
+def _matched_leg(*, lexical: bool, semantic: bool) -> str:
+    """Leg label for one hit; `""` when no ranker ran at all.
+
+    The empty case is browse mode (`allow_empty_query` with no query
+    tokens): candidates are filtered and date-sorted, never ranked, so
+    there is no leg to report and the field is omitted rather than
+    guessed. The leg reports what RAN, not what was requested — a
+    `mode="semantic"` search whose encode fails and degrades to the
+    keyword scorer reports `lexical`, because that is what produced the
+    ordering the caller is looking at.
+    """
+    if lexical and semantic:
+        return LEG_BOTH
+    if semantic:
+        return LEG_SEMANTIC
+    if lexical:
+        return LEG_LEXICAL
+    return ""
+
+
 def _relevance_label(matched_unique: int, query_unique: int) -> str:
     """Map coverage (fraction of distinct query terms that hit) to a label.
 
     Calibrated for short queries: matching 1/1 or 2/2 is "high"; matching 1/3
     is "low". The thresholds are deliberately generous on the high side
     because a 1-word query with a strong match shouldn't be downgraded.
+
+    NEGATIVE RESULT, 2026-07-30 — the recut that was NOT shipped. The
+    plan for this label was to stop scoring pure-semantic hits by lexical
+    coverage and label them from calibrated cosine bands instead, gated
+    on the telemetry_v2 shadow replay: no user-message-length bucket at a
+    0% high-rate, and a max/min bucket spread under 3x. Replaying the
+    dogfood store's `turn_audited` log (317 turns, 274 carrying hits;
+    the harness reproduces both logged labels exactly, so it is measuring
+    the shipped rules and not a paraphrase of them) returns:
+
+        user message chars     0-40   40-80   80-150   150+
+        turns                    65      79       63      67
+        v1 "high" rate          43%     25%       5%      4%
+
+    and — the finding that closed the item — **0 of those 274 top hits
+    carried `matched_unique == 0`**. The store runs the default install,
+    so no semantic leg ever ran, so the population a cosine-band rule
+    changes has ZERO representation in the instrument the bar is measured
+    on. A semantic-only rule is provably byte-identical on that corpus:
+    it cannot clear the 3x bar, and it cannot fail it either. Shipping
+    bands anyway would have been calibrating a verdict on taste, which is
+    the one thing this label's history says not to do (see
+    `_relevance_label_v2`). So v1 stands, `matched_leg` ships instead of
+    a new number, and `search` events now carry the leg — that is the
+    instrument whose absence made the question unanswerable.
+
+    Worth recording for whoever re-opens this: on the same 274 turns the
+    v2 rule now profiles 46/62/86/100, i.e. no zero bucket and a 2.17x
+    spread, so it PASSES the stated bar while remaining the
+    length-credulous rule this project measured and rejected. The bar is
+    a necessary condition, not a sufficient one — exactly what
+    `_relevance_label_v2` says about the screen it comes from. Do not use
+    it alone as a gate.
     """
     if query_unique <= 0:
         return "low"
@@ -1707,6 +1783,44 @@ def score_memory(
 
 _RRF_K_DEFAULT = 60
 
+# Relative score lead the top hit must hold over the runner-up before a
+# caller's `expand_top` inlines its body (`handlers/search.py`). Lives
+# here because it is DERIVED from RRF's spacing rather than chosen: a
+# fused score is a sum of `1/(k + rank)` terms, so a top hit that leads
+# by exactly ONE rank slot in every ranker scores `(k+2)/(k+1)` of the
+# runner-up — 1.6% at the canonical k — which is the smallest possible
+# non-tie and carries no information beyond "not tied". A TWO-slot lead,
+# `(k+3)/(k+1)`, is the first margin a single position disagreement
+# cannot manufacture, so that is the bar. Measured on the dogfood store's
+# logged searches, the median top/runner-up ratio is 1.016 — the one-slot
+# case, i.e. most hybrid results genuinely are near-ties and the
+# derivation is sitting right on top of the mass of the distribution.
+#
+# Raw-score modes (keyword / bm25 / semantic) separate far more widely
+# than fused ones, so the same constant is loose there by construction.
+# That is the correct direction: it is calibrated on the tightest scale
+# in use, and a mode whose scores actually spread has already made the
+# caller's case for it.
+EXPAND_TOP_SCORE_MARGIN = (_RRF_K_DEFAULT + 3) / (_RRF_K_DEFAULT + 1) - 1.0
+
+
+def top_hit_leads_runner_up(top_score: float, next_score: float) -> bool:
+    """Does the top hit lead the runner-up by more than a rank slot?
+
+    The leg-agnostic half of the `expand_top` gate. The lexical half —
+    a "high" coverage label — cannot fire for a pure-semantic hit
+    (`match_terms` is empty by construction), which is how the 4x-cost
+    semantic capability ended up unable to trigger the one affordance
+    that shows the caller a full body.
+
+    Zero or negative runner-up scores mean nothing to compare against on
+    a ratio, so any positive top score leads. An all-zero result set
+    (browse mode) leads nothing.
+    """
+    if next_score <= 0.0:
+        return top_score > 0.0
+    return top_score >= next_score * (1.0 + EXPAND_TOP_SCORE_MARGIN)
+
 
 def reciprocal_rank_fusion(
     ranking_lists: list[list[str]],
@@ -1854,6 +1968,13 @@ def _build_hit(
         path_drift_verified_paths=list(drift.verified),
         path_drift_expected_absent_paths=list(drift.expected_absent),
         path_drift_dropped_as_route_paths=list(drift.dropped_as_route),
+        # The counts and the full path list stay full-set — every
+        # absence the caller could see before is still on the hit. This
+        # is the provenance subset the verdict escalates on, and it has
+        # to ride the hit because the response builder is where the
+        # verdict is computed and a bare path string carries no trace of
+        # where it came from.
+        path_drift_claim_anchored_missing_paths=list(drift.claim_anchored_missing),
     )
 
 
@@ -2126,6 +2247,7 @@ def search(
     corroboration_boost: bool = False,
     allow_empty_query: bool = False,
     corpus_stats_provider: Callable[[list[str]], CorpusStats | None] | None = None,
+    matched_leg_out: dict[str, str] | None = None,
 ) -> list[MemoryHit]:
     """Rank `memories` against `query` and return up to `max_results` hits.
 
@@ -2189,12 +2311,26 @@ def search(
       stopword-only query is ranked on its unstripped tokens instead
       (see the fallback note in the body), so stopword curation can
       never make a non-empty query unanswerable.
+    - `matched_leg_out`: optional dict the function fills with
+      `{memory_id: "lexical" | "semantic" | "both"}` for the hits it
+      returns — WHICH RANKER surfaced each one. An out-parameter rather
+      than a `MemoryHit` field because the leg is a property of THIS
+      CALL's ranker configuration, not of the memory, and every other
+      consumer of `MemoryHit` (memory_show, memory_list, the web detail
+      page) has no legs to report; the MCP search handler is the one
+      surface where it is actionable. `None` (the default) skips the
+      bookkeeping entirely, so every existing caller is byte-stable in
+      both output and cost. Browse-mode hits get no entry — nothing
+      ranked them.
 
     Score semantics vary by mode: keyword/BM25/semantic scores live on
     different scales and are not comparable across modes. Hybrid scores
     are RRF outputs (~0.01-0.05 range, summed `1/(k+rank)` over rankers).
-    Use the `relevance` label, not the raw score, when comparing hits
-    across modes.
+    Comparing hits across modes on the raw score is meaningless; compare
+    on `relevance` plus `matched_leg`, which together say how much of the
+    query the hit literally contains AND which ranker found it —
+    `relevance` alone answers only the first, and answers it "low" for
+    every pure-paraphrase hit.
     """
     # Runtime guard against unknown modes. The `SearchMode` Literal pins
     # this at the type-checker layer, but the handler accepts an opaque
@@ -2264,6 +2400,13 @@ def search(
     if not candidates:
         return []
 
+    # `matched_leg` bookkeeping. Populated only when the caller asked for
+    # it, so the default path pays nothing; the sets are the ids each leg
+    # actually SCORED, which is what makes the reported leg a statement
+    # about the run rather than about `mode`.
+    lexical_ids: set[str] = set()
+    semantic_ids: set[str] = set()
+
     # Tokenize each candidate exactly once per call and thread the streams
     # through every consumer below — the keyword scorer, compute_idf, BM25,
     # and the semantic literal-match block otherwise re-tokenize the same
@@ -2300,6 +2443,8 @@ def search(
         # clock. ULID-shaped ids are lexically time-ordered, so the final
         # tiebreaker also gives "newer wins" semantics.
         scored.sort(key=lambda x: (x[1], x[0].created, x[0].id), reverse=True)
+        if matched_leg_out is not None:
+            lexical_ids = {memory.id for memory, _, _ in scored}
     elif mode == "bm25":
         scored = _score_bm25(
             candidates,
@@ -2314,11 +2459,14 @@ def search(
             corpus_stats=corpus_stats,
         )
         scored.sort(key=lambda x: (x[1], x[0].created, x[0].id), reverse=True)
+        if matched_leg_out is not None:
+            lexical_ids = {memory.id for memory, _, _ in scored}
     elif mode == "semantic":
         # mypy: semantic_model is not None here (guarded above), but the
         # narrowing doesn't survive the assert-via-raise idiom across the
         # block boundary. Re-assert for the type checker.
         assert semantic_model is not None
+        semantic_leg_ran = True
         try:
             scored = _score_semantic(
                 candidates,
@@ -2342,6 +2490,7 @@ def search(
                 "falling back to keyword ranking",
                 exc,
             )
+            semantic_leg_ran = False
             scored = _score_keyword(
                 candidates,
                 query_tokens,
@@ -2353,6 +2502,17 @@ def search(
                 candidate_tokens=candidate_tokens,
             )
         scored.sort(key=lambda x: (x[1], x[0].created, x[0].id), reverse=True)
+        if matched_leg_out is not None:
+            # `mode="semantic"` is a REQUEST, not a report: on the
+            # encode-failure degrade above the ordering the caller is
+            # looking at came from the keyword scorer, and saying
+            # "semantic" here would attribute a lexical ranking to a leg
+            # that never ran.
+            scored_ids = {memory.id for memory, _, _ in scored}
+            if semantic_leg_ran:
+                semantic_ids = scored_ids
+            else:
+                lexical_ids = scored_ids
     else:  # mode == "hybrid"
         rankings: list[list[tuple[Memory, float, list[str]]]] = [
             _score_keyword(
@@ -2378,21 +2538,27 @@ def search(
                 corpus_stats=corpus_stats,
             ),
         ]
+        # Snapshot the LEXICAL legs before the semantic ranking is
+        # appended: `rankings` is a working list and indexing into it
+        # after the fact ("everything but the last entry") silently
+        # changes meaning the day a fourth ranker joins.
+        if matched_leg_out is not None:
+            lexical_ids = {
+                memory.id for ranking in rankings for memory, _, _ in ranking
+            }
         if semantic_model is not None:
             try:
-                rankings.append(
-                    _score_semantic(
-                        candidates,
-                        query,
-                        semantic_model,
-                        now=now,
-                        half_life_days=half_life_days,
-                        matched_terms_fallback=list(dict.fromkeys(query_tokens)),
-                        applied_by_id=applied_by_id,
-                        negative_by_id=negative_by_id,
-                        corroboration_boost=corroboration_boost,
-                        candidate_tokens=candidate_tokens,
-                    )
+                semantic_ranking = _score_semantic(
+                    candidates,
+                    query,
+                    semantic_model,
+                    now=now,
+                    half_life_days=half_life_days,
+                    matched_terms_fallback=list(dict.fromkeys(query_tokens)),
+                    applied_by_id=applied_by_id,
+                    negative_by_id=negative_by_id,
+                    corroboration_boost=corroboration_boost,
+                    candidate_tokens=candidate_tokens,
                 )
             except Exception as exc:  # noqa: BLE001 — degrade to lexical fusion.
                 # The "hybrid gracefully degrades" guarantee must cover a
@@ -2404,11 +2570,24 @@ def search(
                     "fusing keyword+bm25 only",
                     exc,
                 )
+            else:
+                rankings.append(semantic_ranking)
+                if matched_leg_out is not None:
+                    semantic_ids = {memory.id for memory, _, _ in semantic_ranking}
         scored = _hybrid_fuse(rankings, rrf_k=rrf_k)
 
+    trimmed = scored[:max_results]
+    if matched_leg_out is not None:
+        for memory, _, _ in trimmed:
+            leg = _matched_leg(
+                lexical=memory.id in lexical_ids,
+                semantic=memory.id in semantic_ids,
+            )
+            if leg:
+                matched_leg_out[memory.id] = leg
     return [
         _build_hit(memory, score, matched, query_unique=query_unique)
-        for memory, score, matched in scored[:max_results]
+        for memory, score, matched in trimmed
     ]
 
 

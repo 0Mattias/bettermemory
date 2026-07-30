@@ -36,6 +36,11 @@ from bettermemory.server import build_server
 from bettermemory.session import SessionState
 from bettermemory.store import Store
 
+# The verbatim adversarial bodies live with the fence that refuses them
+# (`consolidate._pick_keeper`); one copy, because the whole point is that
+# the text is exact.
+from .test_consolidate import _ADVERSARIAL_PAIRS
+
 _T = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
@@ -102,6 +107,35 @@ def test_polarity_pair_still_skips_with_polarity_detector() -> None:
     _, skipped, _ = _find_dedup_with_skips([a, b])
     assert len(skipped) == 1
     assert skipped[0].detector == "polarity"
+
+
+@pytest.mark.parametrize(("body_a", "body_b", "detector"), _ADVERSARIAL_PAIRS)
+def test_adversarial_pair_routes_to_the_queue_only(
+    tmp_path: Path, body_a: str, body_b: str, detector: str
+) -> None:
+    """Every adversarial pair lands in the arbitration queue and in
+    NEITHER dedup candidate list — the queue is the only exit.
+
+    Driven at `threshold=0.6` so one test covers all three: two clear
+    the shipped 0.75 Jaccard gate on their own, the numeric pair
+    measures 0.667. Below a gate a pair is never compared, which also
+    means it is never merged, so the lower threshold only makes the
+    routing observable — it cannot manufacture a safety property.
+    """
+    root = tmp_path / "memories"
+    root.mkdir()
+    a, b = _memory(body_a), _memory(body_b)
+
+    candidates, skipped, _method = _find_dedup_with_skips([a, b], threshold=0.6)
+    assert candidates == []
+    assert [p.detector for p in skipped] == [detector]
+
+    counters = scan_conflicts(root, [a, b], threshold=0.6)
+    assert counters["added"] == 1
+    rows = ConflictQueue(root).pending()
+    assert [r.detector for r in rows] == [detector]
+    assert {rows[0].a_id, rows[0].b_id} == {a.id, b.id}
+    assert rows[0].status == "pending"
 
 
 def test_find_conflict_candidates_lifts_skips() -> None:

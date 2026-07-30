@@ -273,6 +273,23 @@ def main() -> int:
         for kind in (*run.CLAIM_CLASSES, "ALL")
     }
 
+    # Anchored-relative arm — APPENDED, not folded into anything above.
+    # The three arms scored so far are what PREREGISTRATION.md describes
+    # and what the published scorecard grades; this one measures behaviour
+    # that did not exist when those predictions were written, so it gets
+    # its own block and its own name. Selected BY NAME rather than by
+    # `_MODES[3]`: adding a fourth positional consumer is how the
+    # positional coupling that already makes reordering dangerous would
+    # spread.
+    anchored = [r for r in pooled if r["mode"] == "drift_only_relative_cite_anchored"]
+    path_anchored = {
+        kind: run._detector_stats(
+            [r for r in anchored if kind == "ALL" or r["kind"] == kind],
+            lambda r: r["path_drift"] > 0,
+        )
+        for kind in (*run.CLAIM_CLASSES, "ALL")
+    }
+
     # Repo-level paired comparison on alerts-per-catch.
     wins = losses = ties = 0
     for summary in per_repo:
@@ -301,6 +318,7 @@ def main() -> int:
         "python": sys.version.split()[0],
         "pooled": pooled_stats,
         "path_drift_absolute_arm": path_absolute,
+        "path_drift_anchored_relative_arm": path_anchored,
         "repo_level_paired": {
             "claim_weak_better": wins,
             "file_level_better": losses,
@@ -322,6 +340,23 @@ def main() -> int:
         )
     print(
         f"  oracle_replica         J={pooled_stats['oracle_replica']['ALL']['youden_j']}"
+    )
+    # The B1 acceptance numbers, printed beside the arm they came from
+    # rather than graded in scorecard.py: the scorecard grades
+    # PRE-registered predictions, and a threshold written after the
+    # behaviour exists is not one of those. Bar for the item: path-leg J
+    # materially > 0 at precision >= 0.9, against the relative arm's
+    # pre-registered zero.
+    rel_j = pooled_stats["path_drift_only"]["ALL"]
+    anc = path_anchored["ALL"]
+    print(
+        f"  path leg, relative arm  J={rel_j['youden_j']}  "
+        f"prec={rel_j['precision']}  flag_rate={rel_j['flag_rate']}"
+    )
+    print(
+        f"  path leg, ANCHORED arm  J={anc['youden_j']}  "
+        f"prec={anc['precision']}  flag_rate={anc['flag_rate']}  "
+        f"alerts/catch={anc['alerts_per_catch']}"
     )
     print(
         f"  repo-level paired: {wins}-{losses}-{ties}, p={report['repo_level_paired']['sign_test_p']}"

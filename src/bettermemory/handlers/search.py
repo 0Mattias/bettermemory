@@ -66,6 +66,7 @@ from ..search import (
     _filter_candidates,
     _relevance_label_v2,
     search as run_search,
+    top_hit_leads_runner_up,
 )
 from ..store import MemoryNotFoundError, Store, TombstonedError
 from ..verify import (
@@ -90,8 +91,10 @@ DESC_MEMORY_SEARCH = (
     "non-negotiable. (Full policy: the server `instructions` block.)\n\n"
     "Returns ranked hits with snippets. Per-hit fields the model "
     "should branch on:\n"
-    "- `relevance` (high/medium/low) — use this, not the raw score; "
-    'treat "low" as probable noise.\n'
+    "- `relevance` (high/medium/low) + `matched_leg` (lexical/"
+    "semantic/both) — `relevance` is how much of your query wording "
+    "the hit literally contains, not how good it is; on a `semantic` "
+    "leg it is low by construction, so read them together.\n"
     "- `staleness_verdict` (fresh / spot_check_recommended / "
     "spot_check_required) — rolled-up signal. When != fresh, "
     "the hit already carries the actionable detail (see "
@@ -120,9 +123,10 @@ DESC_MEMORY_SEARCH = (
     "re-query, different nouns.\n"
     "- `scopes` (optional): filter to scope union.\n"
     "- `max_results` (default 5, cap 50).\n"
-    "- `expand_top=True`: inline the full body of the top hit when "
-    'its relevance is "high" — saves a memory_show round trip and '
-    "surfaces the full path_drift + commit_drift detail.\n"
+    "- `expand_top=True`: inline the full body of the top hit when it "
+    "has high `relevance` or a decisive score lead over the runner-up "
+    "— saves a memory_show round trip and surfaces the full "
+    "path_drift + commit_drift detail.\n"
     "- `auto_scope=True` (default): filter to current repo+worktree; "
     "memories with no recorded origin always pass as global. Set "
     "False for explicit cross-project queries.\n"
@@ -836,6 +840,11 @@ async def memory_search(
     applied_by_id = ranking.applied_by_id
     negative_by_id = ranking.negative_by_id
 
+    # Filled by `run_search` with `{memory_id: lexical|semantic|both}` for
+    # the returned hits — see `search.search`'s `matched_leg_out` note for
+    # why the leg travels as an out-parameter rather than a `MemoryHit`
+    # field.
+    matched_leg: dict[str, str] = {}
     hits = run_search(
         memories,
         query,
@@ -857,6 +866,7 @@ async def memory_search(
         # short-circuiting to an empty list on the stopword check.
         allow_empty_query=since_prior_session,
         corpus_stats_provider=corpus_stats_provider,
+        matched_leg_out=matched_leg,
     )
     # Pin one `now` for the whole response so the verification verdict
     # is consistent across hits — the alternative (let each helper
@@ -864,6 +874,19 @@ async def memory_search(
     # hits if we crossed a day boundary mid-loop.
     now = utcnow()
     out = [deps.responses.hit_to_dict(h, now=now) for h in hits]
+
+    # `matched_leg`: which ranker surfaced each hit. Additive and
+    # OMITTED when there is no leg (browse mode ranks nothing), so a
+    # consumer pinned to the existing key set never meets a surprise
+    # key with a meaningless value. This is the field that makes
+    # `relevance` readable rather than misleading: `relevance` is
+    # lexical coverage, which is 0 for a pure-paraphrase hit, so a
+    # `semantic` leg reading "low" is the expected shape of a match by
+    # meaning and not the noise the description used to call it.
+    for row in out:
+        leg = matched_leg.get(row["id"])
+        if leg:
+            row["matched_leg"] = leg
 
     # Per-hit `commit_drift_count`: cheap repo-aware staleness signal
     # surfaced on every hit (parallel to `path_drift_checked` /
@@ -965,18 +988,51 @@ async def memory_search(
         )
 
     # Optional auto-expansion of the top hit. Conservative: only fires
-    # when the top hit clearly wins ("high" relevance) so the model
-    # doesn't get hosed with full bodies it didn't really need.
+    # when the top hit clearly wins, so the model doesn't get hosed with
+    # full bodies it didn't really need.
     # Path-drift runs against the expanded body — if we're already
     # paying the load cost, surfacing drift here saves a memory_show
     # round-trip when the model needs to act on it. Commit-drift is
     # bundled here too: same logic, same one-call-per-search budget,
     # only emitted when the caller's repo matches the memory's origin.
+    #
+    # "Clearly wins" used to mean `relevance == "high"` ALONE, and that
+    # single string is why the semantic ranker could not reach this
+    # affordance: `relevance` is lexical coverage and a pure-paraphrase
+    # hit carries `match_terms=[]`, so it is "low" by construction no
+    # matter how decisively it won the ranking. The gate now takes
+    # either kind of evidence — the coverage label, or a rank-1 hit that
+    # leads the runner-up by more than a rank slot's worth of score
+    # (`top_hit_leads_runner_up`, derived from RRF's own spacing).
+    #
+    # It is a UNION, not a replacement, on purpose: dropping the label
+    # arm would stop expanding some hits that expand today, and this
+    # project subtracts on telemetry, never on taste — there is no
+    # measurement saying those callers were over-served. Measured on the
+    # dogfood store's logged searches, the label arm fires on 25% of
+    # result sets and the union on 37%; the margin arm alone would have
+    # fired on 16%, so replacing rather than widening would have been a
+    # net narrowing dressed up as a fix.
+    #
+    # A sole hit does NOT qualify on the margin arm: with no runner-up
+    # there is nothing to dominate, and "clear winner of a field of one"
+    # is an absence of evidence, not evidence.
     expanded_id: str | None = None
     expanded_drift_missing = 0
+    # Kept separate from `expanded_drift_missing` on purpose. That one is
+    # a TELEMETRY field on the `search` event and stays the full-set
+    # count, so the event log keeps measuring how much path evidence the
+    # detector produced; this one is the claim-anchored subset the
+    # VERDICT escalates on. Collapsing them would either re-broaden the
+    # verdict or silently rewrite the meaning of a logged series.
+    expanded_claim_anchored_missing = 0
     expanded_commit_drift_status: str | None = None
     expanded_commits_since_verify: int | None = None
-    if expand_top and out and out[0]["relevance"] == "high":
+    expand_top_fires = bool(expand_top and out) and (
+        out[0]["relevance"] == "high"
+        or (len(out) > 1 and top_hit_leads_runner_up(out[0]["score"], out[1]["score"]))
+    )
+    if expand_top_fires:
         try:
             memory = deps.store.load_one(hits[0].id)
         except (MemoryNotFoundError, TombstonedError):
@@ -1002,6 +1058,7 @@ async def memory_search(
             if drift.has_drift or drift.verified or drift.expected_absent:
                 out[0]["path_drift"] = drift.to_dict()
             expanded_drift_missing = len(drift.missing)
+            expanded_claim_anchored_missing = len(drift.claim_anchored_missing)
             commit_drift = compute_commit_drift(
                 memory.last_verified_at,
                 memory.origin.repo if memory.origin else None,
@@ -1039,7 +1096,12 @@ async def memory_search(
             )
             out[0]["staleness_verdict"] = compute_staleness_verdict(
                 verification=top_verification,
-                path_drift_missing=expanded_drift_missing,
+                # Claim-anchored subset, matching every other verdict
+                # site. The full report — prose misses included — is
+                # already in `out[0]["path_drift"]` above, so nothing the
+                # caller could see before disappeared; only the tier
+                # narrowed. See `verdict_from_signals`.
+                path_drift_missing=expanded_claim_anchored_missing,
                 commit_drift_count=commit_drift_count_for_verdict,
             )
             expanded_id = memory.id
@@ -1072,6 +1134,13 @@ async def memory_search(
         ],
         scores=[h["score"] for h in out],
         match_counts=[len(h["match_terms"]) for h in out],
+        # Logged for the same reason as the raw features above, and for
+        # one specific one: the 2026-07-30 attempt to re-cut the label
+        # for pure-semantic hits could not be evaluated because nothing
+        # in the event history recorded whether a hit had a semantic leg
+        # at all (`search._relevance_label` carries the full negative
+        # result). A replay can now separate the populations.
+        matched_leg=[h.get("matched_leg") for h in out],
         query_unique=_query_unique,
         expand_top=expand_top,
         expanded_id=expanded_id,

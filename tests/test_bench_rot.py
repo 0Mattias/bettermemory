@@ -293,13 +293,23 @@ def test_a_silent_commit_leg_is_not_reported_as_a_measured_zero() -> None:
 def test_relative_citations_get_no_path_checking_at_all(tmp_path: Path) -> None:
     """A product property, pinned here because the benchmark cannot show it.
 
-    `detect_path_drift` excludes relative paths BY DESIGN — verify.py's
-    module docstring says so: without an anchor, checking them would mean
-    checking the cwd at retrieval time. The consequence is easy to miss
-    and worth stating plainly: a memory that cites `src/pkg/mod.py`, which
-    is how a developer naturally writes it, receives **no** path-drift
-    protection whatsoever. Only the commit-drift and calendar legs can
-    ever fire for it.
+    `detect_path_drift` excludes relative paths from a BARE call by
+    design — verify.py's module docstring says so: without an anchor,
+    checking them would mean checking the cwd at retrieval time. So a
+    memory that cites `src/pkg/mod.py`, which is how a developer
+    naturally writes it, receives no path-drift protection from a caller
+    that has no worktree to offer.
+
+    The assertion is unchanged from when it was written; its STANDING has
+    moved. It used to describe the product's entire treatment of relative
+    citations. Since the anchored citation check it describes the
+    unanchored half — and it is load-bearing for a second reason now:
+    all three pre-registered arms call `detect_path_drift(body)` exactly
+    like this, and P2 ("relative arm: exactly zero path-drift flags") is
+    graded off `_MODES[0]`. If a bare call ever starts checking relative
+    citations, a published prediction is falsified retroactively by a
+    code change. The anchored counterpart is
+    `test_the_anchored_arm_checks_what_the_relative_arm_cannot`.
 
     The rot benchmark runs both citation styles as separate arms, but on a
     repository with no deletions in the window they are indistinguishable,
@@ -314,6 +324,81 @@ def test_relative_citations_get_no_path_checking_at_all(tmp_path: Path) -> None:
             "relative-vs-absolute arms and this project's path-drift "
             "coverage claims both need revisiting"
         )
+
+
+def test_mode_arms_are_append_only() -> None:
+    """`_MODES` is consumed POSITIONALLY, and the results are published.
+
+    `_MODES[0]` is the informative arm for pooled scoring and the per-repo
+    summaries; `_MODES[1]` is the absolute path-drift arm P1 is graded
+    from. Inserting a new arm rather than appending it fails nowhere — it
+    silently rescopes statistics already published under a frozen
+    pre-registration, which is the one unrecoverable mistake available in
+    this directory. The three original names are pinned in position, and
+    anything new sits after them.
+    """
+    assert rot._MODES[0] == "drift_only_relative_cite"
+    assert rot._MODES[1] == "drift_only_absolute_cite"
+    assert rot._MODES[2] == "shipped_default"
+    assert rot._MODES[3:] == ("drift_only_relative_cite_anchored",)
+    assert len(set(rot._MODES)) == len(rot._MODES)
+
+
+def test_the_anchored_arm_checks_what_the_relative_arm_cannot(
+    tmp_path: Path,
+) -> None:
+    """The B1 measurement, end to end on a real deletion.
+
+    One module is deleted inside the window while a sibling holds its
+    directory open. Three things have to be true at once, and only
+    running the arms together shows it:
+
+    * the pre-registered relative arm flags ZERO path drift — its
+      published claim survives the new behaviour untouched;
+    * the anchored arm flags the deleted file — the gap is closed;
+    * the anchored arm flags NOTHING that is still true — the closure is
+      a detector, not a constant.
+
+    Without the third assertion this passes against a stub that marks
+    every relative citation missing, which is precisely the cross-host
+    failure mode the anchor's liveness gate exists to prevent.
+    """
+    _git_repo(tmp_path)
+    _commit(tmp_path, "src/keep.py", "KEEP = 1\n", "keep")
+    _commit(tmp_path, "src/gone.py", "GONE = 1\n", "gone")
+    t0 = subprocess.run(
+        ["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    subprocess.run(["git", "-C", str(tmp_path), "rm", "-q", "src/gone.py"], check=True)
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "commit", "-q", "-m", "delete"], check=True
+    )
+    t1 = subprocess.run(
+        ["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+    rows, _ = rot.collect_rows(tmp_path, "src", t0, t1, "")
+    relative = [r for r in rows if r["mode"] == "drift_only_relative_cite"]
+    anchored = [r for r in rows if r["mode"] == "drift_only_relative_cite_anchored"]
+    assert relative and anchored
+
+    assert all(r["path_drift"] == 0 for r in relative), (
+        "the pre-registered relative arm started flagging path drift — P2 "
+        "and the published scorecard are graded off this arm"
+    )
+    assert any(r["path_drift"] > 0 for r in anchored), (
+        "the anchored arm found no drift on a deleted file — the anchor is "
+        "not reaching detect_path_drift"
+    )
+    assert {r["truth"] for r in anchored if r["path_drift"] > 0} == {"false"}, (
+        "the anchored arm flagged a claim that is still true"
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -11,10 +11,15 @@ report and died with it, re-derived and re-shown every run.
 
 This module is the persistence + lifecycle half of corpus-level
 contradiction detection. The DETECTION stays mechanical and lives in
-`consolidate`'s pairwise dedup scan (high similarity + a polarity flip
-or a numeric divergence — see `_find_dedup_with_skips`); the JUDGMENT
+`consolidate`'s pairwise dedup scan (high similarity plus a signal from
+`consolidate._conflict_signal` — a polarity flip or a numeric
+divergence; `_find_dedup_with_skips` is the entry point); the JUDGMENT
 stays with the model (the `memory_conflicts` MCP tool lists pending
-pairs and takes a verdict). The split mirrors the architecture
+pairs and takes a verdict). The queue is the ONLY exit for a flagged
+pair: the signal is consulted inside `consolidate._pick_keeper`, which
+raises rather than crowning a keeper, so no dedup path — including the
+unattended one — can tombstone a side instead of filing it here. The
+split mirrors the architecture
 everywhere else in this codebase: the server does the corpus-scale
 mechanical work no conversation would ever do by hand, the calling
 model does the semantics.

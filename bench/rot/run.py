@@ -85,7 +85,20 @@ from bettermemory.verify import (  # noqa: E402
 )
 
 CLAIM_CLASSES = ("path", "symbol", "literal")
-_MODES = ("drift_only_relative_cite", "drift_only_absolute_cite", "shipped_default")
+# APPEND-ONLY. These strings are consumed POSITIONALLY downstream —
+# `_MODES[0]` is "the informative arm" for pooled scoring and the per-repo
+# summaries (`corpus.py`, and the detector/baseline blocks below),
+# `_MODES[1]` is the absolute path-drift arm (`corpus.py`). Inserting or
+# reordering silently rescopes statistics that are already published, and
+# the first three arms are what the frozen PREREGISTRATION.md describes.
+# A new behaviour gets a NEW NAME at the END; it never regrades an
+# existing arm. Pinned by `test_mode_arms_are_append_only`.
+_MODES = (
+    "drift_only_relative_cite",
+    "drift_only_absolute_cite",
+    "shipped_default",
+    "drift_only_relative_cite_anchored",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +125,11 @@ class Claim:
         while the same file cited absolutely is checked.
 
         Both styles are measured rather than one being chosen, because
-        the gap between them IS a finding about the product.
+        the gap between them IS a finding about the product. The gap is
+        what the anchored arm exists to close: same relative body, but
+        `detect_path_drift` is handed the worktree the memory was written
+        in, so the citation resolves. The unanchored arms are untouched —
+        the anchor is a caller argument, not a change to the citation.
         """
         cited = str(root / self.rel_path) if root else self.rel_path
         if self.kind == "path":
@@ -759,6 +776,7 @@ def verdict_for(
     commits_touching: dict[str, int],
     calendar_fresh: bool,
     absolute: bool,
+    anchored: bool = False,
 ) -> tuple[str, int, int]:
     """Return (verdict, path_drift_missing, commit_drift_count).
 
@@ -768,9 +786,22 @@ def verdict_for(
     something: the path-drift leg must stat the same tree the oracle
     labels against, or a "missing file" verdict is about the developer's
     current checkout rather than about the window.
+
+    `anchored` hands that same tree to `detect_path_drift` as the
+    memory's recorded `origin.worktree_root`, which is what lets a
+    RELATIVE citation be existence-checked. Defaults off so the three
+    pre-registered arms keep calling the shipped function exactly as
+    before — P2 ("relative arm: exactly zero path-drift flags") is graded
+    off `_MODES[0]`, and an anchor leaking into it would falsify a
+    published prediction with a code change.
+
+    Deliberately NOT passing `verified_paths` in the anchored arm: that
+    would exercise the attestation path, which already worked, and the
+    arm would measure the wrong mechanism while looking like it measured
+    the right one. The claim under measurement is the BODY citation.
     """
     body = claim.body(tree1 if absolute else None)
-    drift = detect_path_drift(body)
+    drift = detect_path_drift(body, worktree_root=tree1 if anchored else None)
     # Anchor inside the staleness window when isolating the drift legs, and
     # outside it when measuring the shipped default. Calendar age is not a
     # claim about the world, so folding it in silently would let a timer
@@ -1352,10 +1383,11 @@ def _score_claims(
     empty_anchor_literals = 0
     for claim in claims:
         truth = label_claim(claim, tree1)
-        for mode, absolute in (
-            ("drift_only_relative_cite", False),
-            ("drift_only_absolute_cite", True),
-            ("shipped_default", False),
+        for mode, absolute, anchored in (
+            ("drift_only_relative_cite", False, False),
+            ("drift_only_absolute_cite", True, False),
+            ("shipped_default", False, False),
+            ("drift_only_relative_cite_anchored", False, True),
         ):
             verdict, missing, commits = verdict_for(
                 claim,
@@ -1365,6 +1397,7 @@ def _score_claims(
                 commits_touching=commits_touching,
                 calendar_fresh=(mode != "shipped_default"),
                 absolute=absolute,
+                anchored=anchored,
             )
             # The claim-level channels come from the RENDERED BODY, not the
             # Claim object — the firewall that stops this from becoming a

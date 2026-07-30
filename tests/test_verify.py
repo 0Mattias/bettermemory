@@ -32,6 +32,7 @@ from bettermemory.verify import (
     PathDriftReport,
     VerificationStatus,
     _MAX_ANCHOR_CITATIONS,
+    _MAX_ANCHORED_CITATION_STATS,
     _MAX_BODY_SCAN_BYTES,
     _MAX_PATH_LENGTH,
     _PLACEHOLDER_PATHS,
@@ -269,6 +270,250 @@ def test_anchoring_is_inert_without_a_worktree_root(tmp_path: Path) -> None:
         "Defined in `src/gone.py`.", verified_paths=["src/gone.py"]
     )
     assert report.checked == () and report.missing == ()
+
+
+# ---------------------------------------------------------------------------
+# Anchored CITATIONS — relative paths in body prose, resolved against the
+# memory's recorded worktree.
+#
+# The measured gap: the rot benchmark's relative-citation arm produced
+# EXACTLY ZERO path-drift flags, so the citation style developers actually
+# write got no path protection while the same claims written absolutely
+# were checked. The anchor closes it; the filter layer below is what keeps
+# it from fabricating drift, because `_RELATIVE_CITATION_RE` is
+# deliberately over-matchy — safe for commit anchors (a phantom touches no
+# commit) and NOT safe for a stat.
+# ---------------------------------------------------------------------------
+
+
+def test_relative_body_citation_is_checked_when_anchored(tmp_path: Path) -> None:
+    """The feature: a cited-but-unattested relative path gets a real check.
+
+    Without it, a relative citation nobody attested — just the way the
+    author happened to write the path — could be deleted and every
+    retrieval of the memory would still read clean.
+    """
+    (tmp_path / "src" / "pkg").mkdir(parents=True)
+    (tmp_path / "src" / "pkg" / "alive.py").write_text("x")
+    body = "Handled in src/pkg/alive.py; the old src/pkg/gone.py is history."
+
+    report = detect_path_drift(body, worktree_root=tmp_path)
+    assert [Path(p).name for p in report.missing] == ["gone.py"]
+    assert [Path(p).name for p in report.checked] == ["alive.py", "gone.py"]
+    # Never `verified` — that bucket means "attested AND present", and a
+    # citation is nobody's reviewed claim.
+    assert report.verified == ()
+
+
+def test_relative_body_citation_stays_unchecked_without_an_anchor(
+    tmp_path: Path,
+) -> None:
+    """The gate the frozen pre-registration rests on.
+
+    P2 of the rot pre-registration is graded from arms that call
+    `detect_path_drift(body)` with no worktree_root. If the citation pass
+    ever fires unanchored, a published prediction is retroactively
+    falsified by a code change — so the gate is pinned, not assumed.
+    """
+    (tmp_path / "src").mkdir()
+    report = detect_path_drift("The old src/gone.py is history.")
+    assert report.checked == () and report.missing == ()
+
+
+def test_a_worktree_this_machine_never_had_skips_every_anchored_check(
+    tmp_path: Path,
+) -> None:
+    """Cross-host fail-open, for citations AND attestations.
+
+    A store synced from another host carries that host's worktree_root.
+    Joining relative claims to it marks EVERY one missing — a constant
+    function, not a detector, firing on every memory from that host at
+    once. `_worktree_root_is_live` refuses to answer instead: a machine
+    that never saw the checkout has no evidence either way.
+    """
+    body = "Handled in src/pkg/mod.py."
+    gone = tmp_path / "checkout-from-another-host"
+
+    report = detect_path_drift(
+        body, verified_paths=["src/pkg/mod.py"], worktree_root=gone
+    )
+    assert report.checked == () and report.missing == ()
+
+    # A recorded root that resolves to a FILE is equally unusable.
+    not_a_dir = tmp_path / "root.txt"
+    not_a_dir.write_text("x")
+    shadowed = detect_path_drift(
+        body, verified_paths=["src/pkg/mod.py"], worktree_root=not_a_dir
+    )
+    assert shadowed.checked == () and shadowed.missing == ()
+
+
+def test_bare_domains_and_schemeless_urls_are_never_stat_checked(
+    tmp_path: Path,
+) -> None:
+    """The over-match the commit-drift regex tolerates on purpose.
+
+    `pypi.org` is a zero-directory match the regex admits knowingly, and
+    `www.example.com/a/b.md` matches whole because the domain-with-route
+    lookahead only rejects extensionless tails. Anchored and stat'd, both
+    would report a missing FILE. The real directories are created here so
+    the parent-existence rule cannot be what saves the test — the
+    host-shape and directory-segment rules have to.
+    """
+    (tmp_path / "www.example.com" / "a").mkdir(parents=True)
+    (tmp_path / "docs.rs" / "serde" / "latest").mkdir(parents=True)
+    body = (
+        "Published on pypi.org; mirrored at www.example.com/a/b.md and "
+        "documented at docs.rs/serde/latest/index.html."
+    )
+    report = detect_path_drift(body, worktree_root=tmp_path)
+    assert report.checked == () and report.missing == ()
+
+
+def test_a_filename_without_a_directory_is_not_checked(tmp_path: Path) -> None:
+    """The single largest false-positive class.
+
+    Prose names a file without its directory constantly ("the `_MODES`
+    tuple in run.py", "bump CHANGELOG.md"), and joined to the worktree
+    ROOT almost none of those exist. The root itself obviously exists, so
+    the parent-existence rule would happily let both through — the
+    directory-segment rule is the one being pinned.
+    """
+    report = detect_path_drift(
+        "Bump CHANGELOG.md, then the _MODES tuple in run.py.",
+        worktree_root=tmp_path,
+    )
+    assert report.checked == () and report.missing == ()
+
+
+def test_citation_whose_parent_directory_is_gone_is_dropped_not_missing(
+    tmp_path: Path,
+) -> None:
+    """A citation written relative to somewhere other than the repo root.
+
+    An author standing in `bench/` writes `rot/run.py`; anchored at the
+    worktree root that resolves to a path whose whole neighbourhood is
+    absent. Reporting it missing would be drift manufactured by our own
+    anchoring guess, so an absent parent means SKIP. The known cost —
+    a whole-directory delete takes its citations down with it — is the
+    same bound `_is_multi_segment_routelike` already documents.
+    """
+    (tmp_path / "src").mkdir()
+    report = detect_path_drift(
+        "Entry point is rot/run.py these days.", worktree_root=tmp_path
+    )
+    assert report.checked == () and report.missing == ()
+
+    # Same shape, live neighbourhood: that one IS reported.
+    real = detect_path_drift("Entry point is src/run.py.", worktree_root=tmp_path)
+    assert [Path(p).name for p in real.missing] == ["run.py"]
+
+
+def test_unlisted_extension_is_not_checked(tmp_path: Path) -> None:
+    """The regex accepts any 2-8 letter-first run as an "extension", so
+    slash-and-dot shaped prose ("the src/dst.mapping split") validates as
+    a path. The parent directory is created so only the extension
+    allowlist can be doing the work."""
+    (tmp_path / "src").mkdir()
+    report = detect_path_drift(
+        "Documented under src/dst.mapping for now.", worktree_root=tmp_path
+    )
+    assert report.checked == () and report.missing == ()
+
+
+def test_placeholder_relative_citation_is_not_checked(tmp_path: Path) -> None:
+    """`path/to/...` is the universal documentation placeholder. Anchored,
+    the prefix test would no longer recognise it (the worktree root sits
+    in front), which is why the check runs on the root-slashed form."""
+    (tmp_path / "path" / "to").mkdir(parents=True)
+    report = detect_path_drift(
+        "Pass `--config path/to/config.yaml` to override.", worktree_root=tmp_path
+    )
+    assert report.checked == () and report.missing == ()
+
+
+def test_anchored_citation_does_not_duplicate_an_attested_path(
+    tmp_path: Path,
+) -> None:
+    """One file cited AND attested is one claim. The attestation must be
+    the entry that lands — it carries the `verified` / `expected_absent`
+    semantics a bare citation cannot express."""
+    (tmp_path / "src").mkdir()
+    report = detect_path_drift(
+        "Deployed from src/remote.yml on the other host.",
+        absent_paths=["src/remote.yml"],
+        worktree_root=tmp_path,
+    )
+    assert len(report.checked) == 1
+    assert report.missing == ()
+    assert [Path(p).name for p in report.expected_absent] == ["remote.yml"]
+
+
+def test_anchored_citations_respect_the_stat_budget(tmp_path: Path) -> None:
+    """A body citing hundreds of files must not turn one retrieval into
+    hundreds of stats. The budget is the STAT cap (8), not the commit
+    anchor cap (24) — an anchor is one pathspec string in a single `git
+    log`, a citation is a syscall on the hottest read path."""
+    (tmp_path / "src").mkdir()
+    body = " ".join(f"src/mod{i}.py" for i in range(60))
+    report = detect_path_drift(body, worktree_root=tmp_path)
+    assert len(report.missing) == _MAX_ANCHORED_CITATION_STATS
+    assert _MAX_ANCHORED_CITATION_STATS < _MAX_ANCHOR_CITATIONS
+
+
+def test_filtered_noise_does_not_exhaust_the_stat_budget(tmp_path: Path) -> None:
+    """The budget is counted at the stat, not at the regex match. Counting
+    matches would let a body full of bare domains and root filenames burn
+    the whole allowance before the one real citation at the end of the
+    body was ever looked at."""
+    (tmp_path / "src").mkdir()
+    noise = " ".join(["pypi.org", "CHANGELOG.md", "run.py"] * 20)
+    body = f"{noise} and finally src/real.py."
+    assert detect_path_drift(body).checked == ()
+    anchored = detect_path_drift(body, worktree_root=tmp_path)
+    assert [Path(p).name for p in anchored.missing] == ["real.py"]
+
+
+def test_an_existing_citation_is_evidence_not_an_alarm(tmp_path: Path) -> None:
+    """A citation that checks out lands in `checked` and nowhere else.
+
+    Every surface gates its `path_drift` block on missing / verified /
+    expected_absent, so a healthy body adds evidence a caller can read
+    off the report without adding noise to the wire or moving the
+    staleness verdict.
+    """
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "here.py").write_text("x")
+    report = detect_path_drift("Lives in src/here.py.", worktree_root=tmp_path)
+    assert len(report.checked) == 1
+    assert report.missing == () and report.verified == ()
+    assert report.has_drift is False
+
+
+def test_adversarial_prose_produces_no_anchored_citation_flags(
+    tmp_path: Path,
+) -> None:
+    """The zero-false-positive suite, extended to the anchored path.
+
+    Every shape here reached `_RELATIVE_CITATION_RE` as a match or a near
+    match at some point in its history. With a live anchor in play, one
+    escape is one fabricated `path_drift_missing` on a real memory — and
+    the verdict escalation that follows it.
+    """
+    (tmp_path / "src" / "pkg").mkdir(parents=True)
+    (tmp_path / "path" / "to").mkdir(parents=True)
+    (tmp_path / "www.example.com").mkdir()
+    body = (
+        "CI/CD and TCP/IP pipelines, e.g. the U.S. case, i.e. at 3.16.0 or "
+        "v3.16.0rc1. Docs at docs.python.org/3/library/re.html, package on "
+        "pypi.org/simple/pkg and pypi.org, mirror www.example.com/index.html. "
+        "Bump CHANGELOG.md and run.py; config at path/to/settings.toml; "
+        "notes in src/pkg/notes.thing; the read/write.access split; "
+        "and -leading-dash.md."
+    )
+    report = detect_path_drift(body, worktree_root=tmp_path)
+    assert report.missing == (), report.missing
+    assert report.checked == (), report.checked
 
 
 # ---------------------------------------------------------------------------
@@ -821,6 +1066,7 @@ def test_report_to_dict_round_trips() -> None:
         "verified": [],
         "expected_absent": [],
         "dropped_as_route": [],
+        "claim_anchored_missing": [],
     }
 
 
@@ -833,6 +1079,7 @@ def test_report_to_dict_includes_verified_paths() -> None:
         "verified": ["/a"],
         "expected_absent": [],
         "dropped_as_route": [],
+        "claim_anchored_missing": [],
     }
 
 
@@ -845,6 +1092,7 @@ def test_report_to_dict_includes_expected_absent() -> None:
         "verified": [],
         "expected_absent": ["/b"],
         "dropped_as_route": [],
+        "claim_anchored_missing": [],
     }
 
 
@@ -860,6 +1108,7 @@ def test_report_to_dict_includes_dropped_as_route() -> None:
         "verified": [],
         "expected_absent": [],
         "dropped_as_route": ["/admin/macros"],
+        "claim_anchored_missing": [],
     }
 
 
@@ -871,11 +1120,15 @@ def test_has_drift_only_when_missing_nonempty() -> None:
 
 
 def test_has_drift_stays_missing_only_when_routes_were_dropped() -> None:
-    """A suppressed route is explicitly NOT drift: `has_drift` feeds the
-    staleness verdict, so folding the new bucket into it would inflate
-    `spot_check_recommended` on every memory that merely cites a URL
-    route. Pinned so a future "make it visible" patch can't take the
-    lazy route of widening `has_drift`."""
+    """A suppressed route is explicitly NOT drift.
+
+    `has_drift` no longer feeds the staleness verdict directly — the
+    escalation term is `has_claim_anchored_drift` since the provenance
+    split — but it is still the term that decides whether the caller
+    SEES a `path_drift` block at all, so folding the suppressed bucket
+    into it would resurrect the URL-route noise on the visibility side
+    instead of the verdict side. Pinned so a future "make it visible"
+    patch can't take the lazy route of widening `has_drift`."""
     routes_only = PathDriftReport(
         checked=(), missing=(), dropped_as_route=("/api/v1/events/presence",)
     )
@@ -3347,3 +3600,375 @@ class TestUnverifiableAttestations:
             ["src/pkg/gone.py"], worktree_root=str(tmp_path)
         )
         assert refused and refused[0].endswith("gone.py")
+
+
+# ---------------------------------------------------------------------------
+# Path-drift PROVENANCE — which absences may raise the verdict
+# ---------------------------------------------------------------------------
+#
+# `PathDriftReport.missing` used to be one bucket feeding one boolean into
+# the verdict, and the 2026-07-26 store sweep measured what that bucket
+# was made of: ~0 of 15 prose-extracted missing-path alerts were real
+# drift, against 3 of 3 for anchored attestations. The split records the
+# provenance at the point of the decision — after the fact a path in
+# `missing` is just a string and carries no trace of where it came from.
+#
+# Two properties are pinned throughout, and they pull in opposite
+# directions on purpose:
+#
+#   * `claim_anchored_missing` is a SUBSET of `missing`, never a
+#     replacement for it. Prose evidence stays on the wire; a caller sees
+#     everything it saw before.
+#   * only `claim_anchored_missing` reaches `verdict_from_signals`. That
+#     is what "surface evidence, not verdicts" means here — the noisy
+#     half stops driving a tier the caller is told to act on, without
+#     becoming invisible.
+#
+# Negative control: appending to `missing` without the paired append to
+# `claim_anchored` (or the reverse) flips
+# `test_claim_anchored_missing_is_always_a_subset_of_missing`; feeding
+# `len(drift.missing)` back into any verdict site flips
+# `test_no_verdict_site_escalates_on_the_full_missing_set`.
+
+
+def test_prose_missing_is_visible_but_does_not_escalate(tmp_path: Path) -> None:
+    """The whole point, in one report: a path scraped out of prose lands
+    in `missing` (so the caller sees it) and NOT in
+    `claim_anchored_missing` (so it cannot raise the tier)."""
+    gone = tmp_path / "notes" / "runbook.md"
+    gone.parent.mkdir()
+    report = detect_path_drift(f"the runbook lives at `{gone}`")
+
+    assert report.missing == (str(gone),)
+    assert report.claim_anchored_missing == ()
+    assert report.has_drift is True
+    assert report.has_claim_anchored_drift is False
+    # And the visibility half of the contract, as the handler gates read it.
+    assert bool(report.has_drift or report.verified or report.expected_absent) is True
+
+
+def test_verified_then_deleted_absolute_path_is_claim_anchored(
+    tmp_path: Path,
+) -> None:
+    """The 3-of-3-real class. An absolute attestation is only ever
+    existence-checked when the body also names it, so this is the ONE
+    shape in the main extraction loop that earns escalation."""
+    gone = tmp_path / "session.py"
+    body = f"the validator lives at `{gone}`"
+    report = detect_path_drift(body, verified_paths=[str(gone)])
+
+    assert report.missing == (str(gone),)
+    assert report.claim_anchored_missing == (str(gone),)
+    assert report.has_claim_anchored_drift is True
+
+
+def test_attested_absent_path_never_becomes_claim_anchored(tmp_path: Path) -> None:
+    """`verified_absent_paths` is the escape hatch for a legitimately
+    remote or platform-conditional path. It must not sneak into the
+    escalating bucket through the attestation door — an absent-attested
+    path is not in `missing` at all, so it cannot be in a subset of it."""
+    remote = tmp_path / "opt" / "gophish" / "config.json"
+    remote.parent.mkdir(parents=True)
+    body = f"the phishing sim reads `{remote}` on the homelab box"
+    report = detect_path_drift(body, absent_paths=[str(remote)])
+
+    assert report.expected_absent == (str(remote),)
+    assert report.missing == ()
+    assert report.claim_anchored_missing == ()
+    assert report.has_claim_anchored_drift is False
+
+
+def test_anchored_relative_attestation_miss_is_claim_anchored(
+    tmp_path: Path,
+) -> None:
+    """A relative attestation resolved against the memory's recorded
+    worktree is a reviewed claim about one file in one tree — the other
+    half of the 3-of-3 class, and the reason the anchoring exists."""
+    (tmp_path / "src").mkdir()
+    report = detect_path_drift(
+        "the token check moved",
+        verified_paths=["src/auth.py"],
+        worktree_root=str(tmp_path),
+    )
+
+    resolved = str(tmp_path / "src" / "auth.py")
+    assert report.missing == (resolved,)
+    assert report.claim_anchored_missing == (resolved,)
+
+
+def test_anchored_relative_citation_miss_is_claim_anchored(tmp_path: Path) -> None:
+    """The filtered body citation. It escalates because the FILTER earns
+    it: a raw `_RELATIVE_CITATION_RE` match is prose noise, and what
+    reaches the stat has survived the directory-segment, host-shape,
+    extension, placeholder and live-parent rules inside a worktree the
+    memory itself recorded."""
+    (tmp_path / "src").mkdir()
+    report = detect_path_drift(
+        "see `src/auth.py` for the token check",
+        worktree_root=str(tmp_path),
+    )
+
+    resolved = str(tmp_path / "src" / "auth.py")
+    assert report.missing == (resolved,)
+    assert report.claim_anchored_missing == (resolved,)
+
+
+def test_claim_anchored_missing_is_always_a_subset_of_missing(
+    tmp_path: Path,
+) -> None:
+    """The structural invariant, on a body that exercises all three
+    producers at once plus the prose one.
+
+    A parallel list is only safe while every append is paired. Dropping
+    either half of a pair — or building `claim_anchored` by filtering
+    strings after the fact, which cannot work because the provenance is
+    gone by then — fails here.
+    """
+    (tmp_path / "src").mkdir()
+    (tmp_path / "docs").mkdir()
+    prose_gone = tmp_path / "elsewhere" / "prose-only.md"
+    prose_gone.parent.mkdir()
+    attested_gone = tmp_path / "attested.py"
+
+    report = detect_path_drift(
+        f"cites `{prose_gone}` and `{attested_gone}`, plus `src/auth.py`",
+        verified_paths=[str(attested_gone), "docs/design.md"],
+        worktree_root=str(tmp_path),
+    )
+
+    assert set(report.claim_anchored_missing) <= set(report.missing)
+    assert str(prose_gone) in report.missing
+    assert str(prose_gone) not in report.claim_anchored_missing
+    for anchored in (
+        str(attested_gone),
+        str(tmp_path / "src" / "auth.py"),
+        str(tmp_path / "docs" / "design.md"),
+    ):
+        assert anchored in report.missing, anchored
+        assert anchored in report.claim_anchored_missing, anchored
+
+
+def test_suppressed_candidates_reach_neither_bucket() -> None:
+    """Routes and placeholders are dropped before the missing decision,
+    so the new bucket cannot resurrect them. Pinned because
+    `claim_anchored_missing` is the bucket a future "make it actionable"
+    patch would be tempted to widen."""
+    report = detect_path_drift(
+        "hit `/api/v1/events/presence` then edit `/path/to/config.yaml`"
+    )
+    assert report.claim_anchored_missing == ()
+    assert report.missing == ()
+
+
+def test_report_to_dict_carries_a_populated_claim_anchored_missing() -> None:
+    """Serialisation parity: both handler gates emit `to_dict()`
+    wholesale, so the bucket reaching the wire is what makes the
+    escalating evidence readable rather than merely inferable from the
+    tier."""
+    r = PathDriftReport(
+        checked=("/a", "/b"),
+        missing=("/a", "/b"),
+        claim_anchored_missing=("/b",),
+    )
+    assert r.to_dict()["claim_anchored_missing"] == ["/b"]
+    assert r.to_dict()["missing"] == ["/a", "/b"]
+
+
+# ---------------------------------------------------------------------------
+# B2(b) preparation — the commit leg's ESCALATING term, isolated
+# ---------------------------------------------------------------------------
+#
+# The upgrade plan's item B2(b) is a MEASUREMENT decision, not a taste
+# one: after the provenance split and the anchored-relative citation arm,
+# `bench/rot`'s new arms get re-run, and only if pooled alerts-per-catch
+# is still >= 1.5 does the commit leg come out of the escalation
+# disjunction. These tests pin CURRENT behaviour (the leg escalates) and,
+# separately, pin that flipping the switch does exactly one thing.
+#
+# The second half is the one with teeth. `stale` + a measured `0` reading
+# `fresh` is the 58a4fa4 fix; removing `commit_drift_count` from the
+# verdict wholesale would resurrect the J=0.000 constant function that
+# `bench/rot` caught. So the switch must not be reachable from the
+# demotion branch, and `None` must not collapse into `0` on the way.
+
+
+def test_commit_leg_escalates_today() -> None:
+    """Current behaviour, pinned before the measurement moves it. If this
+    starts failing without `_COMMIT_DRIFT_ESCALATES` having been flipped
+    deliberately, the disjunction lost a term by accident."""
+    from bettermemory.verify import _COMMIT_DRIFT_ESCALATES
+
+    assert _COMMIT_DRIFT_ESCALATES is True
+    assert (
+        verdict_from_signals(status="fresh", path_drift_missing=0, commit_drift_count=3)
+        == "spot_check_recommended"
+    )
+
+
+def test_disabling_commit_escalation_leaves_the_demotion_intact(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The B2(b) dry run: flip the switch and check that exactly the
+    escalating term goes quiet.
+
+    Every other cell of the ladder must be untouched — above all the
+    stale-demotion arm, which reads `commit_drift_count` directly rather
+    than through the switch precisely so a subtraction here cannot take
+    it out. `None` staying at `spot_check_required` is the other half:
+    if the flip made "couldn't ask" behave like a measured zero, roughly
+    a third of real bodies (the judgement class that anchors nothing)
+    would mass-demote to `fresh`.
+    """
+    import bettermemory.verify as verify_mod
+
+    monkeypatch.setattr(verify_mod, "_COMMIT_DRIFT_ESCALATES", False)
+
+    # The one cell that moves.
+    assert (
+        verdict_from_signals(status="fresh", path_drift_missing=0, commit_drift_count=3)
+        == "fresh"
+    )
+    # The demotion — untouched.
+    assert (
+        verdict_from_signals(status="stale", path_drift_missing=0, commit_drift_count=0)
+        == "fresh"
+    )
+    # None is still not zero.
+    assert (
+        verdict_from_signals(
+            status="stale", path_drift_missing=0, commit_drift_count=None
+        )
+        == "spot_check_required"
+    )
+    # A stale memory with a non-zero measured count still has nothing
+    # standing its calendar leg down.
+    assert (
+        verdict_from_signals(status="stale", path_drift_missing=0, commit_drift_count=3)
+        == "spot_check_required"
+    )
+    # `never` still pre-empts everything.
+    assert (
+        verdict_from_signals(status="never", path_drift_missing=0, commit_drift_count=0)
+        == "spot_check_required"
+    )
+    # And the path leg keeps escalating on its own.
+    assert (
+        verdict_from_signals(
+            status="fresh", path_drift_missing=1, commit_drift_count=None
+        )
+        == "spot_check_recommended"
+    )
+
+
+def test_the_commit_escalation_switch_has_exactly_one_reader() -> None:
+    """`_COMMIT_DRIFT_ESCALATES` is the ONE named place B2(b) flips, and
+    that is only true while `_commit_leg_escalates` is its sole reader.
+
+    A second reader — most plausibly someone "helpfully" guarding the
+    demotion branch with it too — would turn a measured subtraction into
+    a silent resurrection of the constant function. Source-level because
+    the defect is about where the name appears, not about what any one
+    call returns.
+    """
+    import inspect
+
+    import bettermemory.verify as verify_mod
+
+    source = inspect.getsource(verify_mod)
+    reads = [
+        line
+        for line in source.splitlines()
+        if "_COMMIT_DRIFT_ESCALATES" in line
+        and not line.lstrip().startswith("#")
+        and "_COMMIT_DRIFT_ESCALATES: bool" not in line
+    ]
+    assert reads == ["    if not _COMMIT_DRIFT_ESCALATES:"], reads
+
+
+# ---------------------------------------------------------------------------
+# The escalation input, checked where it is WIRED rather than where it is
+# computed
+# ---------------------------------------------------------------------------
+
+
+def test_no_verdict_site_escalates_on_the_full_missing_set() -> None:
+    """Every `path_drift_missing=` argument in `src/` must carry the
+    claim-anchored count.
+
+    The parameter kept its name (the signature is pinned to exactly
+    three signals by
+    `test_verdict_from_signals_takes_exactly_three_signals`), so nothing
+    at a call site announces that the meaning moved. A new surface —
+    or a merge that reverts one line — wiring `len(drift.missing)` back
+    in would silently re-broaden the alarm to the ~0-of-15 prose class
+    and no behavioural test on the other surfaces would notice. This
+    reads the argument's SOURCE at every call site, which is the level
+    the mistake happens on.
+
+    `web.py` is excluded and the exclusion self-retires: the assertion
+    below requires it to still be non-compliant, so the day that
+    surface is switched over this test fails and the exclusion has to
+    go. It is carved out because it belongs to a concurrent workstream,
+    not because the divergence is acceptable — `_render_memory_detail`
+    documents that the page "cannot disagree with what the model sees
+    for the same memory", and right now it does.
+    """
+    import ast
+
+    root = Path(__file__).resolve().parents[1] / "src" / "bettermemory"
+    pending_cross_lane = {"web.py"}
+
+    offenders: list[str] = []
+    excluded_still_offending: set[str] = set()
+    seen_sites = 0
+    for path in sorted(root.rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        if "path_drift_missing=" not in text:
+            continue
+        tree = ast.parse(text)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = (
+                func.attr
+                if isinstance(func, ast.Attribute)
+                else getattr(func, "id", "")
+            )
+            if name not in {"compute_staleness_verdict", "verdict_from_signals"}:
+                continue
+            for kw in node.keywords:
+                if kw.arg != "path_drift_missing":
+                    continue
+                seen_sites += 1
+                arg_src = ast.get_source_segment(text, kw.value) or ""
+                # `0` is the list-summary surface, which loads no body and
+                # so has no drift report at all. The bare parameter name is
+                # `compute_staleness_verdict` forwarding to the primitive it
+                # wraps — a pass-through carries whatever its own caller
+                # passed, and that caller is itself a site this scan sees.
+                ok = "claim_anchored" in arg_src or arg_src.strip() in {
+                    "0",
+                    "path_drift_missing",
+                }
+                if ok:
+                    continue
+                if path.name in pending_cross_lane:
+                    excluded_still_offending.add(path.name)
+                    continue
+                offenders.append(f"{path.name}: path_drift_missing={arg_src}")
+
+    assert seen_sites >= 5, (
+        f"expected to find every verdict call site, found {seen_sites} — the "
+        "scan stopped matching and is no longer guarding anything"
+    )
+    assert not offenders, (
+        "these verdict sites escalate on the FULL missing set, including "
+        f"prose-scraped absences: {offenders}. Pass "
+        "len(drift.claim_anchored_missing) — see PathDriftReport."
+    )
+    assert excluded_still_offending == pending_cross_lane, (
+        "the pending cross-lane exclusion is stale: "
+        f"{sorted(pending_cross_lane - excluded_still_offending)} now feeds the "
+        "claim-anchored count, so drop it from `pending_cross_lane`"
+    )

@@ -51,9 +51,15 @@ to miss a real path than chase ghosts:
 - Bare Windows paths: ``C:\\Users\\me``, ``D:/data``.
 
 Excluded by design:
-- Relative paths (``docs/installation.md``) — too many false positives in
-  prose, and without an anchor we'd be checking the cwd at retrieval time
-  which is meaningless.
+- Relative paths (``docs/installation.md``) in a body with NO anchor —
+  too many false positives in prose, and without an anchor we'd be
+  checking the cwd at retrieval time, which is meaningless. Given an
+  anchor — the memory's own ``origin.worktree_root``, captured at write
+  time — the same citation names one file in one tree, so it is checked
+  through a much stricter filter than the commit-drift anchor scan uses
+  (``_check_anchored_citations``). A machine that never had that
+  checkout skips the whole check rather than reporting everything gone
+  (``_worktree_root_is_live``).
 - URLs (``https://...``, ``git://...``, ``ssh://...``) — they have ``/``
   but aren't filesystem paths.
 - URL routes cross-referenced against the body: when the body cites a
@@ -291,6 +297,41 @@ _RELATIVE_CITATION_RE = re.compile(
 # single `git rev-list` invocation, not a stat() per retrieval.
 _MAX_ANCHOR_CITATIONS = 24
 
+# Stat budget for the ANCHORED CITATION pass (`_check_anchored_citations`),
+# reconciling the two caps above rather than picking one. They are
+# different currencies: `_MAX_ANCHOR_CITATIONS` (24) bounds pathspec
+# STRINGS handed to one `git log` invocation, while every citation checked
+# here costs a `stat()` on the hottest retrieval path — the same currency
+# `_MAX_PATHS_PER_BODY` (8) already prices. So the citation pass borrows
+# the stat cap, not the anchor cap, and gets its own budget rather than
+# sharing the body extractor's: a body that already spent all eight slots
+# on absolute citations still gets its relative claims checked, and the
+# worst case per call stays a fixed, small number of syscalls.
+_MAX_ANCHORED_CITATION_STATS = _MAX_PATHS_PER_BODY
+
+# Extensions a relative citation must carry to be existence-checked.
+#
+# `_RELATIVE_CITATION_RE` accepts ANY 2-8 char letter-first extension
+# because over-match is the cheap direction for commit anchors (a phantom
+# anchor touches no commit and is verdict-neutral). Existence checking
+# inverts that: a phantom stat's `missing` is a fabricated drift signal
+# that escalates a verdict. An allowlist is the conservative direction —
+# an unlisted real extension loses its check (a false negative, which this
+# module has always preferred) while prose that merely happens to be
+# slash-and-dot shaped ("the read/write.access split") cannot manufacture
+# one. Kept to extensions that actually appear in developer citations;
+# growing it is a normal, safe edit.
+_CHECKABLE_CITATION_EXTENSIONS = frozenset(
+    # source
+    "py pyi ts tsx js jsx rs go rb java kt swift c h cc cpp hpp cs php "
+    "lua sh sql vue svelte ipynb "
+    # config / data
+    "toml yaml yml json ini cfg conf env lock xml csv proto tf nix "
+    "gradle plist service mod "
+    # docs / assets
+    "md mdx rst txt html css scss log".split()
+)
+
 # Trailing punctuation that's almost never part of a real path. We strip
 # these from the right edge of a candidate before validating. `~` is in
 # the path-body class so we don't strip it.
@@ -366,6 +407,35 @@ class PathDriftReport:
     An attested-absent path that EXISTS again is treated as a normal
     healthy candidate — presence never raises a flag.
 
+    `claim_anchored_missing` is the PROVENANCE split over `missing`: the
+    subset whose absence is evidence about a claim the memory actually
+    makes, as opposed to a path shape scraped out of prose. Three
+    producers qualify, and only these three:
+
+      * an absolute body candidate the caller ATTESTED via
+        `memory_verify(verified_paths=[...])` and which has since
+        disappeared (verified-then-deleted);
+      * a relative attestation resolved against the memory's recorded
+        `origin.worktree_root` (`_check_anchored_attestations`);
+      * a filtered relative citation resolved against that same live
+        worktree (`_check_anchored_citations`).
+
+    Everything else in `missing` is an unattested absolute token the
+    extractor lifted out of prose. The split exists because the two
+    halves were measured and they are not the same instrument: on the
+    2026-07-26 store sweep, ~0 of 15 prose-extracted missing-path alerts
+    were real drift (remote-host paths, `/etc/nope`-style placeholders,
+    documentation examples) against 3 of 3 for anchored attestations.
+    Merged into one bucket, the noisy half drove the verdict.
+
+    So `missing` stays the FULL set — every surface that showed a prose
+    miss before still shows it, as advisory evidence the caller can act
+    on — while `claim_anchored_missing` is what the staleness verdict
+    escalates on (`has_claim_anchored_drift`). Evidence stays visible;
+    only what ESCALATES narrowed. A path here is always also in
+    `missing`; the bucket is a subset marker, never a separate list of
+    paths the other buckets lack.
+
     `dropped_as_route` is the SUPPRESSED set: candidates the scanner
     extracted, found absent, and then declined to stat-report because
     `_is_multi_segment_routelike` judged them application routes rather
@@ -415,24 +485,49 @@ class PathDriftReport:
     verified: tuple[str, ...] = ()
     expected_absent: tuple[str, ...] = ()
     dropped_as_route: tuple[str, ...] = ()
+    claim_anchored_missing: tuple[str, ...] = ()
 
     @property
     def has_drift(self) -> bool:
         """True when a candidate failed its disk check unattested.
 
-        Strictly `missing`-only, and deliberately so: it is the input to
-        the staleness verdict, and a suppressed route is by definition
-        NOT drift.
+        Strictly `missing`-only, and deliberately so: a suppressed route
+        is by definition NOT drift.
 
-        NOT the emit gate. `memory_show` and `memory_search`'s expanded
-        top hit decide whether to emit a `path_drift` block with their
-        own inline expression, `has_drift or verified or expected_absent`
-        (`handlers/show.py`, `handlers/search.py`) — which this property
-        is only one term of. Adding a bucket here therefore does NOT
-        widen those gates; see the `dropped_as_route` note above for what
-        that currently costs.
+        This is the VISIBILITY term, not the escalation term. It used to
+        be both — `has_drift` was the sole path input to the staleness
+        verdict — and that is what put prose-scraped absences in charge
+        of a tier the caller is told to act on. The verdict now reads
+        `has_claim_anchored_drift`; this property keeps its old meaning
+        and its old job of deciding whether the caller gets to SEE the
+        path-drift block at all.
+
+        NOT the emit gate on its own. `memory_show` and `memory_search`'s
+        expanded top hit decide whether to emit a `path_drift` block with
+        their own inline expression, `has_drift or verified or
+        expected_absent` (`handlers/show.py`, `handlers/search.py`) —
+        which this property is only one term of. Adding a bucket here
+        therefore does NOT widen those gates; see the `dropped_as_route`
+        note above for what that currently costs.
         """
         return bool(self.missing)
+
+    @property
+    def has_claim_anchored_drift(self) -> bool:
+        """True when a miss is backed by a claim the memory itself makes.
+
+        The escalation term: what `path_drift_missing` means at every
+        `compute_staleness_verdict` / `verdict_from_signals` call site.
+        See `claim_anchored_missing` for the provenance rule and the
+        measurement behind it.
+
+        Deliberately NOT folded into `has_drift`: widening that property
+        is the lazy edit that would put prose back in charge of the
+        verdict, and narrowing it is the lazy edit that would make prose
+        misses invisible. The two questions are separate and each has
+        exactly one answer here.
+        """
+        return bool(self.claim_anchored_missing)
 
     def to_dict(self) -> dict[str, list[str]]:
         return {
@@ -441,6 +536,13 @@ class PathDriftReport:
             "verified": list(self.verified),
             "expected_absent": list(self.expected_absent),
             "dropped_as_route": list(self.dropped_as_route),
+            # Unconditional, like every other bucket here: `to_dict()` is
+            # the wholesale serialisation two handlers emit, and a caller
+            # reading `missing` needs to know which entries drove the
+            # verdict WITHOUT having to infer it from the verdict. An
+            # empty list next to a non-empty `missing` is the honest,
+            # readable statement "we saw these, none of them escalated".
+            "claim_anchored_missing": list(self.claim_anchored_missing),
         }
 
 
@@ -476,19 +578,34 @@ def detect_path_drift(
     since disappeared still lands in `missing` — verification doesn't
     paper over deletion.
 
-    `worktree_root` anchors RELATIVE attestations. Body extraction drops
-    relative paths on purpose (checking them would otherwise mean
-    checking the reader's cwd), but an attested relative path resolved
-    against the memory's own `origin.worktree_root` — captured at WRITE
-    time — is anchored, so it gets a real existence check. Without it, a
-    memory citing `src/pkg/mod.py` and attesting the same path receives no
-    deletion detection at all. See `_check_anchored_attestations`.
+    `worktree_root` anchors RELATIVE claims — both attestations
+    (`_check_anchored_attestations`) and body citations
+    (`_check_anchored_citations`). Body extraction drops relative paths on
+    purpose (checking them would otherwise mean checking the reader's
+    cwd), but resolved against the memory's own `origin.worktree_root` —
+    captured at WRITE time — a relative claim names one file in one tree,
+    so it gets a real existence check. Without an anchor a memory citing
+    `src/pkg/mod.py`, which is how developers actually write it, receives
+    no deletion detection at all; a bare `detect_path_drift(body)` call
+    keeps returning nothing for relative paths, unchanged.
+
+    The anchor is used only when it is LIVE on this machine
+    (`_worktree_root_is_live`). A store synced from another host records a
+    worktree this machine never had, and joining citations to it would
+    mark every one of them missing — fabricated drift, on every memory
+    from that host at once.
 
     `absent_paths` is the mirror attestation (`memory_verify(
     verified_absent_paths=[...])`): paths the caller confirmed are
     *intentionally* not present on this machine. A candidate in that
     set that fails the disk check lands in `report.expected_absent`
     instead of `missing` — no drift signal, but the skip stays visible.
+
+    Every miss lands in `report.missing`; the subset backed by an
+    attestation or by an anchored citation ALSO lands in
+    `report.claim_anchored_missing`, which is the only bucket the
+    staleness verdict escalates on. See `PathDriftReport` for the
+    measurement that split them.
 
     A candidate the route rule suppresses lands in
     `report.dropped_as_route` — not `checked`, not `missing`, but
@@ -499,7 +616,15 @@ def detect_path_drift(
     route-ONLY report still fires no block anywhere.
     """
     candidates = _extract_candidates(body)
-    if not candidates and worktree_root is None:
+    # Resolve the anchor ONCE, for both relative passes. A recorded
+    # worktree that is not a live directory here disables them entirely —
+    # see `_worktree_root_is_live` for why that direction is right.
+    anchor_root = (
+        Path(worktree_root)
+        if worktree_root is not None and _worktree_root_is_live(worktree_root)
+        else None
+    )
+    if not candidates and anchor_root is None:
         return PathDriftReport(checked=(), missing=(), verified=())
 
     # Run verified_paths through the same trim/validate pipeline the body
@@ -519,6 +644,13 @@ def detect_path_drift(
 
     checked: list[str] = []
     missing: list[str] = []
+    # Parallel provenance list, not a filter applied afterwards: by the
+    # time a path is a string in `missing` there is nothing left on it to
+    # tell prose from attestation, so the split has to be recorded where
+    # the decision is made. Every append here is paired with an append to
+    # `missing` — the bucket is a subset marker, and the two helpers below
+    # take it for the same reason.
+    claim_anchored: list[str] = []
     verified: list[str] = []
     expected_absent: list[str] = []
     dropped_as_route: list[str] = []
@@ -632,25 +764,51 @@ def detect_path_drift(
                 # also suppressing real local drift, so an unattested
                 # absence that gets this far stays `missing`.
                 missing.append(path)
+                if norm in verified_set:
+                    # Verified-then-deleted: the caller named this exact
+                    # path in `memory_verify(verified_paths=[...])`, so
+                    # its absence is evidence about a REVIEWED claim, not
+                    # about a token the extractor lifted out of a
+                    # sentence. That is the 3-of-3-real class in the
+                    # sweep, and the only shape in this loop that earns
+                    # escalation. (An absent-attested path never reaches
+                    # here — it took the `expected_absent` arm above.)
+                    claim_anchored.append(path)
             continue
         if norm in verified_set:
             verified.append(path)
 
     _check_anchored_attestations(
-        worktree_root,
+        anchor_root,
         verified_paths,
         absent_paths,
         checked=checked,
         missing=missing,
+        claim_anchored=claim_anchored,
         verified=verified,
         expected_absent=expected_absent,
     )
+    # Attestations FIRST, citations second: an attested path is the
+    # caller's reviewed claim and carries the `verified` /
+    # `expected_absent` semantics a bare citation cannot, so when a body
+    # both cites and attests one file the attestation must be the entry
+    # that lands. The citation pass dedupes against everything already
+    # checked, so it can only ever ADD claims neither earlier pass saw.
+    if anchor_root is not None:
+        _check_anchored_citations(
+            anchor_root,
+            body,
+            checked=checked,
+            missing=missing,
+            claim_anchored=claim_anchored,
+        )
     return PathDriftReport(
         checked=tuple(checked),
         missing=tuple(missing),
         verified=tuple(verified),
         expected_absent=tuple(expected_absent),
         dropped_as_route=tuple(dropped_as_route),
+        claim_anchored_missing=tuple(claim_anchored),
     )
 
 
@@ -661,6 +819,7 @@ def _check_anchored_attestations(
     *,
     checked: list[str],
     missing: list[str],
+    claim_anchored: list[str],
     verified: list[str],
     expected_absent: list[str],
 ) -> None:
@@ -680,10 +839,20 @@ def _check_anchored_attestations(
     surfacing it — one genuinely deleted, one moved, and one that never
     existed (a false attestation). All three read clean.
 
-    Scoped deliberately to `verified_paths` / `verified_absent_paths` and
-    NOT to relative paths in body prose. An attestation is a caller's
-    explicit, reviewed claim that a path IS the citation; body prose is
-    the false-positive swamp the original exclusion correctly avoids.
+    Scoped to `verified_paths` / `verified_absent_paths`. An attestation
+    is a caller's explicit, reviewed claim that a path IS the citation,
+    so it needs no filtering; body-prose citations are checked separately
+    and behind a much stricter filter (`_check_anchored_citations`).
+
+    `worktree_root` arrives ALREADY vetted as live by `detect_path_drift`
+    — a `None` here means either "no anchor recorded" or "the recorded
+    anchor is not a directory on this machine", and both must leave this
+    check inert. See `_worktree_root_is_live`.
+
+    Every miss this function records is claim-anchored by construction —
+    an attestation IS the reviewed claim — so `claim_anchored` gets the
+    same append `missing` does. This is the 3-of-3-real half of the
+    measurement that motivated the provenance split.
     """
     if worktree_root is None:
         return
@@ -729,6 +898,176 @@ def _check_anchored_attestations(
             expected_absent.append(resolved)
         else:
             missing.append(resolved)
+            claim_anchored.append(resolved)
+
+
+def _worktree_root_is_live(worktree_root: str | Path) -> bool:
+    """True when the memory's recorded worktree is a directory HERE.
+
+    REVERSES A RECORDED DECISION, so the argument is written down.
+    `origin.py`'s auto-scope filter already degrades on a dead worktree
+    (`worktrees_match` / `_worktree_root_is_gone`) and explicitly says
+    verify takes the OPPOSITE bias: an indeterminate stat there "folds
+    into the `missing` path-drift bucket, i.e. toward MORE signal". That
+    bias is right for a path the caller attested ON THIS MACHINE and
+    which then disappeared — absence is the evidence.
+
+    It is wrong for the root itself. A store synced from another host
+    carries that host's `worktree_root`, so `root/rel` cannot exist here
+    for ANY relative claim; every one lands in `missing` and every memory
+    from that host escalates at once. That is not more signal, it is a
+    constant function — the same failure mode as the `always_flag`
+    detector the rot benchmark exists to distinguish real detection from.
+    A machine that has never seen the checkout has no evidence either
+    way, and "no evidence" must read as silence, not as drift.
+
+    So the fail-open is scoped exactly to the thing the reversal is about:
+    the ROOT's own liveness, checked once per call. Everything below the
+    root keeps the original bias — an unstattable file under a live
+    worktree still folds to `missing` via `_path_exists`.
+
+    `os.path.isdir` rather than `Path.is_dir()`: it swallows OSError and
+    ValueError internally and keeps this independent of the module-level
+    `Path` symbol, which the suite patches wholesale when exercising the
+    stat-failure path (same reasoning as `_is_multi_segment_routelike`).
+    """
+    try:
+        return os.path.isdir(os.path.expanduser(str(worktree_root)))
+    except (OSError, ValueError):
+        return False
+
+
+def _is_checkable_citation(rel: str) -> bool:
+    """True when a `_RELATIVE_CITATION_RE` match may be stat'd once anchored.
+
+    The regex is deliberately OVER-MATCHY and is only safe that way for
+    commit drift, where a phantom anchor touches no commit and is
+    verdict-neutral. Existence checking inverts the asymmetry — a phantom
+    stats as missing and FABRICATES drift — so every citation crosses
+    this gate first. Three rules, each closing a measured shape:
+
+    * **At least one directory segment.** A bare filename (`run.py`,
+      `CHANGELOG.md`) is the single largest false-positive class: prose
+      names a file without its directory constantly ("the `_MODES` tuple
+      in run.py"), and joined to the worktree ROOT almost none of those
+      exist. It is also what makes the whole bare-domain class
+      (`pypi.org`, `example.com`, `fly.io` — zero-dir matches the regex
+      admits on purpose) unreachable here, since a domain WITH a route
+      never matches the regex at all. The cost is real root-file
+      citations (`CHANGELOG.md`) losing their check; that is the cheap
+      direction, and an attestation still checks them.
+
+    * **A first segment that is not host-shaped.** A schemeless URL
+      (`www.example.com/a/b.md`, `docs.rs/serde/latest/index.html`) DOES
+      match the regex — the lookahead only rejects the domain-with-route
+      form when the tail has no extension. A dot inside the first segment
+      is the tell; a LEADING dot is not (`.github/workflows/ci.yml`,
+      `plugin/.claude-plugin/plugin.json`), so only dots past position 0
+      disqualify.
+
+    * **A real file extension** (`_CHECKABLE_CITATION_EXTENSIONS`), which
+      the regex itself cannot check — it accepts any 2-8 letter-first run.
+
+    Placeholders are refused through the existing `_is_placeholder_path`
+    machinery, applied to the ROOT-SLASHED form: `path/to/config.yaml` is
+    the same documentation placeholder as `/path/to/config.yaml`, and
+    once joined to a worktree root the prefix test would no longer see
+    it. Glob/template shapes need no test here — their characters are
+    outside the regex's own character class.
+    """
+    first, slash, _ = rel.partition("/")
+    if not slash:
+        return False
+    if "." in first[1:]:
+        return False
+    if rel.rsplit(".", 1)[-1].lower() not in _CHECKABLE_CITATION_EXTENSIONS:
+        return False
+    return not _is_placeholder_path("/" + rel)
+
+
+def _check_anchored_citations(
+    root: Path,
+    body: str,
+    *,
+    checked: list[str],
+    missing: list[str],
+    claim_anchored: list[str],
+) -> None:
+    """Existence-check RELATIVE citations in body prose against `root`.
+
+    The counterpart to `_check_anchored_attestations` for the citations
+    nobody attested — which is most of them. Measured on the rot
+    benchmark before this existed: the relative-citation arm produced
+    EXACTLY ZERO path-drift flags, i.e. the citation style developers
+    actually write got no path protection at all, while the same claims
+    written absolutely were checked. That gap, not the prose-swamp risk,
+    is what the anchor closes: `origin.worktree_root` is captured at
+    write time, so the check is against the tree the author wrote in
+    rather than against the reader's cwd.
+
+    `_is_checkable_citation` is the filter that makes it safe. Two more
+    rules live here because they need the resolved path:
+
+    * `_normalize_candidate` runs on the ANCHORED form (as in
+      `_check_anchored_attestations`) — it is itself the relative gate,
+      so validating the bare form would drop everything.
+
+    * **A missing file is only reported when its immediate parent
+      directory exists.** An existing parent means the neighbourhood is
+      real and the absence is genuine drift; a missing parent means the
+      citation was probably never root-relative in the first place (prose
+      noise, or a path written relative to a subdirectory the author was
+      standing in). This is the same "existing parent proves the
+      neighbourhood" test `_is_multi_segment_routelike` already uses, and
+      it inherits the same bound: a whole-directory rename or delete
+      takes its citations down with it and they are silently dropped
+      rather than flagged. False negative over fabricated drift, as
+      everywhere else in this module.
+
+    Dropped citations leave no trace on the report, matching the
+    ambiguous-truncation and spaced-prefix drops in `detect_path_drift`.
+    A citation that EXISTS lands in `checked` only — never in `verified`,
+    which means "attested AND present" — so a healthy body adds evidence
+    without firing any surface's emit gate.
+
+    Budget: `_MAX_ANCHORED_CITATION_STATS` stats per call, counted at the
+    stat and not at the match, so filtered-out noise cannot exhaust the
+    budget a real citation later in the body needs.
+
+    Misses here ARE claim-anchored, and the filter above is what earns
+    that. A raw `_RELATIVE_CITATION_RE` match is prose noise and would
+    belong on the advisory side; what reaches the stat has survived the
+    directory-segment, host-shape, extension, placeholder and
+    live-parent rules AND resolves inside a worktree the memory itself
+    recorded. That is a claim about one file in one tree, which is
+    exactly the thing the verdict is allowed to escalate on. If the
+    filter is ever loosened, this append is what has to be re-argued.
+    """
+    seen = {_normalize_for_compare(p) for p in checked}
+    stats = 0
+    for match in _RELATIVE_CITATION_RE.finditer(_bounded_scan_text(body)):
+        if stats >= _MAX_ANCHORED_CITATION_STATS:
+            break
+        cited = match.group(1)
+        if not _is_checkable_citation(cited):
+            continue
+        resolved = _normalize_candidate(str(root / cited))
+        if resolved is None:
+            continue
+        norm = _normalize_for_compare(resolved)
+        if norm in seen:
+            continue
+        seen.add(norm)
+        stats += 1
+        if _path_exists(resolved):
+            checked.append(resolved)
+            continue
+        parent = os.path.expanduser(os.path.dirname(resolved))
+        if not os.path.isdir(parent):
+            continue
+        checked.append(resolved)
+        missing.append(resolved)
+        claim_anchored.append(resolved)
 
 
 def _is_absolute_attestation(s: str) -> bool:
@@ -2089,6 +2428,53 @@ _VERDICT_REQUIRED: str = "spot_check_required"
 # ``tests/test_server_v12_features.py``.
 _VERDICT_RAISE_STATUSES: frozenset[str] = frozenset({"never", "stale"})
 
+# THE ONE PLACE the commit leg's ESCALATING term is switched, and the
+# only thing that may ever read it is `_commit_leg_escalates` below.
+#
+# What flipping it to False does: a memory whose anchored paths saw
+# commits since its last verification stops being nudged to
+# `spot_check_recommended` on that evidence alone. What it must NOT do,
+# and does not: touch the DEMOTION. `stale` + a measured `0` still reads
+# `fresh` — that is the 58a4fa4 fix, the branch that stops the shipped
+# default from being the J=0.000 constant function `bench/rot` caught,
+# and it reads `commit_drift_count` directly rather than through this
+# switch precisely so that a subtraction here cannot resurrect it. The
+# None-vs-0 distinction is untouched in both directions.
+#
+# THE MEASURED CONDITION FOR FLIPPING IT (upgrade plan item B2b, and it
+# is a measurement, not a judgement call): after the path-drift
+# provenance split and the anchored-relative citation arm, re-run
+# `bench/rot`'s new arms pooled. If alerts-per-catch for the escalating
+# tier is still >= 1.5, the commit leg is carrying the residual noise
+# and this flips to False. If it is < 1.5, the recut already paid and
+# this stays True. Either outcome is a result; commit the numbers.
+#
+# Flipping it is NOT complete on its own: `DESC_MEMORY_SEARCH` /
+# `DESC_MEMORY_SHOW` describe `staleness_verdict` as folding commit
+# drift in, and a verdict that no longer does must say so in the same
+# change. A model told to read a signal that cannot fire is worse than
+# no signal.
+_COMMIT_DRIFT_ESCALATES: bool = True
+
+
+def _commit_leg_escalates(commit_drift_count: int | None) -> bool:
+    """Does the commit leg get to RAISE the verdict on this input?
+
+    Split out of the `drifty` disjunction so the commit term has one
+    named home instead of being half of a boolean expression: the B2b
+    decision is "subtract this leg from escalation", and a subtraction
+    that has to be surgically extracted from an `or` is how the demotion
+    branch would get taken out with it.
+
+    `None` never escalates and never has: it means the leg could not ask
+    (no origin repo, caller elsewhere, git unreachable, no anchor landing
+    in this repo), and absence of evidence is not evidence of drift. The
+    guard is kept explicit here rather than relying on `None > 0` raising.
+    """
+    if not _COMMIT_DRIFT_ESCALATES:
+        return False
+    return commit_drift_count is not None and commit_drift_count > 0
+
 
 def verdict_from_signals(
     *,
@@ -2097,6 +2483,20 @@ def verdict_from_signals(
     commit_drift_count: int | None,
 ) -> str:
     """Primitive rollup over the three staleness signals.
+
+    **`path_drift_missing` is the CLAIM-ANCHORED count, not
+    `len(report.missing)`.** Every production call site passes
+    `len(report.claim_anchored_missing)` — attested paths that vanished,
+    and citations resolved against the memory's own recorded worktree.
+    Prose-scraped absences still travel to the caller in
+    `report.missing`; they no longer raise a tier. The parameter kept its
+    name because the signature is pinned (see below) and because the
+    rename would have been the only visible part of the change; the
+    meaning moved, so read `PathDriftReport.claim_anchored_missing` for
+    what it counts and the 15-vs-3 sweep for why. A new surface that
+    wires `len(drift.missing)` in here silently re-broadens the alarm,
+    which is why an AST guard in `tests/test_verify.py` checks the
+    keyword at every call site rather than trusting the name.
 
     Split out of `compute_staleness_verdict` so the per-search
     recompute in `_response.attach_commit_drift_counts` — which holds a
@@ -2118,9 +2518,7 @@ def verdict_from_signals(
     `test_verdict_from_signals_takes_exactly_three_signals` in
     `tests/test_verify.py`.
     """
-    drifty = path_drift_missing > 0 or (
-        commit_drift_count is not None and commit_drift_count > 0
-    )
+    drifty = path_drift_missing > 0 or _commit_leg_escalates(commit_drift_count)
     if status == "never":
         # No anchor was ever laid down, so there is no "since when" to
         # measure against and nothing can stand the calendar leg down.
@@ -2212,6 +2610,15 @@ def compute_staleness_verdict(
       ``/etc/nope``-style placeholders), against 3 of 3 real for
       anchored attestations. A missing path still raises the verdict
       via ``drifty`` — this carve-out is about what may LOWER it.
+
+    That same 15-vs-3 sweep later moved the RAISING side too, which is
+    the one line of this docstring's history worth keeping straight: the
+    prose half no longer raises either. ``path_drift_missing`` is the
+    claim-anchored count now (``verdict_from_signals`` has the full
+    note), so "a missing path still raises the verdict" holds for an
+    attested or anchored miss and no longer holds for a token scraped
+    out of a sentence. The carve-out above is unchanged — path evidence
+    of either provenance still cannot LOWER a verdict.
     """
     return verdict_from_signals(
         status=verification.status,

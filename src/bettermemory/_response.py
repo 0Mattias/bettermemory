@@ -130,13 +130,27 @@ class ResponseBuilder:
         produces no `path_drift` block here — the same route-only
         invisibility `memory_show` has (see the reach note on
         `PathDriftReport`).
+
+        `claim_anchored_missing` folds in the same additive way and
+        answers the question the counts cannot: WHICH of the missing
+        paths moved `staleness_verdict`. The verdict above is computed
+        from that subset alone (attested paths that vanished, citations
+        anchored to the memory's own worktree); the prose-scraped
+        remainder still ships in `missing` and in the
+        `path_drift_missing` count, as evidence the caller can weigh
+        rather than a tier the caller is told to act on.
         """
         verification = compute_verification_status(
             hit.last_verified_at, now=now, stale_after_days=self._stale_after_days
         )
         verdict = compute_staleness_verdict(
             verification=verification,
-            path_drift_missing=hit.path_drift_missing,
+            # The CLAIM-ANCHORED count, not `hit.path_drift_missing`.
+            # The full count still ships in the dict below as triage
+            # detail; what escalates the tier is the attested /
+            # worktree-anchored subset. `verdict_from_signals` has the
+            # measurement.
+            path_drift_missing=len(hit.path_drift_claim_anchored_missing_paths),
             commit_drift_count=None,
         )
         out: dict[str, Any] = {
@@ -182,6 +196,18 @@ class ResponseBuilder:
             if hit.path_drift_dropped_as_route_paths:
                 out["path_drift"]["dropped_as_route"] = list(
                     hit.path_drift_dropped_as_route_paths
+                )
+            # Additive on the same rule, and the reason it is additive
+            # here while `to_dict()` emits it unconditionally: this key
+            # rides EVERY hit of every search, and the bucket is empty on
+            # the overwhelming majority of them (the sweep found 3
+            # anchored misses against 15 prose ones). Emitting it only
+            # when it fired keeps the common hit the same size it was,
+            # and a present key is then itself the signal — these are the
+            # paths that moved the verdict, act on these first.
+            if hit.path_drift_claim_anchored_missing_paths:
+                out["path_drift"]["claim_anchored_missing"] = list(
+                    hit.path_drift_claim_anchored_missing_paths
                 )
         return out
 
@@ -296,7 +322,9 @@ class ResponseBuilder:
         )
         verdict = compute_staleness_verdict(
             verification=verification,
-            path_drift_missing=len(drift.missing),
+            # Claim-anchored subset only — same rule as every other
+            # verdict site. See `verdict_from_signals`.
+            path_drift_missing=len(drift.claim_anchored_missing),
             commit_drift_count=None,
         )
         out = {
@@ -601,7 +629,14 @@ class ResponseBuilder:
             # ask".
             hit_dict["staleness_verdict"] = verdict_from_signals(
                 status=verification_status,
-                path_drift_missing=hit_dict.get("path_drift_missing", 0),
+                # Read off the HIT, not the dict. The dict's
+                # `path_drift_missing` is the full-set triage count and
+                # would re-broaden the escalation this recompute is
+                # supposed to mirror; the claim-anchored subset only
+                # reaches the dict when it is non-empty (additive key),
+                # so the hit is the one source that always has it. The
+                # zip above already pairs them.
+                path_drift_missing=len(hit.path_drift_claim_anchored_missing_paths),
                 commit_drift_count=count,
             )
 

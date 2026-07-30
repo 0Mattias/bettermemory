@@ -70,7 +70,23 @@ def run(args: argparse.Namespace) -> None:
         # Attest it WHILE the file exists, so the verdict below is driven by
         # path drift specifically — not the never-verified default that a
         # brand-new memory would otherwise carry.
-        store.update(mem.model_copy(update={"last_verified_at": utcnow()}))
+        #
+        # `verified_paths` is part of the attestation, not decoration. Until
+        # path drift got a provenance split this line stamped only the
+        # timestamp, and the demo still reproduced because ANY missing path
+        # escalated the verdict — including one merely scraped out of prose.
+        # The verdict now escalates on claim-anchored evidence only, so the
+        # demo has to attest the way its own narration already claimed it
+        # did ("attested it while the file existed"). Same three steps, and
+        # the sentence is true now.
+        store.update(
+            mem.model_copy(
+                update={
+                    "last_verified_at": utcnow(),
+                    "verified_paths": [str(target)],
+                }
+            )
+        )
 
         # …the code gets refactored and that file moves / is deleted.
         target.unlink()

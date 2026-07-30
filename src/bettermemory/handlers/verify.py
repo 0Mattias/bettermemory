@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from .._response import isoformat, isoformat_optional
 from ..store import ConcurrentUpdateError, MemoryNotFoundError, TombstonedError
+from ..symbols import check_symbol_citations
 from ..verify import unverifiable_attestations
 from ._shared import Context, _NOTE_MAX_LEN, _advance_turn
 
@@ -145,10 +146,11 @@ async def memory_verify(
     # moment of attestation, where the caller asserts it looked, can demand
     # existence — which is also why this is the handler's job and not
     # `Store.mark_verified`'s.
+    origin_root = snapshot.origin.worktree_root if snapshot.origin else None
     if verified_paths:
         unseen = unverifiable_attestations(
             verified_paths,
-            worktree_root=(snapshot.origin.worktree_root if snapshot.origin else None),
+            worktree_root=origin_root,
         )
         if unseen:
             raise ValueError(
@@ -157,6 +159,26 @@ async def memory_verify(
                 "checked here; if a path is intentionally absent, pass it as "
                 "verified_absent_paths instead."
             )
+
+    # Symbol citations in the body, AST-checked against the memory's own
+    # recorded worktree. ADVISORY, and structurally so: the result is
+    # attached to this response and read by nothing else. No staleness
+    # verdict, no drift leg, no health rollup consumes it, and none may
+    # until a benchmark measures its precision on real prose — the reach
+    # measurement in `tests/test_symbol_existence.py` is the reason to be
+    # cautious, not the reason to be confident.
+    #
+    # Computed from the SNAPSHOT rather than from the object `mark_verified`
+    # returns, so the evidence and the attestation describe the same
+    # revision of the prose: `mark_verified` never edits a body, but a
+    # concurrent `memory_update` between the two reads would otherwise let
+    # this report describe prose the caller never attested to.
+    #
+    # In the handler, not the store: `Store.mark_verified` is a policy-free
+    # persistence primitive (pinned by
+    # `test_mark_verified_does_not_itself_check_path_existence`), and this
+    # is policy in the same sense the attestation refusal above is.
+    symbol_drift = check_symbol_citations(snapshot.body, worktree_root=origin_root)
 
     try:
         memory = deps.store.mark_verified(
@@ -206,6 +228,12 @@ async def memory_verify(
         # OSError — mirrors remove.py/restore.py and Store.mark_verified's
         # documented handler-boundary contract.
         raise ValueError(f"failed to verify memory {id}: {exc}") from exc
+    # The event field is conditional so the default verify event keeps its
+    # exact shape — and so a non-zero count in the log means the check
+    # actually fired on real prose. That count is the only telemetry a
+    # future precision measurement could be built from; a field written on
+    # every call would drown it.
+    missing = symbol_drift.missing
     deps.recorder.record(
         "verify",
         id=memory.id,
@@ -215,8 +243,9 @@ async def memory_verify(
         verified_commits=list(memory.verified_commits),
         verified_versions=list(memory.verified_versions),
         verified_absent_paths=list(memory.verified_absent_paths),
+        **({"symbol_drift_missing": len(missing)} if missing else {}),
     )
-    return {
+    response: dict[str, Any] = {
         "verified": memory.id,
         "last_verified_at": isoformat_optional(memory.last_verified_at),
         "updated": isoformat(memory.updated),
@@ -225,6 +254,20 @@ async def memory_verify(
         "verified_versions": list(memory.verified_versions),
         "verified_absent_paths": list(memory.verified_absent_paths),
     }
+    # Emitted only when the body actually carried a citation this check
+    # could parse. Silence is the normal case and is the honest one: an
+    # empty block on every call would read as "checked, nothing wrong"
+    # when the truth is usually "there was nothing here to check".
+    if symbol_drift:
+        advisory: dict[str, Any] = dict(symbol_drift.to_dict())
+        if missing:
+            advisory["note"] = (
+                "Advisory only — no staleness verdict reads this. Each name "
+                "was looked up by AST in the file the body cites; a miss "
+                "means that file parses and binds the name nowhere."
+            )
+        response["symbol_drift"] = advisory
+    return response
 
 
 __all__ = ["DESC_MEMORY_VERIFY", "memory_verify"]

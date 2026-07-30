@@ -23,6 +23,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -300,11 +301,11 @@ async def test_memory_search_hit_includes_staleness_verdict(
 
 
 async def test_memory_search_expand_top_recomputes_verdict_on_drift(
-    server: Any,
+    server: Any, tmp_path: Path
 ) -> None:
     """The expanded top hit re-runs path_drift against the actual body
-    and updates the verdict — a fresh-verified memory citing a missing
-    path is `spot_check_recommended`, not `fresh`."""
+    and updates the verdict — a fresh-verified memory whose ATTESTED
+    path has since vanished is `spot_check_recommended`, not `fresh`."""
     # The cited path carries an EXTENSION on purpose. Since 3.25.2 a
     # non-existent leading-slash candidate with no extension and no
     # existing parent directory reads as an application route rather than
@@ -313,13 +314,25 @@ async def test_memory_search_expand_top_recomputes_verdict_on_drift(
     # produces a drift signal at all. That narrowing is deliberate; what
     # this test guards is the verdict RECOMPUTATION mechanism, so the
     # fixture just has to be a candidate that still reads as a file.
+    #
+    # It must also be an ATTESTED one now, for the same kind of reason:
+    # since path drift got a provenance split, a never-attested path
+    # scraped out of prose is advisory evidence and does not move the
+    # verdict. A fabricated `/this/path/does/not/exist-xyz.py` cannot be
+    # attested either (the write side refuses attestations it cannot
+    # stat), so the fixture creates a real file, attests it, and deletes
+    # it — verified-then-deleted, which is the class the verdict is
+    # supposed to escalate on.
+    cited = tmp_path / "expand-top-script.py"
+    cited.write_text("print('hi')\n", encoding="utf-8")
     written = await _call(
         server,
         "memory_write",
-        content="The script lives at `/this/path/does/not/exist-xyz.py`.",
+        content=f"The script lives at `{cited}`.",
         scopes=["tools"],
     )
-    await _call(server, "memory_verify", id=written["id"])
+    await _call(server, "memory_verify", id=written["id"], verified_paths=[str(cited)])
+    cited.unlink()
     hits = _unwrap(
         await _call(
             server,
@@ -333,6 +346,9 @@ async def test_memory_search_expand_top_recomputes_verdict_on_drift(
     if top.get("relevance") == "high":
         # Expanded path triggered.
         assert top["staleness_verdict"] == "spot_check_recommended"
+        # The escalating evidence is NAMED, not just counted: the caller
+        # can see which miss moved the tier without inferring it.
+        assert top["path_drift"]["claim_anchored_missing"] == [str(cited)]
 
 
 # ---------------------------------------------------------------------------
@@ -459,13 +475,49 @@ async def _write_memory_in_state(server: Any, *, status: str) -> str:
     configuration. ``"never"`` skips the verify call; ``"stale"`` calls
     ``memory_verify`` once — paired with ``verification_stale_days=0``
     on ``server``, the immediately-elapsed wall time tips the verdict
-    to stale on the next ``compute_verification_status`` call."""
-    content = "The widget configuration lives in /etc/widget-staleness-pin.toml."
-    written = await _call(server, "memory_write", content=content, scopes=["tools"])
-    if status == "stale":
-        await _call(server, "memory_verify", id=written["id"], note="seed")
-    elif status != "never":
-        raise AssertionError(f"unexpected raise-status fixture: {status!r}")
+    to stale on the next ``compute_verification_status`` call.
+
+    The cited path is CREATED, ATTESTED and then DELETED, which is what
+    keeps the tests below on the branch they mean to pin. They exist to
+    prove that a raise-status memory with drift lands on
+    ``spot_check_required`` — i.e. the ``drifty`` arm's
+    ``_VERDICT_RAISE_STATUSES`` membership check. The fixture used to
+    get its drift from a bare ``/etc/widget-staleness-pin.toml`` in
+    prose, which stopped escalating when path-drift provenance was
+    split: an unattested prose token is advisory evidence now, so every
+    one of these tests silently slid off the drifty arm and onto the
+    stale-demotion arm (they read ``fresh``, via a measured-zero commit
+    leg — a real verdict, but not the one being pinned). Attesting the
+    path before deleting it restores the escalating input on the same
+    branch, and it is also the honest fixture: verified-then-deleted is
+    the 3-of-3-real class the split was measured on.
+
+    The temp directory is torn down whole. Parent-directory existence is
+    irrelevant to this shape — an attested candidate skips every drop
+    rule in ``detect_path_drift`` by design — but leaving the tree behind
+    would make the fixture depend on it.
+    """
+    scratch = Path(tempfile.mkdtemp(prefix="bm-staleness-pin-"))
+    try:
+        cited = scratch / "widget-staleness-pin.toml"
+        cited.write_text("[widget]\n", encoding="utf-8")
+        content = f"The widget configuration lives in `{cited}`."
+        written = await _call(server, "memory_write", content=content, scopes=["tools"])
+        if status == "stale":
+            await _call(
+                server,
+                "memory_verify",
+                id=written["id"],
+                note="seed",
+                # Attest while the file is still there — the write side
+                # refuses attestations the attesting machine cannot stat,
+                # so the order here is load-bearing.
+                verified_paths=[str(cited)],
+            )
+        elif status != "never":
+            raise AssertionError(f"unexpected raise-status fixture: {status!r}")
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
     return str(written["id"])
 
 
@@ -1626,3 +1678,198 @@ async def test_verify_passing_empty_list_clears_prior(
     )
     cleared = await _call(server, "memory_verify", id=res["id"], verified_paths=[])
     assert cleared["verified_paths"] == []
+
+
+# ---------------------------------------------------------------------------
+# Path-drift provenance on the wire — evidence stays, escalation narrows
+# ---------------------------------------------------------------------------
+#
+# `verify.py`'s unit tests pin the split itself. These pin the half that
+# unit tests structurally cannot: that the new bucket TRAVELS. A bucket
+# that exists on `PathDriftReport` and never reaches a tool caller is the
+# failure mode `dropped_as_route`'s reach note documents — it has to ride
+# `MemoryHit` → `hit_to_dict` → each independently-gated emit site, and
+# each of those gates is written out longhand at its own site.
+#
+# The pair below is the acceptance criterion stated as two responses to
+# almost the same memory: same body, same freshness, one attested and one
+# not. The unattested one must still SHOW its missing path and must not
+# escalate; the attested one must do both.
+
+
+async def _write_citing_a_vanished_file(
+    server: Any, tmp_path: Path, *, attest: bool, name: str
+) -> tuple[str, Path]:
+    """Write a memory citing a real file, verify it, then delete the file.
+
+    With `attest=True` the verify call names the path, which is what makes
+    the later absence claim-anchored evidence; with `attest=False` the
+    identical absence is a prose citation nobody reviewed.
+    """
+    cited = tmp_path / name
+    cited.write_text("x\n", encoding="utf-8")
+    written = await _call(
+        server,
+        "memory_write",
+        content=f"The provenance fixture cites `{cited}` for its config.",
+        scopes=["tools"],
+    )
+    await _call(
+        server,
+        "memory_verify",
+        id=written["id"],
+        **({"verified_paths": [str(cited)]} if attest else {}),
+    )
+    cited.unlink()
+    return str(written["id"]), cited
+
+
+async def test_show_surfaces_a_prose_miss_without_escalating(
+    server: Any, tmp_path: Path
+) -> None:
+    """A calendar-fresh memory whose PROSE-cited path vanished: the path
+    is still named on the wire, and the verdict stays `fresh`.
+
+    Before the provenance split this read `spot_check_recommended`, on
+    evidence measured ~0-of-15 real. The fix is not to hide the evidence
+    — `path_drift.missing` is unchanged — it is to stop the evidence from
+    speaking as a verdict.
+    """
+    memory_id, cited = await _write_citing_a_vanished_file(
+        server, tmp_path, attest=False, name="prose-only.toml"
+    )
+    shown = await _call(server, "memory_show", id=memory_id)
+
+    assert shown["path_drift"]["missing"] == [str(cited)]
+    assert shown["path_drift"]["claim_anchored_missing"] == []
+    assert shown["staleness_verdict"] == "fresh"
+
+
+async def test_show_escalates_on_an_attested_miss(server: Any, tmp_path: Path) -> None:
+    """The mirror: identical body, identical deletion, but the path was
+    attested at verify time. Verified-then-deleted is the 3-of-3-real
+    class, so this one escalates AND names which path did it."""
+    memory_id, cited = await _write_citing_a_vanished_file(
+        server, tmp_path, attest=True, name="attested.toml"
+    )
+    shown = await _call(server, "memory_show", id=memory_id)
+
+    assert shown["path_drift"]["missing"] == [str(cited)]
+    assert shown["path_drift"]["claim_anchored_missing"] == [str(cited)]
+    assert shown["staleness_verdict"] == "spot_check_recommended"
+
+
+async def test_per_hit_search_block_keeps_the_full_missing_set(
+    server: Any, tmp_path: Path
+) -> None:
+    """The per-hit `path_drift` block is REBUILT from `MemoryHit` fields
+    rather than serialised from the report, so it is the surface where a
+    new bucket most easily fails to travel.
+
+    Both halves are pinned here: the triage count and the path list stay
+    FULL-set (nothing the caller could act on before disappeared), and
+    the escalating bucket is omitted entirely when it is empty — additive
+    like `expected_absent` and `dropped_as_route`, so the common hit does
+    not grow a key that is always `[]`.
+    """
+    memory_id, cited = await _write_citing_a_vanished_file(
+        server, tmp_path, attest=False, name="prose-hit.toml"
+    )
+    hits = _unwrap(
+        await _call(
+            server, "memory_search", query="provenance fixture config", auto_scope=False
+        )
+    )
+    hit = next(h for h in hits if h["id"] == memory_id)
+
+    assert hit["path_drift_missing"] == 1
+    assert hit["path_drift"]["missing"] == [str(cited)]
+    assert "claim_anchored_missing" not in hit["path_drift"]
+    assert hit["staleness_verdict"] == "fresh"
+
+
+async def test_per_hit_search_block_names_the_escalating_miss(
+    server: Any, tmp_path: Path
+) -> None:
+    """…and carries the bucket the moment it fires, on a non-expanded
+    hit. Without the `MemoryHit` field this is exactly where the split
+    would go invisible: `hit_to_dict` has no report to serialise."""
+    memory_id, cited = await _write_citing_a_vanished_file(
+        server, tmp_path, attest=True, name="attested-hit.toml"
+    )
+    hits = _unwrap(
+        await _call(
+            server, "memory_search", query="provenance fixture config", auto_scope=False
+        )
+    )
+    hit = next(h for h in hits if h["id"] == memory_id)
+
+    assert hit["path_drift"]["claim_anchored_missing"] == [str(cited)]
+    assert hit["staleness_verdict"] == "spot_check_recommended"
+
+
+async def test_list_with_bodies_agrees_with_show_on_provenance(
+    server: Any, tmp_path: Path
+) -> None:
+    """`memory_list(with_bodies=True)` computes its own verdict from its
+    own `detect_path_drift` call — a fifth site, easy to miss. A prose
+    miss must not raise it there either, or the list view would nag about
+    memories `memory_show` reads as fresh."""
+    memory_id, _ = await _write_citing_a_vanished_file(
+        server, tmp_path, attest=False, name="prose-list.toml"
+    )
+    rows = _unwrap(await _call(server, "memory_list", with_bodies=True))
+    row = next(r for r in rows if r["id"] == memory_id)
+    shown = await _call(server, "memory_show", id=memory_id)
+
+    assert row["staleness_verdict"] == "fresh"
+    assert row["staleness_verdict"] == shown["staleness_verdict"]
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+async def test_commit_drift_recompute_does_not_re_broaden_the_path_leg(
+    memory_dir: Path, tmp_path: Path
+) -> None:
+    """The per-search recompute is a SECOND verdict emission site, and it
+    used to take its path input from the serialised hit dict — where the
+    only available number is the full-set triage count.
+
+    That is the one place the provenance split could be undone by a
+    single line without any other surface noticing, so the fixture is
+    built to discriminate: a stale memory with a PROSE-only missing path
+    and a measured-zero commit leg. Reading the claim-anchored count
+    (zero) lets the stale-demotion arm fire and the hit reads `fresh`;
+    reading the dict's full count (one) makes it drifty and the hit reads
+    `spot_check_required`. Same response, opposite tiers.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    origin = Origin(cwd=str(repo), repo=_FAKE_REPO_REMOTE, branch="main")
+    server = _build_stale_server_with_origin(memory_dir, origin)
+
+    cited = tmp_path / "prose-recompute.toml"
+    cited.write_text("x\n", encoding="utf-8")
+    written = await _call(
+        server,
+        "memory_write",
+        content=f"The provenance fixture cites `{cited}` for its config.",
+        scopes=["tools"],
+    )
+    await _call(server, "memory_verify", id=written["id"], note="seed")
+    cited.unlink()
+
+    hits = _unwrap(
+        await _call(
+            server, "memory_search", query="provenance fixture config", auto_scope=False
+        )
+    )
+    hit = next(h for h in hits if h["id"] == written["id"])
+    assert "commit_drift_count" in hit, (
+        "test setup failed: attach_commit_drift_counts did not recompute the "
+        "verdict for this hit, so the recompute's path input isn't exercised"
+    )
+    assert hit["commit_drift_count"] == 0
+    assert hit["verification"]["status"] == "stale"
+    assert hit["path_drift_missing"] == 1, "the prose evidence must still ship"
+    assert hit["staleness_verdict"] == "fresh"

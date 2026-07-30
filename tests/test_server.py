@@ -5963,10 +5963,13 @@ _DESC_BUDGET_PRESSURE = _DESC_BUDGET_CEILING - 100
 # return and the `pending_retained` contract that says the staged write
 # survives one. Both are new refusal shapes a caller cannot discover from a
 # reject it has not hit yet, which is the reference the budget's slack is
-# for; the gate hints still carry the remedies. That leaves 640 chars under
-# `_DESC_BUDGET_CEILING` — the ceiling is deliberately NOT moved here, since
-# the later footprint work ratchets it DOWN and more description edits land
-# before then.
+# for; the gate hints still carry the remedies. The trust recut then moved
+# memory_search +188, describing what the relevance label actually measures
+# and what `matched_leg` reports, in place of the "treat low as noise"
+# absolutism that was suppressing the semantic leg's only capability. That
+# leaves 452 chars under `_DESC_BUDGET_CEILING` — the ceiling is deliberately
+# NOT moved here, since the later footprint work ratchets it DOWN and more
+# description edits land before then.
 _DESC_BASELINE = {
     "episode_handoff": 1560,
     "episode_promote": 1597,
@@ -5982,7 +5985,7 @@ _DESC_BASELINE = {
     "memory_scope_disable": 231,
     "memory_scope_enable": 55,
     "memory_scope_overview": 2820,
-    "memory_search": 3387,
+    "memory_search": 3575,
     "memory_show": 851,
     "memory_update": 2234,
     "memory_verify": 1817,

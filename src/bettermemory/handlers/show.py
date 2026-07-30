@@ -111,7 +111,13 @@ async def memory_show(
     )
     verdict = compute_staleness_verdict(
         verification=verification,
-        path_drift_missing=len(drift.missing),
+        # Claim-anchored subset only: attested paths that vanished, and
+        # citations resolved against this memory's own recorded
+        # worktree. The full `missing` list is still emitted below in
+        # the `path_drift` block — prose absences stay visible as
+        # evidence, they just no longer raise the tier. Rationale and
+        # the 15-vs-3 measurement live on `verdict_from_signals`.
+        path_drift_missing=len(drift.claim_anchored_missing),
         commit_drift_count=commit_drift_count_for_verdict,
     )
     # Issue a use-token for this show before returning so the

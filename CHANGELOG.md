@@ -9,6 +9,92 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+### Added — relative citations finally get path protection, anchored to their own worktree
+
+`detect_path_drift` excluded relative paths by design: without a root, checking
+them would mean stat-ing the reader's cwd, which is meaningless. The cost of
+that exclusion was measured on 37,635 claims across 30 repositories — the path
+leg fired **exactly zero times** in the relative-citation arm, with thousands of
+real deletions in front of it. The citation style people actually write got no
+protection at all.
+
+A memory records its own `origin.worktree_root`, so the root is not unknown —
+it just was not being used. Relative citations now resolve against it before
+the existence check. The anchor regex could not be reused as-is: it is
+deliberately over-matchy because a phantom commit-drift anchor touches no commit
+and is verdict-neutral, but existence checking inverts that — a matched bare
+domain like `pypi.org` would stat as missing and fabricate drift. A filter layer
+requires a real directory segment, rejects host-shaped first segments and
+placeholder paths, and reports missing only when the parent directory exists.
+
+Measured on the same corpus (`bench/rot/results/multirepo-anchored-2026-07-30.json`,
+a fourth arm appended — the frozen `multirepo.json` and scorecard are untouched,
+so no published prediction was regraded): **precision 1.000, false-alarm rate
+0.0, one alert per catch**, J 0.000 → 0.032 pooled, and 19 wins / 0 losses / 7
+ties repo-to-repo. The recall is small — 0.73% of claims against a 22.9% base
+rate — and that is the honest headline: this does not find most rot, it makes a
+dead leg fire precisely on the subset it can prove.
+
+The cross-host case is what would have made it dangerous. A store synced from
+another machine carries a `worktree_root` that does not exist locally, and
+checking against it would mark every citation missing at once. The check fails
+open when the recorded root is absent or unstattable — a deliberate, scoped
+reversal of the bias `origin.py` records for files underneath a live worktree.
+That also closes a latent bug: a recorded empty `worktree_root` used to become
+`Path(".")` and anchor attestations against the reader's cwd, which is precisely
+what the relative exclusion existed to prevent.
+
+### Changed — only claim-anchored evidence escalates the staleness verdict
+
+`PathDriftReport.missing` merged two populations with very different track
+records: misses from paths the memory itself attested, and misses from paths
+extracted out of prose. The in-tree measurement is stark — prose-extracted path
+alerts run about 0 of 15 real, attestation-anchored alerts 3 of 3 — and
+`has_drift` treated them identically as the only path input to the verdict.
+
+Path drift now carries provenance. Only anchored misses, plus the newly
+checkable relative citations, feed verdict escalation; prose misses stay on the
+wire as advisory evidence. Nothing is hidden from the caller — only what
+*escalates* changed, which is the distinction this whole release is built on:
+surface evidence, let the reader judge.
+
+The commit leg was the other candidate for removal from the escalation
+disjunction, gated on pooled alerts-per-catch reaching 1.5. It does not, so it
+stays, and the switch is isolated at one named place with a test pinning today's
+behaviour. The demotion branch — calendar-stale plus a *measured* zero reading
+fresh — is untouched and separately pinned; removing it would resurrect the
+constant-function defect that `docs/incidents/` now documents.
+
+### Changed — the relevance label stops measuring length
+
+The `relevance` field was computed from lexical coverage, and the code said so
+about itself: "measuring LENGTH, not relevance". A pure-semantic paraphrase hit
+has no matched terms, so it was labelled `low` — while the tool description told
+callers to treat low as noise and `expand_top` refused anything not `high`. The
+4x-cost semantic leg was suppressed by the one field callers branch on.
+
+Hits now carry `matched_leg` (lexical / semantic / both), which reports why a hit
+surfaced instead of asking the caller to infer it, and a semantic-only hit is no
+longer labelled by a lexical statistic it cannot have.
+
+### Changed — an unattended consolidation pass cannot tombstone a contradiction
+
+Negation detection was whole-body token presence, so "Deploy with the blue-green
+strategy; never do in-place." and its exact inverse scored Jaccard 1.0 with no
+polarity flip detected, and the keeper-picking pass would have tombstoned one
+side. Pairs showing negation or numeric-divergence signals now route to the
+conflicts queue only, structurally unreachable by the keeper pass rather than
+guarded at the call site — a fence you can forget to call is not a fence.
+
+### Added — `memory_verify` reports symbol drift, advisory only
+
+83 of 194 memories in the reference store cite backticked symbols, and no
+production code ever resolved one against a file; the machinery that scores
+J≈0.99 is bench-only and its parser reads 0% of real prose by construction.
+`memory_verify` now AST-checks the citation shapes it can parse and reports
+`symbol_drift`. It feeds no verdict until a bench measures its precision, and
+`Store.mark_verified` stays a policy-free persistence primitive.
+
 ### Fixed — `ingest --force` was a silent no-op, and three more write-path holes
 
 `--force` documented itself as writing a duplicate the store already holds.

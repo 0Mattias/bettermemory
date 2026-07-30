@@ -450,6 +450,18 @@ class MemoryHit(BaseModel):
     triage; the lists are the actionable detail surfaced when the
     response builder folds them in.
 
+    `path_drift_claim_anchored_missing_paths` mirrors the report's
+    `claim_anchored_missing` bucket: the subset of
+    `path_drift_missing_paths` whose absence is evidence about a claim
+    the memory makes (an attested path that vanished, or a citation
+    resolved against the memory's own recorded worktree) rather than a
+    path shape scraped out of prose. It is what the hit's
+    `staleness_verdict` escalates on — the counts above stay full-set so
+    the caller still sees every absence, advisory ones included. Without
+    this field the response builder would have to re-derive provenance
+    from strings that no longer carry it, which is not possible; see
+    `PathDriftReport.claim_anchored_missing`.
+
     `path_drift_dropped_as_route_paths` mirrors the report's
     `dropped_as_route` bucket: candidates the route rule suppressed
     instead of stat-reporting — neither checked nor missing, see
@@ -490,6 +502,7 @@ class MemoryHit(BaseModel):
     path_drift_verified_paths: list[str] = []
     path_drift_expected_absent_paths: list[str] = []
     path_drift_dropped_as_route_paths: list[str] = []
+    path_drift_claim_anchored_missing_paths: list[str] = []
     category: Category | None = None
     query_unique: int = 0
 
