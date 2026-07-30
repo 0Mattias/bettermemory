@@ -111,13 +111,22 @@ def _unwrap(res: Any) -> Any:
 
 
 async def test_ambient_category_commits_immediately(server: Any) -> None:
-    """Ambient skips the pending-write gate (same fast path as fact)."""
+    """Ambient skips the pending-write gate (same fast path as fact).
+
+    `acknowledge_user_claim=True` because the body is a claim about the
+    user filed as `ambient`, and `UserClaimGate` (index 2 of
+    `_WRITE_GATES`) refuses exactly that shape — it only exempts
+    `user-inference`. The flag keeps this test on its own axis: what is
+    under test is that `ambient` takes the SAME fast path as `fact`
+    past `PendingGate`, not how the user-claim gate classifies bodies
+    (that lives in `tests/test_server_user_claims.py`)."""
     res = await _call(
         server,
         "memory_write",
         content="The user prefers terse code-driven explanations.",
         scopes=["learning-style"],
         category="ambient",
+        acknowledge_user_claim=True,
     )
     assert res["status"] == "committed"
     assert res["category"] == "ambient"
@@ -133,6 +142,7 @@ async def test_ambient_category_persists_in_frontmatter(
         content="The user is based in Boston.",
         scopes=["personal-context"],
         category="ambient",
+        acknowledge_user_claim=True,  # user claim filed as ambient; see above
     )
     files = list(memory_dir.glob("*.md"))
     assert len(files) == 1
@@ -204,6 +214,7 @@ async def test_ambient_excluded_from_dead_weight_via_health(server: Any) -> None
         content="User prefers code-driven tutorials.",
         scopes=["learning-style"],
         category="ambient",
+        acknowledge_user_claim=True,  # user claim filed as ambient; see above
     )
     # Generate a search hit so the memory has retrieval_count > 0 — the
     # condition under which a non-ambient memory would land in dead_weight.

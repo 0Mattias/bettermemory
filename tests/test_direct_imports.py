@@ -327,7 +327,21 @@ def test_handlers_write_direct_import() -> None:
     handler (the acknowledge_* / groundedness_* / force flags) and the
     most failure-prone surface for silent drops — a removed
     ``acknowledge_ungrounded`` would have slipped past the pre-snapshot
-    subset check, which is exactly the gap this rewrite closes."""
+    subset check, which is exactly the gap this rewrite closes.
+
+    Pin moved deliberately when ``UserClaimGate`` landed:
+    ``acknowledge_user_claim`` was inserted at index 10, immediately
+    after ``acknowledge_credential``. Two things make that placement
+    load-bearing rather than cosmetic. First, this snapshot is
+    ORDER-sensitive, and ``memory_write`` is reached positionally by
+    ``_handlers.py`` — a flag appended at the tail instead would shift
+    ``category`` / ``groundedness_check`` / ``source_transcript`` under
+    any positional caller. Second, the acknowledge_* flags are a
+    contiguous run on purpose: each one is a gate's escape hatch, and
+    grouping them is what makes a MISSING escape hatch visible here at
+    a glance. Additive drift on this pin is legitimate (a new gate
+    needs a new flag); a REORDER or a DELETION is not, and this test
+    exists to make either one loud."""
     from bettermemory.handlers.write import (
         DESC_MEMORY_WRITE,
         DESC_MEMORY_WRITE_CANCEL,
@@ -354,6 +368,7 @@ def test_handlers_write_direct_import() -> None:
         ("acknowledge_scope_mismatch", False),
         ("acknowledge_ungrounded", False),
         ("acknowledge_credential", False),
+        ("acknowledge_user_claim", False),
         ("category", "fact"),
         ("groundedness_check", False),
         ("source_transcript", None),

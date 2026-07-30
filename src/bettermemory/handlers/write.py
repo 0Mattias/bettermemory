@@ -25,10 +25,10 @@ self-contained policy decision; the orchestrator is the readable
 sequence.
 
 WriteGate decision: kept as a single file (this one) rather than
-``handlers/write/<gate>.py``. The six gates are small (10-40 lines each),
+``handlers/write/<gate>.py``. The gates are small (10-40 lines each),
 share half a dozen helpers, and reading them one after the other in
 declaration order matches how they fire at runtime — splitting them
-across six files would hide that runtime order behind a directory
+one-per-file would hide that runtime order behind a directory
 listing.
 
 Includes ``memory_write_confirm`` / ``memory_write_cancel`` because
@@ -38,6 +38,7 @@ those tools complete the pending-write lifecycle this module owns.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
@@ -45,13 +46,20 @@ from typing import TYPE_CHECKING, Any, Protocol
 from ..credentials import find_credential_markers
 from ..durability import find_transient_markers
 from ..models import Category, SimilarHit
+from ..proposals import (
+    _HARD_WRAP_RE,
+    _LIST_PREFIX_RE,
+    _PREFERENCE_RE,
+    _SENTENCE_SPLIT_RE,
+    _SMART_APOSTROPHES,
+)
 from ..scope_match import (
     collect_project_roots,
     collect_project_scopes,
     detect_scope_mismatch,
 )
 from ..search import find_similar, find_similar_tombstones
-from ..session import SessionState
+from ..session import GATE_FLAG_KEYS, PendingWrite, SessionState
 from ._shared import (
     Context,
     _AMBIENT_LONG_BODY_WORDS,
@@ -128,6 +136,10 @@ DESC_MEMORY_WRITE = (
     "- `scope_mismatch` — body cites a project the declared "
     "scopes don't cover. Re-scope or pass "
     "`acknowledge_scope_mismatch=True`.\n"
+    "- `user_claim_warning` — the body reads as a claim ABOUT THE "
+    "USER but `category` isn't `user-inference`. Re-issue as that "
+    "(the user gets the veto) or pass `acknowledge_user_claim=True` "
+    "if the subject is someone else.\n"
     "- `pending` — `category='user-inference'` or "
     "`require_write_confirmation`. `pending_reason` distinguishes.\n"
     "- `ungrounded` — groundedness gate fired.\n\n"
@@ -145,7 +157,12 @@ DESC_MEMORY_WRITE_CONFIRM = (
     "Commit a memory_write that returned status='pending'. "
     "Pass the pending_id from that response. Pending writes expire "
     "after 1 hour; the confirm call will tell you which case fired "
-    "(expired vs. never-existed)."
+    "(expired vs. never-existed). Re-gated at commit: `duplicate` / "
+    "`previously_removed` / `credential_warning` can return instead of "
+    "`committed` when the store changed during the wait. The staged "
+    "write survives (`pending_retained: true`, same pending_id) — "
+    "memory_write_cancel or resolve the match. The original write's "
+    "overrides carry over."
 )
 
 
@@ -184,10 +201,16 @@ class GateContext:
     acknowledge_credential: bool
     groundedness_check: bool
     source_transcript: str | None
+    # Defaulted so the non-MCP construction sites keep working: `ingest`
+    # passes every field by keyword and has no `**kwargs` slack, so a
+    # field added without a default breaks that caller at import-time
+    # rather than at review-time.
+    acknowledge_user_claim: bool = False
     # Outputs the gates accumulate as they pass — read by later gates
     # or the final commit step.
     credential_hits: list[Any] = None  # type: ignore[assignment]
     transient_hits: list[Any] = None  # type: ignore[assignment]
+    user_claim_hits: list[Any] = None  # type: ignore[assignment]
     related: list[SimilarHit] = None  # type: ignore[assignment]
     removed_related: list[SimilarHit] = None  # type: ignore[assignment]
 
@@ -196,6 +219,8 @@ class GateContext:
             self.credential_hits = []
         if self.transient_hits is None:
             self.transient_hits = []
+        if self.user_claim_hits is None:
+            self.user_claim_hits = []
         if self.related is None:
             self.related = []
         if self.removed_related is None:
@@ -316,6 +341,136 @@ class TransientGate(WriteGate):
                 "scopes": gc.payload["scopes"],
                 "forced": False,
                 "markers": [h.marker for h in gc.transient_hits],
+            },
+        )
+
+
+# Third-person user claims — the shape a MODEL writes when it files a
+# claim about the user ("Mattias prefers tabs", "the user avoids
+# rebase"). `_PREFERENCE_RE` cannot see these: it mines the USER's own
+# words in the Stop hook, so every one of its branches is first-person.
+# Composed alongside it rather than folded into it — the extractor is
+# behaviourally pinned (tests/test_proposals.py) on exactly which shapes
+# it captures, and widening it there would change what the hook queues.
+#
+# Deliberately NOT re.IGNORECASE: the bare-subject branch reads the
+# capital as the only available "this is a person" signal, and
+# `[A-Z][a-z]+` misses acronyms and CamelCase ("CI", "GitHub") by
+# construction — those head infrastructure claims, not user claims. The
+# `(?<!ly)` drops sentence-opening adverbs ("Allegedly hates dark
+# mode"). Case-insensitive branches carry their own scoped `(?i:)`.
+#
+# The bare-subject branch takes only verbs that predicate a PERSON:
+# "uses" / "runs" / "wants" / "needs" are how ordinary tooling facts
+# read ("Postgres runs on 5433", "Docker needs the daemon"), so those
+# are admitted only under the explicit `the user` subject. The
+# possessive branch mirrors `_PREFERENCE_RE`'s `^(?:my|our)` shape —
+# a stative verb within four words — because a bare "the user's X"
+# matches ordinary prose about users in general. Residual false
+# positives ("Black prefers double quotes") are what
+# `acknowledge_user_claim` is for; the override rate in the write event
+# is the evidence that would reopen this list.
+_USER_CLAIM_RE = re.compile(
+    r"(?i:\bthe user\b)\s+(?:(?:always|never|usually|typically|generally)\s+)?"
+    r"(?i:(?:prefers|likes|dislikes|loves|hates|avoids|wants|needs|uses|runs"
+    r"|works|lives|is|was|has)\b)"
+    r"|(?i:\bthe user's\s+(?:\w+\s+){0,4}?"
+    r"(?:is|are|was|were|prefers?|uses?|runs?|lives)\b)"
+    r"|\b[A-Z][a-z]+(?<!ly)\b\s+(?:(?:always|never|usually|typically|generally)\s+)?"
+    r"(?i:(?:prefers|likes|dislikes|loves|hates|avoids)\b)"
+)
+
+
+@dataclass(frozen=True)
+class UserClaimHit:
+    """One sentence of a body that reads as a claim about the user."""
+
+    phrase: str
+    sentence: str
+
+
+def _find_user_claims(content: str) -> list[UserClaimHit]:
+    """Sentences in `content` that read as claims about the user.
+
+    Applied the way production applies `_PREFERENCE_RE` — per sentence,
+    after smart-apostrophe normalization and hard-wrap repair — because
+    that pattern's `^(?:my|our)` branch anchors to the start of whatever
+    string it is handed, and a curly-apostrophe body ("I’m using zsh")
+    misses every contraction branch without the translation.
+
+    No length floor, unlike `proposals._iter_candidate_sentences`: that
+    30-char / 6-token floor keeps a noisy REVIEW QUEUE clean, while
+    "Mattias prefers tabs" (20 chars, 3 tokens) is precisely the write
+    this gate exists to catch.
+    """
+    hits: list[UserClaimHit] = []
+    text = _HARD_WRAP_RE.sub(" ", content.translate(_SMART_APOSTROPHES))
+    for raw in _SENTENCE_SPLIT_RE.split(text):
+        sentence = _LIST_PREFIX_RE.sub("", raw.strip()).strip()
+        if not sentence:
+            continue
+        match = _PREFERENCE_RE.search(sentence) or _USER_CLAIM_RE.search(sentence)
+        if match is not None:
+            hits.append(UserClaimHit(phrase=match.group(0), sentence=sentence))
+    return hits
+
+
+class UserClaimGate(WriteGate):
+    """Reject bodies that read as claims ABOUT THE USER unless they are
+    filed as `user-inference` (or `acknowledge_user_claim` is set).
+
+    `PendingGate` triggers on the category LABEL, so a claim about the
+    user written as `category='fact'` commits instantly and the staging
+    flow whose entire purpose is the user's veto never runs. This gate
+    classifies the BODY instead, which is why it sits next to
+    `TransientGate` rather than next to `PendingGate`: it must precede
+    dedup (a re-categorized re-issue must not be routed to
+    `memory_update` against a mis-filed parent) and precede
+    `PendingGate` (re-issuing as `user-inference` has to stage
+    normally).
+
+    Precision-first, and porous by the same trade the transient and
+    credential gates make: it matches predicating shapes, so a nominalised
+    claim like "<Name>'s preference is tabs" passes (measured, both
+    apostrophe forms). Widening it to possessive-plus-noun would refuse
+    ordinary prose — "the parser's preference is the longest match" — and
+    chasing shapes one at a time is whack-a-mole. The entry ticket for
+    revisiting the pattern is override-rate telemetry per marker, which is
+    why an acknowledged write records the phrase it overrode.
+    """
+
+    def evaluate(self, deps: "GateDeps", gc: GateContext) -> GateResult:
+        category_enum: Category = gc.payload["category"]
+        if category_enum == Category.USER_INFERENCE:
+            return Continue()
+        gc.user_claim_hits = _find_user_claims(gc.payload["content"])
+        if not gc.user_claim_hits or gc.acknowledge_user_claim:
+            return Continue()
+        return Reject(
+            response={
+                "status": "user_claim_warning",
+                "markers": [
+                    {"phrase": h.phrase, "sentence": h.sentence}
+                    for h in gc.user_claim_hits
+                ],
+                "hint": (
+                    "The body reads as a claim ABOUT THE USER but was "
+                    f"filed as `{category_enum.value}`, which commits "
+                    "without asking them. Re-issue with "
+                    "category='user-inference' — that stages the write "
+                    "and returns a pending_id so you can ask in plain "
+                    "language first; misattribution sticks, so the user "
+                    "gets the veto. Pass acknowledge_user_claim=True "
+                    "when the subject is someone or something else (a "
+                    "teammate, a tool that 'prefers' a setting)."
+                ),
+            },
+            event_kwargs={
+                "status": "user_claim_warning",
+                "scopes": gc.payload["scopes"],
+                "forced": False,
+                "category": category_enum.value,
+                "claim_phrases": [h.phrase for h in gc.user_claim_hits],
             },
         )
 
@@ -564,7 +719,11 @@ class PendingGate(WriteGate):
 # Order matters: credential before everything so a secret is refused
 # before any other gate records body-derived data in the event log;
 # transient before dedup so the writer isn't routed to memory_update on a
-# transient parent; scope-mismatch before dedup so the writer doesn't get a
+# transient parent; user-claim next to transient because both classify the
+# BODY, and before dedup for the same reason transient is (a re-categorized
+# re-issue must not be routed to memory_update on a mis-filed parent) and
+# before pending so re-issuing as user-inference stages normally;
+# scope-mismatch before dedup so the writer doesn't get a
 # duplicate hit on a memory tagged for a different scope; groundedness
 # before dedup because a hallucinated write being a "duplicate" of a real
 # one is misleading; dedup before pending so the user-inference
@@ -573,6 +732,7 @@ class PendingGate(WriteGate):
 _WRITE_GATES: tuple[WriteGate, ...] = (
     CredentialGate(),
     TransientGate(),
+    UserClaimGate(),
     ScopeMismatchGate(),
     GroundednessGate(),
     DedupActiveGate(),
@@ -695,9 +855,20 @@ class GateBundle:
         )
 
 
-# The gates that judge CONTENT — everything except the confirmation
-# handshake. `PendingGate` is the one gate whose correctness depends on the
-# caller having a human to ask, so it is not part of this subset.
+# The gates that judge CONTENT — everything except the two gates whose
+# correctness depends on the caller having a human to ask: `PendingGate`
+# (the confirmation handshake itself) and `UserClaimGate` (which refuses
+# in order to route the write INTO that handshake). Both are excluded by
+# name rather than by "everything but Pending", because the exclusion is
+# what keeps the batch callers correct: `apply_ingest_plan` is a bulk
+# import of the user's OWN prior auto-memory files — first-person
+# preference prose is the norm there, not a model asserting a fresh claim
+# — and `accept_proposal` is a human review decision on a queue whose
+# extractor deliberately stamps explicit captures ("remember that I prefer
+# X") as `fact`, so their bodies match the preference shapes by
+# construction. Inheriting `UserClaimGate` would hard-refuse exactly the
+# rows those two paths exist to carry, with every acknowledge flag False
+# and no human in the loop to flip one.
 #
 # Splitting the tuple rather than always running the whole chain is a
 # deliberate answer to a real finding: the non-MCP writers' deviations from
@@ -714,7 +885,40 @@ class GateBundle:
 # So each caller names the subset its situation justifies, and the reason
 # lives at the call site. A caller that wants the full chain passes nothing.
 CONTENT_GATES: tuple[WriteGate, ...] = tuple(
-    g for g in _WRITE_GATES if not isinstance(g, PendingGate)
+    g for g in _WRITE_GATES if not isinstance(g, (PendingGate, UserClaimGate))
+)
+
+
+# The gates `memory_write_confirm` re-runs against a staged payload before
+# it commits. A pending write can sit for an hour, and the store is not
+# frozen while it does: the duplicate it is now a duplicate OF may have been
+# written five minutes ago, and the memory it now overlaps may have been
+# tombstoned since. Confirm used to replay the payload through zero gates,
+# so both landed unchecked.
+#
+# It is a SUBSET, and each omission is a decision rather than an oversight:
+#
+# - `TransientGate` / `UserClaimGate` / `ScopeMismatchGate` judge the BODY,
+#   and the body has not changed since staging. Re-running them can only
+#   re-raise a verdict the caller already answered (by rewording, by
+#   acknowledging, or by staging deliberately), and the caller has no way to
+#   pass an acknowledgement through `memory_write_confirm` even if it wanted
+#   to. What they would produce is a refusal with no legal escape.
+# - `GroundednessGate` needs the source transcript, which is not staged
+#   (`session.GATE_FLAG_KEYS` says why).
+# - `PendingGate` would stage the write a second time.
+#
+# What is left is exactly the set whose verdict depends on the STORE rather
+# than on the payload — dedup against the active set and against tombstones
+# — plus the credential scan, which is cheap, cannot produce a false refusal
+# on an unchanged body (it either fired at staging time or it did not), and
+# is the one refusal severe enough to be worth re-asserting at the moment of
+# durable commit. Derived from `_WRITE_GATES` by type so confirm inherits
+# the chain's ordering instead of pinning its own copy of it.
+_CONFIRM_GATES: tuple[WriteGate, ...] = tuple(
+    g
+    for g in _WRITE_GATES
+    if isinstance(g, (CredentialGate, DedupActiveGate, DedupTombstoneGate))
 )
 
 
@@ -802,6 +1006,7 @@ async def memory_write(
     acknowledge_scope_mismatch: bool = False,
     acknowledge_ungrounded: bool = False,
     acknowledge_credential: bool = False,
+    acknowledge_user_claim: bool = False,
     category: str = "fact",
     groundedness_check: bool = False,
     source_transcript: str | None = None,
@@ -812,6 +1017,8 @@ async def memory_write(
     from .. import _handlers as _h
 
     state = deps.sessions.for_request(ctx)
+    # See `memory_write_confirm` for why the bind precedes `_advance_turn`.
+    state.bind_pending_log(deps.store.root)
     _advance_turn(state, deps.recorder)
     payload = _validate_write_payload(
         content=content,
@@ -821,6 +1028,7 @@ async def memory_write(
         allowed_scopes=deps.config.scopes.allowed,
         category=category,
         max_content_bytes=deps.config.behavior.max_content_bytes,
+        min_content_tokens=deps.config.behavior.min_content_tokens,
         max_scopes_per_write=deps.config.behavior.max_scopes_per_write,
     )
 
@@ -839,6 +1047,7 @@ async def memory_write(
         acknowledge_credential=acknowledge_credential,
         groundedness_check=groundedness_check,
         source_transcript=source_transcript,
+        acknowledge_user_claim=acknowledge_user_claim,
     )
 
     pending_decision: Pending | None = None
@@ -872,6 +1081,14 @@ async def memory_write(
         if gc.credential_hits and acknowledge_credential
         else []
     )
+    # Same axis again for the user-claim gate: the phrases a caller
+    # overrode. This gate's phrase list is the kind that only ever gets
+    # revisited on override-rate evidence, so the evidence has to exist.
+    user_claims_acknowledged = (
+        [h.phrase for h in gc.user_claim_hits]
+        if gc.user_claim_hits and acknowledge_user_claim
+        else []
+    )
 
     if pending_decision is not None:
         return _stage_pending(
@@ -884,6 +1101,12 @@ async def memory_write(
             forced=force,
             acknowledged=acknowledged,
             credentials_acknowledged=credentials_acknowledged,
+            user_claims_acknowledged=user_claims_acknowledged,
+            # Read off the GateContext rather than off this function's
+            # parameters: `GATE_FLAG_KEYS` is a list of GateContext field
+            # names, so sourcing the values from anywhere else is how the
+            # two would drift.
+            gate_flags={key: getattr(gc, key) for key in GATE_FLAG_KEYS},
         )
 
     response = _commit_write(
@@ -894,6 +1117,7 @@ async def memory_write(
         forced=force,
         acknowledged=acknowledged,
         credentials_acknowledged=credentials_acknowledged,
+        user_claims_acknowledged=user_claims_acknowledged,
     )
     _maybe_attach_curation_hint(response, deps, state)
     return response
@@ -910,11 +1134,18 @@ def _stage_pending(
     forced: bool,
     acknowledged: list[str],
     credentials_acknowledged: list[str],
+    user_claims_acknowledged: list[str],
+    gate_flags: dict[str, Any],
 ) -> dict[str, Any]:
     """Stage the write through the SessionState, record the pending
-    event, and return the pending response shape."""
+    event, and return the pending response shape.
+
+    `gate_flags` rides along on the staged write so the confirm-time
+    re-gate judges it under the same overrides the caller passed here —
+    without it, a `force=True` write is re-refused as a duplicate by the
+    very gate the caller already overrode."""
     category_enum: Category = payload["category"]
-    pending = state.stage_write(payload)
+    pending = state.stage_write(payload, gate_flags=gate_flags)
     hint = (
         "User-inference category — ask the user in plain "
         "language ('want me to remember that you prefer X?') "
@@ -957,6 +1188,7 @@ def _stage_pending(
         removed_related=[h.id for h in removed_related],
         markers_acknowledged=acknowledged,
         credentials_acknowledged=credentials_acknowledged,
+        user_claims_acknowledged=user_claims_acknowledged,
     )
     return response
 
@@ -970,6 +1202,7 @@ def _commit_write(
     forced: bool,
     acknowledged: list[str],
     credentials_acknowledged: list[str],
+    user_claims_acknowledged: list[str],
 ) -> dict[str, Any]:
     """Persist the memory, record the commit event, return the
     committed response. Surfaces the ambient long-body warning as a
@@ -1003,6 +1236,7 @@ def _commit_write(
         removed_related=[h.id for h in removed_related],
         markers_acknowledged=acknowledged,
         credentials_acknowledged=credentials_acknowledged,
+        user_claims_acknowledged=user_claims_acknowledged,
         warnings=warnings,
     )
     return deps.responses.committed(
@@ -1018,12 +1252,86 @@ def _commit_write(
 # ---------------------------------------------------------------------------
 
 
+def _confirm_gate_context(pending: PendingWrite) -> GateContext:
+    """A `GateContext` for re-judging a staged payload at confirm time.
+
+    The overrides are the ones the ORIGINAL `memory_write` carried
+    (`session.GATE_FLAG_KEYS`), spelled out one by one rather than
+    splatted so the type checker sees the arity;
+    `test_every_staged_gate_flag_reaches_the_confirm_context` is what
+    keeps the two lists from drifting apart.
+
+    `groundedness_check=False` is not a policy choice here — the
+    transcript that gate needs is not staged, so passing True would only
+    make `GroundednessGate` return `Continue` on a missing transcript.
+    """
+    flags = pending.gate_flags
+    return GateContext(
+        payload=pending.payload,
+        force=flags["force"],
+        acknowledge_transient=flags["acknowledge_transient"],
+        acknowledge_scope_mismatch=flags["acknowledge_scope_mismatch"],
+        acknowledge_ungrounded=flags["acknowledge_ungrounded"],
+        acknowledge_credential=flags["acknowledge_credential"],
+        acknowledge_user_claim=flags["acknowledge_user_claim"],
+        groundedness_check=False,
+        source_transcript=None,
+    )
+
+
+def _confirm_refusal(
+    deps: "ToolHandlers", state: SessionState, pending_id: str, decision: Reject
+) -> dict[str, Any]:
+    """Shape a confirm-time gate refusal: the gate's own response, plus
+    the still-valid pending id.
+
+    The staged write is deliberately NOT consumed and its promotion
+    linkage deliberately NOT popped — this is a refusal, not a resolution,
+    and both have to survive for the caller to decide. That mirrors
+    `memory_write_cancel`'s contract about the source episode, except
+    cancel drops the linkage because the pending is gone and here it isn't.
+
+    The gate's own hint offers `force=True` / `acknowledge_*`, which are
+    `memory_write` parameters — `memory_write_confirm` takes a pending id
+    and nothing else, so the addendum has to say where those overrides
+    actually live or the model retries the same call expecting a
+    different answer.
+    """
+    if decision.response.get("status") == "duplicate":
+        _corroborate_duplicate(deps, state, decision)
+    response = dict(decision.response)
+    response["pending_id"] = pending_id
+    response["pending_retained"] = True
+    response["hint"] = (
+        f"{response.get('hint', '')} This fired at CONFIRM time — the store "
+        "changed while the write was staged. Nothing was committed and "
+        f"{pending_id!r} is still valid, so the choice is memory_write_cancel"
+        "(pending_id) to drop it, or resolve the match (memory_update, "
+        "memory_restore) and cancel. The overrides named above are "
+        "memory_write parameters; re-issuing the write with one is the only "
+        "way to pass them — memory_write_confirm takes the pending id alone."
+    ).strip()
+    deps.recorder.record(
+        "write_confirm",
+        pending_id=pending_id,
+        pending_retained=True,
+        **decision.event_kwargs,
+    )
+    return response
+
+
 async def memory_write_confirm(
     deps: "ToolHandlers", pending_id: str, ctx: Context | None = None
 ) -> dict[str, Any]:
     state = deps.sessions.for_request(ctx)
+    # Before `_advance_turn`: adoption has to happen while the TTL sweep it
+    # feeds is still ahead of us, or a write that expired during a restart
+    # emits its `pending_expired` event one call later than it should.
+    state.bind_pending_log(deps.store.root)
     _advance_turn(state, deps.recorder)
-    pending = state.take_pending(pending_id)
+    # Peek, don't pop. A gate refusal below has to leave the staged write
+    # re-confirmable, and `take_pending` would already have destroyed it.
+    pending = state.peek_pending(pending_id)
     if pending is None:
         # Distinguish "expired" from "never existed" so the model
         # can offer to re-stage the write rather than just retrying
@@ -1042,14 +1350,25 @@ async def memory_write_confirm(
             f"no pending write with id {pending_id!r} (it may have "
             "been already committed or never existed)"
         )
+    decision = apply_write_gates(
+        deps, _confirm_gate_context(pending), gates=_CONFIRM_GATES
+    )
+    if isinstance(decision, Reject):
+        return _confirm_refusal(deps, state, pending_id, decision)
+    # Every store-dependent gate passed, so the staged write is consumed
+    # now — after the judgement, not before it. The peeked object stays the
+    # authority for this call: `take_pending` re-runs the TTL sweep, and on
+    # the sub-microsecond chance that it evicts between the peek and the
+    # pop, the caller's confirm still refers to the write it asked about.
+    state.take_pending(pending_id)
     try:
         memory = deps.store.write(**pending.payload)
     except OSError as exc:
-        # Disk-level failure after `take_pending` already consumed the
-        # staged write (popped at the top of this handler). Translate to a
-        # clean ValueError at the MCP boundary instead of leaking the bare
-        # OSError path; note the pending id is already consumed so the
-        # caller must re-stage with memory_write rather than re-confirm.
+        # Disk-level failure after the staged write was consumed a few lines
+        # above. Translate to a clean ValueError at the MCP boundary instead
+        # of leaking the bare OSError path; note the pending id is already
+        # consumed so the caller must re-stage with memory_write rather than
+        # re-confirm.
         raise ValueError(
             f"failed to write memory: {exc} (pending {pending_id!r} was "
             "already consumed — re-stage with memory_write)"
@@ -1098,6 +1417,8 @@ async def memory_write_cancel(
     deps: "ToolHandlers", pending_id: str, ctx: Context | None = None
 ) -> dict[str, Any]:
     state = deps.sessions.for_request(ctx)
+    # See `memory_write_confirm` for why the bind precedes `_advance_turn`.
+    state.bind_pending_log(deps.store.root)
     _advance_turn(state, deps.recorder)
     existed = state.cancel_pending(pending_id)
     # Drop the promotion linkage if there is one, but DON'T delete the

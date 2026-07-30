@@ -3,6 +3,30 @@
 Covers the wire flow: opt-in via `groundedness_check=True`, the
 `source_transcript` parameter, the `status: "ungrounded"` response
 shape, and the `acknowledge_ungrounded=True` override.
+
+Why most bodies here carry `acknowledge_user_claim=True`
+-------------------------------------------------------
+These fixtures predate `UserClaimGate`, and their bodies ("The user
+lives in Tokyo…", "The user prefers terse code-driven explanations.")
+are genuinely claims about the user filed as `fact` — exactly what
+that gate refuses. The gate sits at index 2 of `_WRITE_GATES`, ahead
+of `GroundednessGate` at index 4, so on those bodies it now answers
+first and `status: "ungrounded"` becomes unreachable without the
+acknowledgement.
+
+The flag is the right repair rather than a reworded body because the
+bodies are load-bearing for the assertions below (`"Tokyo" in
+c["sentence"]`, the terse/purple-orange split), and because passing it
+states at the call site the thing that is actually true: these are
+user claims, and this module is not testing that axis.
+
+What that costs, stated plainly: on THESE bodies the tests no longer
+exercise the ungrounded path from a bare `memory_write`. What keeps
+that from being a hole is `test_overlap_ratio_in_response` — its body
+("The capital of Bhutan is Thimphu.") trips no user-claim shape, so it
+drives `status: "ungrounded"` through the full chain with every
+acknowledge flag False. It is the control for this file; do not add an
+`acknowledge_*` flag to it.
 """
 
 from __future__ import annotations
@@ -51,6 +75,7 @@ async def test_groundedness_check_off_by_default(server: Any) -> None:
         "memory_write",
         content="The user lives in Tokyo and owns three cats.",
         scopes=["personal-context"],
+        acknowledge_user_claim=True,  # body is a user claim; see module docstring
     )
     assert res["status"] == "committed"
 
@@ -68,6 +93,7 @@ async def test_grounded_body_commits(server: Any) -> None:
         source_transcript=(
             "user: please give me terse code-driven explanations, no prose."
         ),
+        acknowledge_user_claim=True,  # body is a user claim; see module docstring
     )
     assert res["status"] == "committed"
 
@@ -75,7 +101,15 @@ async def test_grounded_body_commits(server: Any) -> None:
 async def test_ungrounded_body_blocks_write(server: Any) -> None:
     """A body with a sentence that doesn't anchor to the transcript
     returns `status: "ungrounded"` with the offending sentence
-    listed. The write does NOT commit to disk."""
+    listed. The write does NOT commit to disk.
+
+    `acknowledge_user_claim=True` is what makes the groundedness verdict
+    reachable at all on this body — `UserClaimGate` precedes
+    `GroundednessGate` — so the test now proves something slightly
+    STRONGER than before: acknowledging the user-claim axis does not
+    also buy a pass on the grounding axis. The acknowledge flags are
+    per-gate and don't cross-apply. The name still describes the
+    assertion: an ungrounded body blocks the write."""
     res = await _call(
         server,
         "memory_write",
@@ -83,6 +117,7 @@ async def test_ungrounded_body_blocks_write(server: Any) -> None:
         scopes=["personal-context"],
         groundedness_check=True,
         source_transcript="user: please use terse code-driven explanations.",
+        acknowledge_user_claim=True,  # body is a user claim; see module docstring
     )
     assert res["status"] == "ungrounded"
     assert "claims" in res
@@ -105,7 +140,11 @@ async def test_acknowledge_ungrounded_overrides_gate(server: Any) -> None:
     """`acknowledge_ungrounded=True` lets the writer commit despite the
     gate. Same shape as the existing acknowledge_transient /
     acknowledge_scope_mismatch overrides — the caller is asserting
-    that they have other grounding sources the gate can't see."""
+    that they have other grounding sources the gate can't see.
+
+    Paired with `test_ungrounded_body_blocks_write` above, which passes
+    ONLY `acknowledge_user_claim` and still gets `ungrounded`: together
+    they show the second flag is doing the work here, not the first."""
     res = await _call(
         server,
         "memory_write",
@@ -114,6 +153,7 @@ async def test_acknowledge_ungrounded_overrides_gate(server: Any) -> None:
         groundedness_check=True,
         source_transcript="user: please use terse code-driven explanations.",
         acknowledge_ungrounded=True,
+        acknowledge_user_claim=True,  # body is a user claim; see module docstring
     )
     assert res["status"] == "committed"
 
@@ -129,6 +169,7 @@ async def test_no_transcript_skips_gate(server: Any) -> None:
         content="The user lives in Tokyo and owns three cats.",
         scopes=["personal-context"],
         groundedness_check=True,
+        acknowledge_user_claim=True,  # body is a user claim; see module docstring
         # source_transcript not passed.
     )
     assert res["status"] == "committed"
@@ -155,7 +196,14 @@ async def test_overlap_ratio_in_response(server: Any) -> None:
 async def test_mixed_body_only_flags_ungrounded_sentences(server: Any) -> None:
     """A body with one grounded sentence and one ungrounded sentence
     flags only the ungrounded one. The caller can see exactly which
-    line to rephrase."""
+    line to rephrase.
+
+    The two gates disagree about WHICH sentence is interesting here, and
+    that is the point of keeping both live on one body:
+    `UserClaimGate` matches sentence 1 ("The user prefers…"),
+    `GroundednessGate` flags sentence 2 (purple-orange). Acknowledging
+    the first must not blunt the second's per-sentence granularity —
+    `len(flagged) == 1` below is what pins that."""
     res = await _call(
         server,
         "memory_write",
@@ -166,6 +214,7 @@ async def test_mixed_body_only_flags_ungrounded_sentences(server: Any) -> None:
         scopes=["learning-style"],
         groundedness_check=True,
         source_transcript="user: please give terse code-driven explanations.",
+        acknowledge_user_claim=True,  # sentence 1 is a user claim; see module docstring
     )
     assert res["status"] == "ungrounded"
     # Exactly one sentence flagged (the colour one); the terse-

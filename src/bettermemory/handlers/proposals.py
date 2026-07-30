@@ -14,7 +14,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from ._shared import Context, _advance_turn, _validate_write_payload
-from ..credentials import find_credential_markers
+from .write import (
+    CONTENT_GATES,
+    GateBundle,
+    GateContext,
+    Reject,
+    apply_write_gates,
+)
 from ..models import Confidence, Source
 from ..proposals import ProposalQueue
 
@@ -42,18 +48,64 @@ DESC_MEMORY_PROPOSALS = (
     "least one scope; the queue does not guess them). `category` defaults "
     "to the proposal's `suggested_category` — override if wrong "
     "(`fact` / `user-inference` / `ambient`). The write goes through the "
-    "normal store path (source=inferred) and is indexed immediately. A "
-    "proposal whose body contains a secret-shaped token is refused with "
-    "the same `credential_warning` status memory_write rejects with "
-    "(`markers` + `hint`, proposal still queued); pass "
-    "`acknowledge_credential=True` to accept anyway when the value is a "
-    "documented public/example credential, mirroring the memory_write / "
-    "memory_update escape hatch.\n"
+    "normal store path (source=inferred), is indexed immediately, and "
+    "runs the SAME content gates memory_write runs: a secret-shaped "
+    "token, a transient-state marker, a scope-mismatched citation, or "
+    "high overlap with an existing or previously-removed memory refuses "
+    "the accept with that gate's own status (`markers`/`matches` + "
+    "`hint`) and leaves the proposal queued. Each refusal carries the "
+    "memory_write escape hatch — `acknowledge_credential`, "
+    "`acknowledge_transient`, `acknowledge_scope_mismatch`, or "
+    "`force=True` for the two dedup refusals (prefer memory_update on "
+    "the matched id, or memory_restore on the tombstone).\n"
     "- `dismiss`: drop the proposal from the queue without writing it. "
     "Requires `proposal_id`. Use for anything not worth remembering.\n\n"
     "Returns `{status, action, ...}`; `status` is one of `ok` (list), "
-    "`accepted`, `dismissed`, `not_found`, or `credential_warning`."
+    "`accepted`, `dismissed`, `not_found`, or a gate refusal "
+    "(`credential_warning`, `transient_warning`, `scope_mismatch`, "
+    "`duplicate`, `previously_removed`)."
 )
+
+
+# The gate hints name the MCP parameter that overrides them. On this surface
+# every override also has a CLI spelling, and the escape hatch shipped DEAD at
+# that surface once — the refusal told the operator to pass a parameter
+# `bettermemory proposals accept` could not express. Naming both keeps one
+# refusal actionable from either entry point. A status absent from this map
+# simply keeps the gate's hint verbatim.
+_CLI_ESCAPE_FLAGS: dict[str, str] = {
+    "credential_warning": "--acknowledge-credential",
+    "transient_warning": "--acknowledge-transient",
+    "scope_mismatch": "--acknowledge-scope-mismatch",
+    "duplicate": "--force",
+    "previously_removed": "--force",
+}
+
+
+def _gate_refusal(decision: Reject, proposal_id: str) -> dict[str, Any]:
+    """Shape a gate `Reject` as a `memory_proposals` accept response.
+
+    The gate's own body (status + markers/matches + hint) verbatim, so one
+    refusal shape spans memory_write, memory_update and this surface, plus
+    the `action`/`proposal_id` keys every result here carries — the caller
+    needs to know WHICH still-queued entry was refused.
+
+    `decision.event_kwargs` is deliberately dropped: no event is recorded on
+    a refusal (the accept event fires only when the write lands).
+    """
+    response: dict[str, Any] = {
+        "status": decision.response["status"],
+        "action": "accept",
+        "proposal_id": proposal_id,
+    }
+    response.update({k: v for k, v in decision.response.items() if k != "status"})
+    flag = _CLI_ESCAPE_FLAGS.get(response["status"])
+    hint = response.get("hint")
+    if flag is not None and isinstance(hint, str):
+        response["hint"] = (
+            f"{hint} On `bettermemory proposals accept` the same override is {flag}."
+        )
+    return response
 
 
 def accept_proposal(
@@ -64,7 +116,10 @@ def accept_proposal(
     proposal_id: str,
     scopes: list[str],
     category: str | None = None,
+    force: bool = False,
     acknowledge_credential: bool = False,
+    acknowledge_transient: bool = False,
+    acknowledge_scope_mismatch: bool = False,
 ) -> dict[str, Any]:
     """Validate, atomically claim, and write one proposal as a durable memory.
 
@@ -81,19 +136,34 @@ def accept_proposal(
        so a bad scope/category raises with the proposal still in the queue
        (the caller fixes the inputs and retries); the only failure that loses
        the entry is an unexpected store error after a successful claim.
-    3. Credential-scan the body that would be persisted with the SAME
-       ``find_credential_markers`` the ``CredentialGate`` runs FIRST on the
-       ``memory_write`` path — the write-reflex captures raw user text, so an
-       accepted proposal is another door through which a secret-shaped token
-       could reach the plain-text store WITHOUT ever passing the write-path
-       gate. Runs BEFORE the claim, so a hit refuses with the proposal still
-       queued — returning the SAME structured ``credential_warning`` status
-       the write/update paths reject with (detector kinds + pre-redacted
-       snippets only, never the value). Passing
-       ``acknowledge_credential=True`` bypasses this refusal, mirroring the
-       identically-named escape hatch on ``memory_write`` / ``memory_update``
-       for the rare legitimate case (a proposal that DESCRIBES a documented
-       public/example credential PATTERN rather than leaking a live secret).
+    3. Run the SHARED content-gate chain (``CONTENT_GATES``) — the same
+       policy object ``memory_write`` runs, not a private copy of one gate
+       of it. The write-reflex captures raw user text, so an accepted
+       proposal is another door onto the plain-text store; before this it
+       was guarded by a hand-rolled credential scan and nothing else, so a
+       transient body, a scope-mismatched citation, or a near-duplicate of
+       an existing memory reached the store through the review surface
+       while the same body was refused through ``memory_write``. The chain
+       runs BEFORE the claim, so a hit refuses with the proposal still
+       queued, returning the gate's own structured status (see
+       ``_gate_refusal``). Every refusal keeps its ``memory_write`` escape
+       hatch: ``acknowledge_credential`` (a proposal that DESCRIBES a
+       documented public/example credential PATTERN rather than leaking a
+       live secret), ``acknowledge_transient``, ``acknowledge_scope_mismatch``
+       and ``force`` — which, as on ``memory_write``, bypasses BOTH dedup
+       gates (the ``previously_removed`` hint offers it, so it has to work
+       there too; ingest's narrower force, which keeps tombstone dedup on,
+       answers to a different contract).
+
+       ``UserClaimGate`` and ``PendingGate`` are the two gates
+       ``CONTENT_GATES`` leaves out, and their exclusion is what makes this
+       conversion safe: the extractor deliberately stamps explicit captures
+       ("remember that I prefer X") as ``fact``, so proposal bodies match
+       the user-claim shapes by construction and inheriting that gate would
+       hard-refuse exactly the entries this queue exists to carry. Every
+       gate that DOES run only READS the store (``load_all`` /
+       ``load_tombstones``), so the module invariant — nothing writes until
+       an accept lands — survives the addition.
     4. Atomically CLAIM the proposal — ``ProposalQueue.remove`` re-checks it
        still exists under the queue's per-file flock and hands it to the single
        racer that wins, so a concurrent double-accept can't write twice.
@@ -107,11 +177,12 @@ def accept_proposal(
        layer its own event on top — the CLI did exactly that before the
        recording moved here. Callers must NOT record a second accept event.
 
-    Returns a result dict (``status`` in ``{"accepted", "not_found",
-    "credential_warning"}``). No event is recorded on the ``not_found``
-    paths or on a credential refusal — only when the write actually lands.
-    Raises ``ValueError`` on a bad payload (it bubbles to the caller and the
-    proposal stays queued).
+    Returns a result dict (``status`` in ``{"accepted", "not_found"}`` or
+    any gate refusal status: ``credential_warning``, ``transient_warning``,
+    ``scope_mismatch``, ``duplicate``, ``previously_removed``). No event is
+    recorded on the ``not_found`` paths or on a gate refusal — only when the
+    write actually lands. Raises ``ValueError`` on a bad payload (it bubbles
+    to the caller and the proposal stays queued).
     """
     from .. import _handlers as _h
 
@@ -129,39 +200,34 @@ def accept_proposal(
         category=cat_value,
         allowed_scopes=config.scopes.allowed,
         max_content_bytes=config.behavior.max_content_bytes,
+        min_content_tokens=config.behavior.min_content_tokens,
         max_scopes_per_write=config.behavior.max_scopes_per_write,
     )
-    # Credential gate — mirror `CredentialGate`, which the memory_write path
-    # runs FIRST, so a secret-shaped token captured by the write-reflex can't
-    # slip onto the plain-text (sync'd) store by being ACCEPTED rather than
-    # written. Scan the body that would be persisted; a hit refuses BEFORE the
-    # claim so the proposal stays queued, returning the SAME structured
-    # `credential_warning` status memory_write / memory_update reject with —
-    # one shape for the escape hatch on every surface. The markers carry the
-    # detector `kind` and the detector's pre-redacted snippet only, never the
-    # value (row shape matches `Responses.credential_to_dict`).
-    credential_hits = find_credential_markers(payload["content"])
-    if credential_hits and not acknowledge_credential:
-        return {
-            "status": "credential_warning",
-            "action": "accept",
-            "proposal_id": proposal_id,
-            "markers": [
-                {"kind": h.kind, "snippet": h.snippet} for h in credential_hits
-            ],
-            "hint": (
-                "The proposal body contains a secret-shaped token — this "
-                "store is plain-text and `sync` pushes it across hosts via "
-                "git, so the accept was refused and the proposal stays "
-                "queued. Edit the proposal to describe the secret without "
-                "embedding it, dismiss it, or pass "
-                "acknowledge_credential=True (--acknowledge-credential on "
-                "the CLI) if the value is a documented public/example "
-                "credential — mirroring the memory_write / memory_update "
-                "escape hatch. The value is redacted from this warning "
-                "regardless."
-            ),
-        }
+    # The content-gate chain (docstring step 3), scanned against the body
+    # that would be persisted. Run BEFORE the claim so a refusal leaves the
+    # proposal queued for the reviewer to edit, dismiss, or re-accept with
+    # an override.
+    gc = GateContext(
+        payload=payload,
+        force=force,
+        acknowledge_transient=acknowledge_transient,
+        acknowledge_scope_mismatch=acknowledge_scope_mismatch,
+        # Groundedness is opt-in even on the MCP path and needs a transcript;
+        # the captured `source_excerpt` is the user's own sentence, not a
+        # conversation to anchor against, so the gate stays inert here.
+        acknowledge_ungrounded=False,
+        acknowledge_credential=acknowledge_credential,
+        groundedness_check=False,
+        source_transcript=None,
+    )
+    decision = apply_write_gates(
+        GateBundle.for_store(store, config), gc, gates=CONTENT_GATES
+    )
+    if isinstance(decision, Reject):
+        return _gate_refusal(decision, proposal_id)
+    # `Pending` is unreachable: `PendingGate` is one of the two gates
+    # `CONTENT_GATES` excludes by name, and accepting IS the confirmation
+    # step this queue's contract is built on.
     # Atomically CLAIM under the queue lock before the durable write — the
     # idempotency guard against a concurrent double-accept.
     claimed = queue.remove(proposal_id)
@@ -174,10 +240,18 @@ def accept_proposal(
     # Kind only, never the value: the detector kinds a forced
     # `acknowledge_credential` override bypassed (empty when none) — a
     # too-loose detector / high override rate stays observable, mirroring
-    # what `memory_write` records for the same escape hatch.
+    # what `memory_write` records for the same escape hatch. The gate
+    # populates `gc.credential_hits` even when the flag suppresses the
+    # refusal, which is what makes the override countable at all.
     credentials_acknowledged = (
-        [h.kind for h in credential_hits]
-        if credential_hits and acknowledge_credential
+        [h.kind for h in gc.credential_hits]
+        if gc.credential_hits and acknowledge_credential
+        else []
+    )
+    # Same axis for the transient gate, now that it is reachable here.
+    markers_acknowledged = (
+        [h.marker for h in gc.transient_hits]
+        if gc.transient_hits and acknowledge_transient
         else []
     )
     # Single choke point for the accept audit event (docstring step 6): the
@@ -191,7 +265,9 @@ def accept_proposal(
         id=memory.id,
         scopes=memory.scopes,
         category=cat_written,
+        forced=force,
         credentials_acknowledged=credentials_acknowledged,
+        markers_acknowledged=markers_acknowledged,
     )
     return {
         "status": "accepted",
@@ -201,6 +277,7 @@ def accept_proposal(
         "scopes": memory.scopes,
         "category": cat_written,
         "credentials_acknowledged": credentials_acknowledged,
+        "markers_acknowledged": markers_acknowledged,
     }
 
 
@@ -210,7 +287,10 @@ async def memory_proposals(
     proposal_id: str | None = None,
     scopes: list[str] | None = None,
     category: str | None = None,
+    force: bool = False,
     acknowledge_credential: bool = False,
+    acknowledge_transient: bool = False,
+    acknowledge_scope_mismatch: bool = False,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Handler body for the `memory_proposals` MCP tool."""
@@ -256,7 +336,7 @@ async def memory_proposals(
                 "scopes is required to accept a proposal — a memory needs at "
                 "least one scope, and the proposal queue does not guess them"
             )
-        # The validate -> atomic-claim -> write contract lives in
+        # The validate -> gate -> atomic-claim -> write contract lives in
         # `accept_proposal` so this MCP tool and the `bettermemory proposals
         # accept` CLI share ONE implementation (no policy drift between
         # entry points). A bad scope/category raises ValueError from there
@@ -275,7 +355,10 @@ async def memory_proposals(
                 proposal_id=proposal_id,
                 scopes=scopes,
                 category=category,
+                force=force,
                 acknowledge_credential=acknowledge_credential,
+                acknowledge_transient=acknowledge_transient,
+                acknowledge_scope_mismatch=acknowledge_scope_mismatch,
             )
         except OSError as exc:
             # A disk-level failure (ENOSPC/EIO/EACCES). Translate to

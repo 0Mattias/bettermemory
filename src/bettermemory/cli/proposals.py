@@ -72,6 +72,41 @@ def add_subparser(
             "only, never the value)."
         ),
     )
+    # The accept path runs the same content gates memory_write runs, so every
+    # gate it can trip needs its override reachable from here. The credential
+    # hatch above shipped without a flag once and the refusal told the
+    # operator to pass a parameter this command could not express.
+    paccept_parser.add_argument(
+        "--acknowledge-transient",
+        action="store_true",
+        help=(
+            "Accept even though the body carries transient-state markers "
+            '("currently", "today", …) — for a marker that is durable in '
+            "context. Mirrors acknowledge_transient on memory_write. The "
+            "overridden markers are recorded in the audit log."
+        ),
+    )
+    paccept_parser.add_argument(
+        "--acknowledge-scope-mismatch",
+        action="store_true",
+        help=(
+            "Accept even though the body cites paths or project names that "
+            "suggest a different scope — for an intentional cross-reference. "
+            "Mirrors acknowledge_scope_mismatch on memory_write."
+        ),
+    )
+    paccept_parser.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "Accept even though the body has high overlap with an existing "
+            "memory (`duplicate`) or with a removed one "
+            "(`previously_removed`). Prefer `memory_update` on the matched "
+            "id, or restoring the tombstone, when the proposal says the same "
+            "thing. Mirrors force=True on memory_write, which likewise "
+            "bypasses BOTH dedup checks."
+        ),
+    )
     paccept_parser.add_argument(
         "--json",
         action="store_true",
@@ -114,7 +149,10 @@ def run(
             proposal_id=args.id,
             scopes=args.scope or None,
             category=args.category,
+            force=args.force,
             acknowledge_credential=args.acknowledge_credential,
+            acknowledge_transient=args.acknowledge_transient,
+            acknowledge_scope_mismatch=args.acknowledge_scope_mismatch,
             json_out=args.json,
             parser=root_parser,
         )
@@ -146,12 +184,48 @@ def _cli_proposals_list(*, json_out: bool) -> None:
         )
 
 
+def _refusal_message(proposal_id: str, result: dict[str, Any]) -> str:
+    """One human line per content-gate refusal, then the gate's own hint.
+
+    The hint already names both spellings of the override (the MCP parameter
+    and this command's flag), so the only surface-specific part is WHAT was
+    refused — the detector kinds, markers or matched ids the operator needs
+    in order to judge it. Values are never echoed: credential snippets are
+    pre-redacted by the detector and only the `kind` is quoted here.
+    """
+    status = result["status"]
+    if status == "credential_warning":
+        kinds = ", ".join(sorted({m["kind"] for m in result["markers"]}))
+        what = f"body contains a secret-shaped token ({kinds})"
+    elif status == "transient_warning":
+        markers = ", ".join(sorted({m["marker"] for m in result["markers"]}))
+        what = f"body contains transient-state markers ({markers})"
+    elif status == "scope_mismatch":
+        suggested = ", ".join(result.get("suggested_scopes") or []) or "none"
+        what = f"body belongs to a different scope (suggested: {suggested})"
+    elif status == "duplicate":
+        ids = ", ".join(m["id"] for m in result.get("matches") or [])
+        what = f"body duplicates an existing memory ({ids})"
+    elif status == "previously_removed":
+        ids = ", ".join(m["id"] for m in result.get("removed_matches") or [])
+        what = f"body duplicates a removed memory ({ids})"
+    else:
+        what = f"was refused ({status})"
+    return (
+        f"proposal {proposal_id} {what} — accept refused, proposal still "
+        f"queued. {result['hint']}"
+    )
+
+
 def _cli_proposals_accept(
     *,
     proposal_id: str,
     scopes: list[str] | None,
     category: str | None,
+    force: bool,
     acknowledge_credential: bool,
+    acknowledge_transient: bool,
+    acknowledge_scope_mismatch: bool,
     json_out: bool,
     parser: Any,
 ) -> None:
@@ -159,11 +233,12 @@ def _cli_proposals_accept(
 
     Shares the `accept_proposal` core with the memory_proposals MCP tool, so
     the write-policy + atomic-claim contract is identical across both entry
-    points — including the credential gate and its `--acknowledge-credential`
-    escape hatch (the CLI spelling of the MCP tools' acknowledge_credential
-    flag). A missing --scope or a bad scope/category surfaces through
-    `parser.error` (clean exit 2); the `parser is None` fallback re-raises so
-    programmatic callers still see the exception.
+    points — including the whole content-gate chain and the CLI spelling of
+    each override (`--acknowledge-credential`, `--acknowledge-transient`,
+    `--acknowledge-scope-mismatch`, `--force`). A missing --scope or a bad
+    scope/category surfaces through `parser.error` (clean exit 2); the
+    `parser is None` fallback re-raises so programmatic callers still see the
+    exception.
 
     The Recorder is constructed the same way the sibling CLI write paths
     (`ingest`, `consolidate`) build theirs, so the accept event — and above
@@ -202,7 +277,10 @@ def _cli_proposals_accept(
             proposal_id=proposal_id,
             scopes=scopes,
             category=category,
+            force=force,
             acknowledge_credential=acknowledge_credential,
+            acknowledge_transient=acknowledge_transient,
+            acknowledge_scope_mismatch=acknowledge_scope_mismatch,
         )
     except ValueError as exc:
         # Bad scope/category — the proposal is still queued; the caller can
@@ -231,17 +309,15 @@ def _cli_proposals_accept(
     if result["status"] == "not_found":
         sys.stdout.write(f"No proposal with id {proposal_id}.\n")
         return
-    if result["status"] == "credential_warning":
+    if result["status"] != "accepted":
         # Same structured refusal the MCP surface returns (one shape across
         # entry points, mirroring memory_write); the human rendering keeps
-        # the old contract — exit 2, detector kinds + the CLI flag spelling
-        # in the message, value never echoed.
-        kinds = ", ".join(sorted({m["kind"] for m in result["markers"]}))
-        message = (
-            f"proposal {proposal_id} body contains a secret-shaped token "
-            f"({kinds}) — accept refused, proposal still queued. "
-            f"{result['hint']}"
-        )
+        # the old contract — exit 2, the evidence + the CLI flag spelling in
+        # the message, values never echoed. Matched by status rather than
+        # enumerated, so a gate added to the shared chain surfaces here
+        # instead of falling through to the "Accepted" line and reporting a
+        # write that never happened.
+        message = _refusal_message(proposal_id, result)
         if parser is not None:
             parser.error(message)
         raise ValueError(message)

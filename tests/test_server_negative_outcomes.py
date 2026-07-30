@@ -55,8 +55,25 @@ def _unwrap(res: Any) -> Any:
     return res.get("result", res) if isinstance(res, dict) and "result" in res else res
 
 
-async def _seed(server: Any, body: str) -> str:
-    res = await _call(server, "memory_write", content=body, scopes=["tools"])
+async def _seed(server: Any, body: str, *, acknowledge_user_claim: bool = False) -> str:
+    """Write one memory and hand back its id.
+
+    `acknowledge_user_claim` defaults to False and is passed by exactly
+    one caller. That asymmetry is deliberate: every other body here
+    ("python list comprehension", "python decorators and closures") is
+    a plain tooling note, and leaving them on the unacknowledged path
+    means they keep proving that ordinary bodies do NOT trip
+    `UserClaimGate`. Flipping the default for the whole helper would
+    have made this file blind to a gate that started refusing
+    everything.
+    """
+    res = await _call(
+        server,
+        "memory_write",
+        content=body,
+        scopes=["tools"],
+        acknowledge_user_claim=acknowledge_user_claim,
+    )
     return res["id"]
 
 
@@ -243,9 +260,17 @@ async def test_claim_excerpt_propagates_from_t11(
     """T1.1 + T2.3 integration: when the ignored event carried a
     claim_excerpt, the annotation carries it too. This is what makes
     the rejection actionable — the model sees not just "rejected" but
-    "*this specific claim* was rejected", and can rephrase."""
+    "*this specific claim* was rejected", and can rephrase.
+
+    The body has to stay a user-shaped claim — it is the string the
+    `claim_excerpts` assertion below matches verbatim, and a claim about
+    the user is the realistic case for a rejection worth echoing back.
+    So the seed acknowledges `UserClaimGate` rather than dodging it by
+    rewording."""
     server, _ = server_with_rec
-    mid = await _seed(server, "the user prefers terse explanations")
+    mid = await _seed(
+        server, "the user prefers terse explanations", acknowledge_user_claim=True
+    )
 
     await _call(
         server,

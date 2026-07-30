@@ -9,6 +9,95 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+### Fixed — `ingest --force` was a silent no-op, and three more write-path holes
+
+`--force` documented itself as writing a duplicate the store already holds.
+Plan-time it did admit the row; apply-time the shared dedup gate refused it
+again, with a hint telling the operator to pass the flag they had just passed.
+CI stayed green because the guard test asserted the *plan* and never applied
+it — a test that asserts an intermediate artifact does not test the behaviour a
+flag promises. `apply_ingest_plan` now takes `force` and drops the active-dedup
+gate from its tuple rather than setting the context's `force` bit, because that
+bit is read by the tombstone gate too and would have resurrected tombstones —
+an asymmetry ingest documents and now proves end to end.
+
+Ingest's scope-mismatch gate refused realistic imports on any non-empty store:
+imported rows carry only provenance and type scopes, so an auto-memory file
+naming its own project tripped the project-name check. All four of its gate
+tests ran against empty stores, where that check is structurally disabled and
+cannot fire. Ingest is a user-initiated bulk import of the user's own prior
+memory files, not a model mis-tagging a conversational write, so it now
+acknowledges the mismatch — and a test pins that the acknowledgement has exactly
+one reader, so it cannot quietly become an amnesty for gates added later.
+
+`memory_write_confirm` replayed its staged payload through zero gates: a
+duplicate or a tombstone that landed during the one-hour TTL committed
+unchecked. It now re-runs the credential and both dedup gates. The obvious
+implementation is wrong — the lookup pops, so a refusal after it destroys the
+staged write it was protecting — so the pending write is peeked, judged, and
+only consumed on success; a refusal returns the normal status plus
+`pending_retained` and the still-valid id, and leaves the promotion source
+episode on disk. The staging call's `force` and acknowledge flags are persisted
+with the pending write, so a write forced at stage time is not re-refused at
+confirm time.
+
+Pending writes were an in-process dict that died on restart with no event. They
+now persist to a `0600` sidecar beside the store, keyed per client so one client
+still cannot confirm another's staged write, with the TTL and the
+expired-versus-never-existed distinction enforced on load.
+
+### Added — `memory_write` classifies claims about the user by body, not by label
+
+`PendingGate` triggers on the category *label*, so a claim about the user
+written as `category='fact'` committed instantly and the staging flow whose
+entire purpose is the user's veto never ran. The content-shape detector that
+could have caught it existed, was tested, and was wired only into the Stop hook.
+
+A new gate classifies the body. It cannot reuse that detector: it matches
+first-person shapes only, because it was built to read the user's own words,
+while a model-authored `memory_write` claim is usually third person — "Mattias
+prefers tabs", "the user prefers…". The gate composes the existing pattern with
+third-person shapes rather than editing it, since the extractor's own tests pin
+its behaviour, and it applies them the way production does: per sentence, after
+smart-apostrophe normalisation, or the anchored possessive branch and every
+curly-quoted body silently stop matching.
+
+The blast radius needed deliberate work. `CONTENT_GATES` is derived by
+exclusion, so a new gate joins it automatically — which would have made ingest
+refuse imported preference files, and made proposal acceptance refuse exactly
+the explicit captures ("remember that I prefer X") the extractor deliberately
+stamps as `fact`. Both are now excluded by name, with the reasoning recorded at
+the definition: neither has a human present to flip a flag.
+
+The gate is precision-first and porous by the same trade the transient and
+credential gates make — a nominalised "<Name>'s preference is tabs" passes, and
+widening to possessive-plus-noun would refuse "the parser's preference is the
+longest match". Acknowledged writes record the phrase they overrode, so the
+entry ticket for revisiting the pattern is override-rate telemetry rather than
+taste.
+
+### Changed — `memory_proposals` accept runs the same gates as every other write
+
+Accepting a proposal ran one gate of six: a hand-rolled credential scan, while
+the commit that introduced the shared chain described these copies as
+"deliberately stricter". It now runs the shared content gates. This is a
+deliberate behaviour change — a proposal that near-duplicates an existing memory
+was previously the reviewer's problem and is now a `duplicate` refusal — so the
+tool and the CLI grew the matching overrides, the refusal still fires before the
+queue removal (a refused proposal stays queued), and no event is recorded on
+refusal. Consolidate's copy is untouched: its stamped-versus-unstamped scan
+split is a measured decision that one gate context cannot express.
+
+### Added — `[behavior] min_content_tokens`, default 0
+
+A minimum body length, off by default. It is hardening rather than a closure:
+`content="x"` is a legitimate fixture in dozens of handler-path tests, and the
+only in-repo floor precedent sits an order of magnitude above what this corpus
+treats as valid. The validator it lives in also serves `memory_update` and
+proposal acceptance, so the three-tool blast radius is documented, and a
+structural test requires every call site to name the parameter explicitly —
+opting out is a decision someone writes down, not one they fall into.
+
 ### Added — a number on a resident surface must now cite a committed artifact
 
 `tests/test_doc_claims.py` closes the mechanically-decidable slice of "prose
@@ -47,10 +136,11 @@ Three budgets were each policed and nothing summed them: the instructions
 block, the lean description total, and the toolcost bench. The served JSON
 schemas and the plugin skill frontmatter were governed by nothing at all.
 `tests/test_resident_footprint.py` records the aggregate — instructions 1,608
-+ descriptions 26,334 + inputSchemas 7,077 + outputSchemas 1,770 + skill
-frontmatter 759 = **37,548 chars** — and puts a ceiling only on the
-previously-uncapped remainder, so an edit cannot fail two budgets under two
-different recalibration rules. The skill body is excluded and the test derives
++ descriptions + inputSchemas + outputSchemas 1,770 + skill frontmatter 759,
+**37,548 chars** when the ceiling was set and 38,167 after the write-path work
+below spent 93 chars of the reserve budgeted for it — and puts a ceiling only
+on the previously-uncapped remainder, so an edit cannot fail two budgets under
+two different recalibration rules. The skill body is excluded and the test derives
 why rather than asserting it: 13,688 chars that load on activation, not per
 turn.
 

@@ -4577,7 +4577,7 @@ async def test_dedup_passes_through_to_pending_with_related(
 # in `_WRITE_GATES` (a plausible "performance" reorder that puts
 # cheaper checks first) fails
 # `test_write_gates_match_expected_types_in_order` (tuple inequality
-# — sequences differ at index 2 / 3). Revert restores green.
+# — sequences differ at index 4 / 5). Revert restores green.
 def test_write_gates_match_expected_types_in_order() -> None:
     """Guard so additions, deletions, AND reorders of ``_WRITE_GATES``
     (the ordered WriteGate strategy chain orchestrated by
@@ -4587,22 +4587,26 @@ def test_write_gates_match_expected_types_in_order() -> None:
     The comment at ``handlers/write.py:474-481`` documents the
     invariant: ``CredentialGate`` fires FIRST so a secret is refused
     before any later gate records body-derived data alongside it in
-    the event log; transient/scope-mismatch/groundedness gates fire
-    BEFORE dedup so (a) a hallucinated write can't masquerade as a
-    duplicate of a real one, (b) a transient-parent write isn't
-    routed to ``memory_update``, (c) a scope-mismatched write doesn't
-    get a misleading duplicate hit; dedup BEFORE pending so the
-    user-inference confirmation flow doesn't ask about a write we'd
-    already reject; ``PendingGate`` last because everything else
-    either rejects or accepts. A silent reorder breaks the
-    security/correctness invariant the source comment documents.
+    the event log; transient/user-claim/scope-mismatch/groundedness
+    gates fire BEFORE dedup so (a) a hallucinated write can't
+    masquerade as a duplicate of a real one, (b) a transient-parent
+    write isn't routed to ``memory_update``, (c) a scope-mismatched
+    write doesn't get a misleading duplicate hit, (d) a body
+    re-categorized as ``user-inference`` isn't routed to
+    ``memory_update`` on a mis-filed parent; ``UserClaimGate`` also
+    BEFORE pending, so that re-issue stages through ``PendingGate``
+    normally; dedup BEFORE pending so the user-inference confirmation
+    flow doesn't ask about a write we'd already reject;
+    ``PendingGate`` last because everything else either rejects or
+    accepts. A silent reorder breaks the security/correctness
+    invariant the source comment documents.
 
     A future contributor reordering this tuple for performance must
     update both the source AND this expected tuple in the same
     commit, AND re-read the write.py:474-481 rationale to confirm
     the new ordering still preserves: hallucinated-before-dedup,
-    transient-before-dedup, scope-before-dedup, dedup-before-pending,
-    and pending-last."""
+    transient-before-dedup, user-claim-before-dedup-and-pending,
+    scope-before-dedup, dedup-before-pending, and pending-last."""
     from bettermemory.handlers.write import (
         CredentialGate,
         DedupActiveGate,
@@ -4611,12 +4615,14 @@ def test_write_gates_match_expected_types_in_order() -> None:
         PendingGate,
         ScopeMismatchGate,
         TransientGate,
+        UserClaimGate,
         _WRITE_GATES,
     )
 
     expected: tuple[type, ...] = (
         CredentialGate,
         TransientGate,
+        UserClaimGate,
         ScopeMismatchGate,
         GroundednessGate,
         DedupActiveGate,
@@ -4631,6 +4637,127 @@ def test_write_gates_match_expected_types_in_order() -> None:
         f"comment before reordering — this guards a security/correctness "
         f"invariant, not a stylistic choice."
     )
+
+
+# ---------------------------------------------------------------------------
+# acknowledge_user_claim is ONE gate's escape hatch, not a chain bypass
+#
+# Written because of the blast radius the flag acquired the moment
+# `UserClaimGate` landed: ten pre-existing fixtures across
+# test_server_groundedness.py / test_server_v12_features.py /
+# test_server_negative_outcomes.py had bodies that are genuinely claims
+# about the user, and each had to start passing
+# `acknowledge_user_claim=True` to keep testing its own axis. Those ten
+# call sites now assume, without saying so, that the flag opens exactly
+# one gate. If a later refactor widened it — the plausible shape is a
+# GateContext change that lets one acknowledge_* field satisfy several
+# gates, or a "skip the body gates when the caller already vouched for
+# the body" shortcut — all ten would stay green while a credential-
+# bearing body sailed through. Nothing else pins the narrowness: the
+# per-gate tests in test_server_user_claims.py drive UserClaimGate with
+# clean bodies, and the other gates' tests never set this flag.
+#
+# The four gates are chosen to straddle the chain position:
+# credential (index 0) and transient (index 1) come BEFORE UserClaimGate
+# (index 2), scope-mismatch (index 3) comes after, and groundedness
+# (index 4) is covered by test_server_groundedness.py's
+# `test_ungrounded_body_blocks_write`, which passes only this flag and
+# still gets `ungrounded`.
+# ---------------------------------------------------------------------------
+
+
+def _shaped(*parts: str) -> str:
+    """Join fragments into a secret-shaped value with no scannable literal.
+
+    Mirrors the helper in test_server_credentials.py — a literal AWS-key
+    shape checked into a test file trips secret scanners on every clone.
+    """
+    return "".join(parts)
+
+
+async def test_acknowledge_user_claim_does_not_bypass_earlier_gates(
+    server: Any,
+) -> None:
+    """Credential and transient both fire ahead of `UserClaimGate`, so
+    acknowledging the user-claim axis must not move their verdicts.
+
+    The credential half is the one with teeth: a body that is BOTH a
+    claim about the user and a live secret is a realistic model write
+    ("the user's deploy key is AKIA…"), and the store is plain-text
+    markdown that `sync` pushes across hosts."""
+    aws = _shaped("AKIA", "IOSFODNN7EXAMPLE")
+
+    secret_claim = await _call(
+        server,
+        "memory_write",
+        content=f"The user prefers keeping the prod key {aws} in the shell profile.",
+        scopes=["infrastructure"],
+        acknowledge_user_claim=True,
+    )
+    assert secret_claim["status"] == "credential_warning", (
+        "acknowledge_user_claim must not satisfy CredentialGate — it is a "
+        "per-gate escape hatch, and this body embeds a live-shaped secret."
+    )
+    assert "id" not in secret_claim
+
+    transient_claim = await _call(
+        server,
+        "memory_write",
+        content="Currently the user prefers tabs over spaces.",
+        scopes=["learning-style"],
+        acknowledge_user_claim=True,
+    )
+    assert transient_claim["status"] == "transient_warning", (
+        "acknowledge_user_claim must not satisfy TransientGate — the body "
+        "carries a transient marker and is not durable in a week."
+    )
+
+
+async def test_acknowledge_user_claim_does_not_bypass_scope_mismatch(
+    server: Any,
+) -> None:
+    """`ScopeMismatchGate` sits immediately AFTER `UserClaimGate`, which
+    makes it the sharpest probe for a leaky flag: the acknowledgement
+    hands control straight to it.
+
+    Asserts both directions on ONE body, which is what makes this a
+    narrowness pin rather than a smoke test — without the flag the body
+    stops at `user_claim_warning` (so the body really does trip the
+    user-claim gate), and with it the body advances exactly one gate to
+    `scope_mismatch` (so the flag really did open only that one)."""
+    # ScopeMismatchGate derives the known project scopes from the store,
+    # so a project memory has to exist before a mismatch is detectable.
+    seeded = await _call(
+        server,
+        "memory_write",
+        content="alpha keeps its build script in scripts/build.sh",
+        scopes=["projects:alpha"],
+    )
+    assert seeded["status"] == "committed"
+
+    body = "The user prefers running alpha with the -x flag."
+
+    without_flag = await _call(
+        server,
+        "memory_write",
+        content=body,
+        scopes=["tools"],
+    )
+    assert without_flag["status"] == "user_claim_warning"
+
+    with_flag = await _call(
+        server,
+        "memory_write",
+        content=body,
+        scopes=["tools"],
+        acknowledge_user_claim=True,
+    )
+    assert with_flag["status"] == "scope_mismatch", (
+        "acknowledge_user_claim advanced the write past UserClaimGate but "
+        "must not also satisfy ScopeMismatchGate — the body cites `alpha` "
+        "while declaring only `tools`."
+    )
+    assert "projects:alpha" in with_flag["suggested_scopes"]
 
 
 async def test_memory_update_unaffected_by_dedup(server: Any) -> None:
@@ -5827,6 +5954,19 @@ _DESC_BUDGET_PRESSURE = _DESC_BUDGET_CEILING - 100
 # attestations the attesting machine cannot stat); memory_scope_overview +8;
 # memory_write -24. Two commits' worth of drift behind one row is the argument
 # for the rule above: attributing it after the fact took a bisect.
+#
+# Re-measured again in the write-path hole-closure commit (table total
+# 26,334 -> 26,860, live total identical). Exactly the two rows this commit
+# edits moved, which is what the rule above buys: memory_write +217 for the
+# `user_claim_warning` status and its `acknowledge_user_claim` escape,
+# memory_write_confirm +309 for the statuses confirm-time re-gating can now
+# return and the `pending_retained` contract that says the staged write
+# survives one. Both are new refusal shapes a caller cannot discover from a
+# reject it has not hit yet, which is the reference the budget's slack is
+# for; the gate hints still carry the remedies. That leaves 640 chars under
+# `_DESC_BUDGET_CEILING` — the ceiling is deliberately NOT moved here, since
+# the later footprint work ratchets it DOWN and more description edits land
+# before then.
 _DESC_BASELINE = {
     "episode_handoff": 1560,
     "episode_promote": 1597,
@@ -5846,9 +5986,9 @@ _DESC_BASELINE = {
     "memory_show": 851,
     "memory_update": 2234,
     "memory_verify": 1817,
-    "memory_write": 3108,
+    "memory_write": 3325,
     "memory_write_cancel": 216,
-    "memory_write_confirm": 206,
+    "memory_write_confirm": 515,
 }
 
 

@@ -110,14 +110,21 @@ class Footprint(NamedTuple):
 
 # Measured live at HEAD against the shipping-default (lean) surface.
 # DIAGNOSTIC, in the spirit of `_DESC_BASELINE` in `tests/test_server.py`:
-# nothing asserts these numbers, so a stale row degrades a failure message
-# and never the verdict. Re-measure it in the same commit as anything that
+# no verdict reads these numbers, so a stale row degrades a failure message
+# and never the outcome. Re-measure it in the same commit as anything that
 # moves a leg — the breakdown below is the only map a reader gets from "the
 # remainder is over" to "the thing you just typed".
+#
+# That property is load-bearing and was briefly lost: the scheduled-reserve
+# test read `uncapped_remainder` from this literal instead of measuring, so
+# the one guard whose job is to announce that the promised headroom is gone
+# could not see it go. It reported the reserve intact while a landed phase
+# had already spent 93 of it. Keep verdicts on live measurements; this table
+# is for the reader.
 _FOOTPRINT_BASELINE = Footprint(
     instructions=1_608,
-    descriptions=26_334,
-    input_schemas=7_077,
+    descriptions=26_860,
+    input_schemas=7_170,
     output_schemas=1_770,
     skill_frontmatter=759,
     tool_count=18,
@@ -125,7 +132,10 @@ _FOOTPRINT_BASELINE = Footprint(
 
 # --- the ceiling, and the arithmetic behind it ------------------------------
 #
-# The remainder measured 9,606 chars at HEAD (7,077 + 1,770 + 759).
+# The remainder measured 9,606 chars when this ceiling was set (7,077 +
+# 1,770 + 759). It is 9,699 now: the write-path phase landed
+# `acknowledge_user_claim` and spent exactly the 93 chars budgeted for it
+# below, which is the reserve working as intended rather than drift.
 #
 # The headroom is measured, not guessed. `_scheduled_param_costs` registers
 # the three tool parameters this upgrade plan schedules against a real
@@ -433,7 +443,9 @@ async def test_uncapped_remainder_stays_under_its_ceiling(tmp_path: Path) -> Non
         )
 
 
-async def test_the_scheduled_parameters_still_fit_the_reserve() -> None:
+async def test_the_scheduled_parameters_still_fit_the_reserve(
+    tmp_path: Path,
+) -> None:
     """The ceiling above carries a measured reserve for the parameters this
     upgrade plan schedules — a ceiling that the next phase immediately
     recalibrates would be noise, not a guard.
@@ -453,12 +465,15 @@ async def test_the_scheduled_parameters_still_fit_the_reserve() -> None:
         f"reserve folded into `_REMAINDER_CEILING`. Resize the reserve and "
         f"the ceiling together, before landing them."
     )
-    # The reserve must also still be spendable: ceiling minus the measured
-    # remainder has to cover it, or the "no immediate recalibration" promise
-    # is already broken at HEAD.
-    remainder = _FOOTPRINT_BASELINE.uncapped_remainder
+    # The reserve must also still be spendable: ceiling minus the remainder
+    # has to cover it, or the "no immediate recalibration" promise is already
+    # broken at HEAD. Measured LIVE, not read from `_FOOTPRINT_BASELINE` — the
+    # recorded literal is hand-maintained, so reading it here would mean this
+    # guard could only fire after someone had already noticed by hand. It
+    # would report headroom that a landed phase has quietly spent.
+    remainder = (await _measure(_lean_server(tmp_path))).uncapped_remainder
     assert _REMAINDER_CEILING - remainder >= total, (
-        f"the recorded remainder ({remainder}) leaves "
+        f"the live remainder ({remainder}) leaves "
         f"{_REMAINDER_CEILING - remainder} chars under the ceiling, less than "
         f"the {total} chars the scheduled parameters measure. The ceiling was "
         f"set with headroom that no longer exists."

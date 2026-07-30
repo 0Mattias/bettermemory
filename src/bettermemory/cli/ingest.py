@@ -128,6 +128,7 @@ def _cli_ingest(
         compute_ingest_plan,
         discover_default_source_root,
         render_ingest_text,
+        resolve_dedup_policy,
     )
     from ..models import validate_scope
 
@@ -163,12 +164,20 @@ def _cli_ingest(
     existing = store.load_all()
     tombstoned = store.load_tombstones()
 
+    # Score the plan under the policy the apply-time dedup gates will
+    # enforce, not under a hardcoded lexical default. Same reason the
+    # --scope validation above runs before the branch: a --dry-run whose
+    # verdicts a commit would overturn is a dry-run that lied.
+    semantic_model, high_threshold = resolve_dedup_policy(store, ctx.config)
+
     try:
         plan = compute_ingest_plan(
             source_root,
             existing_memories=existing,
             existing_tombstones=tombstoned,
             extra_scopes=extra_scopes,
+            high_threshold=high_threshold,
+            semantic_model=semantic_model,
             force=force,
         )
     except (FileNotFoundError, NotADirectoryError) as exc:
@@ -197,8 +206,12 @@ def _cli_ingest(
         # Thread the real config, not the `Config()` fallback: the
         # allowed-scopes list and the dedup thresholds the content gates
         # read are user knobs, and the CLI is the one caller that always
-        # has them resolved.
-        apply_ingest_plan(plan, store, recorder=recorder, config=ctx.config)
+        # has them resolved. `force` has to arrive here too, not only at
+        # plan time — the apply loop runs its own dedup gate, so a plan
+        # computed under --force was refused right back at commit.
+        apply_ingest_plan(
+            plan, store, recorder=recorder, config=ctx.config, force=force
+        )
 
     if json_out:
         sys.stdout.write(_json.dumps(plan.to_dict(), indent=2) + "\n")

@@ -21,6 +21,7 @@ import pytest
 
 import typing
 
+from bettermemory.config import BehaviorConfig, Config
 from bettermemory.ingest import (
     DEFAULT_PROVENANCE_SCOPE,
     _ACTIONS,
@@ -30,6 +31,7 @@ from bettermemory.ingest import (
     compute_ingest_plan,
     discover_default_source_root,
     render_ingest_text,
+    resolve_dedup_policy,
 )
 from bettermemory.models import Category
 from bettermemory.store import Store
@@ -577,7 +579,13 @@ class TestDedup:
         the active-store dedup but keeps the tombstone dedup so a
         user-removed memory can't be resurrected by re-ingest. Locks
         in the asymmetry the audit specifically called out — the two
-        gates have to be controllable independently."""
+        gates have to be controllable independently.
+
+        Runs THROUGH `apply_ingest_plan`, not just to the plan. The
+        plan-only version of this test passed for the entire lifetime of
+        a regression in which the apply loop's own `DedupActiveGate`
+        refused every forced row right back — `--force` produced a green
+        plan and wrote nothing."""
         # Seed an active memory that would otherwise dedup.
         _write_auto_memory(
             source_root,
@@ -591,6 +599,7 @@ class TestDedup:
             existing_tombstones=store.load_tombstones(),
         )
         apply_ingest_plan(plan_first, store)
+        assert len(store.load_all()) == 1
 
         # Without --force the same source file is suppressed as duplicate.
         plan_skip = compute_ingest_plan(
@@ -608,6 +617,15 @@ class TestDedup:
             force=True,
         )
         assert plan_force.rows[0].action == "write"
+        apply_ingest_plan(plan_force, store, force=True)
+        [forced_row] = plan_force.rows
+        assert forced_row.action == "write", forced_row.reason
+        assert forced_row.written_id is not None
+        # The decisive assertion the plan-only version never made: the
+        # duplicate row `--force` documents is DURABLE.
+        active = {m.id for m in store.load_all()}
+        assert forced_row.written_id in active
+        assert len(active) == 2
 
     def test_force_does_not_resurrect_tombstoned_memory(
         self, source_root: Path, store: Store
@@ -640,6 +658,58 @@ class TestDedup:
             force=True,
         )
         assert plan_replay.rows[0].action == "skip_tombstone"
+        # And the apply pass agrees rather than quietly overturning it.
+        apply_ingest_plan(plan_replay, store, force=True)
+        assert plan_replay.rows[0].written_id is None
+        assert store.load_all() == []
+
+    def test_force_refuses_a_tombstone_twin_at_apply_time_too(
+        self, source_root: Path, store: Store
+    ) -> None:
+        """The apply-side half of the asymmetry, isolated.
+
+        `--force` reaches the gate chain by DROPPING `DedupActiveGate`
+        from the tuple, never by setting `GateContext.force=True` — one
+        field both dedup gates read, so threading it would take
+        `DedupTombstoneGate` down with it and let `--force` resurrect a
+        deliberately-removed memory. The compute side does not cover
+        this: it can only refuse rows it saw the tombstone for, and it
+        scores under whatever threshold the caller resolved, so a
+        tombstone that lands between plan and commit (or a twin only the
+        semantic scorer recognises) arrives here with `action="write"`.
+        """
+        _write_auto_memory(
+            source_root,
+            "twin",
+            description="remove me",
+            body="this body is going to be tombstoned",
+        )
+        seeded = compute_ingest_plan(
+            source_root,
+            existing_memories=store.load_all(),
+            existing_tombstones=store.load_tombstones(),
+        )
+        apply_ingest_plan(seeded, store)
+        [seed_row] = seeded.rows
+        assert seed_row.written_id is not None
+
+        # Plan while the memory is still ACTIVE, so the row is "write"...
+        plan = compute_ingest_plan(
+            source_root,
+            existing_memories=store.load_all(),
+            existing_tombstones=store.load_tombstones(),
+            force=True,
+        )
+        assert plan.rows[0].action == "write"
+        # ...then remove it, and commit the already-computed forced plan.
+        store.tombstone(seed_row.written_id, "test-removed", session_id="sess-test")
+        apply_ingest_plan(plan, store, force=True)
+
+        [row] = plan.rows
+        assert row.action == "skip_invalid"
+        assert "previously_removed" in (row.reason or "")
+        assert row.written_id is None
+        assert store.load_all() == []
 
     def test_duplicate_against_active_store_is_skipped(
         self, source_root: Path, store: Store
@@ -866,6 +936,217 @@ class TestApplyIngestPlanContentGates:
         apply_ingest_plan(plan, store)
         [row] = plan.rows
         assert (row.reason or "").startswith("write gate refused: ")
+
+
+class TestApplyIngestPlanOnNonEmptyStore:
+    """The gates as they behave once the store has content in it.
+
+    Every other gate test in this file runs against an EMPTY store, which
+    is where `ScopeMismatchGate` is structurally inert: its project-name
+    pass needs an existing `projects:*` scope to compare against, so with
+    nothing seeded it can never fire. That blind spot hid a gate that
+    hard-refused realistic imports on every store a real user would have.
+    """
+
+    def test_body_citing_a_seeded_project_name_still_lands(
+        self, source_root: Path, store: Store
+    ) -> None:
+        """The reproduced refusal, as a regression test.
+
+        Ingested rows carry only `imported-from-claude-code` plus the
+        type-derived scope — never `projects:*` — while the source files
+        come from a per-cwd auto-memory directory, so a body naming its
+        own project is the norm. On any store holding one `projects:*`
+        memory, that combination tripped the gate and the whole import
+        came back `skip_invalid`.
+        """
+        store.write(
+            content="The webapp deploy pipeline is documented in the runbook.",
+            scopes=["projects:webapp"],
+        )
+        _write_auto_memory(
+            source_root,
+            "deploy",
+            description="deploy notes",
+            body="The webapp deploy runs through GitHub Actions.",
+        )
+        plan = compute_ingest_plan(
+            source_root,
+            existing_memories=store.load_all(),
+            existing_tombstones=store.load_tombstones(),
+        )
+        assert plan.rows[0].action == "write"
+        apply_ingest_plan(plan, store)
+        [row] = plan.rows
+        assert row.action == "write", row.reason
+        assert row.written_id is not None
+        assert len(store.load_all()) == 2
+
+    def test_content_gates_still_fire_on_a_non_empty_store(
+        self, source_root: Path, store: Store
+    ) -> None:
+        """The scope-mismatch acknowledgement is not a blanket amnesty.
+
+        Without this, the fix above would also pass if `_gate_context`
+        had simply stopped running the chain — the credential refusal is
+        the one ingest most needed and it has to survive on exactly the
+        stores where the scope gate was disabled.
+        """
+        store.write(
+            content="The webapp deploy pipeline is documented in the runbook.",
+            scopes=["projects:webapp"],
+        )
+        _write_auto_memory(
+            source_root,
+            "leaky",
+            description="webapp deploy notes",
+            body=(
+                "The webapp deploy token is "
+                "sk-ant-api03-AA00bbCCddEEffGGhhIIjjKKllMMnnOOpp"
+            ),
+        )
+        plan = compute_ingest_plan(
+            source_root,
+            existing_memories=store.load_all(),
+            existing_tombstones=store.load_tombstones(),
+        )
+        apply_ingest_plan(plan, store)
+        [row] = plan.rows
+        assert row.action == "skip_invalid"
+        assert "credential" in (row.reason or "")
+        assert len(store.load_all()) == 1
+
+    def test_scope_mismatch_ack_flag_has_exactly_one_reader(self) -> None:
+        """`_gate_context` acknowledges `acknowledge_scope_mismatch` for the
+        whole batch path. That is only safe while exactly one gate reads
+        the field: a gate added later that reuses it would inherit an
+        acknowledgement reasoned about for `ScopeMismatchGate` alone,
+        silently and with no ingest-side test failing.
+        """
+        import inspect
+
+        from bettermemory.handlers.write import _WRITE_GATES, ScopeMismatchGate
+
+        readers = [
+            type(gate).__name__
+            for gate in _WRITE_GATES
+            if "acknowledge_scope_mismatch" in inspect.getsource(type(gate))
+        ]
+        assert readers == [ScopeMismatchGate.__name__], (
+            "ingest acknowledges `acknowledge_scope_mismatch` for every row; "
+            "a second gate reading that field now inherits the "
+            "acknowledgement. Give the new gate its own flag, or extend "
+            "`ingest._gate_context`'s rationale to cover it deliberately."
+        )
+
+
+class _FixedVectorModel:
+    """Stub embedding model: every body encodes to the same normalized
+    vector, so every pair scores cosine 1.0 regardless of shared tokens.
+
+    Same shape as the stub in `tests/test_consolidate.py` — the scorer
+    only calls `.encode`, so the semantic path is exercisable on the
+    default leg where the embeddings extra isn't installed."""
+
+    def encode(self, text: str, normalize_embeddings: bool = True) -> list[float]:
+        return [1.0, 0.0]
+
+
+class TestDedupPolicyAlignment:
+    """The plan phase and the apply phase must judge a row the same way.
+
+    They didn't: the plan side hardcoded lexical Jaccard at
+    `HIGH_SIMILARITY` while the apply-time dedup gates read
+    `[behavior] semantic_dedup` per row. Under `semantic_dedup = true`
+    those are different scorers on different scales, so a `--dry-run`
+    promising N writes could commit fewer — the dry-run-lies class the
+    `--scope` pre-validation in `cli/ingest.py` already exists to prevent.
+    """
+
+    @staticmethod
+    def _semantic(monkeypatch: pytest.MonkeyPatch) -> Config:
+        monkeypatch.setattr(
+            "bettermemory.semantic_setup._semantic_model_or_none",
+            lambda _config: _FixedVectorModel(),
+        )
+        return Config(behavior=BehaviorConfig(semantic_dedup=True))
+
+    def test_resolver_returns_the_gates_own_scorer_and_threshold(
+        self, store: Store, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        config = self._semantic(monkeypatch)
+        model, high_threshold = resolve_dedup_policy(store, config)
+        assert isinstance(model, _FixedVectorModel)
+        assert high_threshold == config.behavior.semantic_high_threshold
+
+    def test_default_config_resolves_the_lexical_policy(self, store: Store) -> None:
+        """`semantic_dedup` off (the default) must leave the plan phase on
+        exactly the thresholds it used before the resolver existed — and
+        must not touch the model factory at all."""
+        from bettermemory.search import HIGH_SIMILARITY
+
+        model, high_threshold = resolve_dedup_policy(store, Config())
+        assert model is None
+        assert high_threshold == HIGH_SIMILARITY
+        assert resolve_dedup_policy(store, None) == (None, HIGH_SIMILARITY)
+
+    def test_semantic_duplicate_is_refused_in_the_plan_not_at_commit(
+        self, source_root: Path, store: Store, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A row the semantic scorer calls a duplicate has to surface as
+        `skip_duplicate` in the PLAN, where `--dry-run` can show it."""
+        config = self._semantic(monkeypatch)
+        store.write(content="alpha beta gamma delta", scopes=["tools"])
+        # Shares no tokens with the seeded memory: Jaccard 0, cosine 1.0.
+        _write_auto_memory(
+            source_root,
+            "paraphrase",
+            description="zeta eta",
+            body="theta iota kappa lambda",
+        )
+        model, high_threshold = resolve_dedup_policy(store, config)
+        plan = compute_ingest_plan(
+            source_root,
+            existing_memories=store.load_all(),
+            existing_tombstones=store.load_tombstones(),
+            high_threshold=high_threshold,
+            semantic_model=model,
+        )
+        assert plan.rows[0].action == "skip_duplicate"
+        apply_ingest_plan(plan, store, config=config)
+        assert len(store.load_all()) == 1
+
+    def test_unthreaded_plan_is_the_dry_run_that_lied(
+        self, source_root: Path, store: Store, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The control for the test above, and the reason the CLI has to
+        thread the resolver rather than rely on the defaults.
+
+        A plan computed WITHOUT the resolved policy is scored lexically
+        and reports `write`; the apply loop then re-judges the same row
+        semantically and refuses it. Every row of a real import took that
+        path before the threading landed — the plan the operator read and
+        the writes they got were produced by two different policies.
+        """
+        config = self._semantic(monkeypatch)
+        store.write(content="alpha beta gamma delta", scopes=["tools"])
+        _write_auto_memory(
+            source_root,
+            "paraphrase",
+            description="zeta eta",
+            body="theta iota kappa lambda",
+        )
+        plan = compute_ingest_plan(
+            source_root,
+            existing_memories=store.load_all(),
+            existing_tombstones=store.load_tombstones(),
+        )
+        assert plan.rows[0].action == "write"
+        apply_ingest_plan(plan, store, config=config)
+        [row] = plan.rows
+        assert row.action == "skip_invalid"
+        assert "duplicate" in (row.reason or "")
+        assert len(store.load_all()) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -1278,6 +1559,45 @@ class TestCLI:
         all_mems = store.load_all()
         assert len(all_mems) == 1
         assert DEFAULT_PROVENANCE_SCOPE in all_mems[0].scopes
+
+    def test_ingest_force_commits_the_duplicate(
+        self, tmp_path: Path, capsys: Any, monkeypatch: Any
+    ) -> None:
+        """`--force` end-to-end through `main()`.
+
+        The flag reached `compute_ingest_plan` but not `apply_ingest_plan`,
+        so the apply loop's own `DedupActiveGate` refused every forced row
+        — with a hint telling the operator to pass `force=True`, which is
+        what they had just done. Nothing below the CLI can catch that:
+        both halves work in isolation, the threading is the defect.
+        """
+        from bettermemory.server import main as server_main
+
+        source = tmp_path / "source"
+        _write_auto_memory(
+            source,
+            "cli-force",
+            description="ripgrep over grep",
+            body="The team uses ripgrep instead of grep.",
+        )
+        store_dir = tmp_path / "store"
+        monkeypatch.setenv("BETTERMEMORY_DIR", str(store_dir))
+
+        monkeypatch.setattr(
+            sys, "argv", ["bettermemory", "ingest", "--from", str(source)]
+        )
+        server_main()
+        capsys.readouterr()
+        assert len(Store(store_dir).load_all()) == 1
+
+        monkeypatch.setattr(
+            sys, "argv", ["bettermemory", "ingest", "--from", str(source), "--force"]
+        )
+        server_main()
+
+        out = capsys.readouterr().out
+        assert "write gate refused" not in out
+        assert len(Store(store_dir).load_all()) == 2
 
     def test_ingest_json_output(
         self, tmp_path: Path, capsys: Any, monkeypatch: Any

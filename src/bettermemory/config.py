@@ -229,6 +229,19 @@ max_takeaway_bytes = 4096
 # cap (the model-layer cap still fires at 64).
 max_scopes_per_write = 64
 
+# Opt-in floor on a memory body's whitespace-separated token count at
+# `memory_write` time. 0 (the default) disables it: the only shipped lower
+# bound is "non-empty after stripping", so a one-word body still commits —
+# which is correct for a caller storing an identifier, a path, or a version
+# pin. Set it (5-8 is a reasonable band for a self-contained statement) when
+# writes arrive from unattended or bulk callers, where a fragment costs a
+# durable record plus the curation pass that later removes it. Enabling it
+# also binds `bettermemory proposals accept` / `memory_proposals`, which
+# share the write validator; `memory_update` does NOT, so a body edit can
+# still take an existing memory below the floor. The default is revisited
+# at 4.0.
+min_content_tokens = 0
+
 # Passive in-conversation curation surface. When the sum of dead_weight
 # + drifted + cold_endorsement_memories counts (the `curation_pending`
 # rollup you'd otherwise have to call `memory_scope_overview` to see)
@@ -434,6 +447,15 @@ class BehaviorConfig:
     # above the typical 1-5 scopes used in practice. Set to 0 to disable the
     # handler-boundary cap (the model-layer cap still fires).
     max_scopes_per_write: int = 64
+    # Opt-in floor on a memory body's whitespace-token count at write time.
+    # 0 (default, and the loader default too — this is NOT one of the
+    # deliberate asymmetries) leaves the shipped "non-empty after strip"
+    # bound, so a one-word body commits exactly as it always has. Enabling
+    # it binds every caller of `_validate_write_payload` — memory_write and
+    # accept_proposal — but not `memory_update`, which size-checks a
+    # replacement body without routing through that validator. See
+    # DEFAULT_CONFIG for the recommendation and the 4.0 revisit.
+    min_content_tokens: int = 0
     # One-shot per-session passive curation hint. When the sum of
     # dead_weight + drifted + cold_endorsement_memories counts (the
     # `curation_pending` rollup the model would otherwise have to
@@ -1080,6 +1102,12 @@ def load_config(path: Path | None = None) -> Config:
                 behavior_raw.get("max_scopes_per_write"),
                 64,
                 label="[behavior] max_scopes_per_write",
+                config_path=config_path,
+            ),
+            min_content_tokens=_coerce_int(
+                behavior_raw.get("min_content_tokens"),
+                0,
+                label="[behavior] min_content_tokens",
                 config_path=config_path,
             ),
             curation_hint_threshold=_coerce_int(

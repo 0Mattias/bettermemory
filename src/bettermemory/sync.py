@@ -68,6 +68,7 @@ from .ingest import INGEST_WATERMARK_FILENAME
 from .patterns import PATTERNS_FILENAME
 from .proposals import PROPOSALS_FILENAME
 from .semantic import EMBEDDING_FILENAME_PREFIX, EMBEDDING_FILENAME_SUFFIX
+from .session import PENDING_WRITES_FILENAME
 
 # Coarse store-wide lock for push/pull. The git operations the sync
 # wrapper invokes (`git add -A`, `git commit-tree`, `git pull --rebase`)
@@ -126,6 +127,14 @@ _GITIGNORE_LINES = [
     # sentences at capture as defense-in-depth; this keeps the whole queue —
     # including non-secret captures the user may not want synced — local.)
     PROPOSALS_FILENAME,
+    # Staged writes awaiting `memory_write_confirm`. Same stance as the
+    # proposals queue and for a stronger reason: a pending row is a memory
+    # body the USER HAS NOT AGREED TO STORE YET — the user-inference tier
+    # stages precisely so they can veto it — and syncing it would push a
+    # rejected claim to every clone before anyone said yes. Host-local by
+    # construction too: rows are keyed by the client identifier of the
+    # session that staged them, which means nothing on another machine.
+    PENDING_WRITES_FILENAME,
     # Conflict-candidate verdict queue and episode-pattern dismissals
     # (3.28.0). Both are host-local curation state derived from this
     # host's store + journal: the conflict queue quotes memory summaries

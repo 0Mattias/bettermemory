@@ -418,6 +418,31 @@ null to 0.0) fails.
 
 ### Phase 2 — Write-path hole closure (S/M each; parallelizable)
 
+**PHASE STATUS: DONE 2026-07-30.** F1 F2 F3 F4 F5 F6 F7 F9 F10 all closed;
+A3c postmortem written. The first implementation pass FAILED adversarial
+verification — worth recording, because the failures were all one shape:
+- **Two shipped features were inert or unsafe**, and their own tests passed.
+  F6's `min_content_tokens` was never threaded from config into either
+  validator call site, so the knob did nothing while `docs/api.md` and the
+  shipped `DEFAULT_CONFIG` both promised it worked — the `--force` regression
+  repeated exactly, inside the very phase whose postmortem names that lesson.
+  F4's sidecar let a stale in-memory snapshot resurrect a consumed pending id,
+  turning one `memory_write` into two durable memories.
+- **A parameter reached a handler but not the wire** for the second time in one
+  phase (`memory_proposals`' three overrides), because the `_handlers.py` facade
+  signature IS the served schema.
+- F5's gate correctly fired on 10 pre-existing fixtures that were genuinely
+  user claims filed as `fact`/`ambient`; they took `acknowledge_user_claim=True`
+  rather than any weakening of the gate.
+All repaired and re-proven by reproduction, including a negative control on the
+F4 fix (restoring the old semantics puts the store back to 2 memories).
+- **F9 CLOSED with a measurement** (`bench/dedup/`), F10(c) done, F10(a)/(b)
+  measured-then-decided — see the lane reports in the commit.
+- Guard note: Phase 1's `_FOOTPRINT_BASELINE` had a real defect this phase
+  exposed — the scheduled-reserve assertion read the recorded literal instead
+  of measuring live, so the one guard meant to announce that promised headroom
+  is gone could not see it go. Verdicts now measure; the table stays diagnostic.
+
 **F1. Make `ingest --force` real.** The trap: threading `gc.force=True`
 also skips `DedupTombstoneGate` (`handlers/write.py:505-506`) and
 resurrects tombstones, violating the pinned asymmetry

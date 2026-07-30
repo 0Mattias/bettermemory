@@ -425,6 +425,7 @@ class ToolHandlers:
         acknowledge_scope_mismatch: bool = False,
         acknowledge_ungrounded: bool = False,
         acknowledge_credential: bool = False,
+        acknowledge_user_claim: bool = False,
         category: str = "fact",
         groundedness_check: bool = False,
         source_transcript: str | None = None,
@@ -441,6 +442,7 @@ class ToolHandlers:
             acknowledge_scope_mismatch=acknowledge_scope_mismatch,
             acknowledge_ungrounded=acknowledge_ungrounded,
             acknowledge_credential=acknowledge_credential,
+            acknowledge_user_claim=acknowledge_user_claim,
             category=category,
             groundedness_check=groundedness_check,
             source_transcript=source_transcript,
@@ -583,7 +585,10 @@ class ToolHandlers:
         proposal_id: str | None = None,
         scopes: list[str] | None = None,
         category: str | None = None,
+        force: bool = False,
         acknowledge_credential: bool = False,
+        acknowledge_transient: bool = False,
+        acknowledge_scope_mismatch: bool = False,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         return await _handlers_pkg.memory_proposals(
@@ -592,7 +597,10 @@ class ToolHandlers:
             proposal_id=proposal_id,
             scopes=scopes,
             category=category,
+            force=force,
             acknowledge_credential=acknowledge_credential,
+            acknowledge_transient=acknowledge_transient,
+            acknowledge_scope_mismatch=acknowledge_scope_mismatch,
             ctx=ctx,
         )
 

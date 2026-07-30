@@ -158,6 +158,39 @@ def _validate_content_size(
         )
 
 
+def _validate_content_floor(content: str, min_tokens: int) -> None:
+    """Reject memory bodies with fewer than `min_tokens` whitespace tokens.
+
+    A no-op when `min_tokens <= 0`, which is the shipped default. Out of the
+    box the only lower bound on a body is the "non-empty after strip" check
+    in `_validate_write_payload`: a one-word body is a legitimate write for a
+    caller that knows what it is storing (an identifier, a path, a version
+    pin), so a floor is deployment policy rather than a server invariant. It
+    earns its keep for unattended or bulk callers, where a fragment costs a
+    durable record plus the curation pass that later removes it.
+
+    Blast radius when enabled, because the validator is shared: the floor
+    binds `memory_write` AND `accept_proposal` (`handlers/proposals.py`).
+    It does NOT reach `memory_update`, which validates a replacement body
+    through `_validate_content_size` directly and never calls this
+    validator — a body edit can still take a memory below the floor.
+
+    Raises `ValueError` in the mirror-image message shape of
+    `_validate_content_size` so the MCP error surface stays uniform across
+    the content-bound family.
+    """
+    if min_tokens <= 0:
+        return
+    token_count = len(content.split())
+    if token_count < min_tokens:
+        raise ValueError(
+            f"content is below min_content_tokens "
+            f"({token_count} tokens < {min_tokens} tokens). "
+            f"Expand the content or lower the "
+            f"[behavior] min_content_tokens config setting."
+        )
+
+
 def _validate_write_payload(
     *,
     content: str,
@@ -167,17 +200,24 @@ def _validate_write_payload(
     allowed_scopes: list[str],
     category: str = "fact",
     max_content_bytes: int = 0,
+    min_content_tokens: int = 0,
     max_scopes_per_write: int = 0,
 ) -> dict[str, Any]:
     """Validate and normalise the kwargs for `Store.write`.
 
     Returns a dict suitable for `Store.write(**payload)`. Raises ValueError
     on any input problem so the model gets a clear error.
+
+    `min_content_tokens` defaults to 0 (floor disabled) so an omitted
+    argument is byte-identical to the pre-floor behaviour; callers thread
+    `[behavior] min_content_tokens` in. See `_validate_content_floor` for
+    which tools the floor reaches when it is enabled.
     """
     if not content or not content.strip():
         raise ValueError("content must be a non-empty string")
     if not scopes:
         raise ValueError("scopes must contain at least one entry")
+    _validate_content_floor(content, min_content_tokens)
     _validate_content_size(content, max_content_bytes)
     _validate_scope_count(scopes, max_scopes_per_write)
 
@@ -593,6 +633,7 @@ __all__ = [
     "_event_ts_epoch",
     "_hook_attributed_pending_ids",
     "_maybe_attach_curation_hint",
+    "_validate_content_floor",
     "_validate_content_size",
     "_validate_scope_count",
     "_validate_write_payload",

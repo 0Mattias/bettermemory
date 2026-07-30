@@ -62,7 +62,7 @@ Returns `{current_repo, current_cwd, auto_scope, scopes: {scope: count}, total, 
 
 Signature reflects the handler in `src/bettermemory/_handlers.py`. In MCP every argument is keyword-only at the wire, so positional order is only consequential for Python callers reading this as a spec.
 
-- `content: str`. Required.
+- `content: str`. Required; the only shipped lower bound is "non-empty after stripping". `[behavior] min_content_tokens` (default `0` = off) adds an opt-in floor on whitespace-token count — recommended for unattended or bulk callers, where a fragment costs a durable record plus the curation pass that later removes it. Below the floor the call raises rather than returning a status, so it is not a new result status. The floor is enforced in the shared write validator, so enabling it binds `memory_write` and `memory_proposals` accept, but NOT `memory_update` (a body edit can still take a memory below the floor). The default is revisited at 4.0.
 - `scopes: list[str]`. Required, non-empty.
 - `confidence: str = "medium"`. One of `"low"`, `"medium"`, `"high"`.
 - `source: str = "explicit-statement"`. One of `"explicit-statement"`, `"inferred"`, `"user-correction"`. `"user-correction"` is the post-hoc tag for memories created when the user contradicts an earlier inference — the body carries the corrected fact, the source records that the correction came from the user rather than from a fresh statement or model inference.

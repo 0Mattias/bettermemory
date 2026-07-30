@@ -19,10 +19,15 @@ the verification surface bettermemory layers on top.
 
 Design notes:
 
-- **Dedup leans on the existing `find_similar` Jaccard pass.** A
-  re-ingest after a partial run won't duplicate, because byte-for-byte
-  matches Jaccard at 1.0 and trip the high-similarity threshold. No
-  sidecar state file is needed.
+- **Dedup leans on the existing `find_similar` pass.** A re-ingest
+  after a partial run won't duplicate, because byte-for-byte matches
+  score 1.0 under either scorer and trip the high-similarity
+  threshold. No sidecar state file is needed. The scorer and threshold
+  come from `resolve_dedup_policy`, so the plan phase and the
+  gate-driven apply phase reach the same *dedup* verdict for a row
+  instead of scoring it under two different policies. The other
+  content gates still run only at apply time, so a `--dry-run` can
+  over-promise on a row carrying a credential or a transient marker.
 
 - **Tombstone-aware.** Source files that match a tombstoned memory
   surface as skipped with the reason ``previously_removed`` — the same
@@ -233,6 +238,7 @@ def _classify_one(
     tombstoned: list[TombstonedMemory],
     extra_scopes: list[str],
     high_threshold: float,
+    semantic_model: Any | None = None,
     force: bool = False,
 ) -> IngestRow:
     """Parse one source file and return the classified IngestRow.
@@ -334,13 +340,21 @@ def _classify_one(
             scope_list.append(s)
 
     # Dedup gate: active store wins, then tombstones. Both checks use
-    # the same Jaccard threshold as `memory_write` so a re-ingest
-    # behaves the same way an interactive write would have. `force`
-    # bypasses the active-store check (parity with `memory_write`'s
-    # `force=True`) but never bypasses the tombstone check —
-    # re-ingesting a deliberately-removed memory stays disallowed.
+    # the scorer and threshold `resolve_dedup_policy` hands the caller,
+    # which is the same pair `memory_write`'s dedup gates resolve, so a
+    # re-ingest behaves the same way an interactive write would have —
+    # and so this plan's verdict survives `apply_ingest_plan` re-running
+    # the same policy per row. `force` bypasses the active-store check
+    # (parity with `memory_write`'s `force=True`) but never bypasses the
+    # tombstone check — re-ingesting a deliberately-removed memory stays
+    # disallowed.
     if not force:
-        active_hits = find_similar(composed, existing, high_threshold=high_threshold)
+        active_hits = find_similar(
+            composed,
+            existing,
+            semantic_model=semantic_model,
+            high_threshold=high_threshold,
+        )
         high_active = [h for h in active_hits if h.relevance == "high"]
         if high_active:
             return IngestRow(
@@ -356,7 +370,10 @@ def _classify_one(
             )
 
     tombstone_hits = find_similar_tombstones(
-        composed, tombstoned, high_threshold=high_threshold
+        composed,
+        tombstoned,
+        semantic_model=semantic_model,
+        high_threshold=high_threshold,
     )
     # Tombstone hits carry a `-removed` suffix on the relevance label
     # (see `find_similar_tombstones` — same convention the
@@ -396,6 +413,7 @@ def compute_ingest_plan(
     extra_scopes: list[str] | None = None,
     now: datetime | None = None,
     high_threshold: float = HIGH_SIMILARITY,
+    semantic_model: Any | None = None,
     force: bool = False,
 ) -> IngestPlan:
     """Walk the source root for `.md` files and classify each one.
@@ -405,6 +423,14 @@ def compute_ingest_plan(
     scope list (after the provenance + type-derived defaults).
     `force=True` bypasses the active-store dedup gate (parity with
     `memory_write`'s `force`); tombstone dedup is always honoured.
+
+    `semantic_model` + `high_threshold` are the dedup policy this plan
+    is scored under. Callers that will follow up with
+    `apply_ingest_plan` should source both from `resolve_dedup_policy`
+    so the plan is scored by the same scorer the apply-time gates will
+    use; the defaults (no model, Jaccard `HIGH_SIMILARITY`) are what
+    that resolver returns whenever `semantic_dedup` is off, which is
+    the default config.
 
     Raises `FileNotFoundError` if the source root doesn't exist —
     distinguished from "exists but empty" so the CLI can tell the
@@ -467,6 +493,7 @@ def compute_ingest_plan(
             tombstoned=existing_tombstones,
             extra_scopes=extras,
             high_threshold=high_threshold,
+            semantic_model=semantic_model,
             force=force,
         )
         rows.append(row)
@@ -511,13 +538,77 @@ def _gate_deps(store: Store, config: "Config | None") -> Any:
     return GateBundle.for_store(store, config if config is not None else Config())
 
 
+def resolve_dedup_policy(store: Store, config: "Config | None") -> tuple[Any, float]:
+    """The `(semantic_model, high_threshold)` pair the dedup gates will use.
+
+    Exists so `compute_ingest_plan` can be scored under the SAME policy
+    `apply_ingest_plan`'s gates enforce. The two used to disagree by
+    construction: the plan side hardcoded lexical Jaccard at
+    `HIGH_SIMILARITY` while the apply side read `[behavior] semantic_dedup`
+    per row, so under `semantic_dedup = true` a green `--dry-run` ("would
+    write N") could commit fewer than N — cosine-0.85 and Jaccard-0.75 are
+    different scorers on different scales and disagree in both directions.
+    That is the same dry-run-lies class the `--scope` pre-validation in
+    `cli/ingest.py` exists to prevent.
+
+    Delegates the resolution itself to the gates' own
+    `_resolve_dedup_thresholds` rather than re-reading the config here:
+    a second copy of "which flag turns cosine on, and does a model
+    actually resolve" is exactly how the two sides drifted apart the
+    first time. `None` from that resolver means "no semantic model" —
+    translated to the Jaccard-natural `HIGH_SIMILARITY` because
+    `compute_ingest_plan` takes a concrete float.
+    """
+    from .handlers.write import _resolve_dedup_thresholds
+
+    semantic_model, high_threshold, _medium = _resolve_dedup_thresholds(
+        _gate_deps(store, config)
+    )
+    return semantic_model, (
+        high_threshold if high_threshold is not None else HIGH_SIMILARITY
+    )
+
+
+def _content_gates(*, force: bool) -> tuple[Any, ...]:
+    """`CONTENT_GATES`, minus the active-store dedup gate under `force`.
+
+    Dropping the gate is NOT interchangeable with setting
+    `GateContext.force=True`: that one field is read by `DedupActiveGate`
+    and `DedupTombstoneGate` alike, so threading it would also bypass the
+    tombstone check and let `--force` resurrect a memory the user
+    deliberately removed. Ingest's documented asymmetry is the opposite —
+    `--force` skips the active-store check only, which is why the
+    tombstone pass in `_classify_one` is unconditional too.
+    """
+    from .handlers.write import DedupActiveGate
+
+    if not force:
+        return CONTENT_GATES
+    return tuple(g for g in CONTENT_GATES if not isinstance(g, DedupActiveGate))
+
+
 def _gate_context(payload: dict[str, Any]) -> Any:
-    """A `GateContext` with every `acknowledge_*` override left False.
+    """A `GateContext` for the batch path.
 
     Ingest is unattended: there is no one to offer an override to, so a
-    gate hit is final. `groundedness_check` stays off because the gate is
-    opt-in even on the MCP path and there is no `source_transcript` here —
-    the auto-memory file IS the source.
+    gate hit is final — every `acknowledge_*` stays False except the
+    scope-mismatch one. That gate's premise is a MODEL mis-tagging a
+    conversational write; ingest is the user pointing a CLI at their own
+    per-cwd auto-memory directory, where a body naming its own project is
+    the norm rather than the mis-tag signal. Ingested rows also carry only
+    the provenance and type-derived scopes, never a `projects:*` one, so
+    on any store that already holds a project scope the gate refuses
+    realistic imports wholesale. Acknowledging also skips the gate's
+    per-row `store.load_all()`.
+
+    Each flag is passed explicitly rather than left to its default: a gate
+    added later that reads one of them should have to change this call,
+    not silently inherit an acknowledgement meant for `ScopeMismatchGate`
+    (pinned by `test_scope_mismatch_ack_flag_has_exactly_one_reader`).
+
+    `groundedness_check` stays off because the gate is opt-in even on the
+    MCP path and there is no `source_transcript` here — the auto-memory
+    file IS the source.
     """
     from .handlers.write import GateContext
 
@@ -525,9 +616,10 @@ def _gate_context(payload: dict[str, Any]) -> Any:
         payload=payload,
         force=False,
         acknowledge_transient=False,
-        acknowledge_scope_mismatch=False,
+        acknowledge_scope_mismatch=True,
         acknowledge_ungrounded=False,
         acknowledge_credential=False,
+        acknowledge_user_claim=False,
         groundedness_check=False,
         source_transcript=None,
     )
@@ -555,6 +647,7 @@ def apply_ingest_plan(
     recorder: Any | None = None,
     cwd: Path | None = None,
     config: "Config | None" = None,
+    force: bool = False,
 ) -> IngestPlan:
     """Execute every ``action="write"`` row in the plan.
 
@@ -563,6 +656,13 @@ def apply_ingest_plan(
     a single write don't abort the run — the row's action flips to
     `skip_invalid` with the exception text as `reason` so the user
     can see which file failed without losing the rest of the batch.
+
+    ``force`` must match the flag the plan was computed under. It drops
+    the active-store dedup gate for this run (see ``_content_gates``);
+    without it a plan computed with ``force=True`` reaches the apply loop
+    only to be refused by `DedupActiveGate` with a hint telling the
+    operator to pass the flag they already passed — ``--force`` was a
+    silent end-to-end no-op for exactly that reason.
 
     Origin capture — only when it's HONEST evidence. When the plan's
     source root IS the auto-memory directory for `cwd` (the process cwd
@@ -614,6 +714,23 @@ def apply_ingest_plan(
     ):
         origin = capture(cwd).model_copy(update={"branch": None})
     gate_deps = _gate_deps(store, config)
+    gates = _content_gates(force=force)
+    # This loop is O(rows x store): each surviving row's dedup gates re-read
+    # the whole store and the whole tombstone log from disk. Measured rather
+    # than assumed (2026-07-30, synthetic 40-token bodies, one machine): the
+    # per-row cost does roughly double each time the store doubles, and the
+    # apply pass runs ~3x the plan pass on the same comparison count — the
+    # gap is the per-row reload, not the similarity maths.
+    #
+    # Left alone deliberately. The reload is what lets each row see the rows
+    # committed before it in the same batch; hoisting the loads out of the
+    # loop would buy back that multiple by reopening the intra-batch
+    # duplicate hole `compute_ingest_plan`'s `planned` fold-in exists to
+    # close, on a one-shot CLI command with no interactive latency budget
+    # and realistic batch sizes in the tens. The one cheap win was already
+    # taken: acknowledging scope-mismatch in `_gate_context` drops that
+    # gate's own `store.load_all()`, which measured as roughly a 45% cut to
+    # this loop across every size tried.
     for row in plan.rows:
         if row.action != "write":
             continue
@@ -636,13 +753,12 @@ def apply_ingest_plan(
         # Reusing the row's own `skip_invalid` channel means rejections
         # surface in `render_ingest_text` next to every other skip reason
         # rather than needing a second reporting path.
-        if gate_deps is not None:
-            gc = _gate_context(payload)
-            decision = apply_write_gates(gate_deps, gc, gates=CONTENT_GATES)
-            if decision is not None:
-                row.action = "skip_invalid"
-                row.reason = _gate_skip_reason(decision)
-                continue
+        gc = _gate_context(payload)
+        decision = apply_write_gates(gate_deps, gc, gates=gates)
+        if decision is not None:
+            row.action = "skip_invalid"
+            row.reason = _gate_skip_reason(decision)
+            continue
         try:
             memory = store.write(**payload)
             row.written_id = memory.id
@@ -1024,5 +1140,6 @@ __all__ = [
     "discover_default_source_root",
     "load_ingest_watermark",
     "render_ingest_text",
+    "resolve_dedup_policy",
     "source_is_ingested",
 ]

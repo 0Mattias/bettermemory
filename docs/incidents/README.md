@@ -28,5 +28,6 @@ One file per incident, named `YYYY-MM-DD-short-slug.md`. Use [`TEMPLATE.md`](TEM
 
 ## Index
 
+- [2026-07-30 — `ingest --force` was refused by the gate it was passed to bypass](2026-07-30-ingest-force-refused-by-its-own-gate.md). The flag reached the plan and not the commit, so a forced import wrote nothing and reported a refusal telling the operator to pass `force=True`. The guard test had asserted the plan and stopped one call short since the flag shipped. Found by the write-path audit hours after `0073c70` introduced it; never in a release.
 - [2026-07-26 — the staleness verdict was a constant function](2026-07-26-staleness-verdict-constant-function.md). Past the freshness window the calendar leg pre-empted both drift legs, so every calendar-stale memory read `spot_check_required` regardless of drift. Found by `bench/rot` (Youden's J = 0.000 at the shipped default); fixed in v3.30.0.
 - [2026-07-25 — an importable extra was read as a working semantic leg](2026-07-25-doctor-false-green-on-importable-extra.md). `doctor`'s new `retrieval_discrimination` check short-circuited to `ok` whenever an embeddings package merely imported, silencing itself for the default config it was written for. Found and fixed inside the v3.29.0 window.

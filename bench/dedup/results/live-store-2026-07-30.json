@@ -1,0 +1,249 @@
+{
+  "bettermemory_version": "3.30.0",
+  "closed_form": "jaccard >= f implies containment >= 2f/(1+f); that bound equals MEDIUM_SIMILARITY (0.40) at f = 0.25, so any reported floor at or above 0.25 is unreachable except below _CONTAINMENT_MIN_TOKENS.",
+  "corpus_note": "The live-store arm was measured on the author's private store. Counts only: no bodies, ids, scopes or paths are recorded here, and tests/test_bench_dedup_floor.py pins that.",
+  "date": "2026-07-30",
+  "decision": "closed-negative",
+  "decision_note": "MEDIUM_SIMILARITY stays at 0.40. Lowering the reported floor to 0.30 is inert (containment already lifts every pair a floor >= 0.25 could admit); lowering the CONSTANT widens the containment gate instead, multiplying breadcrumbs 5.5x while admitting zero pairs whose real Jaccard reaches 0.30. See bench/dedup/README.md.",
+  "live_store": {
+    "bettermemory_version": "3.30.0",
+    "blocking_pairs_at_high": 0,
+    "breadcrumb_wire_bytes": {
+      "max": 444.0,
+      "mean": 418.9,
+      "median": 419.0
+    },
+    "containment_dominance": {
+      "containment_gate": 0.4,
+      "containment_min_tokens": 8,
+      "floor_below_which_the_knob_can_bite": 0.25,
+      "memories_below_containment_min_tokens": 0,
+      "predicted_containment_floor_at_jaccard": {
+        "0.15": 0.2609,
+        "0.20": 0.3333,
+        "0.25": 0.4,
+        "0.30": 0.4615,
+        "0.35": 0.5185,
+        "0.40": 0.5714
+      }
+    },
+    "corpus": "live store",
+    "date": "2026-07-30",
+    "memories": 231,
+    "naive_admits_what": {
+      "added_hits": 2236,
+      "added_hits_at_or_above_the_new_floor": 0,
+      "raw_jaccard_quartiles": {
+        "max": 0.2284,
+        "median": 0.0911,
+        "min": 0.0146,
+        "p25": 0.0667,
+        "p75": 0.1186
+      }
+    },
+    "naive_constant_edit": {
+      "MEDIUM_SIMILARITY=0.30": {
+        "max_per_write": 197,
+        "mean_per_write": 11.827,
+        "median_per_write": 8,
+        "p90_per_write": 17,
+        "related_pairs": 1366,
+        "writes_with_5_or_more": 170,
+        "writes_with_zero": 9
+      },
+      "MEDIUM_SIMILARITY=0.40": {
+        "max_per_write": 103,
+        "mean_per_write": 2.147,
+        "median_per_write": 1,
+        "p90_per_write": 4,
+        "related_pairs": 248,
+        "writes_with_5_or_more": 13,
+        "writes_with_zero": 73
+      }
+    },
+    "removed_related_hits": {
+      "0.30": 49,
+      "0.40": 49
+    },
+    "surgical_floor_sweep": {
+      "0.15": {
+        "max_per_write": 107,
+        "mean_per_write": 3.437,
+        "median_per_write": 2,
+        "p90_per_write": 7,
+        "related_pairs": 397,
+        "writes_with_5_or_more": 44,
+        "writes_with_zero": 43
+      },
+      "0.20": {
+        "max_per_write": 103,
+        "mean_per_write": 2.19,
+        "median_per_write": 1,
+        "p90_per_write": 4,
+        "related_pairs": 253,
+        "writes_with_5_or_more": 13,
+        "writes_with_zero": 72
+      },
+      "0.25": {
+        "max_per_write": 103,
+        "mean_per_write": 2.147,
+        "median_per_write": 1,
+        "p90_per_write": 4,
+        "related_pairs": 248,
+        "writes_with_5_or_more": 13,
+        "writes_with_zero": 73
+      },
+      "0.30": {
+        "max_per_write": 103,
+        "mean_per_write": 2.147,
+        "median_per_write": 1,
+        "p90_per_write": 4,
+        "related_pairs": 248,
+        "writes_with_5_or_more": 13,
+        "writes_with_zero": 73
+      },
+      "0.35": {
+        "max_per_write": 103,
+        "mean_per_write": 2.147,
+        "median_per_write": 1,
+        "p90_per_write": 4,
+        "related_pairs": 248,
+        "writes_with_5_or_more": 13,
+        "writes_with_zero": 73
+      },
+      "0.40": {
+        "max_per_write": 103,
+        "mean_per_write": 2.147,
+        "median_per_write": 1,
+        "p90_per_write": 4,
+        "related_pairs": 248,
+        "writes_with_5_or_more": 13,
+        "writes_with_zero": 73
+      }
+    },
+    "target_band_already_surfaced": {
+      "hits_with_raw_jaccard_in_target_band": 2,
+      "of_those_already_surfaced_as_related": 2
+    },
+    "tombstones": 18
+  },
+  "public_corpus": {
+    "bettermemory_version": "3.30.0",
+    "blocking_pairs_at_high": 0,
+    "breadcrumb_wire_bytes": {
+      "max": 431.0,
+      "mean": 416.8,
+      "median": 417.0
+    },
+    "containment_dominance": {
+      "containment_gate": 0.4,
+      "containment_min_tokens": 8,
+      "floor_below_which_the_knob_can_bite": 0.25,
+      "memories_below_containment_min_tokens": 0,
+      "predicted_containment_floor_at_jaccard": {
+        "0.15": 0.2609,
+        "0.20": 0.3333,
+        "0.25": 0.4,
+        "0.30": 0.4615,
+        "0.35": 0.5185,
+        "0.40": 0.5714
+      }
+    },
+    "corpus": "corpus:corpus.jsonl",
+    "date": "2026-07-30",
+    "memories": 180,
+    "naive_admits_what": {
+      "added_hits": 2,
+      "added_hits_at_or_above_the_new_floor": 0,
+      "raw_jaccard_quartiles": {
+        "max": 0.1638,
+        "median": 0.1638,
+        "min": 0.1638,
+        "p25": 0.1638,
+        "p75": 0.1638
+      }
+    },
+    "naive_constant_edit": {
+      "MEDIUM_SIMILARITY=0.30": {
+        "max_per_write": 1,
+        "mean_per_write": 0.011,
+        "median_per_write": 0,
+        "p90_per_write": 0,
+        "related_pairs": 1,
+        "writes_with_5_or_more": 0,
+        "writes_with_zero": 178
+      },
+      "MEDIUM_SIMILARITY=0.40": {
+        "max_per_write": 0,
+        "mean_per_write": 0.0,
+        "median_per_write": 0,
+        "p90_per_write": 0,
+        "related_pairs": 0,
+        "writes_with_5_or_more": 0,
+        "writes_with_zero": 180
+      }
+    },
+    "surgical_floor_sweep": {
+      "0.15": {
+        "max_per_write": 1,
+        "mean_per_write": 0.011,
+        "median_per_write": 0,
+        "p90_per_write": 0,
+        "related_pairs": 1,
+        "writes_with_5_or_more": 0,
+        "writes_with_zero": 178
+      },
+      "0.20": {
+        "max_per_write": 0,
+        "mean_per_write": 0.0,
+        "median_per_write": 0,
+        "p90_per_write": 0,
+        "related_pairs": 0,
+        "writes_with_5_or_more": 0,
+        "writes_with_zero": 180
+      },
+      "0.25": {
+        "max_per_write": 0,
+        "mean_per_write": 0.0,
+        "median_per_write": 0,
+        "p90_per_write": 0,
+        "related_pairs": 0,
+        "writes_with_5_or_more": 0,
+        "writes_with_zero": 180
+      },
+      "0.30": {
+        "max_per_write": 0,
+        "mean_per_write": 0.0,
+        "median_per_write": 0,
+        "p90_per_write": 0,
+        "related_pairs": 0,
+        "writes_with_5_or_more": 0,
+        "writes_with_zero": 180
+      },
+      "0.35": {
+        "max_per_write": 0,
+        "mean_per_write": 0.0,
+        "median_per_write": 0,
+        "p90_per_write": 0,
+        "related_pairs": 0,
+        "writes_with_5_or_more": 0,
+        "writes_with_zero": 180
+      },
+      "0.40": {
+        "max_per_write": 0,
+        "mean_per_write": 0.0,
+        "median_per_write": 0,
+        "p90_per_write": 0,
+        "related_pairs": 0,
+        "writes_with_5_or_more": 0,
+        "writes_with_zero": 180
+      }
+    },
+    "target_band_already_surfaced": {
+      "hits_with_raw_jaccard_in_target_band": 0,
+      "of_those_already_surfaced_as_related": 0
+    },
+    "tombstones": 0
+  },
+  "runtime_note": "live arm 5m39s, public corpus arm 1m07s, single-threaded on an M-series laptop; cost is O(n^2) in memories."
+}
