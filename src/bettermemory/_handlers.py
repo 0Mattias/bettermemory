@@ -6,7 +6,7 @@ god class. Round 2 moved each handler into its own module under
 god class shrank but did NOT disappear — what's left here is a
 ~500-line dependency-bundle + per-tool delegation surface. It is
 intentionally not "thin": every public tool method re-lists the same
-kwargs FastMCP will introspect, because FastMCP's ``mcp.tool(...)``
+kwargs the SDK will introspect, because the ``mcp.tool(...)``
 decorator builds the JSON schema from ``inspect.signature(method)``
 and a ``**kwargs``-only delegate would land in the client manifest
 as a typeless catch-all. The signature has to be spelled out per
@@ -60,7 +60,7 @@ log = logging.getLogger("bettermemory._handlers")
 # reaches for. Moving the strings into the per-tool modules let each
 # DESC live next to the handler body it describes; re-exporting here
 # preserves the historical `from ._handlers import DESC_*` import
-# path the server uses. (Tests import handlers via the FastMCP tool
+# path the server uses. (Tests import handlers via the SDK's tool
 # manager rather than these constants, so the re-export exists for
 # server.py's benefit and back-compat with any out-of-tree caller.)
 DESC_EPISODE_HANDOFF = _handlers_pkg.DESC_EPISODE_HANDOFF
@@ -335,7 +335,7 @@ class ToolHandlers:
     The methods below all delegate to the corresponding ``handlers.*``
     module function, threading ``self`` as the dependency bundle. This
     keeps the wire surface byte-identical to the pre-Round-2 shape:
-    FastMCP introspects each method's signature and the JSON schema
+    The SDK introspects each method's signature and the JSON schema
     drops ``self``, so the call site that the model sees is unchanged.
     """
 
@@ -385,7 +385,7 @@ class ToolHandlers:
     # Each method below threads `self` (the dependency bundle) into the
     # corresponding `handlers.*` function. The method signature mirrors
     # the function signature minus its leading `deps` argument so
-    # FastMCP's `inspect.signature` introspection produces the same
+    # the SDK's `inspect.signature` introspection produces the same
     # JSON schema as the pre-Round-2 shape.
 
     async def memory_search(

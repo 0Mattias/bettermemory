@@ -1,7 +1,7 @@
 """The optional long-form system-prompt addendum.
 
 The core contract (opt-in retrieval, transparency, verification) lives
-in the server-level `instructions` block on the FastMCP instance, which
+in the server-level `instructions` block on the `MCPServer` instance, which
 every MCP client surfaces at the system-prompt level. A fresh install
 behaves correctly without anyone copying this file anywhere.
 

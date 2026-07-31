@@ -314,7 +314,7 @@ async def test_acknowledge_miss_rejects_short_reason(
     ]
     event_id = miss_events[0]["event_id"]
 
-    with pytest.raises(Exception):  # FastMCP wraps ValueError
+    with pytest.raises(Exception):  # The SDK wraps ValueError
         await _call(
             server,
             "memory_acknowledge_miss",
@@ -378,7 +378,7 @@ async def test_acknowledge_miss_rejects_overlong_reason(
     miss_events = [e for e in _events(memory_dir) if e["kind"] == "search_miss"]
     event_id = miss_events[0]["event_id"]
 
-    with pytest.raises(Exception):  # FastMCP wraps the ValueError
+    with pytest.raises(Exception):  # The SDK wraps the ValueError
         await _call(
             server,
             "memory_acknowledge_miss",

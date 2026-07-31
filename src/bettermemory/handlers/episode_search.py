@@ -97,7 +97,7 @@ async def episode_search(
     """Handler body for the `episode_search` MCP tool.
 
     `include_bodies` / `ids` are also spelled out on the `_handlers.py`
-    facade — FastMCP builds the served schema from THAT signature, and a
+    facade — the SDK builds the served schema from THAT signature, and a
     parameter present only here is dropped by the argument model without
     an error (the call succeeds and ignores the flag). See
     `tests/test_episode_search_scan_and_fetch.py` for the wire proof.

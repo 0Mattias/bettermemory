@@ -677,7 +677,7 @@ async def memory_search(
 ) -> list[dict[str, Any]]:
     """Body of the ``memory_search`` MCP tool — pre-Round-2 was a method
     on ``ToolHandlers``. The signature mirrors the original (minus the
-    leading ``self``) so the FastMCP JSON schema is unchanged."""
+    leading ``self``) so the served JSON schema is unchanged."""
     # Route capture_origin through the parent ``_handlers`` module so
     # the test suite's monkey-patch (`tests/test_server_origin.py` /
     # `tests/test_server_commit_drift.py`) propagates here too.

@@ -350,7 +350,7 @@ async def test_claim_excerpts_non_string_rejected(
     server_with_events: tuple[Any, Path],
 ) -> None:
     """Each entry must be str or None. A list of ints, dicts, etc. is a
-    caller bug — FastMCP's pydantic validation layer rejects non-string
+    caller bug — the SDK's pydantic validation layer rejects non-string
     inputs before our handler runs, surfacing a clearer "valid string"
     error to the caller. The handler-level isinstance() check is the
     backstop for paths that bypass pydantic (e.g. direct in-process

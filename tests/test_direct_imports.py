@@ -38,7 +38,7 @@ import pytest
 # Each handler module exports ``DESC_<TOOL>`` (string) + ``<tool>`` (async
 # function). The smoke pins three things per handler:
 #
-#   1. The DESC constant is a non-empty string (so the FastMCP schema
+#   1. The DESC constant is a non-empty string (so the served schema
 #      renders something the model can actually read).
 #   2. The handler is a coroutine function (async->sync flips are loud
 #      breakage at the dispatch boundary).

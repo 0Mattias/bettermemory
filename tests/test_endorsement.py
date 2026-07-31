@@ -182,7 +182,7 @@ async def _search_ids(server: Any) -> list[str]:
     structured = await _mcp_call(
         server, "memory_search", {"query": "alpha beta gamma", "auto_scope": False}
     )
-    # FastMCP wraps a list return under "result".
+    # The SDK wraps a list return under "result".
     hits = (
         structured.get("result", structured)
         if isinstance(structured, dict)

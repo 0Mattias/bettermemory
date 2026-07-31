@@ -7,7 +7,7 @@ pass its parent's id, which can be mistyped or path-shaped. Such an id
 flows verbatim into `deps.episode_store.list_by_session(...)`, whose
 `_session_dir` validator raises `ValueError` for anything outside the
 `[A-Za-z0-9_-]` charset (slash / space / dot / "../"). Before the fix
-that ValueError propagated out of the handler on the hot path; FastMCP
+that ValueError propagated out of the handler on the hot path; the SDK
 wraps it, so the caller saw a raw tool error rather than the graceful
 `episodes: []` shape every other episode read surface returns.
 
@@ -65,7 +65,7 @@ async def test_episode_handoff_explicit_invalid_prior_session_id_degrades(
     `{prior_session_id: <id>, episodes: []}` shape instead of raising.
 
     Pre-fix, `list_by_session(<bad_id>)` on the emit path raised a raw
-    ValueError that FastMCP surfaced as a tool error at /loop iteration
+    ValueError that the SDK surfaced as a tool error at /loop iteration
     entry. The fix wraps that call in `try/except ValueError: all_eps =
     []`, matching the auto-resolution branch and `episode_search`.
     """

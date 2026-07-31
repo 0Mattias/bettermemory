@@ -6,8 +6,8 @@ the test surface) — a back-edge that made ``cli/`` co-dependent with
 ``server.py`` and forced the cycle workaround documented in
 ``cli/serve.py``. Their job is purely the wiring (read provider /
 model-name out of ``Config``, hand them to ``semantic.get_model`` or
-``semantic.configure_persistent_cache``); they don't touch FastMCP or
-anything else server-specific, so the colocation was historical, not
+``semantic.configure_persistent_cache``); they don't touch the MCP
+server or anything else server-specific, so the colocation was historical, not
 structural. Moving them to their own module lets ``cli/`` import them
 directly without reaching back through ``server.py``.
 

@@ -288,7 +288,7 @@ async def test_memory_write_refuses_a_short_body_when_the_floor_is_configured(
     Before the fix this returned `{"status": "committed"}` and the store grew
     by one. The store assertion is the half that matters — a refusal that
     still writes is the failure mode a status-only assertion would miss.
-    FastMCP wraps the handler's ValueError in a ToolError; both pass through
+    The SDK wraps the handler's ValueError in a ToolError; both pass through
     `Exception` and the message carries through either way.
     """
     server = _server(memory_dir, min_content_tokens=6)

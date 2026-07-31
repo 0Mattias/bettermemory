@@ -1,6 +1,6 @@
 """MCP server entry-point shim and historical re-export surface.
 
-The MCP wiring (``build_server``, ``_register_tools``, the FastMCP
+The MCP wiring (``build_server``, ``_register_tools``, the server-level
 ``instructions`` block, the per-tool ``mcp.tool(...)`` registrations)
 lives in ``bettermemory.builder``. That move closed a load-time cycle:
 ``cli/serve.py`` can now import ``build_server`` at the module top

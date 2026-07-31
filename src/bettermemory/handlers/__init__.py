@@ -13,7 +13,7 @@ references (`config`, `store`, `sessions`, `recorder`, `responses`,
 `_semantic_model_factory`) once per server and exposes one bound
 method per tool that delegates straight to the per-tool module. That
 shape is what keeps the test suite's `mcp._tool_manager.get_tool(name).fn`
-patterns working — `fn` is still a bound method, and FastMCP's
+patterns working — `fn` is still a bound method, and the SDK's
 introspection still strips `self` from the JSON schema.
 
 `server._register_tools` imports the `DESC_*` constants from this

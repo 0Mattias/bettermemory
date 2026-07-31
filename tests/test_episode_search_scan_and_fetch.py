@@ -21,7 +21,7 @@ G1 adds the two halves of the cheap pattern:
   `tests/test_episode_search_isolation.py`); AND-composed with every
   other filter; unknown ids are absent rather than an error.
 
-THE WIRE IS THE POINT. FastMCP builds each tool's JSON schema from the
+THE WIRE IS THE POINT. The SDK builds each tool's JSON schema from the
 `_handlers.py` facade signature, not from the handler module, and a
 parameter present on the handler alone is silently DROPPED by the
 pydantic argument model — `call_tool("episode_search",

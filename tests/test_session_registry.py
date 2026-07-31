@@ -81,7 +81,7 @@ def test_registry_returns_distinct_states_for_distinct_client_ids() -> None:
 
 
 def test_registry_falls_back_to_default_state_when_ctx_is_none() -> None:
-    """A None ctx (in-process call, no FastMCP request) maps to the
+    """A None ctx (in-process call, no SDK request) maps to the
     default key. The stdio transport's `build_server` recorder
     construction calls `for_request(None)` to read a stable
     session_id — that path must work without raising."""
@@ -107,7 +107,7 @@ def test_registry_does_not_collide_default_key_with_real_client_id() -> None:
     """A client that picks `__default__` as its literal client_id (or
     whatever the internal sentinel happens to be) shouldn't end up
     sharing state with the no-id bucket. We aren't going to enforce
-    that contract on FastMCP's client_id field; this test just pins the
+    that contract on the client id a request carries; this test just pins the
     current behavior so a future change is intentional rather than
     accidental."""
     registry = SessionRegistry()
@@ -159,9 +159,9 @@ def test_get_default_registry_is_a_stable_singleton() -> None:
 async def _call(server: Any, name: str, **kwargs: Any) -> Any:
     """Invoke a tool with explicit ctx routing.
 
-    `server.call_tool(name, kwargs)` goes through FastMCP's schema-driven
+    `server.call_tool(name, kwargs)` goes through the SDK's schema-driven
     dispatch, which strips any kwarg whose corresponding parameter isn't
-    in the public tool schema — including `ctx`, because FastMCP excludes
+    in the public tool schema — including `ctx`, because the SDK excludes
     `Context`-typed parameters from the schema by design. Routing the
     test ctx through call_tool would silently land at `ctx=None` in the
     handler, and every "client" would resolve to the default registry
@@ -170,7 +170,7 @@ async def _call(server: Any, name: str, **kwargs: Any) -> Any:
     Reaching the unwrapped handler via `_tool_manager.get_tool(name).fn`
     bypasses the schema layer. We're testing the registry routing on the
     server-side glue, not the wire format — direct call is the right
-    surface. FastMCP itself injects ctx the same way at runtime, just
+    surface. The SDK itself injects ctx the same way at runtime, just
     through its own request-context lookup rather than a test kwarg.
     """
     fn = server._tool_manager.get_tool(name).fn
@@ -210,7 +210,7 @@ async def test_pending_write_is_isolated_between_clients(
     can't confirm or cancel it.
 
     Tests inject a forged Context via the `ctx` kwarg that every
-    handler now accepts. FastMCP normally injects this at the wire
+    handler now accepts. The SDK normally injects this at the wire
     layer; passing it explicitly here lets us simulate two distinct
     clients hitting the same in-process server.
     """

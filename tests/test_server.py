@@ -1,6 +1,6 @@
 """Tests for server.py — tool registration and end-to-end behavior.
 
-We exercise the registered tools via FastMCP's `call_tool` rather than
+We exercise the registered tools via the SDK's `call_tool` rather than
 spinning up the full stdio transport.
 """
 
@@ -109,7 +109,7 @@ async def test_search_finds_written_memory(server: Any) -> None:
         scopes=["infrastructure"],
     )
     hits = await _call(server, "memory_search", query="home lab subnet")
-    # Structured returns under the "result" key for FastMCP — handle both.
+    # Structured returns under the "result" key for the SDK — handle both.
     hits = hits.get("result", hits) if isinstance(hits, dict) else hits
     assert len(hits) >= 1
     assert "home lab" in hits[0]["snippet"]
@@ -1670,7 +1670,7 @@ async def test_episode_write_persists_takeaway_and_scopes(server: Any) -> None:
 async def test_episode_write_rejects_empty_body(server: Any) -> None:
     """Empty/whitespace-only body raises a clear error — the
     write surface enforces the same non-empty invariant `memory_write`
-    does, just without the durability gate. FastMCP wraps the
+    does, just without the durability gate. The SDK wraps the
     underlying ValueError as a ToolError; both pass through `Exception`."""
     with pytest.raises(Exception, match="non-empty"):
         await _call(server, "episode_write", body="")
@@ -2594,7 +2594,7 @@ async def test_loop_iteration_end_to_end_pattern(
     memory_dir: Path, monkeypatch: Any
 ) -> None:
     """End-to-end exercise of the loop-iteration pattern documented in
-    SKILL.md and the FastMCP instructions block.
+    SKILL.md and the server-level instructions block.
 
     Iteration A:
     1. Writes durable memory + a journal entry with a takeaway.
@@ -3660,7 +3660,7 @@ async def test_handoff_floor_written_before_handoff_event_recorded(
 
     # The handoff call raises (mimicking a crash after the floor
     # write succeeded but during/before the event-record stage).
-    # FastMCP wraps the underlying RuntimeError in a ToolError —
+    # The SDK wraps the underlying RuntimeError in a ToolError —
     # `_call` propagates whichever shape lands.
     with pytest.raises(Exception, match=crash_msg):
         await _call(server, "episode_handoff")
@@ -3728,7 +3728,7 @@ async def test_episode_promote_rejects_floor_episode(
     assert floor.is_floor is True
 
     # Attempting to promote a floor raises with a floor-specific message.
-    # FastMCP wraps the underlying ValueError in a ToolError — match on
+    # The SDK wraps the underlying ValueError in a ToolError — match on
     # the message which carries through either way.
     with pytest.raises(Exception, match="floor"):
         await _call(
@@ -5826,7 +5826,7 @@ def test_instructions_block_fits_under_truncation_budget(server: Any) -> None:
     for clients whose users want to paste it into a project CLAUDE.md.
 
     Anything is accessible at `server.instructions` and is the same
-    string FastMCP advertises over the wire."""
+    string the SDK advertises over the wire."""
     body = server.instructions or ""
     # Hard ceiling: comfortably below the empirical 1830-char cut.
     assert len(body) <= 1700, (
@@ -6648,7 +6648,7 @@ async def test_memory_proposals_schema_includes_acknowledge_credential(
 ) -> None:
     """The REGISTERED memory_proposals tool's input schema must expose
     `acknowledge_credential` — the same escape hatch memory_write /
-    memory_update carry. FastMCP derives the schema from the
+    memory_update carry. The SDK derives the schema from the
     `ToolHandlers.memory_proposals` wrapper signature, and its pydantic
     arg-model silently DROPS any key the signature doesn't declare, so a
     handler-core parameter the wrapper omits is dead at the tool boundary:
@@ -6670,7 +6670,7 @@ async def test_memory_proposals_accept_acknowledge_credential_end_to_end(
     """The acknowledge_credential escape hatch exercised THROUGH the MCP
     boundary (`mcp.call_tool`), not the handler function — the boundary is
     where it died before: the wrapper's signature didn't declare the
-    parameter, so FastMCP dropped the key and the flag never reached the
+    parameter, so the SDK dropped the key and the flag never reached the
     core. A credential-bearing proposal is refused without the flag and
     accepted WITH acknowledge_credential=True; the forced override lands in
     the audit log exactly once (the accept core records it — the MCP

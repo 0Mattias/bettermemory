@@ -495,7 +495,7 @@ async def _served_schemas(root: Path) -> dict[str, set[str]]:
 async def test_the_new_overrides_reach_the_registered_mcp_schema(
     tmp_path: Path,
 ) -> None:
-    """FastMCP derives the input schema from the `ToolHandlers` facade, whose
+    """The SDK derives the input schema from the `ToolHandlers` facade, whose
     pydantic arg-model silently DROPS any key the facade signature does not
     declare. A handler parameter the facade omits is dead at the tool
     boundary — the client passes `force=True` and still gets the refusal.

@@ -439,7 +439,7 @@ def _param_cost(schema: dict, name: str) -> int:
 async def _scheduled_param_costs() -> dict[str, int]:
     """Live cost of each scheduled parameter, from a throwaway server.
 
-    The probe is a bare `FastMCP`, so it never goes through
+    The probe is a bare `MCPServer`, so it never goes through
     `_register_tools` and its schema still carries pydantic's `title`
     annotations. A real server's does not — `builder._strip_schema_titles`
     deletes them at registration — and the title is between a third and a
@@ -460,7 +460,7 @@ async def _scheduled_param_costs() -> dict[str, int]:
 
 
 def _served_schemas(mcp: Any) -> dict:
-    """The registry FastMCP serves `inputSchema` from, so a test can grow a
+    """The registry the SDK serves the input schema from, so a test can grow a
     parameter the way a code change would.
 
     This reaches through a private attribute deliberately. It is the same
@@ -473,7 +473,7 @@ def _served_schemas(mcp: Any) -> dict:
     manager = getattr(mcp, "_tool_manager", None)
     registry = getattr(manager, "_tools", None)
     assert isinstance(registry, dict) and registry, (
-        "FastMCP's tool registry is no longer at `_tool_manager._tools`. The "
+        "The SDK's tool registry is no longer at `_tool_manager._tools`. The "
         "schema-growth guard below reaches through it to grow a parameter, and "
         "the shipped title-scrub mutates the same path — re-check both "
         "against the installed SDK before assuming either still works."

@@ -42,7 +42,7 @@ async def _call(server: Any, name: str, **kwargs: Any) -> Any:
 
 
 def _hits(raw: Any) -> list[dict[str, Any]]:
-    """Unwrap FastMCP's structured content envelope."""
+    """Unwrap the SDK's structured content envelope."""
     if isinstance(raw, dict) and "result" in raw:
         return raw["result"]
     return raw

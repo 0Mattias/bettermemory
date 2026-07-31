@@ -457,7 +457,7 @@ def _all_names(tree: ast.Module) -> set[str]:
     real citation shape there is — a method named on its own, cited
     against the file that holds its class. The keyword-argument clause
     is not decoration either: prose names a setting by the keyword the
-    call site passes it under (`FastMCP(instructions=...)`), and without
+    call site passes it under (`MCPServer(instructions=...)`), and without
     that clause such a citation reads as absent.
     """
     names: set[str] = set()

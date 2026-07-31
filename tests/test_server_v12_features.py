@@ -102,7 +102,7 @@ async def _call(server: Any, name: str, **kwargs: Any) -> Any:
 
 
 def _unwrap(res: Any) -> Any:
-    """FastMCP wraps `list[...]` tool responses as `{"result": [...]}` on
+    """The SDK wraps `list[...]` tool responses as `{"result": [...]}` on
     the structured side. Mirror the helper from `test_server.py`."""
     return res.get("result", res) if isinstance(res, dict) and "result" in res else res
 

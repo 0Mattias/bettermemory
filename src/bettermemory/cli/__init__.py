@@ -18,7 +18,7 @@ statement of what the command does that ``bettermemory <cmd>
 twice so the two surfaces can't drift.
 
 MCP wiring (``build_server`` plus ``_register_tools`` and the
-FastMCP ``instructions`` block, neither re-exported through
+server-level ``instructions`` block, neither re-exported through
 ``server.py``) lives in ``bettermemory.builder``; ``server.py``
 re-exports ``build_server`` for back-compat. The split keeps this package's top-level imports
 from back-edging through ``server.py``, which was previously the

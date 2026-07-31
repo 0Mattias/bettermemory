@@ -290,7 +290,7 @@ def test_the_scrub_reaches_the_attributes_it_feature_detects() -> None:
 
     registry = getattr(getattr(mcp, "_tool_manager", None), "_tools", None)
     assert isinstance(registry, dict) and registry, (
-        "FastMCP's tool registry is no longer at `_tool_manager._tools`. "
+        "The SDK's tool registry is no longer at `_tool_manager._tools`. "
         "`builder._strip_schema_titles` feature-detects this and returns "
         "quietly, so the only symptom would be schemas growing ~4.2k chars "
         "with no diff in this repo."
@@ -599,7 +599,7 @@ async def test_the_scrub_does_not_leak_between_servers(tmp_path: Path) -> None:
     Each registration builds a fresh `arg_model` and therefore a fresh
     schema dict, so the mutation is per-instance — asserted here in both
     directions: two bettermemory servers agree and are both scrubbed, and
-    an unrelated `FastMCP` constructed AFTER a scrub still has its titles.
+    an unrelated `MCPServer` constructed AFTER a scrub still has its titles.
     The second half is what would catch a scrub that had found its way
     onto a class attribute or a cached model."""
     first = await _server(tmp_path).list_tools()
@@ -618,7 +618,7 @@ async def test_the_scrub_does_not_leak_between_servers(tmp_path: Path) -> None:
     unrelated.tool(name="probe", description="d")(_probe)
     (tool,) = await unrelated.list_tools()
     assert _title_count(_input_schema(tool)) > 0, (
-        "an unrelated FastMCP built after a bettermemory server has no titles "
+        "an unrelated MCPServer built after a bettermemory server has no titles "
         "either — the scrub is reaching shared state, not this server's own "
         "registry."
     )
