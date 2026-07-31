@@ -6,7 +6,7 @@ layer between an agent and its own past: every retrieved fact carries
 a staleness verdict, every use an attribution, and whether it helped
 is measured rather than assumed.
 
-The plugin bundles three things:
+The plugin bundles four things:
 
 1. **MCP server registration** ([`.mcp.json`](.mcp.json)) — spawns
    `uvx bettermemory` as a stdio MCP server. 18 of the 27 tools
@@ -22,6 +22,14 @@ The plugin bundles three things:
    `uvx bettermemory audit-turn --quiet` at each turn end to log
    silent retrieval misses. Always exits 0, so a transient failure
    never surfaces as a hook-error banner.
+4. **SessionStart hook** (same file) — runs
+   `uvx bettermemory session-start` when a conversation opens and
+   prints the per-scope memory counts for the current repository.
+   Claude Code injects a SessionStart hook's stdout into the model's
+   context, so the session begins knowing what is stored without
+   spending a `memory_scope_overview` call on it. Reads the search
+   index only (never memory bodies), records nothing, prints nothing
+   when the store is empty, and always exits 0.
 
 ## Install
 

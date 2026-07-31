@@ -67,7 +67,22 @@ DESC_MEMORY_HEALTH = (
     "one of `remove_dead_weight` / `resolve_contradicted` / "
     "`cleanup_cold_endorsements` / `verify_drifted` / "
     "`fix_typo_scopes`; empty list means nothing crossed.\n\n"
-    "CLI equivalent: `bettermemory health [--json]`."
+    "CLI equivalent: `bettermemory health [--json]`.\n\n"
+    # Documented AFTER the `CLI equivalent:` line on purpose. The bucket
+    # region above is sliced and set-compared against the report's wire
+    # shape by `test_desc_memory_health_enumerates_report_bucket_keys`,
+    # and this key is not a bucket — it is the gate that says whether
+    # `dead_weight` was measurable at all. Listing it up there would
+    # both break that parity and invite the model to read it as another
+    # pile of rows to act on.
+    "`telemetry_coverage` is non-null whenever the coverage gate ran: "
+    "`{hook_telemetry_events, covered, dead_weight_suppressed, reason}`. "
+    "When `dead_weight_suppressed` is true, `dead_weight` is empty BY "
+    "CONSTRUCTION — the event log carries no Stop-hook settlement "
+    "telemetry, so 'never applied' says nothing about the memory — NOT "
+    "because the store is clean. `memory_scope_overview`'s "
+    "`curation_pending.dead` reads zero under the same gate. Report the "
+    "`reason` verbatim rather than 'no dead weight found'."
 )
 
 

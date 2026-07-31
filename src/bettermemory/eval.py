@@ -52,9 +52,14 @@ Attribution tier: events carry an ``attribution`` field with values
 ``"model"`` (explicit by AI), ``"hook"`` (Stop-hook substring match),
 or ``"auto"`` (the auto-fallback). Older events without the field
 fall back to ``"model"`` when ``auto`` is false and ``"auto"`` when
-``auto`` is true. The eval rollups branch on ``auto`` directly so the
-back-compat fall-through stays implicit; consumers wanting to split
-model-explicit from hook-attributed reach into the raw events.
+``auto`` is true. ``applied_total`` / ``applied_explicit`` and the
+``endorsement_rate`` built on them keep the two-way auto/explicit
+split they have always had (published, with recorded baselines);
+``applied_model`` / ``applied_hook`` decompose the explicit half so a
+consumer can tell a deliberate ``memory_record_use`` call from the
+Stop hook's containment match without reaching into the raw events.
+The tiering itself is ``health.applied_tier`` — one derivation, two
+surfaces.
 """
 
 from __future__ import annotations
@@ -65,6 +70,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
+from .health import applied_tier as _applied_tier
 from .models import Memory, first_summary_line
 from .time_utils import parse_event_ts
 
@@ -326,6 +332,25 @@ class EvalReport:
     repeat_audits: int = 0
     by_model: dict[str, dict[str, int]] = field(default_factory=dict)
 
+    # `applied_explicit` split by producer — `applied_model +
+    # applied_hook == applied_explicit`, always. Additive: the
+    # `endorsement_rate` numerator stays `applied_explicit`, because
+    # that rate has a recorded baseline and the hook's attribution IS
+    # evidence the retrieval landed.
+    #
+    # What the pair adds is the ability to ask a question the single
+    # number cannot answer. The Stop hook's containment matcher emits
+    # `auto=False, attribution="hook"` — the same shape an explicit
+    # model call produces — so on a hook-wired store `applied_explicit`
+    # is dominated by "a phrase from the memory appeared in the reply",
+    # not by "the model called memory_record_use". Reading the former
+    # as deliberate endorsement overstates the model's engagement with
+    # memory, which is precisely the metric this module exists to
+    # measure honestly. Tiering is `health.applied_tier`, shared so the
+    # two surfaces cannot derive three tiers two ways.
+    applied_model: int = 0
+    applied_hook: int = 0
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "generated_at": self.generated_at.isoformat(),
@@ -339,6 +364,10 @@ class EvalReport:
                 "explicit_endorsements_with_excerpt": self.explicit_endorsements_with_excerpt,
                 "applied_total": self.applied_total,
                 "applied_explicit": self.applied_explicit,
+                # The explicit half, split by producer. Sums to
+                # `applied_explicit` exactly.
+                "applied_model": self.applied_model,
+                "applied_hook": self.applied_hook,
                 "turns_audited": self.turns_audited,
                 "turns_no_signal": self.turns_no_signal,
                 "silent_misses": self.silent_misses,
@@ -482,6 +511,10 @@ def compute_eval(
     explicit_endorsements_with_excerpt = 0
     applied_total = 0
     applied_explicit = 0
+    # `applied_explicit` split by producer (hook containment match vs
+    # real `memory_record_use` call) — see the EvalReport fields.
+    applied_model = 0
+    applied_hook = 0
     turns_audited = 0
     turns_no_signal = 0
     silent_misses = 0
@@ -613,13 +646,18 @@ def compute_eval(
             ids = ev.get("ids") or ev.get("memory_ids") or []
             if not isinstance(ids, list):
                 continue
-            # Strict identity comparison matches health.py:736 — only
-            # the literal `True` the Recorder stamps on auto-committed
-            # use events qualifies as "auto". A stray truthy value
-            # (legacy `auto=1`, `auto="true"`) reads as explicit, same
-            # as missing/None, so we never silently relabel borderline
-            # data as auto.
-            is_auto = ev.get("auto") is True
+            # Tiering via the shared `health.applied_tier` — auto /
+            # hook / model, with the strict `auto is True` identity
+            # comparison (a stray truthy `auto=1` / `auto="true"` reads
+            # as NON-auto, same as missing/None, so we never silently
+            # relabel borderline data as the server closing the loop).
+            # Shared rather than re-derived here: this module and
+            # `health._StatsAccumulator._handle_use` publish the same
+            # split under different names, and the hand-mirrored version
+            # of this comment used to cite a health.py line number that
+            # had been wrong for several releases.
+            tier = _applied_tier(ev)
+            is_auto = tier == "auto"
             raw_excerpts = ev.get("claim_excerpts")
             # claim_excerpts is parallel to ids; entries may be None.
             # An entry counts toward the helped-rate numerator only
@@ -660,6 +698,10 @@ def compute_eval(
                     auto_applied_count[mid] = auto_applied_count.get(mid, 0) + 1
                 else:
                     applied_explicit += 1
+                    if tier == "hook":
+                        applied_hook += 1
+                    else:
+                        applied_model += 1
                     explicit_applied_count[mid] = explicit_applied_count.get(mid, 0) + 1
                     if isinstance(excerpt, str) and excerpt.strip():
                         explicit_endorsements_with_excerpt += 1
@@ -800,6 +842,8 @@ def compute_eval(
         explicit_endorsements_with_excerpt=explicit_endorsements_with_excerpt,
         applied_total=applied_total,
         applied_explicit=applied_explicit,
+        applied_model=applied_model,
+        applied_hook=applied_hook,
         turns_audited=turns_audited,
         turns_no_signal=turns_no_signal,
         silent_misses=silent_misses,
@@ -2400,6 +2444,15 @@ TOOLS_WITHOUT_TELEMETRY: tuple[str, ...] = ("memory_health",)
 # ``doctor_fix`` is `bettermemory doctor --fix`'s per-applied-fix audit
 # record — an admin CLI operation like ``silent_miss_cutoff``, never a
 # tool invocation, so counting it in the rollup would invent a tool.
+#
+# ``use_token_expired`` is the use-token counterpart of
+# ``pending_expired``: one batched event per set of retrieval tokens
+# that hit the 30-minute wall-clock eviction with nothing having
+# settled them (no Stop-hook attribution, no explicit
+# ``memory_record_use``, no in-process auto-commit). It is a
+# consequence of ``memory_search`` / ``memory_show`` going unsettled,
+# not a call — counting it would inflate whichever tool it was
+# attributed to, and it has no tool of its own to be attributed to.
 _KNOWN_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
     {
         "search_miss",
@@ -2407,6 +2460,7 @@ _KNOWN_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
         "silent_miss_cutoff",
         "proposals_enqueued",
         "doctor_fix",
+        "use_token_expired",
     }
 )
 
@@ -2414,11 +2468,26 @@ _KNOWN_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
 # under that client's own session id. Verified at the call sites:
 # ``search_miss`` / ``proposals_enqueued`` come off the Stop hook's
 # recorder (hook.py) — the same recorder that writes that session's
-# ``turn_audited`` rows — and ``pending_expired`` is drained
-# handler-side through the live session's recorder
-# (handlers/_shared.py).
+# ``turn_audited`` rows — and ``pending_expired`` and
+# ``use_token_expired`` are both drained handler-side through the live
+# session's recorder (handlers/_shared.py), at the entry of the very
+# tool call that noticed the eviction.
+#
+# MEMBERSHIP HERE IS NOT OPTIONAL AND NOT MECHANICALLY CHECKED. The
+# roster below is DERIVED as ``_KNOWN − _IN_SESSION``, which makes
+# ``ADMIN | IN_SESSION == KNOWN`` a tautology: a kind added to
+# ``_KNOWN_SIDE_EFFECT_KINDS`` alone lands in the admin roster, and
+# every partition assertion in the suite still passes. The visible
+# damage is downstream — ``is_admin_recorded_event`` starts returning
+# True, ``doctor._check_audit_turn_cadence`` drops the event AND its
+# whole session from the census, and eval's tally treats a real client
+# session as never having existed. The only guard is a hand-written,
+# per-kind one — see
+# ``tests/test_doctor.py::test_use_token_expired_is_classified_in_session``
+# for the shape (membership assertion plus a behavioural census half).
+# Write one alongside every new entry here.
 _IN_SESSION_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
-    {"search_miss", "pending_expired", "proposals_enqueued"}
+    {"search_miss", "pending_expired", "proposals_enqueued", "use_token_expired"}
 )
 
 # Event kinds recorded by an admin/CLI surface OUTSIDE any client

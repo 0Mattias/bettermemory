@@ -854,6 +854,56 @@ threshold"; both bench READMEs' declared gap closed or narrowed.
 
 ### Phase 5 — Settlement + hooks (M)
 
+Entry brief for this phase: `docs/audit/phase5-entry-2026-07-31.md` (verified at `7a79b61`).
+
+**PHASE STATUS: DONE 2026-07-31.** D1, D2, D3 all shipped. Suite 4,174 passed /
+16 skipped default leg, 4,099 / 3 / 8 embeddings; ruff, mypy (209 files),
+pyright (0 errors) clean. Executed by a 3-lane recon → adjudicator → 3-lane
+implement → 3-lane adversarial verify → 3-lane repair → 3-lane re-verify chain.
+Deltas from the plan as written, each reproduced rather than reasoned:
+
+- **The plan's `D1 → D2` arrow is not a real dependency.** `use_token_expired`
+  carries none of the fields D2's coverage predicate keys on (deliberately — the
+  omission of `attribution` is what keeps it in-session). All three items are
+  parallel; D1 was kept first only so the eval-roster edit landed before D2's
+  reviewer read that file.
+- **Risk that the plan did not name, and the fact pack contradicts: adding a kind
+  to `_KNOWN_SIDE_EFFECT_KINDS` and forgetting `_IN_SESSION_SIDE_EFFECT_KINDS`
+  has NO tripwire.** `ADMIN_RECORDED_EVENT_KINDS` is *derived* as
+  `KNOWN − IN_SESSION`, so the parity assertion is a tautology. Reproduced: with
+  only the `_KNOWN_` entry, `tests/test_doctor.py` + `tests/test_eval.py` ran
+  329 passed / 0 failed while the event — and its whole session — dropped out of
+  doctor's census. The hand-written membership guard is the only thing there.
+- **D1 as specified would have regressed hookful stores, twice.** Eviction runs
+  inside `state.advance_turn()`, *before* the dedup purge, so a retrieval the
+  Stop hook had already settled read as a loss after an idle gap. The
+  `extra_pending` fix closes that. Adversarial verification then found the same
+  defect open on a third path the brief had not considered: `memory_record_use`
+  writes its `use` event *after* `_advance_turn` returns, so the log scan
+  structurally cannot see it — the append-only log held one retrieval as both
+  settled and lost. Fixed by threading `override_ids` into the drain.
+- **D2's shared predicate shipped mutation-silent.** Three of five branches of
+  `is_hook_telemetry_event` — including the `turn_audited` / `stop_hook` check the
+  plan calls out by name — could be deleted with all 4,159 tests green, because
+  every fixture used one event shape. Closed with a truth-table unit test plus
+  end-to-end variants. Separately, `telemetry_coverage` first shipped as an
+  undocumented wire key: the test that exists to prevent exactly that compared the
+  DESC against a *hardcoded* expected set, so it passed. It now derives from
+  `HealthReport.to_dict()`.
+- **D3's "always exits 0" contract was false as first written.** `print(block)`
+  sat outside the guard; `PYTHONIOENCODING=ascii` exited 1 with a traceback on the
+  em dash. Beyond moving it inside, the flush and a `/dev/null` descriptor salvage
+  are both load-bearing — without the salvage a hung-up reader exits **120** from
+  CPython's shutdown flush, *after* `run` returned `SystemExit(0)`. Guarded by a
+  subprocess test, since the bug lives past the last line any in-process test runs.
+- **Budgets: zero spent, as the brief predicted.** No new wire params, no lean-DESC
+  edits. `memory_health` is outside the 18-tool lean surface, so its new field and
+  DESC sentence are free. Lean DESC stays 27,048/27,500; footprint remainder
+  9,699/10,000 with G1's 182-char reserve intact.
+- **Environment: the `.venv` corruption recurred twice more** (sixth and seventh).
+  Refined trigger: it is not only an extras SWAP — plain `uv run` re-syncs
+  implicitly and does it too. Use `uv run --no-sync` for every invocation here.
+
 **D1. Make use-token loss visible — and do NOT convert it to applied.**
 The audit draft's "settle prior-session tokens as auto-applied at next
 session start" is WRONG by the system's own semantics: applied events

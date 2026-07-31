@@ -712,6 +712,20 @@ class SessionState:
     # TTL — at that point the model has no live reference to it.
     _expired_pending: dict[str, "PendingWrite"] = field(default_factory=dict)
     _expired_pending_at: dict[str, float] = field(default_factory=dict)
+    # Use-tokens the wall-clock safety net evicted before anything
+    # settled them. Same stash-then-drain shape as `_expired_pending`
+    # one field up, and for the same reason: a bare `del` made the loss
+    # unobservable. Drained by `pop_expired_use_tokens()` so the handler
+    # layer can emit one `use_token_expired` event per batch.
+    #
+    # Deliberately ONE map, with none of the second-TTL companion
+    # bookkeeping `_expired_pending` carries above: that companion
+    # exists solely so `was_recently_expired` can tell
+    # `memory_write_confirm` "expired" from "never existed", and a
+    # use-token has no equivalent return path — the model never hands a
+    # token back (`memory_record_use` takes `memory_ids`). The drain is
+    # the whole lifetime.
+    _expired_use_tokens: dict[str, "PendingUseToken"] = field(default_factory=dict)
     # Tracks pending writes that originated from `episode_promote`. The
     # value is `(episode_session_id, episode_id)` — what the promote
     # handler needs to delete the source episode once the user
@@ -1035,11 +1049,13 @@ class SessionState:
 
         Called at the entry of every memory_* tool handler so the
         auto-commit pass has a stable monotonic clock to compare token
-        ages against. Also evicts wall-clock-expired tokens AND any
-        pending writes that crossed their TTL — the latter populates
-        `_expired_pending` so `_drain_pending_expired` (handler-side)
-        can emit one event per drop and the confirm handler can
-        distinguish "expired" from "never existed."
+        ages against. Also evicts wall-clock-expired use-tokens AND any
+        pending writes that crossed their TTL. Both evictions stash
+        rather than delete — `_expired_use_tokens` and
+        `_expired_pending` respectively — so the handler layer can
+        drain each and emit one event per drop (`use_token_expired`,
+        `pending_expired`), and the confirm handler can distinguish
+        "expired" from "never existed."
         """
         self.turn_counter += 1
         self._evict_expired_use_tokens()
@@ -1129,6 +1145,26 @@ class SessionState:
         return self.pending_use_tokens.pop(memory_id, None) is not None
 
     def _evict_expired_use_tokens(self) -> None:
+        """Move wall-clock-expired use-tokens into the
+        `_expired_use_tokens` stash.
+
+        This used to be a bare `del`, and that was the last silent loss
+        left in the retrieval-settlement chain. A retrieval that no
+        surface settled — no Stop-hook attribution, no explicit
+        `memory_record_use`, and no in-process auto-commit because the
+        session went idle before the next memory_* call — simply
+        disappeared at the 30-minute mark. Downstream the store then
+        read "retrieved, never applied", which is exactly the shape
+        dead-weight curation punishes: the memory looked useless when
+        in fact the evidence was thrown away.
+
+        Stashing mirrors `_evict_expired`'s treatment of pending
+        writes. The event itself is emitted handler-side
+        (`handlers/_shared._emit_expired_use_tokens`) because this
+        module stays dependency-free of the audit stack by design — the
+        same rule that keeps `AUTO_COMMIT_MIN_AGE_SECONDS` a
+        cross-pinned copy rather than an import of the audit constant.
+        """
         cutoff = time.time() - _PENDING_USE_TOKEN_TTL_SECONDS
         stale = [
             mid
@@ -1136,7 +1172,27 @@ class SessionState:
             if tok.issued_at < cutoff
         ]
         for mid in stale:
-            del self.pending_use_tokens[mid]
+            self._expired_use_tokens[mid] = self.pending_use_tokens.pop(mid)
+
+    def pop_expired_use_tokens(self) -> list["PendingUseToken"]:
+        """Drain and return use-tokens evicted since the last drain.
+
+        Returned in insertion order — oldest eviction first — so the
+        `use_token_expired` event the handler builds from them is
+        reproducible across runs. The tokens stay out of the live
+        `pending_use_tokens` map regardless of what the caller does
+        with them. Idempotent: a second call returns an empty list
+        until the next eviction.
+
+        Callers must drain unconditionally, before any
+        telemetry-enabled check. That ordering (the one
+        `_drain_pending_expired` already uses) is what keeps the stash
+        bounded on a telemetry-disabled deployment, where the events
+        are never written but the evictions still happen.
+        """
+        drained = list(self._expired_use_tokens.values())
+        self._expired_use_tokens.clear()
+        return drained
 
     # ---- lifecycle -------------------------------------------------------
 
@@ -1151,6 +1207,11 @@ class SessionState:
         self.pending_use_tokens.clear()
         self._expired_pending.clear()
         self._expired_pending_at.clear()
+        # Dropped rather than drained: a reset discards the live tokens
+        # on the line above too, so emitting expiry events for the
+        # stash would report losses for retrievals the caller just
+        # declared irrelevant.
+        self._expired_use_tokens.clear()
         self._promotion_episodes.clear()
         # The sidecar mirrors the live set, so a reset that only cleared
         # memory would be undone by the next `bind_pending_log`.

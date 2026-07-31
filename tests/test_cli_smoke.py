@@ -20,6 +20,7 @@ tests; the subprocess tests pass it through `env=`.
 
 from __future__ import annotations
 
+import io
 import json
 import subprocess
 import sys
@@ -29,6 +30,7 @@ from pathlib import Path
 import pytest
 
 from bettermemory.config import load_config
+from bettermemory.origin import Origin
 from bettermemory.proposals import Proposal, ProposalQueue
 from bettermemory.server import main as cli_main
 from bettermemory.store import Store
@@ -1344,3 +1346,586 @@ def test_migrate_origin_repair_reports_breakdown(
     assert "Repair: ON" in out
     assert "Would anchor" in out
     assert "Would demote" in out
+
+
+# ---------------------------------------------------------------------------
+# `bettermemory session-start` — the SessionStart-hook context block.
+#
+# Claude Code injects a SessionStart hook's stdout verbatim into the model's
+# context, which makes two properties load-bearing in ways ordinary CLI
+# subcommands' aren't:
+#
+#   1. The command must record NOTHING. `hook._latest_in_process_session`
+#      picks the newest non-`stop_hook` session in the event log as the
+#      anchor the turn audit attributes against, and reads only
+#      `triggered_from` to do it — so any row written here hijacks that
+#      anchor no matter how it is stamped, and publishes a session id that
+#      no `turn_audited` can ever accompany. The mandate is a comment in
+#      `cli/session_start_cmd.py`; `test_session_start_records_nothing`
+#      below is the part that makes it enforceable.
+#   2. Stdout is the block and nothing else. A diagnostic line printed on
+#      the wrong stream is indistinguishable, to the model, from content it
+#      should act on.
+#
+# Everything else here pins the degrade-to-silence gates: the command must
+# never take the expensive `load_all` path, and must never publish a count
+# it cannot prove.
+# ---------------------------------------------------------------------------
+
+
+def _event_log_snapshot(root: Path) -> dict[str, bytes]:
+    """Every event-log file under `root`, by name, with contents.
+
+    Byte-level rather than "parse and count rows": the assertion is that
+    the command is inert on this store, and a rewritten-but-equivalent
+    log would be a behaviour change worth failing on.
+    """
+    return {
+        p.name: p.read_bytes()
+        for p in sorted(root.iterdir())
+        if p.name.startswith(".events")
+    }
+
+
+def _run_session_start(
+    monkeypatch: pytest.MonkeyPatch, storage: Path
+) -> "pytest.ExceptionInfo[SystemExit]":
+    """Invoke the subcommand and assert the always-exit-0 contract."""
+    with pytest.raises(SystemExit) as exc:
+        _run_main(["session-start"], monkeypatch=monkeypatch, storage=storage)
+    assert exc.value.code == 0, (
+        f"session-start must always exit 0 — a non-zero exit surfaces as a "
+        f"hook-error banner at session open; got {exc.value.code!r}"
+    )
+    return exc
+
+
+def test_session_start_records_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """THE regression guard for the negative mandate.
+
+    A store with a pre-existing event log must come out of a
+    `session-start` run byte-identical — no appended row, no new shard,
+    no new archive. That is the assertion that catches a would-be author
+    who reaches for the "just stamp it `cli_*` like consolidate does"
+    workaround: it fixes doctor's census and does NOT fix anchor hijack,
+    because `hook.py`'s walk reads `triggered_from` and never
+    `attribution`.
+
+    Second pass with `Recorder` construction made fatal. `run()` swallows
+    every exception into a stderr note, so a constructed recorder shows
+    up as an EMPTY block — which makes a still-non-empty block the proof
+    that nothing tried. It catches the variant the first pass can't:
+    a recorder built with `enabled=False`, or one whose write silently
+    no-ops on this store, leaves the log identical while still being the
+    thing the mandate forbids.
+    """
+    from bettermemory.events import Recorder
+
+    store = _seeded_store(tmp_path, monkeypatch)
+    store.write(content="alpha one", scopes=["tools"])
+    # A real recorder, so the baseline log is production-shaped rather
+    # than a hand-rolled literal.
+    Recorder(root=store.root, session_id="a-prior-session").record(
+        "search", query="anything", returned=[]
+    )
+    before = _event_log_snapshot(store.root)
+    assert before, "fixture must leave an event log to compare against"
+
+    _run_session_start(monkeypatch, tmp_path)
+
+    # It did its job (otherwise "records nothing" is trivially true).
+    assert capsys.readouterr().out.strip()
+    assert _event_log_snapshot(store.root) == before, (
+        "session-start wrote to the event log — see the negative mandate "
+        "at the top of cli/session_start_cmd.py"
+    )
+
+    class _Exploding:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            raise AssertionError(
+                "session-start constructed a Recorder — see the negative "
+                "mandate at the top of cli/session_start_cmd.py"
+            )
+
+    monkeypatch.setattr("bettermemory.events.Recorder", _Exploding)
+
+    _run_session_start(monkeypatch, tmp_path)
+
+    captured = capsys.readouterr()
+    assert captured.out.strip(), (
+        f"the block went missing once Recorder construction became fatal, "
+        f"which means something constructed one: {captured.err!r}"
+    )
+    assert _event_log_snapshot(store.root) == before
+
+
+def test_session_start_source_never_reaches_for_the_recorder(tmp_path: Path) -> None:
+    """The static half of the same mandate.
+
+    The runtime guard above only fires on the code path a given fixture
+    happens to take. This one reads the module's own source: no `Recorder`
+    name, no `.record(...)` call, anywhere in it — including the branches
+    a test store never reaches (a corrupt index, an OSError degrade).
+    """
+    import ast
+    import inspect
+
+    from bettermemory.cli import session_start_cmd
+
+    tree = ast.parse(inspect.getsource(session_start_cmd))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            assert node.id != "Recorder", (
+                "cli/session_start_cmd.py names `Recorder`; the SessionStart "
+                "hook must record nothing (anchor hijack + phantom sessions)"
+            )
+        if isinstance(node, ast.Attribute):
+            assert node.attr not in {"record", "recorder"}, (
+                f"cli/session_start_cmd.py calls `.{node.attr}` — the "
+                "SessionStart hook must record nothing"
+            )
+
+
+def test_session_start_on_an_empty_store_prints_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An empty store has nothing to say, and saying "0 memories" into
+    every session's opening context would be pure overhead.
+
+    Stderr must be clean too, and that half is the load-bearing one: an
+    empty store has no index file, so a run that reached the index-trust
+    gate would ALSO print nothing on stdout — passing this test while
+    having lost the cheap `count_active_memory_files == 0` bail. A silent
+    stderr is what proves the emptiness gate fired first, and that a
+    brand-new install is not being told its index is broken."""
+    _seeded_store(tmp_path, monkeypatch)
+
+    _run_session_start(monkeypatch, tmp_path)
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "", (
+        "an empty store is not a degraded state — nothing should be "
+        f"reported about it; got {captured.err!r}"
+    )
+
+
+def test_session_start_stdout_is_only_the_context_block(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Stdout goes into the model's context verbatim, so it must carry
+    the block and nothing else — diagnostics belong on stderr.
+
+    Pins the block's shape too: the count line, the scope line, and the
+    line that tells the model these are counts rather than retrieval
+    already performed (without which a non-zero number reads as an
+    invitation to stop searching)."""
+    store = _seeded_store(tmp_path, monkeypatch)
+    store.write(content="alpha one", scopes=["tools"])
+    store.write(content="beta two", scopes=["tools", "learning-style"])
+
+    _run_session_start(monkeypatch, tmp_path)
+
+    captured = capsys.readouterr()
+    lines = captured.out.splitlines()
+    assert len(lines) == 3, f"expected exactly the 3-line block, got {lines!r}"
+    assert lines[0] == "bettermemory: 2 memories are in scope for this repository."
+    assert lines[1] == "Top scopes: tools (2), learning-style (1)."
+    assert "no bodies, no ids" in lines[2]
+    assert "opt-in" in lines[2]
+    # Every diagnostic on stderr, none of it on stdout.
+    assert "[bettermemory]" not in captured.out
+    assert "[bettermemory] session-start:" in captured.err
+
+
+def _load_all_spy(monkeypatch: pytest.MonkeyPatch) -> list[object]:
+    """Count `Store.load_all` calls; return the (initially empty) log.
+
+    A COUNTER and not a raising sentinel, deliberately: `run()` swallows
+    every exception into a stderr note, so a sentinel that raised would
+    be absorbed and the test would still see the empty stdout it expects
+    — the guard would look green while the expensive path ran. Counting
+    is immune to that.
+
+    The whole point of the index path is that the hook never pays the
+    per-file open + YAML parse. A degrade arm that quietly fell back to
+    `load_all` would still print correct counts, and would still be a
+    regression, because it would pay that bill on the session-open
+    critical path.
+    """
+    calls: list[object] = []
+    real = Store.load_all
+
+    def _spy(self: Store) -> object:
+        calls.append(self)
+        return real(self)
+
+    monkeypatch.setattr("bettermemory.store.Store.load_all", _spy)
+    return calls
+
+
+def test_session_start_stays_silent_when_the_index_is_corrupt(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An unreadable index degrades to empty stdout and exit 0 — never a
+    traceback, never a `load_all` fallback."""
+    from bettermemory import index
+
+    store = _seeded_store(tmp_path, monkeypatch)
+    store.write(content="alpha one", scopes=["tools"])
+    index.index_path(store.root).write_bytes(b"not a sqlite database" * 40)
+    load_all_calls = _load_all_spy(monkeypatch)
+
+    _run_session_start(monkeypatch, tmp_path)
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "index unusable" in captured.err
+    assert load_all_calls == [], (
+        "the corrupt-index arm fell back to Store.load_all instead of "
+        "degrading to silence"
+    )
+
+
+def test_session_start_stays_silent_when_the_index_count_disagrees_with_disk(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """This surface publishes a COUNT, so "close enough" isn't available:
+    a number `memory_search` then contradicts is worse than no number.
+
+    The extra `.md` dropped in by hand is the shape a bulk migration or a
+    hand-copied file produces — on disk, never indexed."""
+    store = _seeded_store(tmp_path, monkeypatch)
+    store.write(content="alpha one", scopes=["tools"])
+    (store.root / "hand-copied.md").write_text(
+        "---\nid: 01JHANDCOPIEDHANDCOPIEDXX\n---\nbody\n", encoding="utf-8"
+    )
+    load_all_calls = _load_all_spy(monkeypatch)
+
+    _run_session_start(monkeypatch, tmp_path)
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "skipping the hint" in captured.err
+    assert load_all_calls == [], (
+        "the count-mismatch arm fell back to Store.load_all instead of "
+        "degrading to silence"
+    )
+
+
+class _FailingStdout:
+    """A stdout that fails the way a hook's real one can.
+
+    `write` and `flush` are separately riggable because they fail at
+    different moments: the encode happens in `write`, while an OS-level
+    write error (closed pipe, full disk) surfaces only when the buffer
+    is handed to the descriptor.
+
+    `fileno` raises on purpose. It keeps the salvage in
+    `_blackhole_stdout` away from the test process's real descriptor 1
+    (dup2-ing /dev/null over it would blind the rest of the run), and it
+    doubles as the proof that a stdout with no descriptor — which is
+    every captured or embedded one — cannot make the salvage itself the
+    thing that breaks the exit-0 contract.
+    """
+
+    def __init__(self, *, write_error: Exception | None = None) -> None:
+        self._write_error = write_error
+        self.flush_error: Exception | None = None
+        self.written: list[str] = []
+
+    def write(self, text: str) -> int:
+        if self._write_error is not None:
+            raise self._write_error
+        self.written.append(text)
+        return len(text)
+
+    def flush(self) -> None:
+        if self.flush_error is not None:
+            raise self.flush_error
+
+    def fileno(self) -> int:
+        raise io.UnsupportedOperation("fileno")
+
+
+def test_session_start_exits_0_when_the_stdout_write_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The always-exit-0 contract has to cover the WRITE, not just the read.
+
+    It did not, and the failure was reachable rather than theoretical:
+    `PYTHONIOENCODING=ascii bettermemory session-start` exited 1 with a
+    `UnicodeEncodeError` traceback on the em dash in the block's third
+    line — i.e. a hook-error banner at session open, the exact outcome
+    the command's broad `except` exists to prevent. Encoding is the
+    cheapest way to reproduce it; a closed pipe and a full disk raise
+    from the same `print`.
+    """
+    store = _seeded_store(tmp_path, monkeypatch)
+    store.write(content="alpha one", scopes=["tools"])
+    stdout = _FailingStdout(
+        write_error=UnicodeEncodeError("ascii", "—", 0, 1, "ordinal not in range(128)")
+    )
+    monkeypatch.setattr(sys, "stdout", stdout)
+
+    _run_session_start(monkeypatch, tmp_path)
+
+    # stderr is still pytest's, so the degrade note is capturable even
+    # though stdout is the fake.
+    err = capsys.readouterr().err
+    assert "could not write the context block" in err
+    assert "UnicodeEncodeError" in err
+    assert stdout.written == [], "the failing write must not be retried"
+
+
+def test_session_start_flushes_the_block_inside_the_guard(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A buffered write that is never flushed escapes the guard entirely.
+
+    `print` alone only fills the buffer, so a broken pipe or a full disk
+    surfaces during the interpreter's shutdown flush — after every
+    handler is gone, where CPython prints "Exception ignored on flushing
+    sys.stdout" and exits **120** regardless of the `SystemExit(0)` the
+    command raised. Measured directly: a short block down a closed pipe
+    exits 120 without an in-guard flush and 0 with one.
+
+    So the assertion is not just "exit 0" (which a command that never
+    flushed would also satisfy, by never noticing) — it is that the
+    failure was SEEN, on stderr, while the guard was still up.
+    """
+    store = _seeded_store(tmp_path, monkeypatch)
+    store.write(content="alpha one", scopes=["tools"])
+    stdout = _FailingStdout()
+    stdout.flush_error = BrokenPipeError(32, "Broken pipe")
+    monkeypatch.setattr(sys, "stdout", stdout)
+
+    _run_session_start(monkeypatch, tmp_path)
+
+    err = capsys.readouterr().err
+    assert "could not write the context block" in err, (
+        "the block was written but never flushed inside the guard — the "
+        "write error would land in the shutdown flush and exit 120"
+    )
+    assert "BrokenPipeError" in err
+    assert stdout.written, "the block itself should still have been attempted"
+
+
+# Two projects on the same host, deliberately: `repos_match` compares
+# (host, owner, name), so same-host/different-name is both the shape a
+# real multi-project store has and the shape a filter that only looked
+# at the host would wrongly admit.
+_FIXTURE_REPO_HERE = "git@github.com:example/here.git"
+_FIXTURE_REPO_ELSEWHERE = "git@github.com:example/elsewhere.git"
+
+
+def _out_of_scope_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Store, Origin]:
+    """A store whose every memory belongs to somebody else's workspace.
+
+    Returns the store and the origin the command will capture, so a
+    caller can add the in-scope rows it wants on top.
+
+    One row per half of the filter the command binds:
+
+    * a different repository — `repos_match` rejects it, and
+    * the SAME repository in a different worktree — `worktrees_match`
+      rejects it. That is the leakage `origin.worktree_root` exists to
+      stop, and it is invisible to a repo-only fixture.
+
+    All three checkout directories are real, and that is load-bearing:
+    `worktrees_match` degrades to repo-level matching when the recorded
+    root is POSITIVELY GONE (a since-deleted ephemeral worktree must not
+    become invisible forever), so a made-up path would be ADMITTED and
+    the sibling row would prove nothing.
+
+    `origin.capture` is pinned rather than inherited from wherever pytest
+    was invoked, because the command captures the CALLER's origin at run
+    time: a suite that read the real cwd could not seed a matching
+    memory deterministically, and — run from outside any git checkout —
+    would get `repo=None`, which switches the whole filter off and makes
+    every assertion below vacuous.
+    """
+    store = _seeded_store(tmp_path, monkeypatch)
+    here = tmp_path / "checkout-here"
+    elsewhere = tmp_path / "checkout-elsewhere"
+    sibling = tmp_path / "checkout-here-sibling"
+    for path in (here, elsewhere, sibling):
+        path.mkdir()
+
+    caller = Origin(repo=_FIXTURE_REPO_HERE, worktree_root=str(here))
+    monkeypatch.setattr("bettermemory.origin.capture", lambda cwd=None: caller)
+
+    store.write(
+        content="another project's deploy note",
+        scopes=["projects:elsewhere"],
+        origin=Origin(repo=_FIXTURE_REPO_ELSEWHERE, worktree_root=str(elsewhere)),
+    )
+    store.write(
+        content="a note from the sibling worktree",
+        scopes=["projects:sibling"],
+        origin=Origin(repo=_FIXTURE_REPO_HERE, worktree_root=str(sibling)),
+    )
+    return store, caller
+
+
+def test_session_start_counts_only_what_is_in_scope_for_this_repository(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The published number is a SCOPED number, and that is the whole point.
+
+    The block says "in scope for this repository", and the model is
+    expected to reconcile it with what `memory_search` and
+    `memory_scope_overview` later report — both of which auto-scope. A
+    command that bound the predicate to nothing would still print a
+    perfectly plausible total: on the dogfood store, 235 instead of 188.
+    Nothing else in the suite notices, because
+    `test_index.py::test_scope_counts_agree_with_the_load_all_answer`
+    builds its own `_admit` closure and so is structurally blind to how
+    the CLI binds one.
+
+    The null-origin row is the counter-assertion: scoping must not turn
+    into "only rows stamped with my repo", or every legacy and every
+    global memory would vanish from the count.
+    """
+    store, caller = _out_of_scope_store(tmp_path, monkeypatch)
+    store.write(
+        content="this project's note",
+        scopes=["projects:here"],
+        origin=Origin(repo=caller.repo, worktree_root=caller.worktree_root),
+    )
+    # No origin at all — global, and admitted for every caller.
+    store.write(content="a global preference", scopes=["personal-context"])
+
+    _run_session_start(monkeypatch, tmp_path)
+
+    captured = capsys.readouterr()
+    lines = captured.out.splitlines()
+    assert lines[0] == "bettermemory: 2 memories are in scope for this repository.", (
+        f"expected the two admitted memories out of four stored; got {lines!r}"
+    )
+    assert lines[1] == "Top scopes: personal-context (1), projects:here (1)."
+    assert "projects:elsewhere" not in captured.out, (
+        "a memory from another repository reached the opening context"
+    )
+    assert "projects:sibling" not in captured.out, (
+        "a memory from a sibling worktree of this repository reached the "
+        "opening context — the worktree half of the filter is unbound"
+    )
+    assert "2 in scope out of 4 stored" in captured.err
+
+
+def test_session_start_stays_silent_when_nothing_is_in_scope(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A populated store with nothing for THIS repository says nothing.
+
+    The second emptiness gate, and the one the store-is-empty test cannot
+    reach: here the store has memories, the index agrees with disk, and
+    the count is zero only after admission. "0 memories are in scope"
+    would be true and useless — opt-in retrieval is already the model's
+    default, so the line would buy nothing and cost every session.
+
+    Silent stderr as well, for the same reason the empty-store test
+    demands it: this is a normal state, not a degraded one, and a
+    diagnostic here would also mean some earlier gate fired instead of
+    this one.
+    """
+    _out_of_scope_store(tmp_path, monkeypatch)
+
+    _run_session_start(monkeypatch, tmp_path)
+
+    captured = capsys.readouterr()
+    assert captured.out == "", (
+        f"a zero count must not be published as a block; got {captured.out!r}"
+    )
+    assert captured.err == "", (
+        f"nothing in scope is not a degraded state; got {captured.err!r}"
+    )
+
+
+@_skip_without_install
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "the reproducer needs POSIX pipe semantics: closing the read end "
+        "must make the child's stdout write fail. Windows signals a broken "
+        "pipe differently and the 120 path is not the one under test."
+    ),
+)
+def test_session_start_exits_0_when_the_reader_hung_up(tmp_path: Path) -> None:
+    """The `_blackhole_stdout` salvage, guarded where it actually bites.
+
+    Catching the write error and exiting 0 is not sufficient on its own:
+    a failed flush leaves the bytes in the buffer, so CPython's own
+    shutdown flush retries them, fails again, and overrules the exit
+    code with 120 — after `run` has already returned SystemExit(0).
+    Redirecting the descriptor at /dev/null is what empties that retry,
+    and nothing in-process can observe it because the bug lives in
+    interpreter shutdown, past the last line any in-process test runs.
+
+    Hence a subprocess, and hence a closed pipe rather than the encoding
+    trick the in-process test uses: the UnicodeEncodeError path fails
+    before the bytes are buffered, so it exits 0 with or without the
+    salvage and would pin nothing. Verified by mutation — deleting the
+    `os.dup2` and running this exact shape returns 120.
+
+    A hook whose command exits 120 shows the user an error banner at
+    session open, which is the one outcome this command must never
+    produce; `|| true` in hooks.json is a second net, not a reason to
+    leave the first one untested.
+    """
+    store = Store(tmp_path)
+    store.write(content="alpha one durable fact", scopes=["tools"])
+
+    env = shielded_child_env()
+    env["BETTERMEMORY_DIR"] = str(tmp_path)
+
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "bettermemory", "session-start"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+    )
+    # Hang up on the child immediately. It has a config load, an index
+    # open and a scan to do first, so the close wins by several orders
+    # of magnitude — but the stderr assertion below is what proves the
+    # failure path was actually taken rather than assumed.
+    assert proc.stdout is not None
+    proc.stdout.close()
+    assert proc.stderr is not None
+    err = proc.stderr.read()
+    proc.stderr.close()
+    returncode = proc.wait()
+
+    assert returncode == 0, (
+        f"session-start exited {returncode} after its reader hung up — "
+        f"120 means the shutdown flush retried the buffered block, i.e. "
+        f"the /dev/null redirect is gone. stderr: {err!r}"
+    )
+    assert "could not write the context block" in err, (
+        "the write unexpectedly succeeded, so this run proved nothing "
+        f"about the salvage; stderr was {err!r}"
+    )

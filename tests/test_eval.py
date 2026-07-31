@@ -365,6 +365,71 @@ class TestUseEvents:
         assert report.applied_explicit == 1
         assert report.endorsement_rate.rate == pytest.approx(1 / 3)
 
+    def test_applied_explicit_splits_into_model_and_hook(self) -> None:
+        """`applied_model + applied_hook == applied_explicit`, always.
+
+        The Stop hook's containment matcher writes `auto=False,
+        attribution="hook"` — the same shape an explicit
+        `memory_record_use` produces — so the single `applied_explicit`
+        number could not tell "the model reached for this memory" from
+        "a phrase from the memory appeared in the reply". The split is
+        additive; the published rates below must not move."""
+        mem = _mem()
+        events = [
+            _ev("search", returned=[mem.id]),
+            _ev("use", ids=[mem.id], outcome="applied", auto=True, attribution="auto"),
+            _ev(
+                "use",
+                ids=[mem.id],
+                outcome="applied",
+                attribution="hook",
+                claim_excerpts=["load-bearing claim"],
+            ),
+            _ev(
+                "use",
+                ids=[mem.id],
+                outcome="applied",
+                attribution="model",
+                claim_excerpts=["another claim"],
+            ),
+        ]
+        report = compute_eval(memories=[mem], events=events)
+        assert report.applied_total == 3
+        assert report.applied_explicit == 2
+        assert report.applied_hook == 1
+        assert report.applied_model == 1
+        assert report.applied_hook + report.applied_model == report.applied_explicit
+        # The two PUBLISHED rates (recorded baselines) are untouched: a
+        # hook-attributed apply still counts as explicit in the
+        # numerator of both.
+        assert report.endorsement_rate.to_dict() == RateCI.from_counts(2, 3).to_dict()
+        assert report.memory_helped_rate.to_dict() == RateCI.from_counts(2, 1).to_dict()
+        counts = report.to_dict()["counts"]
+        assert counts["applied_model"] == 1
+        assert counts["applied_hook"] == 1
+
+    def test_applied_tier_back_compat_lands_legacy_rows_on_model(self) -> None:
+        """Back-compat, on the published surface: a legacy truthy-but-not-
+        True `auto`, a missing attribution, and an admin/CLI attribution
+        all land explicit/model — never auto, never a fourth tier."""
+        mem = _mem()
+        events = [
+            _ev("use", ids=[mem.id], outcome="applied", auto=1),
+            _ev("use", ids=[mem.id], outcome="applied", auto="true"),
+            _ev("use", ids=[mem.id], outcome="applied", attribution=None),
+            _ev(
+                "use",
+                ids=[mem.id],
+                outcome="applied",
+                attribution="cli_acknowledge_debt",
+            ),
+        ]
+        report = compute_eval(memories=[mem], events=events)
+        assert report.applied_total == 4
+        assert report.applied_explicit == 4
+        assert report.applied_model == 4
+        assert report.applied_hook == 0
+
     def test_explicit_applied_without_excerpt_does_not_help_rate(self) -> None:
         mem = _mem()
         events = [
@@ -752,6 +817,10 @@ class TestSilentMissInvalidation:
                 "explicit_endorsements_with_excerpt": 1,
                 "applied_total": 2,
                 "applied_explicit": 1,
+                # The explicit apply above carries no `attribution`, so
+                # it tiers as `model` — the back-compat fall-through.
+                "applied_model": 1,
+                "applied_hook": 0,
                 "turns_audited": 2,
                 "turns_no_signal": 1,
                 "silent_misses": 1,
@@ -1519,17 +1588,24 @@ class TestComputeToolUsage:
         assert [r.tool for r in nonzero] == ["memory_search", "memory_verify"]
 
     def test_side_effect_event_kinds_are_not_counted_as_tool_calls(self) -> None:
-        """`search_miss`, `pending_expired`, and `silent_miss_cutoff`
-        are side-effects of other tools (or CLI admin ops), not
-        standalone tool calls. They must not inflate any tool's count
-        and must not surface as unmapped either — a regression that
-        moved any of these into `_TOOL_EVENT_KIND_TO_TOOL` would
-        attribute admin operations to the wrong parent."""
+        """`search_miss`, `pending_expired`, `silent_miss_cutoff` and
+        `use_token_expired` are side-effects of other tools (or CLI
+        admin ops), not standalone tool calls. They must not inflate
+        any tool's count and must not surface as unmapped either — a
+        regression that moved any of these into
+        `_TOOL_EVENT_KIND_TO_TOOL` would attribute admin operations to
+        the wrong parent.
+
+        `use_token_expired` carries an `ids` list, the same field name
+        `use` and `search` use, which is exactly why it is worth
+        pinning here: a reader that keys on the payload shape rather
+        than the kind would count it as a retrieval settlement."""
         events = [
             _ev("search_miss"),
             _ev("search_miss"),
             _ev("pending_expired", pending_id="pending_x"),
             _ev("silent_miss_cutoff", cutoff_ts="2026-04-10T00:00:00Z"),
+            _ev("use_token_expired", ids=["m1"], reason="wall_clock_ttl"),
         ]
         report = compute_tool_usage(events)
         assert report.total_tool_calls == 0

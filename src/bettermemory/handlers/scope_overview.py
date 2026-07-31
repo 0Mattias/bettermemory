@@ -13,7 +13,11 @@ from typing import TYPE_CHECKING, Any
 from .._response import isoformat_optional
 from ..events import iter_all_events
 from ..conflicts import ConflictQueue, split_judgeable
-from ..health import curation_counts, find_prior_session_boundary
+from ..health import (
+    curation_counts,
+    find_prior_session_boundary,
+    is_hook_telemetry_event,
+)
 from ..time_utils import parse_event_ts
 from ..models import utcnow
 from ..origin import Origin, should_include_for_caller
@@ -172,6 +176,17 @@ async def memory_scope_overview(
     # are read together by the model branching on session-start hints
     # and following up with the deep view, so they must agree.
     tombstoned_ids = {t.id for t in deps.store.load_tombstones()}
+    # Telemetry coverage for the `dead` count's honesty gate, derived
+    # once off the snapshot both arms share. Armed here (rather than
+    # left at the "assume covered" default) because this is the
+    # production entry point: `memory_health` gates its `dead_weight`
+    # bucket on the same signal, and the model reads the two surfaces
+    # together — a `curation_pending.dead` of 5 next to an empty
+    # `dead_weight` bucket is the three-surface disagreement this
+    # rollup's numerical contract exists to prevent.
+    hook_telemetry_events = sum(
+        1 for ev in events_snapshot if is_hook_telemetry_event(ev)
+    )
     curation = curation_counts(
         all_memories,
         events_snapshot,
@@ -182,6 +197,7 @@ async def memory_scope_overview(
         ),
         caller_origin=current_origin,
         tombstoned_ids=tombstoned_ids,
+        hook_telemetry_events=hook_telemetry_events,
     )
     # `conflicts` rides on the same rollup but comes from the verdict
     # queue, not the event stream — pending memory-vs-memory
@@ -254,6 +270,13 @@ async def memory_scope_overview(
             caller_origin=current_origin,
             since=prior_boundary,
             tombstoned_ids=tombstoned_ids,
+            # Same UNBOUNDED coverage count as the absolute arm above.
+            # "Is the Stop hook wired for this store?" is not a delta
+            # question: a store whose hook events all predate the
+            # boundary is still hooked, and passing a since-filtered
+            # count here would make the delta arm report a phantom
+            # hookless verdict every session-start.
+            hook_telemetry_events=hook_telemetry_events,
         )
         # Delta arm of the queue-derived `conflicts` key: candidates
         # whose detection time postdates the boundary. Walks the same

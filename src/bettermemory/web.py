@@ -1009,6 +1009,10 @@ _HEALTH_RENDERED_BUCKETS = frozenset(
         "recent_silent_misses",
         "cold_endorsement_memories",
         "recommendations",
+        # Rendered only when it suppressed the dead-weight bucket —
+        # otherwise the section's absence already means "nothing to
+        # show". See the warn row in `_render_health`.
+        "telemetry_coverage",
     }
 )
 
@@ -1057,6 +1061,19 @@ def _render_health(report: Any) -> str:
             f"as active memories nor as tombstones. A few can be a rotated "
             f"log or a hard-deleted file; a growing count usually means "
             f"fabricated ULIDs.</p></div>"
+        )
+
+    coverage = getattr(report, "telemetry_coverage", None)
+    if coverage is not None and coverage.dead_weight_suppressed:
+        # Same discipline as the orphan row above: shown only when it
+        # fires. Without it the Dead weight section below is simply
+        # absent, which on this page reads as "your store is clean" —
+        # the one thing it does not mean when nothing ever settled a
+        # retrieval.
+        parts.append(
+            f'<div class="card"><div class="hit-meta">'
+            f'<span class="chip bad">dead weight not measured</span></div>'
+            f'<p class="muted">{html.escape(coverage.reason or "")}</p></div>'
         )
 
     if report.dead_weight:

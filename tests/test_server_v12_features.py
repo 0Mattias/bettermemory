@@ -1208,6 +1208,275 @@ async def test_stale_use_event_does_not_falsely_purge_fresh_token(
     )
 
 
+def _backdate_use_token(state: SessionState, memory_id: str) -> None:
+    """Age one live use-token past the wall-clock eviction TTL.
+
+    Backdating the token, not monkeypatching
+    `_PENDING_USE_TOKEN_TTL_SECONDS`: the eviction resolves its cutoff
+    from the module constant at call time, and that call-time-resolution
+    contract is itself load-bearing elsewhere in this file. Mutating the
+    token keeps these tests on the eviction's own axis and is faster
+    than idling for half an hour.
+    """
+    import time as _time
+
+    import bettermemory.session as session_mod
+
+    state.pending_use_tokens[memory_id].issued_at = (
+        _time.time() - session_mod._PENDING_USE_TOKEN_TTL_SECONDS - 1
+    )
+
+
+async def test_hook_settled_token_expiring_does_not_report_a_loss(
+    server_with_state: tuple[Any, SessionState, Path],
+) -> None:
+    """A retrieval the Stop hook ALREADY settled, whose token then dies
+    of wall clock, must not be reported as a lost retrieval.
+
+    The trap is an ordering one, and it only bites hookful stores.
+    `SessionState.advance_turn` evicts wall-clock-expired tokens at the
+    TOP of `_advance_turn` — BEFORE the dedup scan that reads the event
+    log. So by the time the scan looks, a hook-settled token is already
+    out of `state.pending_use_tokens` and invisible to it. A drain that
+    only asked "was this still pending?" would file a `use_token_expired`
+    for a retrieval the hook attributed half an hour earlier: on a
+    properly-wired store — the deployment shape this whole feature is
+    supposed to leave untouched — every idle gap would manufacture
+    phantom losses. The fix is `extra_pending`: the drained batch is
+    folded into the same log scan the live tokens get.
+
+    No hookless fixture can see this, which is why this is the only
+    test in the item that constructs a hookful store — one that emits
+    `triggered_from="stop_hook"` under a transcript id from a different
+    id space than the server's, mirroring `hook.run_audit`.
+    """
+    srv, state, memory_dir = server_with_state
+    res = await _call(
+        srv, "memory_write", content="A retrievable fact.", scopes=["tools"]
+    )
+    mid = res["id"]
+    await _call(srv, "memory_search", query="retrievable fact")
+    assert mid in state.pending_use_tokens
+
+    # The Stop hook settles the turn's retrieval seconds after the reply.
+    transcript_session_id = "claude-code-transcript-expiry"
+    assert transcript_session_id != state.session_id
+    Recorder(root=memory_dir, session_id=transcript_session_id).record(
+        "use",
+        ids=[mid],
+        outcome="applied",
+        auto=False,
+        attribution="hook",
+        claim_excerpts=["A retrievable fact"],
+        triggered_from="stop_hook",
+    )
+
+    # ...and then the session goes idle past the eviction TTL. Backdated
+    # AFTER the hook wrote, so the hook event is timestamped inside the
+    # token's lifetime exactly as production would have it.
+    _backdate_use_token(state, mid)
+
+    await _call(srv, "memory_list")
+
+    events = list(iter_events(memory_dir))
+    expiries = [e for e in events if e.get("kind") == "use_token_expired"]
+    assert not [e for e in expiries if mid in (e.get("ids") or [])], (
+        "a retrieval the Stop hook already settled was reported as a "
+        f"loss — the eviction outran the dedup scan; got: {expiries}"
+    )
+    uses = [e for e in events if e.get("kind") == "use" and mid in (e.get("ids") or [])]
+    assert len(uses) == 1, f"expected only the hook's use event; got: {uses}"
+    assert uses[0]["attribution"] == "hook"
+    assert mid not in state.pending_use_tokens
+
+
+async def test_expired_use_token_emits_event_and_is_not_applied(
+    server_with_state: tuple[Any, SessionState, Path],
+) -> None:
+    """A retrieval nothing settled surfaces as `use_token_expired` — and
+    as NOTHING else.
+
+    The event deliberately carries no `outcome`, `auto` or
+    `attribution`. Settling evidence-free leftovers as `applied` (the
+    shape an earlier draft proposed) would feed cold-endorsement and
+    block dead-weight curation wholesale: the retrievals that failed to
+    earn any evidence would become the ones vouching for their
+    memories. An expiry is the absence of evidence and has to read that
+    way. Omitting `attribution` is also what keeps the event inside
+    doctor's client-session census, since that is the field
+    `eval.is_admin_recorded_event` keys its second axis on.
+    """
+    import bettermemory.session as session_mod
+
+    srv, state, memory_dir = server_with_state
+    res = await _call(
+        srv, "memory_write", content="A retrievable fact.", scopes=["tools"]
+    )
+    mid = res["id"]
+    await _call(srv, "memory_search", query="retrievable fact")
+    _backdate_use_token(state, mid)
+
+    await _call(srv, "memory_list")
+
+    events = list(iter_events(memory_dir))
+    expiries = [e for e in events if e.get("kind") == "use_token_expired"]
+    assert len(expiries) == 1, f"expected exactly one expiry event; got {expiries}"
+    expiry = expiries[0]
+    assert expiry["ids"] == [mid]
+    assert expiry["reason"] == "wall_clock_ttl"
+    assert expiry["age_seconds"] >= session_mod._PENDING_USE_TOKEN_TTL_SECONDS
+    assert expiry["turns_since_issue"] >= 1
+    for forbidden in ("outcome", "auto", "attribution"):
+        assert forbidden not in expiry, (
+            f"the expiry event carries `{forbidden}` — it will be read as "
+            "a settlement by at least one downstream surface"
+        )
+    assert not [
+        e for e in events if e.get("kind") == "use" and mid in (e.get("ids") or [])
+    ], "an expired token was also recorded as a use — expiry is not applied"
+
+
+async def test_explicit_record_use_of_an_expired_token_reports_no_loss(
+    server_with_state: tuple[Any, SessionState, Path],
+) -> None:
+    """The model settling a dead token explicitly is a settlement, not a
+    loss — even though the settling event is written after the drain.
+
+    Third settlement path, third ordering trap, and the only one where
+    the evidence is not in the log at all when the drain looks. The
+    hook's `use` is at least already on disk; `memory_record_use`
+    writes its `use` AFTER `_advance_turn` returns, so the dedup scan
+    structurally cannot see it. Without `override_ids` threaded into
+    the drain, one handler call files a `use_token_expired` and a `use`
+    for the same id, and the append-only log records that retrieval as
+    both settled and lost forever.
+
+    Driven through `call_tool` rather than the handler function so the
+    real intra-call ordering is what's under test.
+    """
+    srv, state, memory_dir = server_with_state
+    res = await _call(
+        srv, "memory_write", content="A retrievable fact.", scopes=["tools"]
+    )
+    mid = res["id"]
+    await _call(srv, "memory_search", query="retrievable fact")
+    assert mid in state.pending_use_tokens
+
+    # Idle past the eviction TTL, then come back and endorse — the
+    # `memory_record_use` is this session's next memory_* call, so its
+    # own `_advance_turn` is the one that runs the drain.
+    _backdate_use_token(state, mid)
+    await _call(
+        srv,
+        "memory_record_use",
+        memory_ids=[mid],
+        outcome="applied",
+        claim_excerpts=["A retrievable fact"],
+    )
+
+    events = list(iter_events(memory_dir))
+    settled = {
+        i for e in events if e.get("kind") == "use" for i in (e.get("ids") or [])
+    }
+    expired = {
+        i
+        for e in events
+        if e.get("kind") == "use_token_expired"
+        for i in (e.get("ids") or [])
+    }
+    # Anti-vacuity: the explicit settlement must actually be on disk,
+    # otherwise "not in expired" would hold for a call that did nothing.
+    assert mid in settled
+    assert mid not in expired, (
+        "the id the model explicitly recorded a use for was ALSO filed as "
+        "an expired retrieval — the same retrieval is now permanently "
+        "logged as both settled and lost"
+    )
+    assert not (settled & expired)
+
+
+async def test_hookless_session_loses_no_retrieval_silently(
+    server_with_state: tuple[Any, SessionState, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The acceptance criterion, as a closure over the event log.
+
+    Every id a hookless session retrieved must end up accounted for by
+    exactly one of the two settlement surfaces: a `use` event (the
+    in-process auto-commit did its job) or a `use_token_expired` event
+    (the session went idle and the token died). The two must be
+    disjoint — an id in both would mean the same retrieval was counted
+    as settled AND lost.
+
+    The second set did not exist before this landed, and the closure
+    simply didn't hold: the difference was thrown away by a bare `del`, and
+    downstream the memory read as "retrieved, never applied" — the
+    exact shape dead-weight curation punishes.
+
+    The wall-clock floor on the auto-commit is zeroed so both fates are
+    reachable inside one test; the floor's own coverage lives in
+    test_telemetry_v2.py.
+    """
+    import bettermemory.session as session_mod
+
+    monkeypatch.setattr(session_mod, "AUTO_COMMIT_MIN_AGE_SECONDS", 0.0)
+    srv, state, memory_dir = server_with_state
+    idle = await _call(
+        srv,
+        "memory_write",
+        content="Alpha fact about kayak maintenance schedules.",
+        scopes=["tools"],
+    )
+    shown = await _call(
+        srv,
+        "memory_write",
+        content="Beta fact about ukulele tuning pegs.",
+        scopes=["tools"],
+    )
+
+    # Both mint sites: search (`_attach_use_tokens`) and show
+    # (`issue_use_tokens`).
+    await _call(srv, "memory_search", query="kayak maintenance")
+    await _call(srv, "memory_show", id=shown["id"])
+
+    # One retrieval goes idle past the eviction TTL; the rest ride the
+    # turn counter into the auto-commit.
+    _backdate_use_token(state, idle["id"])
+    await _call(srv, "memory_list")
+    await _call(srv, "memory_list")
+    await _call(srv, "memory_list")
+
+    assert not state.pending_use_tokens, (
+        "a token is still live — the closure below would be vacuously "
+        "satisfiable by tokens that simply haven't been decided yet"
+    )
+
+    events = list(iter_events(memory_dir))
+    retrieved: set[str] = set()
+    settled: set[str] = set()
+    expired: set[str] = set()
+    for e in events:
+        kind = e.get("kind")
+        if kind == "search":
+            retrieved |= set(e.get("returned") or [])
+        elif kind == "show":
+            retrieved.add(e["id"])
+        elif kind == "use":
+            settled |= set(e.get("ids") or [])
+        elif kind == "use_token_expired":
+            expired |= set(e.get("ids") or [])
+
+    assert idle["id"] in expired
+    assert shown["id"] in settled
+    assert not (settled & expired), (
+        f"ids {sorted(settled & expired)} are recorded as both settled and lost"
+    )
+    assert retrieved == settled | expired, (
+        "retrievals fell off the log with no settlement and no expiry: "
+        f"{sorted(retrieved - (settled | expired))}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Change 5 — curation_pending in memory_scope_overview
 # ---------------------------------------------------------------------------
@@ -1255,6 +1524,117 @@ async def test_scope_overview_curation_never_verified_increments(
     await _call(server, "memory_write", content="A new fact.", scopes=["tools"])
     res = await _call(server, "memory_scope_overview")
     assert res["curation_pending"]["never_verified"] == 1
+
+
+async def test_scope_overview_dead_count_rides_the_telemetry_gate(
+    server: Any, memory_dir: Path
+) -> None:
+    """`curation_pending.dead` gates on Stop-hook telemetry, on BOTH arms.
+
+    The third production entry point for the dead-weight honesty gate
+    (`memory_health`'s `report_for_directory` and the consolidate
+    demotion pass have their own end-to-end tests). It needs one because
+    the gate's default is `None` = "the caller did not measure; assume
+    covered": a handler that forgets to derive and pass the count never
+    gates at all, and every pure-function test still passes.
+
+    Both arms, because `curation_pending_new_since_last_session` makes
+    its own `curation_counts` call and can be wired wrong on its own.
+    And behavioural rather than structural: the standing AST guard
+    (`test_every_production_dead_weight_call_arms_the_telemetry_gate`)
+    proves the kwarg is passed, not that the value passed is the count
+    of hook rows in the log this call is reading.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from bettermemory.events import EVENT_LOG_FILENAME
+
+    now = datetime.now(timezone.utc)
+
+    def _append(*rows: dict[str, Any]) -> None:
+        """Append raw event rows carrying explicit timestamps.
+
+        Written to the legacy untagged log rather than through
+        `Recorder`, which always stamps `ts` with the wall clock: a
+        dead-weight fixture needs a retrieval older than BOTH the
+        30-day window and the 2-day endorsement grace, and there is no
+        way to backdate through the writer. Readers merge this file with
+        the per-session shards, so the handler sees one stream.
+        """
+        path = memory_dir / EVENT_LOG_FILENAME
+        with path.open("a", encoding="utf-8") as fh:
+            for row in rows:
+                fh.write(json.dumps(row) + "\n")
+
+    store = Store(memory_dir)
+    written = store.write(
+        content="Release tags go out only after the CI matrix is green.",
+        scopes=["tools"],
+    )
+    # Age it past the window on disk — `Store.write` stamps `created` /
+    # `updated` with now, and the rollup keys on the freshest
+    # maintenance touch.
+    aged = now - timedelta(days=60)
+    for path, mem in store.iter_active():
+        if mem.id == written.id:
+            store._write_path(
+                path, mem.model_copy(update={"created": aged, "updated": aged})
+            )
+            break
+
+    # One warm-up call, purely to learn the server recorder's session
+    # id. The retrieval row below has to carry it: an event stamped with
+    # any OTHER session becomes the newest prior-session boundary, and a
+    # boundary younger than the memory's `created` would make the delta
+    # arm drop the row for being old news rather than for being
+    # unmeasurable — the two look identical from the assertion.
+    await _call(server, "memory_scope_overview")
+    sessions = [ev.get("session") for ev in iter_events(memory_dir)]
+    session_id = sessions[-1]
+    assert isinstance(session_id, str) and session_id
+
+    _append(
+        # The prior-session boundary the delta arm deltas against.
+        {
+            "ts": (now - timedelta(days=120)).isoformat(),
+            "session": "sess_before",
+            "kind": "search",
+            "returned": [],
+        },
+        # The retrieval that makes the memory dead weight: past the
+        # endorsement grace, never followed by an apply.
+        {
+            "ts": (now - timedelta(days=50)).isoformat(),
+            "session": session_id,
+            "kind": "search",
+            "returned": [written.id],
+        },
+    )
+
+    res = await _call(server, "memory_scope_overview")
+    delta = res["curation_pending_new_since_last_session"]
+    assert delta is not None, "no prior-session boundary — the delta arm never ran"
+    assert res["curation_pending"]["dead"] == 0, (
+        "hookless store reported dead weight through memory_scope_overview"
+    )
+    assert delta["dead"] == 0, "the delta arm did not arm the gate"
+
+    # The positive control: same store, same memory, one Stop-hook row.
+    _append(
+        {
+            "ts": (now - timedelta(days=40)).isoformat(),
+            "session": session_id,
+            "kind": "turn_audited",
+            "triggered_from": "stop_hook",
+            "verdict": "ok",
+        }
+    )
+
+    res = await _call(server, "memory_scope_overview")
+    delta = res["curation_pending_new_since_last_session"]
+    assert delta is not None
+    assert res["curation_pending"]["dead"] == 1
+    assert delta["dead"] == 1
 
 
 # Wire-shape parity for the DESC_* tool descriptions — the prose the LLM
@@ -1320,6 +1700,7 @@ def test_desc_memory_health_enumerates_report_bucket_keys() -> None:
     against the expected bucket names — drift here misleads clients
     about what `memory_health` actually returns."""
     import re
+    from datetime import datetime, timezone
 
     from bettermemory.handlers.health import DESC_MEMORY_HEALTH
 
@@ -1367,42 +1748,79 @@ def test_desc_memory_health_enumerates_report_bucket_keys() -> None:
     }
     extracted = all_ticked - NON_BUCKET
 
-    # Match `HealthReport.to_dict()` keys (see `health.py`). The five
-    # report-metadata keys (`generated_at`, `window_days`,
-    # `total_active_memories`, `total_events`, `distinct_sessions`) are
-    # intentionally NOT in the prose's "Returns buckets" section — they
-    # surface above it in the same DESC string but aren't buckets. This
-    # set is the bucket subset, kept in lockstep with the wire shape.
-    # `recommendations` is technically a derived digest (not a raw
-    # bucket) but appears in `to_dict` and gets enumerated alongside
-    # the buckets in DESC for the same model-discovery reason — added
-    # here so the parity check stays in lockstep with the prose.
-    # `kind`-token allowlist below filters out the recommendation
-    # kind names that share the backtick syntax (`remove_dead_weight`,
-    # etc.) but aren't bucket keys in the report shape.
-    expected = {
-        "dead_weight",
-        "cold_memories",
-        "heavily_used",
-        "contradicted",
-        "verification_debt",
-        "commit_drift_debt",
-        "silent_misses",
-        "cold_endorsement_memories",
-        "scope_distribution",
-        "scope_health",
-        "rare_scopes",
-        "orphan_use_events",
-        "marker_stats",
-        "recommendations",
+    # DERIVED from `HealthReport.to_dict()`, not hand-listed. The
+    # hand-listed version of this set is how `telemetry_coverage` shipped
+    # as an undocumented wire key past the one test whose docstring
+    # claims to prevent exactly that: a literal `expected` never consults
+    # `to_dict()`, so a key added to both the report and the literal's
+    # blind spot is invisible here. Building it from the real shape means
+    # the NEXT new key fails this test until someone decides where it is
+    # documented.
+    #
+    # `recommendations` is technically a derived digest rather than a raw
+    # bucket, but it appears in `to_dict()` and is enumerated alongside
+    # the buckets in DESC for the same model-discovery reason, so the
+    # derivation picks it up on purpose.
+    from bettermemory.health import HealthReport
+
+    wire_keys = set(
+        HealthReport(
+            generated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            window_days=30,
+            total_active_memories=0,
+            total_events=0,
+            distinct_sessions=0,
+        ).to_dict()
+    )
+    # Report metadata — surfaced in the same DESC string but ABOVE the
+    # sliced region, because they describe the run rather than name a
+    # bucket.
+    METADATA = {
+        "generated_at",
+        "window_days",
+        "total_active_memories",
+        "total_events",
+        "distinct_sessions",
     }
+    # Keys that are real wire keys and deliberately NOT in the bucket
+    # region. Each needs a reason, because "exclude it" is also how a key
+    # goes undocumented:
+    #
+    # - `telemetry_coverage` is documented after the `CLI equivalent:`
+    #   line, i.e. outside this slice by construction. It is not a
+    #   curation bucket — it is the honesty gate that says whether
+    #   `dead_weight` was measurable at all — and putting it in the
+    #   bucket list would invite the model to read it as another pile of
+    #   rows to act on.
+    # - `recent_silent_misses` is the inline triage subset of the
+    #   `silent_misses` bucket (the bounded newest-first list carrying
+    #   `event_id` for `memory_acknowledge_miss`). The DESC sends the
+    #   model to `memory_audit_turn` for that workflow and documents the
+    #   payload in `docs/api.md`; it has never been enumerated here.
+    DOCUMENTED_OUTSIDE_THE_BUCKET_REGION = {
+        "telemetry_coverage",
+        "recent_silent_misses",
+    }
+    expected = wire_keys - METADATA - DOCUMENTED_OUTSIDE_THE_BUCKET_REGION
     assert extracted == expected, (
         "DESC_MEMORY_HEALTH's enumerated bucket names drifted from "
         f"HealthReport.to_dict(). Only in prose: "
         f"{sorted(extracted - expected)}; only in runtime: "
         f"{sorted(expected - extracted)}. Sync the docstring with the "
         "report's wire shape — clients build mental models from this "
-        "description."
+        "description. A key that genuinely belongs outside the "
+        "'Returns buckets' region goes in "
+        "DOCUMENTED_OUTSIDE_THE_BUCKET_REGION above, WITH the sentence "
+        "of prose that documents it somewhere else."
+    )
+
+    # ...and "documented elsewhere in this DESC" has to be true, or the
+    # exclusion set is just a second blind spot with better comments.
+    assert "`telemetry_coverage`" in DESC_MEMORY_HEALTH[end:], (
+        "DESC_MEMORY_HEALTH excludes `telemetry_coverage` from the bucket "
+        "region on the grounds that it is documented after the "
+        "`CLI equivalent:` line — and it no longer is. Either restore "
+        "that sentence or move the key into the bucket enumeration."
     )
 
 

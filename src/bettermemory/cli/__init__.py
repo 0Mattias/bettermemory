@@ -44,6 +44,7 @@ from . import (
     reindex,
     rename_scope,
     serve,
+    session_start_cmd,
     sync,
     tombstones,
     try_cmd,
@@ -59,7 +60,11 @@ from . import (
 # established "strip the memory_ prefix" convention) eliminates the
 # basename collision while preserving every CLI surface — the
 # subcommand strings ``bettermemory health`` and ``bettermemory
-# audit-turn`` are unchanged.
+# audit-turn`` are unchanged. ``session_start_cmd`` carries the same
+# suffix for the same reason: ``handlers/scope_overview.py`` is the
+# sibling this command's counts come from, and a bare
+# ``cli/session_start.py`` would re-create exactly the ambiguity the
+# rename removed.
 
 
 def _build_parser() -> tuple[
@@ -94,9 +99,17 @@ def _build_parser() -> tuple[
     )
     sub = parser.add_subparsers(dest="cmd")
 
-    # Order pinned by tests/test_cli_smoke.py
-    # (`test_help_lists_all_subcommands`) and by users who memorise
-    # the layout. Don't reorder casually.
+    # Order is user-facing — it is exactly the order `bettermemory
+    # --help` lists subcommands in, and people memorise the layout. Don't
+    # reorder casually.
+    #
+    # NOTHING PINS IT, though: `test_help_lists_all_subcommands` (which
+    # this comment used to credit) asserts substring membership over a
+    # hand-picked 8-name subset, not order and not completeness — see the
+    # note at `tests/test_cli_smoke.py`'s registry/dispatch parity test,
+    # which says the same thing from the other side. What IS mechanically
+    # enforced is that every key here has a matching `if cmd == "<key>"`
+    # arm in `main()` below (`test_subparser_registry_matches_main_dispatch`).
     subparsers: dict[str, argparse.ArgumentParser] = {
         "health": health_cmd.add_subparser(sub),
         "doctor": doctor.add_subparser(sub),
@@ -109,6 +122,7 @@ def _build_parser() -> tuple[
         "sync": sync.add_subparser(sub),
         "reindex": reindex.add_subparser(sub),
         "audit-turn": audit_turn_cmd.add_subparser(sub),
+        "session-start": session_start_cmd.add_subparser(sub),
         "consolidate": consolidate.add_subparser(sub),
         "ingest": ingest.add_subparser(sub),
         "eval": eval_cmd.add_subparser(sub),
@@ -169,6 +183,9 @@ def main() -> None:
         return
     if cmd == "audit-turn":
         audit_turn_cmd.run(args)
+        return
+    if cmd == "session-start":
+        session_start_cmd.run(args)
         return
     if cmd == "consolidate":
         consolidate.run(args)

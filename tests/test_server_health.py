@@ -122,12 +122,30 @@ async def test_memory_health_window_days_filters_dead_and_cold(
     # search has fired by now; drop those `use` events too — they are
     # plumbing artifacts of this test's extra turns, and the scenario
     # under test is retrieved-NEVER-applied.
+    #
+    # Dropping every `use` event also strips the store of its only
+    # settlement telemetry, and `memory_health` refuses to call anything
+    # dead weight on a store where nothing was ever in a position to
+    # record an apply (`health.is_hook_telemetry_event`). So the rewrite
+    # also stamps in one Stop-hook `turn_audited` row — a store whose
+    # hook IS wired, which is the store this scenario is about. It
+    # records no apply against any memory, so the memory under test
+    # stays retrieved-never-applied.
     from datetime import datetime, timedelta, timezone
 
     aged = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
     # The active log is sharded; the session's events live in one shard
     # file, but transform every active segment so the test doesn't need
     # to know which. Drop `use`, age `search`, rewrite each in place.
+    hook_row = json.dumps(
+        {
+            "ts": aged,
+            "kind": "turn_audited",
+            "session": "sess-stop-hook",
+            "triggered_from": "stop_hook",
+            "verdict": "ok",
+        }
+    )
     for seg in memory_dir.glob(".events*.jsonl"):
         lines = []
         for line in seg.read_text(encoding="utf-8").splitlines():
@@ -137,6 +155,8 @@ async def test_memory_health_window_days_filters_dead_and_cold(
             if event["kind"] == "search":
                 event["ts"] = aged
             lines.append(json.dumps(event))
+        if lines:
+            lines.append(hook_row)
         seg.write_text("\n".join(lines) + "\n" if lines else "", encoding="utf-8")
 
     # Query from a FRESH server session: the original session still holds

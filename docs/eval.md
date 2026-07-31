@@ -181,8 +181,9 @@ Four additional modes:
   telemetry surface as "no telemetry" rather than a silent zero;
   unmapped event kinds get their own footer. Side-effect events
   (`search_miss`, `pending_expired`, `silent_miss_cutoff`,
-  `proposals_enqueued`) are excluded — they're consequences of calls,
-  not calls.
+  `proposals_enqueued`, `doctor_fix`, `use_token_expired`) are
+  excluded — they're consequences of calls (or of admin CLI
+  operations), not calls.
 - `--threshold-sweep`: replays logged `search_miss` events against
   alternative STRICTER threshold rules (`v2_top1_high_score_50`,
   `v3_top1_high_dominant`, `v4_top1_high_strict_combined`) to ask

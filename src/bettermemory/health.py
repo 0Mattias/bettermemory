@@ -183,6 +183,168 @@ def _is_dead_weight(
 
 
 # ---------------------------------------------------------------------------
+# Shared telemetry-coverage predicate
+# ---------------------------------------------------------------------------
+#
+# The dead-weight rule above reads `applied_count == 0` as evidence
+# against a memory. That inference is only sound when something was in a
+# position to record an apply. Settlement is overwhelmingly the Stop
+# hook's job (`hook._emit_hook_attributions` — the containment pass plus
+# its auto fallback); the in-process use-token path only settles a
+# retrieval when the same session makes another `memory_*` call before
+# the token expires. So on a store whose Stop hook was never wired,
+# almost every retrieval ends with applied == 0 and the ENTIRE store
+# reads as dead weight. That is a statement about the client's hook
+# configuration, not about the memories — and on the unattended
+# demotion path (`consolidate.find_demotion_candidates`) it retags them
+# fact->ambient with nobody reviewing the diff.
+#
+# `is_hook_telemetry_event` is the one predicate answering "did
+# hook-sourced settlement telemetry ever reach this event log?".
+# `compute_health`, `curation_counts` and `find_demotion_candidates`
+# each count it on their OWN existing event walk, so the three surfaces
+# cannot disagree about coverage the way they once disagreed about dead
+# weight — and the count costs no extra pass.
+#
+# Two deliberate exclusions:
+#
+# - `auto_consolidate` events (`consolidate.py`) also carry
+#   `triggered_from="stop_hook"`, but that pass is opt-in-gated. Keying
+#   coverage on them would make the signal depend on `[consolidate]`
+#   config rather than on whether settlement runs. The `kind` gate below
+#   already excludes them; the exclusion is named here so a future
+#   widening to "anything stamped stop_hook" is a decision, not a slip.
+# - `turn_audited` from `memory_audit_turn` carries
+#   `triggered_from="mcp_tool"` (handlers/audit_turn.py), i.e. the model
+#   calling the audit tool in-process. That is not evidence the hook is
+#   wired, so the `stop_hook` check is load-bearing on that arm too.
+
+
+def is_hook_telemetry_event(ev: dict[str, Any]) -> bool:
+    """True when ``ev`` is Stop-hook-sourced settlement/audit telemetry.
+
+    Two shapes, both written by `hook.run_audit`'s end-of-turn pass:
+
+    - ``kind="use"`` carrying ``attribution="hook"`` (the containment
+      matcher's explicit attribution) or ``triggered_from="stop_hook"``
+      (which also covers the `attribution="auto"` fallback the same
+      pass emits for the retrieved-but-unmatched remainder).
+    - ``kind="turn_audited"`` with ``triggered_from="stop_hook"`` — the
+      silent-miss probe. Counted because a wired hook that audits every
+      turn IS covered telemetry even in a window where nothing was
+      retrieved, so a quiet store doesn't read as unwired.
+
+    A store with zero such events across its whole log has no settlement
+    telemetry, which makes `applied_count == 0` uninformative — see the
+    section comment above for what the callers do with that.
+    """
+    kind = ev.get("kind")
+    if kind == "use":
+        return (
+            ev.get("attribution") == "hook" or ev.get("triggered_from") == "stop_hook"
+        )
+    if kind == "turn_audited":
+        return ev.get("triggered_from") == "stop_hook"
+    return False
+
+
+def applied_tier(ev: dict[str, Any]) -> str:
+    """Which surface settled this ``use(outcome="applied")`` event:
+    ``"auto"``, ``"hook"`` or ``"model"``.
+
+    THREE tiers, not two. The pre-3.32 split was binary — `auto is
+    True` versus everything else — and the "everything else" bucket
+    was named *explicit*, which read as "the model deliberately
+    endorsed this". It isn't: the Stop hook's containment matcher
+    emits `auto=False, attribution="hook"` on purpose (same shape an
+    explicit call produces, so the pending-purge and the auto fallback
+    treat them alike), so a phrase from the memory happening to appear
+    in the reply landed in the same bucket as a real
+    `memory_record_use(applied)` call.
+
+    The classification, in order:
+
+    - ``auto`` — strict ``auto is True``. Identity, not truthiness: a
+      legacy ``auto=1`` / ``auto="true"`` reads as NON-auto so we never
+      silently relabel borderline data as the server closing the loop.
+      All four readers of this discriminator agree on the strict form.
+    - ``hook`` — ``attribution == "hook"``, the containment matcher.
+    - ``model`` — everything else, and deliberately a fall-through
+      rather than an enumeration: a missing/None attribution (every
+      pre-attribution event) and the CLI admin surfaces' own
+      attribution values all land here. Admin-recorded rows ARE genuine
+      endorsements (that is what `consolidate --acknowledge-debt` is
+      for); what they must not do is masquerade as hook coverage. The
+      fall-through is also the only shape this module is permitted:
+      `eval.is_admin_recorded_event` owns the admin classification, and
+      `tests/test_eval.py::TestAdminRecordedParity` fails any module in
+      `src/` outside eval.py that re-spells half of it here.
+
+    Shared with `eval.py` (which imports this) so the health rollup's
+    per-memory counts and the published eval counters cannot derive the
+    same three tiers two different ways — the drift class this repo
+    keeps paying for.
+    """
+    if ev.get("auto") is True:
+        return "auto"
+    if ev.get("attribution") == "hook":
+        return "hook"
+    return "model"
+
+
+@dataclass
+class TelemetryCoverage:
+    """Whether the walked event log carries Stop-hook settlement telemetry.
+
+    Attached to `HealthReport.telemetry_coverage` only when the caller
+    asked for the honesty gate (see `compute_health`'s
+    `hook_telemetry_events` parameter); `None` means "nobody measured",
+    which is the pre-3.32 behaviour and what offline tooling and unit
+    tests get by default.
+
+    `dead_weight_suppressed` is the actionable bit: when it is True the
+    `dead_weight` bucket is EMPTY BY CONSTRUCTION rather than because
+    the store is clean, and `reason` says so in one line the model can
+    surface verbatim.
+    """
+
+    hook_telemetry_events: int
+    covered: bool
+    dead_weight_suppressed: bool
+    reason: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "hook_telemetry_events": self.hook_telemetry_events,
+            "covered": self.covered,
+            "dead_weight_suppressed": self.dead_weight_suppressed,
+            "reason": self.reason,
+        }
+
+
+# The one sentence every surface uses when it suppresses a dead-weight
+# verdict. Written once so the MCP report, the CLI rendering and the
+# consolidate refusal cannot drift into three different explanations of
+# the same silence.
+#
+# NOT "applied_count is structurally zero without the hook" — that
+# overstates it, and this is a feature about honesty. The in-process
+# auto-commit (`handlers/_shared._advance_turn`) does settle retrievals
+# as `applied` on a hookless store, and `_is_dead_weight` keys on
+# `applied_count`, which counts them. What it CANNOT do is settle a
+# retrieval the session never comes back to — no later `memory_*` call,
+# no settlement, ever. So the honest claim is the weaker one: with no
+# hook the zero is uninformative, not guaranteed.
+_HOOKLESS_REASON = (
+    "no Stop-hook settlement telemetry in the event log — the only "
+    "settlement left is the in-process auto-commit, which cannot settle "
+    "a retrieval the session never returns to, so applied_count == 0 "
+    "does not distinguish an unhelpful memory from an unwired hook. Run "
+    "`bettermemory doctor` to wire the Stop hook, then re-check."
+)
+
+
+# ---------------------------------------------------------------------------
 # Per-memory and per-marker stats
 # ---------------------------------------------------------------------------
 
@@ -229,6 +391,26 @@ class MemoryStats:
     # once the model wrote a use event for this id rather than letting
     # the auto pass close the loop.
     explicit_applied_count: int = 0
+    # `explicit_applied_count` split by WHO produced the non-auto
+    # apply. The two are disjoint and sum to it exactly (pinned by
+    # test_health.py's conservation test), so every existing consumer
+    # of `explicit_applied_count` keeps its exact meaning.
+    #
+    # Why the split: the Stop hook's containment matcher
+    # (`attribution.attribute_uses`) emits `auto=False,
+    # attribution="hook"` — deliberately the same shape an explicit
+    # model call produces, so `_already_recorded_pending_ids` and the
+    # auto fallback treat them alike. But a phrase from the memory
+    # appearing in the reply is EVIDENCE the retrieval landed, not the
+    # model deliberately endorsing the memory, and folding the two into
+    # one number made `endorsement_ratio` unable to tell "the model
+    # reached for this" from "some words overlapped".
+    hook_applied_count: int = 0
+    # The residual: an explicit apply that did NOT come from the hook's
+    # containment pass — a real `memory_record_use(applied)` call.
+    # `attribution=None` (every pre-attribution event) and the CLI
+    # admin surfaces land here too; see `_applied_tier`.
+    model_applied_count: int = 0
     ignored_count: int = 0
     contradicted_count: int = 0
     # `corrected` is the audit-only sibling of `contradicted`: the caller
@@ -297,6 +479,27 @@ class MemoryStats:
             return None
         return self.explicit_applied_count / self.applied_count
 
+    @property
+    def model_endorsement_ratio(self) -> float | None:
+        """`endorsement_ratio` with the hook's containment matches taken
+        out of the numerator — the fraction of applies that came from
+        the model actually calling `memory_record_use`.
+
+        The published `endorsement_rate` (eval.py) and the
+        `cold_endorsement_memories` bucket both key on the wider
+        `explicit` numerator and keep doing so — they have recorded
+        baselines, and the hook's attribution IS evidence the retrieval
+        landed. This sibling exists because the wider ratio cannot
+        answer "is the model deliberately reaching for this memory, or
+        is a phrase merely overlapping?", and on a hook-wired store
+        that is most of the endorsement signal. Same None-on-zero
+        contract as `endorsement_ratio` so a consumer can hold the two
+        side by side.
+        """
+        if self.applied_count == 0:
+            return None
+        return self.model_applied_count / self.applied_count
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
@@ -309,7 +512,12 @@ class MemoryStats:
             "applied_count": self.applied_count,
             "auto_applied_count": self.auto_applied_count,
             "explicit_applied_count": self.explicit_applied_count,
+            # The explicit half, split by producer:
+            # hook + model == explicit, always.
+            "hook_applied_count": self.hook_applied_count,
+            "model_applied_count": self.model_applied_count,
             "endorsement_ratio": self.endorsement_ratio,
+            "model_endorsement_ratio": self.model_endorsement_ratio,
             "ignored_count": self.ignored_count,
             "contradicted_count": self.contradicted_count,
             "corrected_count": self.corrected_count,
@@ -900,6 +1108,15 @@ class HealthReport:
     # consumers can ignore the field entirely and read the raw buckets
     # directly, which is what the existing CLI text rendering does.
     recommendations: list[Recommendation] = field(default_factory=list)
+    # Honesty gate for `dead_weight` — see `TelemetryCoverage` and
+    # `is_hook_telemetry_event`. Null when the caller didn't ask for the
+    # measurement (`compute_health(hook_telemetry_events=None)`, the
+    # default for offline tooling and unit fixtures); populated on every
+    # production path. When `dead_weight_suppressed` is true the
+    # `dead_weight` list above is empty BY CONSTRUCTION, and a consumer
+    # that reports "no dead weight" without reading this field is
+    # reporting a missing Stop hook as a clean store.
+    telemetry_coverage: TelemetryCoverage | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -927,6 +1144,11 @@ class HealthReport:
             "recent_silent_misses": [m.to_dict() for m in self.recent_silent_misses],
             "cold_endorsement_memories": self.cold_endorsement_memories.to_dict(),
             "recommendations": [r.to_dict() for r in self.recommendations],
+            "telemetry_coverage": (
+                self.telemetry_coverage.to_dict()
+                if self.telemetry_coverage is not None
+                else None
+            ),
         }
 
 
@@ -982,6 +1204,12 @@ class _AccumulatorRollups:
     # grace input to the shared `_is_dead_weight` predicate. Ids with
     # no timestamped retrieval are simply absent (read as "old").
     earliest_retrieval_by_id: dict[str, datetime]
+    # How many events on this walk satisfied `is_hook_telemetry_event`.
+    # Zero means the store carries no Stop-hook settlement telemetry at
+    # all, which makes every `applied_count == 0` uninformative — the
+    # input to the dead-weight honesty gate. Defaulted so a caller
+    # constructing this record positionally (tests do) stays valid.
+    hook_telemetry_events: int = 0
 
 
 def _parse_silent_miss_event(
@@ -1124,6 +1352,11 @@ class _StatsAccumulator:
         # contribute (the predicate treats an absent earliest retrieval
         # as old, keeping legacy logs dead-weight-eligible).
         self._earliest_retrieval_by_id: dict[str, datetime] = {}
+        # Stop-hook settlement telemetry seen on this walk — the
+        # dead-weight honesty gate's input. Counted here rather than on
+        # a second pass because `compute_health` already walks every
+        # event exactly once and the predicate is two dict reads.
+        self._hook_telemetry_events = 0
 
     # ---- dispatch -------------------------------------------------------
 
@@ -1183,6 +1416,11 @@ class _StatsAccumulator:
                 stats.show_count += 1
 
     def _handle_use(self, ev: dict[str, Any]) -> None:
+        # Coverage bookkeeping first: it is per-EVENT, not per-id, and
+        # it must count even when every id in the event is unknown to
+        # this store (a hook that settled a since-tombstoned memory
+        # still proves the hook runs).
+        self._note_hook_telemetry(ev)
         outcome = ev.get("outcome")
         ts = _ensure_utc(parse_event_ts(ev.get("ts")))
         for mid in _event_id_list(ev.get("ids") or ev.get("memory_ids")):
@@ -1203,18 +1441,22 @@ class _StatsAccumulator:
                 continue
             if outcome == "applied":
                 stats.applied_count += 1
-                # Split on the `auto` discriminator the recorder
-                # stamps in `_advance_turn`. A missing or non-True
-                # value reads as explicit so legacy events written
-                # before the auto-commit pass existed don't get
-                # silently relabelled. The two-axis split is the
-                # endorsement signal: high `auto_applied_count` with
-                # zero explicit means the ranker keeps surfacing the
-                # memory but the model never deliberately reaches.
-                if ev.get("auto") is True:
+                # Tiering via the shared `applied_tier` (see its
+                # docstring for the auto / hook / model rule and why
+                # the third tier is a fall-through). `explicit` stays
+                # exactly what it always was — everything not auto —
+                # so `endorsement_ratio`, `_is_weakly_endorsed` and the
+                # published eval rate all keep their meaning; the
+                # hook/model pair below decomposes it.
+                tier = applied_tier(ev)
+                if tier == "auto":
                     stats.auto_applied_count += 1
                 else:
                     stats.explicit_applied_count += 1
+                    if tier == "hook":
+                        stats.hook_applied_count += 1
+                    else:
+                        stats.model_applied_count += 1
             elif outcome == "ignored":
                 stats.ignored_count += 1
             elif outcome == "contradicted":
@@ -1279,6 +1521,12 @@ class _StatsAccumulator:
         # and counting those as the denominator produced a perpetual
         # false-green 0% miss rate. Missing/legacy verdicts read as
         # None and stay in the miss-capable denominator (conservative).
+        #
+        # Coverage bookkeeping runs BEFORE the repeat early-out: a
+        # deduped re-audit is still proof the Stop hook fired, and the
+        # dead-weight gate asks "is the hook wired?", not "how many
+        # distinct turns did it audit?".
+        self._note_hook_telemetry(ev)
         if ev.get("repeat"):
             # Re-audit of the same (session, message) inside the dedup
             # window (3.14+; `audit.is_duplicate_audit`) — cadence
@@ -1340,6 +1588,18 @@ class _StatsAccumulator:
 
     # ---- helpers --------------------------------------------------------
 
+    def _note_hook_telemetry(self, ev: dict[str, Any]) -> None:
+        """Bump the Stop-hook coverage counter if `ev` qualifies.
+
+        Deliberately not spelled with the _handle_ prefix: every method
+        on this class carrying it must have a matching `_HANDLERS` key
+        (pinned by `test_handlers_table_matches_handle_methods`), and
+        this is a helper the real per-kind handlers call, not a
+        dispatch target.
+        """
+        if is_hook_telemetry_event(ev):
+            self._hook_telemetry_events += 1
+
     def _append_resolution(self, mid: str, kind: str, ts_str: Any, note: Any) -> None:
         # Defensive against malformed events: a missing or non-string
         # timestamp would still be useful in the timeline (the kind
@@ -1370,6 +1630,7 @@ class _StatsAccumulator:
             acknowledged_miss_event_ids=self._acknowledged_miss_event_ids,
             resolution_events_by_id=self._resolution_events_by_id,
             earliest_retrieval_by_id=self._earliest_retrieval_by_id,
+            hook_telemetry_events=self._hook_telemetry_events,
         )
 
     # Class-level dispatch table. Defined after the methods so the
@@ -1402,6 +1663,7 @@ def compute_health(
     caller_origin: Origin | None = None,
     now: datetime | None = None,
     tombstoned_ids: set[str] | None = None,
+    hook_telemetry_events: int | None = None,
 ) -> HealthReport:
     """Build a `HealthReport` from active memories + the event stream.
 
@@ -1449,6 +1711,26 @@ def compute_health(
     so calling it on a large store is cheap. Pass None (the default) to
     skip the rollup — production callers from the MCP tool / CLI thread
     in `capture()`'s output; tests and offline tooling can opt out.
+
+    `hook_telemetry_events` arms the dead-weight honesty gate. Semantics:
+
+    - `None` (default) — "the caller did not measure; assume covered".
+      The gate is OFF and the bucket behaves exactly as it did before
+      3.32. This is the right default for offline tooling and unit
+      fixtures, which construct synthetic event lists that contain no
+      Stop-hook rows and are nevertheless asserting on dead weight.
+    - an int — the count of `is_hook_telemetry_event` rows the caller
+      already observed over the SAME event stream. The gate is ON, and
+      coverage is that count OR-ed with what this walk sees for itself,
+      so a caller that cannot cheaply pre-measure (an `iter_all_events`
+      generator it is handing straight in) passes `0` and delegates the
+      measurement here. With coverage at zero the `dead_weight` bucket
+      is emptied and `telemetry_coverage.dead_weight_suppressed` says
+      why — see `is_hook_telemetry_event` for the full rationale.
+
+    Deliberately NOT an MCP tool parameter: the gate belongs to every
+    caller of this function equally, and a wire parameter would spend
+    schema budget to let a client turn off an honesty check.
     """
     if heavily_used_min_applied < 1:
         heavily_used_min_applied = 1
@@ -1534,26 +1816,50 @@ def compute_health(
     # their value is implicit (they shape responses without being cited),
     # so the use signal is structurally absent and a count of zero
     # there is not an indictment.
+    #
+    # ...and none of that reasoning holds on a store where nothing was
+    # ever in a position to record an apply. The honesty gate empties
+    # the bucket rather than reporting an unwired Stop hook as rot;
+    # `telemetry_coverage` below carries the explanation so the empty
+    # bucket is never mistaken for a clean store.
     grace_cutoff = now - timedelta(days=_ENDORSEMENT_GRACE_DAYS)
+    observed_hook_telemetry = rollups.hook_telemetry_events
+    if hook_telemetry_events is None:
+        # Caller didn't measure — assume covered, pre-3.32 behaviour.
+        telemetry_coverage: TelemetryCoverage | None = None
+        telemetry_covered = True
+    else:
+        total_hook_telemetry = hook_telemetry_events + observed_hook_telemetry
+        telemetry_covered = total_hook_telemetry > 0
+        telemetry_coverage = TelemetryCoverage(
+            hook_telemetry_events=total_hook_telemetry,
+            covered=telemetry_covered,
+            dead_weight_suppressed=not telemetry_covered,
+            reason=None if telemetry_covered else _HOOKLESS_REASON,
+        )
     dead_weight: list[MemoryStats] = []
-    for s in by_id.values():
-        first_seen = rollups.earliest_retrieval_by_id.get(s.id)
-        if _is_dead_weight(
-            category=s.category,
-            freshest_ts=_freshest_touch_ts(
-                s.created, s.updated, s.last_verified_at, s.last_corroborated
-            ),
-            retrieval_count=s.retrieval_count,
-            applied_count=s.applied_count,
-            has_unresolved_contradiction=s.has_unresolved_contradiction,
-            earliest_retrieval_ts=(
-                first_seen.timestamp() if first_seen is not None else None
-            ),
-            cutoff_ts=cutoff.timestamp(),
-            grace_cutoff_ts=grace_cutoff.timestamp(),
-        ):
-            dead_weight.append(s)
-    dead_weight.sort(key=lambda s: s.created)
+    # The whole loop is skipped when coverage is absent, not run and
+    # filtered afterwards: there is no per-memory judgement to make,
+    # the input SIGNAL is missing for every row at once.
+    if telemetry_covered:
+        for s in by_id.values():
+            first_seen = rollups.earliest_retrieval_by_id.get(s.id)
+            if _is_dead_weight(
+                category=s.category,
+                freshest_ts=_freshest_touch_ts(
+                    s.created, s.updated, s.last_verified_at, s.last_corroborated
+                ),
+                retrieval_count=s.retrieval_count,
+                applied_count=s.applied_count,
+                has_unresolved_contradiction=s.has_unresolved_contradiction,
+                earliest_retrieval_ts=(
+                    first_seen.timestamp() if first_seen is not None else None
+                ),
+                cutoff_ts=cutoff.timestamp(),
+                grace_cutoff_ts=grace_cutoff.timestamp(),
+            ):
+                dead_weight.append(s)
+        dead_weight.sort(key=lambda s: s.created)
 
     # Cold memories: never retrieved at all in the window. Either nobody is
     # asking the kind of question this memory answers, or the ranker isn't
@@ -1747,7 +2053,12 @@ def compute_health(
             acknowledged_event_ids=acknowledged_miss_event_ids,
         ),
         cold_endorsement_memories=cold_endorsement_memories,
+        telemetry_coverage=telemetry_coverage,
     )
+    # Recommendations are distilled from the buckets, so the gate above
+    # reaches them for free: an emptied `dead_weight` cannot cross the
+    # size floor, and `memory_health` therefore never tells the model to
+    # go remove rot it invented from a missing hook.
     report.recommendations = _compute_recommendations(report)
     return report
 
@@ -2036,6 +2347,12 @@ def render_text(report: HealthReport) -> str:
     )
     if not report.dead_weight:
         lines.append("  (none)")
+        # An empty bucket has two very different causes, and the CLI
+        # reader has no other way to tell them apart. Printed only when
+        # suppressed, so the line never appears on a clean hooked store.
+        coverage = report.telemetry_coverage
+        if coverage is not None and coverage.dead_weight_suppressed:
+            lines.append(f"  NOT MEASURED: {coverage.reason}")
     for s in report.dead_weight[:20]:
         lines.append(
             f"  {s.id} [retrievals={s.retrieval_count}] {','.join(s.scopes)}: {s.summary}"
@@ -2498,6 +2815,7 @@ def curation_counts(
     now: datetime | None = None,
     since: datetime | None = None,
     tombstoned_ids: set[str] | None = None,
+    hook_telemetry_events: int | None = None,
 ) -> dict[str, int]:
     """Cheap summary of curation pressure.
 
@@ -2560,6 +2878,34 @@ def curation_counts(
     state-derived buckets: the drift count is filtered to memories
     created after `since`, so an older row that drifted in the prior
     session won't double-surface in the next session's delta.
+
+    `hook_telemetry_events` arms the same dead-weight honesty gate
+    `compute_health` carries, with identical semantics (`None` = caller
+    did not measure, assume covered; an int = gate on, OR-ed with this
+    walk's own observation). Only the `dead` count is gated — the two
+    surfaces must agree, and `dead` is the one this rollup shares with
+    `compute_health`'s `dead_weight`.
+
+    FOLLOW-UP, deliberately not done here: `dead` is not the only
+    hook-dependent count in this rollup. `cold_endorsement_memories`
+    keys on `explicit_applied_count == 0`, which is if anything MORE
+    hook-dependent — the Stop hook's containment matcher is the dominant
+    producer of explicit applies — and the curation hint's pressure
+    formula (`handlers/_shared._maybe_attach_curation_hint`) sums
+    `dead + drifted + cold_endorsement_memories`, so a hookless store
+    still gets nagged, through a leg that is misleading for exactly the
+    reason this gate exists. Widening the gate to cover it (or dropping
+    that leg from the hint's pressure sum when coverage is absent)
+    changes what a published rollup means on the one surface the model
+    does not have to ask for, so it wants its own decision rather than
+    riding along with this one.
+
+    The returned key set is deliberately UNCHANGED: it flows into
+    `memory_scope_overview`'s `curation_pending` block, whose key set is
+    enumerated in that tool's description and pinned on the wire. The
+    explanation for a suppressed count lives on `memory_health`, which
+    is where a model that wants to know WHY a count is zero is already
+    being sent.
     """
     now = now or datetime.now(timezone.utc)
     cutoff = now - timedelta(days=window_days)
@@ -2619,8 +2965,20 @@ def curation_counts(
     # `_StatsAccumulator` tracks for `compute_health`.
     earliest_retrieval: dict[str, datetime] = {}
     last_contradicted: dict[str, datetime] = {}
+    observed_hook_telemetry = 0
     for ev in events:
         kind = ev.get("kind")
+        # Coverage bookkeeping is exempt from the `--since` filter
+        # below, exactly like the two global markers underneath it.
+        # "Is the Stop hook wired for this store?" is a property of the
+        # store, not of the delta window: a session whose hook events
+        # all predate the boundary is still a hooked store, and gating
+        # this behind the filter would make the delta arm manufacture a
+        # "hookless" verdict every session-start and blank the `dead`
+        # count that the absolute arm — same events, no filter — reports
+        # normally. The two arms are read side by side.
+        if is_hook_telemetry_event(ev):
+            observed_hook_telemetry += 1
         # `silent_miss_cutoff` is a global marker — once written it
         # applies to the entire silent_miss rollup regardless of
         # window. Resolve it BEFORE the `--since` filter so a cutoff
@@ -2694,6 +3052,13 @@ def curation_counts(
     silent_misses = silent_miss_stats.miss_total
     unique_silent_miss_memories = silent_miss_stats.unique_miss_memories
 
+    # Dead-weight honesty gate — see `compute_health` for the full
+    # contract. `None` leaves the count exactly as it was pre-3.32.
+    telemetry_covered = (
+        hook_telemetry_events is None
+        or (hook_telemetry_events + observed_hook_telemetry) > 0
+    )
+
     never_verified = 0
     stale = 0
     cold = 0
@@ -2715,9 +3080,12 @@ def curation_counts(
         # numerical contract) — including the freshest-touch,
         # contradiction, and endorsement-grace gates the demotion pass
         # applies. Disjoint from `cold` by construction: dead requires
-        # at least one retrieval.
+        # at least one retrieval. The telemetry gate rides in the same
+        # condition for the same reason: `compute_health` empties its
+        # bucket on a hookless store, so this count must go to zero
+        # with it or the two surfaces disagree about the same store.
         first_seen = earliest_retrieval.get(m.id)
-        if _is_dead_weight(
+        if telemetry_covered and _is_dead_weight(
             category=m.category,
             freshest_ts=_freshest_touch_ts(
                 m.created, m.updated, m.last_verified_at, m.last_corroborated
@@ -2890,7 +3258,14 @@ def report_for_directory(
     `caller_origin`, if provided, drives the cwd-aware `commit_drift_debt`
     rollup. Production callers should pass `origin.capture()`'s result;
     leaving it None skips the rollup, which is appropriate for offline
-    tooling that doesn't have a meaningful cwd to anchor against."""
+    tooling that doesn't have a meaningful cwd to anchor against.
+
+    This is the entry point BOTH production surfaces use — the
+    `memory_health` MCP tool (`handlers/health.py`) and `bettermemory
+    health` (`cli/health_cmd.py`) — which is why the dead-weight honesty
+    gate is armed here rather than in `compute_health`'s default: every
+    caller looking at a REAL store goes through this function, and every
+    caller passing a synthetic event list does not."""
     from .store import Store
 
     store = Store(root)
@@ -2907,6 +3282,12 @@ def report_for_directory(
         caller_origin=caller_origin,
         now=now,
         tombstoned_ids=tombstoned_ids,
+        # `0`, not a pre-measured count: `iter_all_events` is a
+        # generator we hand straight in, and pre-counting would mean a
+        # second full walk of the log for two dict reads per event.
+        # Zero arms the gate and delegates the measurement to the walk
+        # `compute_health` is about to do anyway — see its docstring.
+        hook_telemetry_events=0,
     )
 
 
@@ -2921,10 +3302,13 @@ __all__ = [
     "Recommendation",
     "ScopeHealth",
     "SilentMissStats",
+    "TelemetryCoverage",
     "VerificationDebt",
     "HealthReport",
+    "applied_tier",
     "compute_health",
     "curation_counts",
+    "is_hook_telemetry_event",
     "render_text",
     "render_json",
     "report_for_directory",

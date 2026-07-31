@@ -93,10 +93,12 @@ from ._fsutil import atomic_write_bytes, bounded_tail_read
 from .events import Recorder, iter_all_events
 from .health import (
     _ENDORSEMENT_GRACE_DAYS,
+    _HOOKLESS_REASON,
     _freshest_touch_ts,
     _has_unresolved_contradiction,
     _is_dead_weight,
     _scope_typo_neighbor,
+    is_hook_telemetry_event,
 )
 from .models import Category, Memory, Source, snippet_for
 from .origin import Origin
@@ -343,6 +345,18 @@ class ConsolidateReport:
     # path never reads this list. Declared last so positional
     # construction of the older fields stays valid.
     polarity_skipped: list[PolaritySkippedPair] = field(default_factory=list)
+    # One line explaining an EMPTY `demotion_candidates` list that is
+    # empty by refusal rather than because the store is clean — today
+    # only the telemetry-coverage gate sets it (see
+    # `find_demotion_candidates`). None on every pass that actually
+    # ran. Declared last so positional construction stays valid.
+    #
+    # Why surface it at all: the unattended Stop-hook path
+    # (`run_auto_consolidate`) is exactly where a silent `[]` would be
+    # invisible, and "the demotion pass has found nothing for three
+    # weeks" and "the demotion pass has been refusing to run for three
+    # weeks" are the same output without it.
+    demotion_skipped_reason: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -351,6 +365,7 @@ class ConsolidateReport:
             "dedup_candidates": [c.to_dict() for c in self.dedup_candidates],
             "polarity_skipped": [p.to_dict() for p in self.polarity_skipped],
             "demotion_candidates": [d.to_dict() for d in self.demotion_candidates],
+            "demotion_skipped_reason": self.demotion_skipped_reason,
             "cold_scope_suggestions": [
                 s.to_dict() for s in self.cold_scope_suggestions
             ],
@@ -899,6 +914,7 @@ def find_demotion_candidates(
     *,
     window_days: int = _DEFAULT_WINDOW_DAYS,
     now: datetime | None = None,
+    hook_telemetry_events: int | None = None,
 ) -> list[DemotionCandidate]:
     """Memories that match the `dead_weight` rule from `memory_health`:
     last touched (created / updated / verified) before the window with
@@ -939,6 +955,24 @@ def find_demotion_candidates(
     REPORT still surfaces such rows as dead weight; only the
     unattended retag is category-restricted.)
 
+    `hook_telemetry_events` arms the telemetry-coverage gate — same
+    contract as `health.compute_health`'s parameter (`None` = caller
+    did not measure, assume covered; an int = gate on, OR-ed with this
+    walk's own observation). When coverage is zero this function
+    REFUSES the pass entirely and returns `[]`.
+
+    The refusal matters more here than on either reporting surface:
+    this is the only one of the three `_is_dead_weight` consumers that
+    MUTATES. `run_auto_consolidate` calls it from the Stop hook with
+    nobody reviewing the diff, and every candidate it returns is
+    retagged fact->ambient — a one-way trip `memory_update` cannot
+    reverse. On a store with no settlement telemetry every retrieved
+    memory satisfies `applied == 0`, so the unattended pass would demote
+    the entire working set on the strength of a hook that was never
+    wired. `consolidate()` surfaces the refusal on
+    `ConsolidateReport.demotion_skipped_reason` — a silent `[]` on the
+    unattended path is correct but invisible.
+
     Returns a list sorted oldest-first so the longest-stale rot is
     surfaced before fresher candidates.
     """
@@ -950,7 +984,14 @@ def find_demotion_candidates(
     applied: dict[str, int] = defaultdict(int)
     earliest_retrieval: dict[str, datetime] = {}
     last_contradicted: dict[str, datetime] = {}
+    observed_hook_telemetry = 0
     for event in events:
+        # Coverage bookkeeping on this pass's own walk — the same
+        # predicate the two reporting surfaces count, so the three
+        # cannot disagree about whether the store has telemetry any
+        # more than they can disagree about the dead-weight rule.
+        if is_hook_telemetry_event(event):
+            observed_hook_telemetry += 1
         if event.get("kind") == "search":
             # The recorder writes the result-id list as `returned`
             # (canonical name in `_handlers.memory_search`). Tolerate
@@ -988,6 +1029,15 @@ def find_demotion_candidates(
                         prev = last_contradicted.get(mid)
                         if prev is None or event_ts > prev:
                             last_contradicted[mid] = event_ts
+
+    if (
+        hook_telemetry_events is not None
+        and (hook_telemetry_events + observed_hook_telemetry) == 0
+    ):
+        # Refuse the whole pass, before the memory loop — there is no
+        # per-memory judgement to make when the signal every judgement
+        # reads is absent for all of them at once.
+        return []
 
     grace_cutoff = now.timestamp() - _ENDORSEMENT_GRACE_DAYS * 86400
     out: list[DemotionCandidate] = []
@@ -1289,6 +1339,15 @@ def consolidate(
     # cold-scope pass reads the same `applied` signal, so it shares the
     # source. (The similarity-based dedup pass doesn't touch events.)
     events = list(iter_all_events(store.root))
+    # Telemetry coverage for the demotion gate, derived HERE because
+    # this is the production entry point — `consolidate()` is what both
+    # `bettermemory consolidate --apply` and the unattended
+    # `run_auto_consolidate` go through, and the gate has to be armed
+    # on the path that mutates, not merely available on the pure
+    # function. The list is already materialised above (the demotion and
+    # cold-scope passes each walk it), so the count is one extra pass
+    # over an in-memory list, no additional I/O.
+    hook_telemetry_events = sum(1 for ev in events if is_hook_telemetry_event(ev))
 
     dedup_candidates, polarity_skipped, dedup_method = _find_dedup_with_skips(
         memories,
@@ -1296,7 +1355,11 @@ def consolidate(
         threshold=semantic_threshold,
     )
     demotion_candidates = find_demotion_candidates(
-        memories, events, window_days=window_days, now=now
+        memories,
+        events,
+        window_days=window_days,
+        now=now,
+        hook_telemetry_events=hook_telemetry_events,
     )
     cold_scopes = find_cold_scopes(
         memories, events, cold_scope_days=cold_scope_days, now=now
@@ -1311,6 +1374,9 @@ def consolidate(
         applied=apply,
         dedup_method=dedup_method,
         polarity_skipped=polarity_skipped,
+        demotion_skipped_reason=(
+            _HOOKLESS_REASON if hook_telemetry_events == 0 else None
+        ),
     )
 
     if not apply:
@@ -1723,6 +1789,10 @@ def render_text(report: ConsolidateReport) -> str:
             lines.append(f"    {d.summary}")
     else:
         lines.append("  (none)")
+        # Distinguish "nothing to demote" from "the pass refused to
+        # run" — see `ConsolidateReport.demotion_skipped_reason`.
+        if report.demotion_skipped_reason:
+            lines.append(f"  NOT MEASURED: {report.demotion_skipped_reason}")
     lines.append("")
 
     lines.append(f"Cold-scope suggestions ({len(report.cold_scope_suggestions)})")

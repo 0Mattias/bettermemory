@@ -45,6 +45,7 @@ from bettermemory.doctor import (
     _check_mcp_client_configs,
     _check_memory_parse_health,
     _check_python_version,
+    _check_session_start_hook_wired,
     _check_attestation_anchors,
     _check_retrieval_discrimination,
     _DISCRIMINATION_WARN_AT,
@@ -1137,6 +1138,63 @@ def test_audit_turn_cadence_excludes_every_admin_recorded_kind(
         assert diag.status == "ok", f"{kind} manufactured a phantom session"
         assert diag.details["sessions"] == 1
         assert diag.details["total_events"] == 1
+
+
+def test_use_token_expired_is_classified_in_session(tmp_path: Path) -> None:
+    """`use_token_expired` is drained through the LIVE session's own
+    recorder, so it must be in-session — and nothing else in the suite
+    checks that.
+
+    This is the one hole in the roster apparatus, and it is not
+    theoretical. `ADMIN_RECORDED_EVENT_KINDS` is DERIVED as
+    `_KNOWN_SIDE_EFFECT_KINDS - _IN_SESSION_SIDE_EFFECT_KINDS`, which
+    makes every partition assertion in the suite a tautology in this
+    direction: `test_cadence_census_uses_evals_shared_predicate`'s
+    `ADMIN | IN_SESSION == KNOWN` holds automatically, and
+    `test_audit_turn_cadence_excludes_every_admin_recorded_kind`
+    iterates the ADMIN roster and asserts doctor EXCLUDES each member —
+    so a kind mis-landed there has the broken behaviour asserted as
+    correct. Adding a kind to `_KNOWN_SIDE_EFFECT_KINDS` alone was
+    measured (2026-07-31) to leave the entire suite green.
+
+    The cost of getting it wrong: `is_admin_recorded_event` returns
+    True, and `_check_audit_turn_cadence` drops the event AND its whole
+    session from the census — a real client session read as never
+    having existed, which is the exact phantom-session failure class
+    `ADMIN_RECORDED_EVENT_KINDS` was introduced to close, arriving
+    through the one door the apparatus doesn't watch.
+
+    The behavioural half deliberately writes the expiry under the SAME
+    session as the retrieval it belongs to, because that is production:
+    the drain runs at the entry of the next memory_* tool call, on the
+    live session's recorder.
+    """
+    from datetime import datetime, timezone
+
+    from bettermemory.eval import (
+        ADMIN_RECORDED_EVENT_KINDS,
+        _IN_SESSION_SIDE_EFFECT_KINDS,
+    )
+
+    assert "use_token_expired" in _IN_SESSION_SIDE_EFFECT_KINDS
+    assert "use_token_expired" not in ADMIN_RECORDED_EVENT_KINDS
+
+    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    _write_event(tmp_path, "search", ts=now_iso, session="the-real-one")
+    _write_event(
+        tmp_path,
+        "use_token_expired",
+        ts=now_iso,
+        session="the-real-one",
+        ids=["m1"],
+        reason="wall_clock_ttl",
+    )
+    diag = _check_audit_turn_cadence(tmp_path)
+    assert diag.details["sessions"] == 1
+    assert diag.details["total_events"] == 2, (
+        "the expiry event was dropped from the census — it is being read "
+        "as admin-recorded, which also drops its session"
+    )
 
 
 def test_audit_turn_cadence_excludes_cli_attributed_in_session_kinds(
@@ -5517,3 +5575,172 @@ def test_attestation_anchors_reads_fenced_blocks_for_evidence(tmp_path: Path) ->
 
     assert diag.status == "ok", diag.details
     assert diag.details["checked"] == 1
+
+
+# ---------------------------------------------------------------------------
+# session_start_hook — is the memory-hint hook actually wired?
+#
+# Deliberately CONFIG-shaped where `audit_turn_cadence` above is
+# TELEMETRY-shaped, and the asymmetry is forced rather than chosen: the
+# Stop hook records `turn_audited`, so a silent no-op is inferable from
+# the event log. The SessionStart hook records nothing on purpose (a row
+# from it would hijack the anchor `hook._latest_in_process_session`
+# attributes the next turn audit against, and would publish a session id
+# no `turn_audited` could accompany), so there is no footprint to count
+# and the configuration itself is the only observable.
+#
+# The bar for warning is correspondingly high: doctor must never fail on
+# a foreign config, and "no evidence" must read as ok — otherwise this
+# fires forever at every Claude Desktop / Cursor / Continue user.
+# ---------------------------------------------------------------------------
+
+
+def _hook_settings(path: Path, *, wired: bool) -> Path:
+    """Write a Claude-Code-shaped settings file at `path`."""
+    body: dict[str, Any] = {"hooks": {"Stop": [{"hooks": [{"type": "command"}]}]}}
+    if wired:
+        body["hooks"]["SessionStart"] = [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "uvx bettermemory session-start || true",
+                        "timeout": 20,
+                    }
+                ]
+            }
+        ]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(body), encoding="utf-8")
+    return path
+
+
+def _store_with_one_memory(tmp_path: Path) -> Path:
+    from bettermemory.store import Store as _Store
+
+    root = tmp_path / "store"
+    _Store(root).write(content="alpha", scopes=["tools"])
+    return root
+
+
+def test_session_start_hook_ok_when_wired(tmp_path: Path) -> None:
+    """A settings file declaring the binding is the healthy case, and the
+    path it was found at goes into `details` so a user with several
+    configs can tell which one is doing the work."""
+    root = _store_with_one_memory(tmp_path)
+    settings = _hook_settings(tmp_path / "cfg" / "settings.json", wired=True)
+
+    diag = _check_session_start_hook_wired(root, [settings])
+
+    assert diag.status == "ok"
+    assert diag.details["wired_in"] == str(settings)
+
+
+def test_session_start_hook_ok_on_an_empty_store(tmp_path: Path) -> None:
+    """Unwired but empty: the hook would print nothing on this store, so
+    nagging about it is pure noise. Note the config passed in IS unwired —
+    the empty-store gate has to be what produces the `ok`, not a
+    coincidence of the fixture."""
+    root = tmp_path / "empty"
+    root.mkdir()
+    settings = _hook_settings(tmp_path / "cfg" / "settings.json", wired=False)
+
+    diag = _check_session_start_hook_wired(root, [settings])
+
+    assert diag.status == "ok"
+    assert diag.details["active_memories"] == 0
+
+
+def test_session_start_hook_warns_when_unwired_with_memories(tmp_path: Path) -> None:
+    """Memories exist, a hook config exists, and nothing binds the
+    subcommand — the one shape where the user is measurably losing the
+    feature. The fix hint must name both routes (plugin install and the
+    manual settings edit), because a manual-MCP user can't take the
+    first one."""
+    root = _store_with_one_memory(tmp_path)
+    settings = _hook_settings(tmp_path / "cfg" / "settings.json", wired=False)
+
+    diag = _check_session_start_hook_wired(root, [settings])
+
+    assert diag.status == "warn"
+    assert diag.fix_hint is not None
+    assert "bettermemory session-start" in diag.fix_hint
+    assert "/plugin install" in diag.fix_hint
+    assert diag.details["readable"] == 1
+
+
+def test_session_start_hook_ok_when_every_config_is_unreadable(tmp_path: Path) -> None:
+    """Foreign, hand-edited, or half-written JSON is not evidence of
+    anything. An unparseable candidate must degrade to ok-with-a-note —
+    doctor never fails on someone else's file."""
+    root = _store_with_one_memory(tmp_path)
+    broken = tmp_path / "cfg" / "settings.json"
+    broken.parent.mkdir(parents=True, exist_ok=True)
+    broken.write_text("{ this is not json", encoding="utf-8")
+
+    diag = _check_session_start_hook_wired(root, [broken])
+
+    assert diag.status == "ok"
+    assert diag.details["readable"] == 0
+    assert diag.details["unreadable"], "the unreadable path should be surfaced"
+
+
+def test_session_start_hook_ok_when_no_config_exists_at_all(tmp_path: Path) -> None:
+    """No candidates means no Claude Code install to judge. Silence."""
+    root = _store_with_one_memory(tmp_path)
+
+    diag = _check_session_start_hook_wired(root, [])
+
+    assert diag.status == "ok"
+    assert diag.details["scanned"] == 0
+
+
+def test_session_start_hook_ignores_a_binding_on_another_event(
+    tmp_path: Path,
+) -> None:
+    """A `Stop`-only config must not read as wired. The structural walk
+    is keyed on the `SessionStart` event specifically — a substring scan
+    of the whole file would pass here and ship the feature unfired."""
+    root = _store_with_one_memory(tmp_path)
+    settings = tmp_path / "cfg" / "settings.json"
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "Stop": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "uvx bettermemory session-start",
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    diag = _check_session_start_hook_wired(root, [settings])
+
+    assert diag.status == "warn"
+
+
+def test_session_start_hook_accepts_the_shipped_plugin_manifest(tmp_path: Path) -> None:
+    """The manifest the plugin actually ships must satisfy the check.
+
+    Reading `plugin/hooks/hooks.json` off disk rather than re-encoding
+    its shape here is the point: this is the one test that proves the
+    doctor check and the shipped artifact agree, so a future edit to
+    either surfaces as a failure instead of as a plugin user being told
+    their working install is broken."""
+    root = _store_with_one_memory(tmp_path)
+    manifest = Path(__file__).resolve().parents[1] / "plugin" / "hooks" / "hooks.json"
+
+    diag = _check_session_start_hook_wired(root, [manifest])
+
+    assert diag.status == "ok", diag.message
+    assert diag.details["wired_in"] == str(manifest)

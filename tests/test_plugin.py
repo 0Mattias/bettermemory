@@ -339,6 +339,108 @@ def test_stop_hook_has_reasonable_timeout() -> None:
 
 
 # ---------------------------------------------------------------------------
+# SessionStart hook — the memory hint a fresh session opens with.
+#
+# A SessionStart hook's stdout is one of the three (with UserPromptSubmit
+# and UserPromptExpansion) that Claude Code injects into the model's
+# context rather than routing to the debug log. That is the whole feature:
+# `bettermemory session-start` prints the per-scope counts, so the model
+# starts every conversation knowing what is stored instead of spending a
+# `memory_scope_overview` call to find out — or, far more often, never
+# finding out, since retrieval is opt-in and nothing prompts it.
+#
+# The matcher is the failure mode worth guarding. Per the Claude Code
+# hooks reference, SessionStart's matcher values are `startup`, `resume`,
+# `clear`, `compact`, and `fork`, and an omitted / empty / `"*"` matcher
+# means "match all". A matcher naming an event that does not exist would
+# ship a feature that never fires, with every test in this file green — so
+# the assertion below refuses anything outside the documented set rather
+# than merely requiring the key to be present.
+# ---------------------------------------------------------------------------
+
+# The five documented SessionStart matcher values (Claude Code hooks
+# reference). Omitting the matcher — which this manifest does — is
+# equivalent to listing all five, and stays correct if a sixth is ever
+# added; `clear` and `compact` in particular have just discarded the
+# context this hook supplies, which is when re-injecting it matters most.
+_SESSION_START_MATCHERS = frozenset({"startup", "resume", "clear", "compact", "fork"})
+
+
+def test_plugin_ships_session_start_hook() -> None:
+    """The SessionStart binding exists and calls the right subcommand.
+
+    Pin the exact subcommand: a rename would otherwise degrade silently
+    into "the hook runs, argparse exits 2, `|| true` swallows it" — a
+    feature that ships and never fires."""
+    body = json.loads(PLUGIN_HOOKS_PATH.read_text(encoding="utf-8"))
+    assert "SessionStart" in body["hooks"], "SessionStart event binding missing"
+    entries = body["hooks"]["SessionStart"]
+    assert entries, "SessionStart entry list is empty"
+    command_hooks = [
+        h
+        for entry in entries
+        for h in entry.get("hooks", [])
+        if h.get("type") == "command"
+    ]
+    assert command_hooks, "no command-form hook under SessionStart"
+    matched = [
+        h for h in command_hooks if "bettermemory session-start" in h.get("command", "")
+    ]
+    assert matched, (
+        f"none of the SessionStart command hooks call `bettermemory "
+        f"session-start`; got: {[h.get('command') for h in command_hooks]}"
+    )
+    # `|| true` is why an older published wheel without the subcommand
+    # (argparse exits 2) can't surface as a hook-error banner.
+    for hook in matched:
+        assert "|| true" in hook["command"], (
+            f"SessionStart hook drops the `|| true` guard: {hook['command']!r}"
+        )
+
+
+def test_session_start_matcher_is_omitted_or_documented() -> None:
+    """A matcher outside the documented set means the hook never fires.
+
+    Omission is the deliberate choice here (it means "match all"), so the
+    assertion accepts an absent/empty/`"*"` matcher and otherwise requires
+    every named value to be one Claude Code actually emits."""
+    body = json.loads(PLUGIN_HOOKS_PATH.read_text(encoding="utf-8"))
+    for entry in body["hooks"]["SessionStart"]:
+        matcher = entry.get("matcher")
+        if matcher is None or matcher in {"", "*"}:
+            continue
+        assert isinstance(matcher, str), f"matcher must be a string: {matcher!r}"
+        named = {part.strip() for part in matcher.replace(",", "|").split("|")}
+        unknown = named - _SESSION_START_MATCHERS
+        assert not unknown, (
+            f"SessionStart matcher names {sorted(unknown)}, which Claude Code "
+            f"never emits — the hook would ship and never fire. Valid values: "
+            f"{sorted(_SESSION_START_MATCHERS)}, or omit the field to match all."
+        )
+
+
+def test_session_start_hook_has_reasonable_timeout() -> None:
+    """This hook blocks session OPEN, where latency is visible to the
+    user in a way the Stop hook's isn't. Same sub-minute ceiling."""
+    body = json.loads(PLUGIN_HOOKS_PATH.read_text(encoding="utf-8"))
+    command_hooks = [
+        h
+        for entry in body["hooks"]["SessionStart"]
+        for h in entry.get("hooks", [])
+        if h.get("type") == "command"
+    ]
+    for hook in command_hooks:
+        timeout = hook.get("timeout")
+        assert timeout is not None, (
+            f"SessionStart hook is missing a timeout field: {hook!r}"
+        )
+        assert 0 < timeout <= 60, (
+            f"SessionStart hook timeout {timeout!r} is outside the 1..60s "
+            f"window — hooks must not visibly block session open"
+        )
+
+
+# ---------------------------------------------------------------------------
 # server.json — the MCP registry publish manifest.
 #
 # Three separate copies of the same facts (two version fields, the server

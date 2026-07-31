@@ -1061,6 +1061,225 @@ def _check_audit_turn_cadence(directory: Path) -> Diagnosis:
     )
 
 
+# The substring that identifies OUR SessionStart binding inside a hook
+# command line. Matching on the subcommand rather than on the full
+# command string is deliberate: the plugin ships `uvx bettermemory
+# session-start || true`, a `uv tool install` user writes
+# `bettermemory session-start`, and a venv user writes an absolute path
+# — all three are correctly wired, and pinning any one spelling would
+# warn at the other two.
+_SESSION_START_HOOK_MARKER = "bettermemory session-start"
+
+# Ceiling on how many `hooks.json` MATCHES the plugin-directory walk
+# collects, and so on how many files this check then opens and parses.
+# It bounds the parsing, not the traversal: `rglob` yields lazily, so
+# breaking at the cap only stops a walk that has already found that many
+# manifests — under the cap (a handful on a real install) the whole of
+# `~/.claude/plugins` is still visited. That split is the intended one.
+# `~/.claude/plugins` holds marketplace CHECKOUTS — ordinary git repos of
+# unbounded size — but visiting one is readdir/stat with no file opens
+# and stays in the low milliseconds, whereas reading and JSON-parsing
+# every match pays per file for however many manifests a checkout ships
+# (test fixtures, vendored plugins). Hitting the cap can make this check
+# publish a false "not wired" warn — a binding past the cap is simply
+# never read — so the cap is a real accuracy trade, not a free one. It is
+# an acceptable trade because the settings-file candidates above are
+# collected FIRST and are never truncated, so a hand-wired user is never
+# missed; only a plugin binding sitting behind 200 other manifests is,
+# and a real install carries a handful. Raise the cap rather than
+# rationalise the warn if that ever stops being true.
+_PLUGIN_HOOK_SCAN_CAP = 200
+
+
+def _session_start_hook_config_candidates(cwd: Path | None = None) -> list[Path]:
+    """Existing files that could carry a SessionStart hook binding.
+
+    Two families, both of which a correctly-wired user may use, and
+    neither of which is authoritative on its own:
+
+    * Claude Code settings files (user- and project-scope, plus the
+      `.local` overrides) — where a manual wiring lands.
+    * `hooks.json` manifests under `~/.claude/plugins` — where a
+      *plugin* install's hooks live. This is the load-bearing half: a
+      plugin user never edits settings.json, so scanning settings alone
+      would warn at exactly the users who did the recommended thing.
+
+    Only paths that exist are returned, which doubles as the "is this
+    even a Claude Code install?" probe — an empty list means we have
+    nothing to judge and the check stays silent rather than guessing.
+    """
+    home = Path.home()
+    base = cwd if cwd is not None else Path.cwd()
+    candidates = [
+        home / ".claude" / "settings.json",
+        home / ".claude" / "settings.local.json",
+        base / ".claude" / "settings.json",
+        base / ".claude" / "settings.local.json",
+    ]
+    found = [p for p in candidates if p.is_file()]
+
+    plugins_root = home / ".claude" / "plugins"
+    if plugins_root.is_dir():
+        try:
+            for i, path in enumerate(plugins_root.rglob("hooks.json")):
+                if i >= _PLUGIN_HOOK_SCAN_CAP:
+                    break
+                if path.is_file():
+                    found.append(path)
+        except OSError:
+            # An unreadable plugins tree is not this check's problem to
+            # report — the settings-file arm still has something to say.
+            pass
+    return found
+
+
+def _declares_session_start_hook(data: Any) -> bool:
+    """Does this parsed hook/settings JSON bind our SessionStart command?
+
+    One structural reader for both file families because the shape is
+    identical — Claude Code's settings files and a plugin's `hooks.json`
+    both nest `{"hooks": {"<Event>": [{"hooks": [{"type": "command",
+    "command": ...}]}]}}`. Everything is defensively type-checked: these
+    are FOREIGN files, frequently hand-edited, and a check that raises on
+    someone else's unexpected shape is worse than no check.
+    """
+    if not isinstance(data, dict):
+        return False
+    hooks = data.get("hooks")
+    if not isinstance(hooks, dict):
+        return False
+    entries = hooks.get("SessionStart")
+    if not isinstance(entries, list):
+        return False
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        inner = entry.get("hooks")
+        if not isinstance(inner, list):
+            continue
+        for hook in inner:
+            if not isinstance(hook, dict):
+                continue
+            command = hook.get("command")
+            if isinstance(command, str) and _SESSION_START_HOOK_MARKER in command:
+                return True
+    return False
+
+
+def _check_session_start_hook_wired(
+    directory: Path,
+    config_paths: list[Path] | None = None,
+) -> Diagnosis:
+    """Is the SessionStart hook that injects the memory hint actually wired?
+
+    CONFIG-SHAPED, NOT TELEMETRY-SHAPED — and that is forced, not a
+    preference. `_check_audit_turn_cadence` above can infer a broken Stop
+    hook from missing `turn_audited` rows because that hook RECORDS. The
+    SessionStart hook deliberately records nothing (a row from it would
+    become the anchor `hook._latest_in_process_session` attributes the
+    next turn audit against, and would publish a session id no
+    `turn_audited` could ever accompany), so it leaves no footprint to
+    count. The only observable is the configuration itself.
+
+    Two gates keep this quiet for people it has nothing to offer:
+
+    * an empty store — the hook prints nothing on one, so wiring it
+      changes nothing;
+    * no discoverable hook config at all — the user isn't running Claude
+      Code, or hasn't configured it, and either way we have no evidence.
+
+    `config_paths` is injectable for tests only; production passes None
+    and takes `_session_start_hook_config_candidates()`.
+    """
+    try:
+        active = count_active_memory_files(directory) if directory.exists() else 0
+    except OSError as exc:
+        return Diagnosis(
+            name="session_start_hook",
+            status="ok",
+            message=f"Could not read the store to check the hint hook: {exc}.",
+        )
+    if active == 0:
+        return Diagnosis(
+            name="session_start_hook",
+            status="ok",
+            message=(
+                "Store is empty — the session-start hint would print "
+                "nothing, so the hook is not needed yet."
+            ),
+            details={"active_memories": 0},
+        )
+
+    paths = (
+        config_paths
+        if config_paths is not None
+        else _session_start_hook_config_candidates()
+    )
+    unreadable: list[str] = []
+    readable = 0
+    for path in paths:
+        try:
+            text = path.read_text(encoding="utf-8")
+            data = json.loads(text) if text.strip() else {}
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+            unreadable.append(f"{path}: {exc}")
+            continue
+        readable += 1
+        if _declares_session_start_hook(data):
+            return Diagnosis(
+                name="session_start_hook",
+                status="ok",
+                message=(
+                    f"SessionStart hint hook is wired ({path}) — new "
+                    f"sessions open with the per-scope counts already in "
+                    f"context."
+                ),
+                details={
+                    "wired_in": str(path),
+                    "scanned": len(paths),
+                    "active_memories": active,
+                },
+            )
+
+    info: dict[str, Any] = {
+        "scanned": len(paths),
+        "readable": readable,
+        "unreadable": unreadable,
+        "active_memories": active,
+    }
+    if readable == 0:
+        # Either there is no hook config to read, or every candidate is a
+        # foreign file we couldn't parse. Both are "no evidence", and a
+        # check that warns on absent evidence would fire at every Claude
+        # Desktop / Cursor / Continue user forever.
+        return Diagnosis(
+            name="session_start_hook",
+            status="ok",
+            message=(
+                "No readable Claude Code hook config found — skipping the "
+                "session-start hint check."
+            ),
+            details=info,
+        )
+    return Diagnosis(
+        name="session_start_hook",
+        status="warn",
+        message=(
+            f"{active} memories are stored but no SessionStart hook runs "
+            f"`bettermemory session-start`, so every new session opens "
+            f"blind to them unless the model chooses to call "
+            f"`memory_scope_overview`."
+        ),
+        fix_hint=(
+            "Install the plugin (`/plugin install bettermemory@bettermemory`), "
+            "which ships the binding in `hooks/hooks.json`; or add a "
+            "SessionStart hook running `uvx bettermemory session-start "
+            "|| true` to `~/.claude/settings.json`."
+        ),
+        details=info,
+    )
+
+
 def _check_auto_memory_stranded(directory: Path, cwd: Path | None = None) -> Diagnosis:
     """Detect Claude Code auto-memory files for this cwd that never
     made it into the store.
@@ -2937,6 +3156,12 @@ def run_diagnostics() -> DoctorReport:
             _safe(
                 "audit_turn_cadence",
                 lambda: _check_audit_turn_cadence(directory),
+            )
+        )
+        checks.append(
+            _safe(
+                "session_start_hook",
+                lambda: _check_session_start_hook_wired(directory),
             )
         )
         checks.append(

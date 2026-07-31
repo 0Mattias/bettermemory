@@ -2,8 +2,9 @@
 
 The per-tool modules in this package own their happy-path logic; the
 helpers here own the bookkeeping every handler runs (turn counter
-advance, pending-write TTL drain, use-token attribution scan, payload
-validation, event log timestamp parsing).
+advance, pending-write TTL drain, use-token attribution scan,
+use-token expiry drain, payload validation, event log timestamp
+parsing).
 
 Importing ``capture_origin`` THROUGH ``bettermemory._handlers`` rather
 than directly from ``bettermemory.origin`` is load-bearing: the test
@@ -24,7 +25,7 @@ from mcp.server.fastmcp import Context as _FastMCPContext
 
 from ..events import Recorder, iter_events
 from ..models import Category, Confidence, Source, validate_scope
-from ..session import SessionState
+from ..session import PendingUseToken, SessionState
 from ..time_utils import parse_event_ts
 
 
@@ -291,6 +292,118 @@ def _drain_pending_expired(state: SessionState, recorder: Recorder) -> None:
         )
 
 
+def _drain_expired_use_tokens(
+    state: SessionState,
+    recorder: Recorder,
+    *,
+    override_ids: set[str] | None = None,
+) -> list[PendingUseToken]:
+    """Drain the wall-clock-evicted use-token stash and return only the
+    tokens that were genuinely LOST — nothing settled them.
+
+    This owns the whole dedup scan, live tokens included, because the
+    scan reads the event log and one read per handler entry is the
+    budget. `already_recorded` therefore covers both populations and
+    the live purge happens here too.
+
+    The false-expiry defect this closes is subtle and only shows on
+    hookful stores: `SessionState.advance_turn` evicts expired tokens
+    at the TOP of `_advance_turn`, BEFORE the dedup scan runs. A
+    retrieval the Stop hook already settled at t=5s, followed by an
+    idle gap past `_PENDING_USE_TOKEN_TTL_SECONDS`, is therefore out of
+    `state.pending_use_tokens` by the time the scan looks — so a naive
+    drain would report a settled retrieval as a loss, inverting the
+    whole point of the event. Folding the drained batch into the scan
+    as `extra_pending` is what makes the scan see it.
+
+    `override_ids` closes the same defect on the THIRD settlement path,
+    where the log scan cannot help at all. `memory_record_use` passes
+    the ids it is recording for, and writes its `use` event only AFTER
+    `_advance_turn` returns — so however far back the scan reaches, the
+    settlement is not on disk yet when it runs. Here the caller's
+    declared intent IS the evidence: an id the model is explicitly
+    settling in this very handler entry is settled, and dropping it
+    before the scan is what keeps one call from filing the same
+    retrieval as both settled and lost. Dropped rather than reported,
+    because the token is already out of the live map either way.
+
+    Residual, recorded honestly: `iter_events` reads active segments
+    only, so a log rotation between the hook's `use` event and the
+    eviction still yields a false expiry. That is the same residual the
+    auto-commit dedup already carries, and implausible inside 30
+    minutes at the default 10 MB cap.
+    """
+    expired = state.pop_expired_use_tokens()
+    if override_ids:
+        expired = [tok for tok in expired if tok.memory_id not in override_ids]
+    if not recorder.enabled:
+        # The pop above already happened — that is the point. Telemetry
+        # being off must not let the stash grow without bound, and
+        # there is nothing to dedup against when no events are written.
+        return expired
+    if not state.pending_use_tokens and not expired:
+        return expired
+    already_recorded = _already_recorded_pending_ids(
+        state,
+        recorder,
+        extra_pending={tok.memory_id: tok.issued_at for tok in expired},
+    )
+    for mid in already_recorded:
+        state.purge_use_token(mid)
+    return [tok for tok in expired if tok.memory_id not in already_recorded]
+
+
+def _emit_expired_use_tokens(
+    state: SessionState,
+    recorder: Recorder,
+    expired: list[PendingUseToken],
+) -> None:
+    """Record ONE `use_token_expired` event for a batch of lost tokens.
+
+    Batched rather than one-per-token (the shape `pending_expired`
+    uses) because this population is the auto-commit's population: a
+    single 20-hit search that goes unsettled would otherwise write 20
+    events, inflating `total_events` in both `doctor.py`'s cadence
+    census and health's accumulator — denominators that are supposed to
+    count client activity, not fan-out.
+
+    Field choices, all load-bearing:
+
+    * `ids` — the canonical id-list field name, so every existing
+      reader that already handles `ids` keeps working. Safe because
+      every `.get("ids")` reader in `src/` sits inside a `kind` guard.
+    * `age_seconds` / `turns_since_issue` — measured against the OLDEST
+      token in the batch, i.e. the worst case. Both axes are reported
+      because the two TTLs are independent: a token can die of wall
+      clock while its turn delta says the session never advanced (the
+      idle-session case) or with a large turn delta (the case where the
+      auto-commit somehow never fired).
+    * `reason` — names the eviction axis so a future second one (a
+      session reset that decided to report its stash, say) does not
+      have to be told apart by inference.
+
+    Deliberately ABSENT: `outcome`, `auto` and `attribution`. This is
+    not a `use` event and must never be read as one — an expiry is the
+    absence of evidence, and `outcome="applied"` on evidence-free
+    leftovers would manufacture endorsements out of exactly the
+    retrievals that failed to earn any. `attribution` is also what
+    `eval.is_admin_recorded_event` keys its second exclusion axis on;
+    omitting it keeps the event (and its session) inside doctor's
+    client-session census, where it belongs.
+    """
+    if not expired:
+        return
+    now = time.time()
+    oldest = min(expired, key=lambda tok: tok.issued_at)
+    recorder.record(
+        "use_token_expired",
+        ids=[tok.memory_id for tok in expired],
+        age_seconds=int(now - oldest.issued_at),
+        turns_since_issue=state.turn_counter - oldest.issued_at_turn,
+        reason="wall_clock_ttl",
+    )
+
+
 def _advance_turn(
     state: SessionState,
     recorder: Recorder,
@@ -310,7 +423,10 @@ def _advance_turn(
     caller is explicitly recording for shouldn't be auto-committed
     as `applied` first — the explicit outcome wins. The session's
     `consume_old_tokens` accepts the same set so the exclusion is
-    structural rather than racey.
+    structural rather than racey. The expiry drain accepts it for the
+    same reason and one more: its own settlement evidence is written
+    after this function returns, so no amount of log scanning can find
+    it (see `_drain_expired_use_tokens`).
 
     Hook-attributed ids (the Stop hook substring-matched a retrieved
     memory's body against the assistant turn and emitted a
@@ -328,13 +444,24 @@ def _advance_turn(
     explicit, hook attributed, auto fallback). Older events without
     `attribution` fall back to `model` when auto=false and `auto`
     when auto=true at read time.
+
+    Tokens that reached the 30-minute wall-clock eviction without ANY
+    of those three settling them are the fourth outcome, and the only
+    one that used to be silent: they are drained here and emitted as
+    `use_token_expired` (see `_drain_expired_use_tokens`). All three
+    settling surfaces are subtracted first — the hook's and the
+    auto-commit's via the log scan, the explicit one via
+    `override_ids` — so the fourth outcome really is the leftovers.
+    The drain runs before `consume_old_tokens` because the dedup purge
+    it performs is the same purge the auto-commit depends on.
     """
     state.advance_turn()
     _drain_pending_expired(state, recorder)
-    if state.pending_use_tokens and recorder.enabled:
-        already_recorded = _already_recorded_pending_ids(state, recorder)
-        for mid in already_recorded:
-            state.purge_use_token(mid)
+    # Drain + dedup in one pass: `_drain_expired_use_tokens` also
+    # purges the LIVE tokens the log already settled, which is why the
+    # standalone purge loop that used to live here is gone.
+    lost_tokens = _drain_expired_use_tokens(state, recorder, override_ids=override_ids)
+    _emit_expired_use_tokens(state, recorder, lost_tokens)
     auto_ids = state.consume_old_tokens(override_ids=override_ids)
     if auto_ids:
         recorder.record(
@@ -397,6 +524,7 @@ def _already_recorded_pending_ids(
     recorder: Recorder,
     *,
     extra_session_ids: set[str] | None = None,
+    extra_pending: dict[str, float] | None = None,
 ) -> set[str]:
     """Return the subset of pending-token memory_ids that already have
     a `use` event in the log emitted AFTER the token was issued.
@@ -436,6 +564,20 @@ def _already_recorded_pending_ids(
     lets a caller thread additional ids explicitly (e.g. a known
     transcript id); it is unioned with the derived set.
 
+    `extra_pending` is `{memory_id: issued_at}` for tokens that are no
+    longer in `state.pending_use_tokens` but still need the same
+    "did anything settle this?" answer — in practice the batch
+    `_drain_expired_use_tokens` just popped out of the wall-clock
+    eviction stash. Without it the scan cannot see them at all
+    (eviction runs at the top of `_advance_turn`, before this scan) and
+    a hook-settled retrieval would be reported as a loss. Entries also
+    widen the backward-scan boundary below, so the older mint times
+    are actually reached. On the (production-impossible, since the
+    stash is drained in the same handler entry that filled it) collision
+    where an id is in BOTH maps, `extra_pending` wins: erring toward the
+    older mint time can only suppress a settlement, never manufacture a
+    phantom loss report.
+
     The `event.ts >= token.issued_at` filter is load-bearing: without
     it, a stale `use` event for the same id (from an earlier retrieval
     in the same session, or replay-after-rotation) would falsely purge
@@ -454,11 +596,12 @@ def _already_recorded_pending_ids(
     the active log once and iterate `reversed(...)` — the cap keeps
     the materialised list bounded.
     """
-    if not state.pending_use_tokens:
+    if not state.pending_use_tokens and not extra_pending:
         return set()
     pending_issued_at = {
         mid: tok.issued_at for mid, tok in state.pending_use_tokens.items()
     }
+    pending_issued_at.update(extra_pending or {})
     # Oldest pending token's mint time. Any event timestamped before
     # this cannot have recorded any of these tokens, so we can stop
     # the backward scan as soon as we cross that boundary.
@@ -596,6 +739,15 @@ def _maybe_attach_curation_hint(
         window_days=30,
         verification_stale_days=behavior.verification_stale_days,
         cold_endorsement_ratio_threshold=behavior.cold_endorsement_ratio_threshold,
+        # Arm the dead-weight telemetry gate — production entry point.
+        # `0` (rather than a pre-measured count) because the event
+        # stream above is a generator handed straight in; zero turns the
+        # gate on and delegates the measurement to the walk
+        # `curation_counts` is about to do. Without this the hint would
+        # nag about dead weight that is really an unwired Stop hook —
+        # and it is the one curation surface the model does not have to
+        # ask for.
+        hook_telemetry_events=0,
     )
     pressure = counts["dead"] + counts["drifted"] + counts["cold_endorsement_memories"]
     if pressure < threshold:
@@ -629,7 +781,9 @@ __all__ = [
     "_advance_turn",
     "_already_recorded_pending_ids",
     "_attach_use_tokens",
+    "_drain_expired_use_tokens",
     "_drain_pending_expired",
+    "_emit_expired_use_tokens",
     "_event_ts_epoch",
     "_hook_attributed_pending_ids",
     "_maybe_attach_curation_hint",

@@ -40,7 +40,20 @@ DESC_MEMORY_CURATE = (
     "report dict plus `dry_run`; on apply, `applied=True`, `actions_taken` "
     "(each .kind is 'tombstoned' or 'demoted_to_ambient') and any "
     "`failures`. Nothing is hard-deleted; an apply records one `curate` "
-    "event for the tool-usage rollup."
+    "event for the tool-usage rollup. "
+    # The demotion promise above is conditional, and the condition is
+    # invisible from the payload unless the description names the field:
+    # on a hookless store `demotion_candidates` comes back empty and the
+    # only signal is `demotion_skipped_reason`. Same gate, same reason
+    # string as `memory_health.telemetry_coverage`. Free to say here —
+    # `memory_curate` sits behind `full_tool_surface`, outside the
+    # description budget the lean 18-tool surface pays for.
+    "One conditional on the demotion half: it needs Stop-hook settlement "
+    "telemetry in the event log. Without it `demotion_candidates` is "
+    "empty and `demotion_skipped_reason` explains why — 'retrieved, "
+    "never applied' cannot mean 'unhelpful' on a store where nothing was "
+    "in a position to record an apply. Dedup is unaffected. Surface that "
+    "reason rather than reporting a store with nothing to demote."
 )
 
 

@@ -1,5 +1,6 @@
 {
   "$schema-comment": "Claude Code plugin hook manifest. The Stop event fires once per assistant response — every turn end. The hook calls `bettermemory audit-turn`, which reads the hook's stdin JSON (session_id + transcript_path), runs `probe_for_miss` over the pool `memory_search` would have built for that message (`handlers.search.resolve_search_pool`) — above the FTS index threshold a capped, query-biased prefilter slice, not the whole store; and drawn with the raw user message rather than the query the model would have typed, so it matches production's mechanism, not necessarily production's rows — and writes `turn_audited` / `search_miss` events to the on-disk event log. The CLI is designed to always exit 0; the trailing `|| true` is belt-and-suspenders so a uvx network failure, an older PyPI version that doesn't yet have the subcommand, or any other unexpected shape never surfaces as a hook error banner in Claude Code. Losing one turn of telemetry is preferable to interrupting the user.",
+  "$schema-comment-session-start": "The SessionStart event fires when a conversation opens. Its stdout — uniquely, along with UserPromptSubmit — is injected verbatim into the model's context, which is the entire point: `bettermemory session-start` prints the per-scope memory counts for the current repository, so a fresh session begins already knowing what is stored instead of spending a `memory_scope_overview` tool call to find out (or, far more often, never finding out, because retrieval is opt-in and nothing prompts it). The subcommand reads the FTS index only, never memory bodies, records NO event and opens NO session (a recorded row would become the anchor `hook._latest_in_process_session` attributes the next turn audit against — it filters on `triggered_from` alone), prints nothing when the store is empty or the index cannot be trusted, and always exits 0. MATCHER DELIBERATELY OMITTED: per the Claude Code hooks reference an omitted matcher means 'match all', and all five SessionStart matchers — startup, resume, clear, compact, fork — want the hint. `clear` and `compact` in particular have just discarded the context this block supplies, which is exactly when re-injecting it is most valuable. Pinning the five by name would be equivalent today and silently stop firing on a sixth. Timeout is 20s rather than the Stop hook's 30 because this one blocks session open, where latency is visible.",
   "hooks": {
     "Stop": [
       {
@@ -8,6 +9,17 @@
             "type": "command",
             "command": "uvx bettermemory audit-turn --quiet || true",
             "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uvx bettermemory session-start || true",
+            "timeout": 20
           }
         ]
       }

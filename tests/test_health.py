@@ -362,6 +362,50 @@ def test_dead_weight_parity_across_health_counts_and_demotion() -> None:
     assert [d.memory_id for d in demotions] == [control.id]
 
 
+def test_three_dead_weight_surfaces_agree_under_the_telemetry_gate() -> None:
+    """The three-surface numerical contract, extended to the gate.
+
+    `compute_health`'s bucket, `curation_counts`' `dead` and
+    `find_demotion_candidates`' action list must agree about the same
+    store — and "agree at zero because none of them gates" is not
+    agreement, so the hookful control runs the same fixture with one
+    Stop-hook row and pins all three at one."""
+    from bettermemory.consolidate import find_demotion_candidates
+
+    now = _utc(2026, 6, 1)
+    control = _memory(created=now - timedelta(days=90))
+    base = [_event("search", ts=now - timedelta(days=20), returned=[control.id])]
+    hook_row = _event(
+        "turn_audited", ts=now - timedelta(days=19), triggered_from="stop_hook"
+    )
+
+    for events, expected in ((base, 0), (base + [hook_row], 1)):
+        report = compute_health(
+            [control],
+            events,
+            window_days=30,
+            now=now,
+            hook_telemetry_events=0,
+        )
+        counts = curation_counts(
+            [control],
+            events,
+            window_days=30,
+            now=now,
+            hook_telemetry_events=0,
+        )
+        demotions = find_demotion_candidates(
+            [control],
+            events,
+            window_days=30,
+            now=now,
+            hook_telemetry_events=0,
+        )
+        assert len(report.dead_weight) == expected
+        assert counts["dead"] == expected
+        assert len(demotions) == expected
+
+
 def test_curation_counts_excludes_ambient_from_dead_and_cold() -> None:
     cold = _memory(created=_utc(2026, 1, 1), category=Category.AMBIENT)
     dead = _memory(created=_utc(2026, 1, 1), category=Category.AMBIENT)
@@ -391,6 +435,42 @@ def test_curation_counts_since_drops_events_older_than_boundary() -> None:
     )
     assert absolute["silent_misses"] == 2
     assert delta["silent_misses"] == 1
+
+
+def test_curation_counts_delta_arm_sees_coverage_from_before_the_boundary() -> None:
+    """Coverage is a property of the STORE, not of the delta window.
+
+    `memory_scope_overview` runs `curation_counts` twice over one
+    snapshot — once unbounded, once bounded to events newer than the
+    prior session boundary — and shows both to the model. If the
+    coverage count were taken after the `since` filter, a store whose
+    Stop-hook rows all predate the boundary (i.e. any store on any
+    session after the first) would read as hookless in the delta arm
+    only: `dead` blanked in one view and populated in the other, same
+    events, same store. Both arms here must report the row."""
+    now = _utc(2026, 6, 1)
+    boundary = _utc(2026, 2, 1)
+    # Created after the boundary (so the delta's memory filter keeps
+    # it) but well outside the 30-day dead-weight window.
+    dead = _memory(created=_utc(2026, 3, 1))
+    events = [
+        # The ONLY hook row, and it predates the boundary.
+        _event("turn_audited", ts=_utc(2026, 1, 15), triggered_from="stop_hook"),
+        _event("search", ts=_utc(2026, 3, 2), returned=[dead.id]),
+    ]
+    absolute = curation_counts(
+        [dead], events, window_days=30, now=now, hook_telemetry_events=0
+    )
+    delta = curation_counts(
+        [dead],
+        events,
+        window_days=30,
+        now=now,
+        since=boundary,
+        hook_telemetry_events=0,
+    )
+    assert absolute["dead"] == 1
+    assert delta["dead"] == 1
 
 
 def test_curation_counts_since_excludes_memories_created_before_boundary() -> None:
@@ -2083,8 +2163,238 @@ def test_render_json_round_trips() -> None:
 
 
 # ---------------------------------------------------------------------------
+# is_hook_telemetry_event — the shared coverage predicate itself
+# ---------------------------------------------------------------------------
+
+
+def test_is_hook_telemetry_event_truth_table() -> None:
+    """Every branch of the predicate all three dead-weight surfaces key on.
+
+    A direct truth table rather than three more end-to-end fixtures,
+    because the end-to-end tests can only afford one coverage shape each
+    and the discriminations that matter here are between shapes that
+    look alike. Each of the five behaviours below can be deleted
+    independently, and until this test existed four of them could be
+    deleted with the whole suite still green — the two hookless/hookful
+    controls only pin the coarse always-True / always-False mutations.
+
+    The `mcp_tool` rows are the load-bearing ones: `memory_audit_turn`
+    called in-process by the model (`handlers/audit_turn.py`) emits
+    `turn_audited` too, and reading it as coverage would un-gate every
+    surface on a store whose Stop hook was never wired — the exact
+    conflation the gate exists to prevent.
+    """
+    from bettermemory.health import is_hook_telemetry_event as covered
+
+    # `use` — the containment matcher's explicit attribution, and the
+    # `stop_hook` stamp that also covers its `attribution="auto"`
+    # fallback for the retrieved-but-unmatched remainder.
+    assert covered({"kind": "use", "attribution": "hook"})
+    assert covered({"kind": "use", "triggered_from": "stop_hook"})
+    # An in-session apply is not evidence the hook runs.
+    assert not covered({"kind": "use", "attribution": "model"})
+    assert not covered({"kind": "use", "auto": True, "attribution": "auto"})
+    assert not covered({"kind": "use"})
+
+    # `turn_audited` — the hook's silent-miss probe counts, the model
+    # calling the same audit tool in-process does not.
+    assert covered({"kind": "turn_audited", "triggered_from": "stop_hook"})
+    assert not covered({"kind": "turn_audited", "triggered_from": "mcp_tool"})
+    assert not covered({"kind": "turn_audited"})
+
+    # `auto_consolidate` carries `triggered_from="stop_hook"` as well
+    # (`consolidate.py`), and is excluded by the `kind` gate on purpose:
+    # that pass is opt-in-gated, so counting it would make coverage a
+    # function of `[consolidate]` config rather than of whether
+    # settlement runs. Pinned so a future widening to "anything stamped
+    # stop_hook" is a decision rather than a slip.
+    assert not covered({"kind": "auto_consolidate", "triggered_from": "stop_hook"})
+
+    # Unrelated kinds never count, however they are stamped.
+    assert not covered({"kind": "search", "triggered_from": "stop_hook"})
+    assert not covered({})
+
+
+# ---------------------------------------------------------------------------
 # report_for_directory — end-to-end against a real Store + event log
 # ---------------------------------------------------------------------------
+#
+# The telemetry-coverage gate is deliberately OFF by default on
+# `compute_health` (`hook_telemetry_events=None` reads as "the caller
+# did not measure; assume covered") so the hundred-odd synthetic-event
+# fixtures above keep asserting what they always asserted. That default
+# is also exactly the shape under which a forgotten production wiring is
+# invisible: the pure function would gate correctly, every unit test
+# would pass, and the shipped tool would never gate at all.
+#
+# So the gate's tests drive `report_for_directory` — the function BOTH
+# production surfaces (the `memory_health` MCP tool and `bettermemory
+# health`) actually call — against a real store on disk, and each comes
+# with its hookful positive control so the gate cannot pass by being
+# always-on.
+
+
+def _seed_dead_weight_store(
+    root: Path, *, coverage: str | None
+) -> tuple[list[str], datetime]:
+    """Retrieved-but-never-applied memories in a real store on disk.
+
+    Returns `(memory_ids, now)` where `now` is far enough past creation
+    that both the dead-weight window and the endorsement grace have
+    elapsed — so every row IS dead weight under the shared predicate,
+    and the only thing standing between them and the bucket is the
+    coverage gate.
+
+    THREE rows, not one, because `_RECOMMENDATION_SIZE_FLOOR` is 3: with
+    a single row `remove_dead_weight` cannot fire on either arm, so the
+    hookless test's "and no recommendation to go remove rot that was
+    never measured" assertion would hold just as well against a gate
+    that had been deleted outright.
+
+    `coverage` selects the ONE telemetry row seeded beside them, which
+    is the only difference between the arms:
+
+    - `None` — hookless; no coverage row at all.
+    - `"turn_audited"` — the silent-miss probe a wired hook emits every
+      turn. The default positive control because it proves settlement
+      telemetry reaches this log without recording an apply against any
+      row under test (which would disqualify that row from the bucket
+      and make the control prove nothing).
+    - `"use_hook"` — the predicate's other arm: a hook-attributed apply,
+      against a FOURTH memory so the three under test keep
+      `applied_count == 0`. Deliberately carries `attribution="hook"`
+      and NO `triggered_from`, so it exercises that disjunct alone.
+    - `"turn_audited_mcp_tool"` — an in-process `memory_audit_turn` row
+      (`handlers/audit_turn.py` stamps `triggered_from="mcp_tool"`).
+      Shaped like coverage and must not count as it: the model calling
+      the audit tool is not evidence the Stop hook is wired.
+    """
+    from bettermemory.events import Recorder
+    from bettermemory.store import Store
+
+    store = Store(root)
+    mems = [
+        store.write(
+            content=f"a durable fact nobody ever applied ({i})", scopes=["tools"]
+        )
+        for i in range(3)
+    ]
+    rec = Recorder(root=root, session_id="sess_disk", enabled=True)
+    rec.record("search", returned=[m.id for m in mems])
+    if coverage == "turn_audited":
+        rec.record("turn_audited", triggered_from="stop_hook", verdict="ok")
+    elif coverage == "use_hook":
+        settled = store.write(
+            content="a fact the hook matched against a reply", scopes=["tools"]
+        )
+        rec.record("use", ids=[settled.id], outcome="applied", attribution="hook")
+    elif coverage == "turn_audited_mcp_tool":
+        rec.record("turn_audited", triggered_from="mcp_tool", verdict="ok")
+    elif coverage is not None:
+        raise AssertionError(f"unknown coverage shape: {coverage!r}")
+    return [m.id for m in mems], mems[0].created + timedelta(days=60)
+
+
+def test_hookless_store_suppresses_dead_weight_through_report_for_directory(
+    tmp_path: Path,
+) -> None:
+    """The AC, through the production entry point: with no Stop-hook
+    settlement telemetry in the log, `applied_count == 0` says nothing
+    about the memory, so the bucket is emptied — and the report says
+    WHY, because an empty bucket that means "not measured" and one that
+    means "clean store" are otherwise the same output."""
+    root = tmp_path / "memories"
+    _mids, now = _seed_dead_weight_store(root, coverage=None)
+
+    report = report_for_directory(root, window_days=30, now=now)
+
+    assert report.dead_weight == []
+    coverage = report.telemetry_coverage
+    assert coverage is not None, "production entry point did not arm the gate"
+    assert coverage.covered is False
+    assert coverage.dead_weight_suppressed is True
+    assert coverage.hook_telemetry_events == 0
+    assert coverage.reason is not None and "Stop-hook" in coverage.reason
+    # Legible on both published renderings, not just the dataclass.
+    assert coverage.to_dict() == report.to_dict()["telemetry_coverage"]
+    assert "NOT MEASURED" in render_text(report)
+    # And no recommendation to go remove rot that was never measured —
+    # falsifiable because the fixture seeds `_RECOMMENDATION_SIZE_FLOOR`
+    # rows, which the hookful control below shows DO fire it.
+    assert all(r.kind != "remove_dead_weight" for r in report.recommendations)
+
+
+def test_hookful_store_still_reports_dead_weight_through_report_for_directory(
+    tmp_path: Path,
+) -> None:
+    """Positive control for the test above — the same fixture plus one
+    Stop-hook row. Without this the suppression test would pass just as
+    happily against a gate that is unconditionally on, or against a
+    fixture that was never dead-weight-shaped to begin with."""
+    root = tmp_path / "memories"
+    mids, now = _seed_dead_weight_store(root, coverage="turn_audited")
+
+    report = report_for_directory(root, window_days=30, now=now)
+
+    assert {s.id for s in report.dead_weight} == set(mids)
+    coverage = report.telemetry_coverage
+    assert coverage is not None
+    assert coverage.covered is True
+    assert coverage.dead_weight_suppressed is False
+    assert coverage.hook_telemetry_events == 1
+    assert coverage.reason is None
+    assert "NOT MEASURED" not in render_text(report)
+    # The other half of the hookless test's recommendations assertion:
+    # measured rot IS worth a recommendation.
+    assert "remove_dead_weight" in {r.kind for r in report.recommendations}
+
+
+def test_hook_attributed_use_is_coverage_through_report_for_directory(
+    tmp_path: Path,
+) -> None:
+    """The predicate's `use` arm, end to end.
+
+    A unit test of `is_hook_telemetry_event` proves the branch answers
+    correctly; it does not prove the accumulator ever reaches it with a
+    `use` event. This does — and it is the arm that carries the coverage
+    signal the AC names, since the containment matcher (not the audit
+    probe) is what a settled retrieval actually looks like.
+    """
+    root = tmp_path / "memories"
+    mids, now = _seed_dead_weight_store(root, coverage="use_hook")
+
+    report = report_for_directory(root, window_days=30, now=now)
+
+    assert {s.id for s in report.dead_weight} == set(mids)
+    coverage = report.telemetry_coverage
+    assert coverage is not None
+    assert coverage.covered is True
+    assert coverage.dead_weight_suppressed is False
+    assert coverage.hook_telemetry_events == 1
+
+
+def test_in_process_audit_turn_is_not_coverage_through_report_for_directory(
+    tmp_path: Path,
+) -> None:
+    """The near-miss the gate exists to reject, end to end.
+
+    `memory_audit_turn` called in-process by the model writes
+    `turn_audited` — the same kind the Stop hook's probe writes, minus
+    the `stop_hook` stamp. Reading it as coverage would let a store the
+    model audits by hand report dead weight (and, on the unattended
+    consolidate path, retag it) with no settlement telemetry at all.
+    """
+    root = tmp_path / "memories"
+    _mids, now = _seed_dead_weight_store(root, coverage="turn_audited_mcp_tool")
+
+    report = report_for_directory(root, window_days=30, now=now)
+
+    assert report.dead_weight == []
+    coverage = report.telemetry_coverage
+    assert coverage is not None
+    assert coverage.covered is False
+    assert coverage.dead_weight_suppressed is True
+    assert coverage.hook_telemetry_events == 0
 
 
 # ---------------------------------------------------------------------------
@@ -2367,6 +2677,122 @@ def test_to_dict_carries_split_counts_and_ratio() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Endorsement tier split — hook-attributed vs model-explicit
+# ---------------------------------------------------------------------------
+#
+# The Stop hook's containment matcher emits `auto=False,
+# attribution="hook"` deliberately (same shape an explicit call
+# produces, so the pending-purge treats them alike), which meant a
+# phrase from the memory overlapping the reply counted as the model
+# deliberately endorsing the memory. The split below is ADDITIVE:
+# `explicit_applied_count` keeps its exact meaning — `_is_weakly_endorsed`
+# and the published `endorsement_rate` both key on it — and gains a
+# decomposition.
+
+
+def test_applied_tiers_split_hook_from_model_and_sum_to_explicit() -> None:
+    """Conservation, on a fixture carrying all three tiers."""
+    m = _memory()
+    events = [
+        _event("use", ids=[m.id], outcome="applied", auto=True, attribution="auto"),
+        _event("use", ids=[m.id], outcome="applied", attribution="hook"),
+        _event("use", ids=[m.id], outcome="applied", attribution="hook"),
+        _event("use", ids=[m.id], outcome="applied", attribution="model"),
+    ]
+    report = compute_health(
+        [m], events, heavily_used_min_applied=1, now=_utc(2026, 5, 1)
+    )
+    row = report.heavily_used[0]
+    assert row.applied_count == 4
+    assert row.auto_applied_count == 1
+    assert row.explicit_applied_count == 3
+    assert row.hook_applied_count == 2
+    assert row.model_applied_count == 1
+    # The two invariants, stated as invariants.
+    assert row.hook_applied_count + row.model_applied_count == (
+        row.explicit_applied_count
+    )
+    assert row.auto_applied_count + row.explicit_applied_count == row.applied_count
+    # The published ratio is untouched (3 explicit of 4); the sibling
+    # is what stops a containment match reading as deliberation.
+    assert row.endorsement_ratio == 0.75
+    assert row.model_endorsement_ratio == 0.25
+    out = row.to_dict()
+    assert out["hook_applied_count"] == 2
+    assert out["model_applied_count"] == 1
+    assert out["endorsement_ratio"] == 0.75
+    assert out["model_endorsement_ratio"] == 0.25
+
+
+def test_applied_tier_back_compat_for_legacy_and_admin_rows() -> None:
+    """Three back-compat rules, all load-bearing:
+
+    - the auto discriminator stays a STRICT `is True` — a legacy
+      `auto=1` / `auto="true"` reads as explicit, never silently
+      relabelled as the server closing the loop;
+    - a missing/None `attribution` (every pre-attribution event) tiers
+      as `model`, so the split doesn't retroactively reclassify years
+      of log as hook traffic;
+    - an admin/CLI attribution tiers as `model` too — a genuine
+      endorsement, not a fourth tier. (`eval.is_admin_recorded_event`
+      owns the admin classification; this split must not fork it.)
+    """
+    from bettermemory.health import applied_tier
+
+    assert applied_tier({"auto": True}) == "auto"
+    assert applied_tier({"auto": 1}) == "model"
+    assert applied_tier({"auto": "true"}) == "model"
+    assert applied_tier({"attribution": None}) == "model"
+    assert applied_tier({}) == "model"
+    assert applied_tier({"attribution": "cli_acknowledge_debt"}) == "model"
+    assert applied_tier({"attribution": "hook"}) == "hook"
+    # auto wins over attribution — the hook's own fallback row carries
+    # `auto=True, attribution="auto"` and must not tier as hook.
+    assert applied_tier({"auto": True, "attribution": "hook"}) == "auto"
+
+    m = _memory()
+    events = [
+        _event("use", ids=[m.id], outcome="applied", auto=1),
+        _event("use", ids=[m.id], outcome="applied", auto="true"),
+        _event("use", ids=[m.id], outcome="applied", attribution=None),
+        _event(
+            "use", ids=[m.id], outcome="applied", attribution="cli_acknowledge_debt"
+        ),
+    ]
+    report = compute_health(
+        [m], events, heavily_used_min_applied=1, now=_utc(2026, 5, 1)
+    )
+    row = report.heavily_used[0]
+    assert row.auto_applied_count == 0
+    assert row.explicit_applied_count == 4
+    assert row.hook_applied_count == 0
+    assert row.model_applied_count == 4
+
+
+def test_hook_attributed_applies_still_feed_the_published_endorsement_signals() -> None:
+    """The split must not move the numbers other surfaces publish. A
+    hook-attributed apply still counts as explicit for
+    `endorsement_ratio` AND still clears the memory out of the
+    cold-endorsement bucket — both key on `explicit_applied_count`,
+    which is unchanged by construction."""
+    m = _memory()
+    events = []
+    for _ in range(5):
+        events.append(_event("search", returned=[m.id]))
+        events.append(_event("use", ids=[m.id], outcome="applied", auto=True))
+    events.append(_event("use", ids=[m.id], outcome="applied", attribution="hook"))
+    report = compute_health(
+        [m], events, heavily_used_min_applied=1, now=_utc(2026, 5, 1)
+    )
+    row = report.heavily_used[0]
+    assert row.explicit_applied_count == 1
+    assert row.hook_applied_count == 1
+    assert row.endorsement_ratio == 1 / 6
+    assert row.model_endorsement_ratio == 0.0
+    assert report.cold_endorsement_memories.total == 0
+
+
+# ---------------------------------------------------------------------------
 # Change D — cold_endorsement_memories rollup
 # ---------------------------------------------------------------------------
 
@@ -2588,12 +3014,15 @@ def test_cold_endorsement_to_dict_shape() -> None:
 # Registry-vs-handler-methods parity for `_StatsAccumulator` (Class 7 —
 # closed by this commit).
 #
-# `_StatsAccumulator._HANDLERS` (`health.py:833`) is a class-level
+# `_StatsAccumulator._HANDLERS` (in `health.py`) is a class-level
 # `dict[str, Callable]` that routes each event `kind` to a sibling
-# `_handle_<kind>` instance method. `handle_event` (`:651`) consumes the
-# table by `_HANDLERS.get(kind)` and `handler is not None` — events
-# whose kind is missing from the table are silently dropped (the
-# fallback is `if handler is not None`, NOT `else: raise`).
+# `_handle_<kind>` instance method. `handle_event` consumes the table by
+# `_HANDLERS.get(kind)` and `handler is not None` — events whose kind is
+# missing from the table are silently dropped (the fallback is `if
+# handler is not None`, NOT `else: raise`). Symbol names, no line
+# numbers: the pair this paragraph used to cite had been wrong for
+# several releases, and the test below resolves both symbols by
+# attribute lookup anyway.
 #
 # The two enumerations MUST agree:
 #
@@ -2654,6 +3083,94 @@ def test_handlers_table_matches_handle_methods() -> None:
         f"methods-only={handler_methods - registry_keys} "
         "(SILENTLY no-ops in handle_event — health rollup loses the metric)."
     )
+
+
+def test_use_token_expired_counts_as_activity_and_settles_nothing() -> None:
+    """`use_token_expired` bumps the kind-agnostic rollups and touches
+    NO per-memory rollup — pinned, not left correct-by-accident.
+
+    Today this holds by absence: `handle_event` bumps `_total_events`
+    and the session set before dispatch, then finds no `_HANDLERS`
+    entry for the kind. An absence is exactly what regresses silently.
+    The event carries a batched `ids` field for its own reasons, and
+    `ids` is the field every settlement reader keys on, so the one
+    plausible slip — routing the kind at a `use`-shaped handler — has
+    to be nailed down rather than assumed. The semantics at stake are
+    the whole point of the event: an expiry is the ABSENCE of
+    evidence, so a retrieval that expired must stay dead weight rather
+    than end up vouching for its own memory.
+
+    The unknown id in the batch is deliberate (a memory removed
+    between the retrieval and the expiry). It is what makes that slip
+    observable, via `orphan_use_events` — verified by routing the kind
+    to `_handle_use` and watching this test fail.
+    """
+    m = _memory(created=_utc(2026, 1, 1))
+    removed_since = generate_ulid()
+    search = _event("search", ts=_utc(2026, 2, 1), returned=[m.id])
+    expiry = _event(
+        "use_token_expired",
+        ts=_utc(2026, 2, 1),
+        # Its OWN session, and not only for realism: the idle gap that
+        # strands a token is usually long enough that the next client
+        # session is a different one. Sharing `_event`'s default with
+        # the search would make the assertion below unfalsifiable — the
+        # search alone already supplies a session, so the count reads 1
+        # whether the expiry's session is counted or silently dropped,
+        # which is precisely the regression it exists to catch.
+        session="sess_after_idle",
+        ids=[m.id, removed_since],
+        age_seconds=1801,
+        turns_since_issue=1,
+        reason="wall_clock_ttl",
+    )
+
+    report = compute_health([m], [search, expiry], window_days=30, now=_utc(2026, 5, 1))
+
+    # Kind-agnostic: real client-session activity, counted as such —
+    # the same reason the kind stays out of ADMIN_RECORDED_EVENT_KINDS.
+    # Dropping the kind from the census costs the whole session, which
+    # is the shape of the doctor defect the roster guard also covers.
+    assert report.total_events == 2
+    assert report.distinct_sessions == 2
+    # Per-memory: nothing at all.
+    assert report.orphan_use_events == 0, (
+        "the expiry's ids were walked by a `use` reader — a batch that "
+        "cites a since-removed memory now reads as a hallucinated id"
+    )
+    rows = {row.id: row for row in report.dead_weight}
+    assert m.id in rows, (
+        "a retrieval that expired unsettled stopped counting as dead "
+        "weight — the expiry event settled it"
+    )
+    assert rows[m.id].retrieval_count == 1, (
+        "the expiry was counted as a second retrieval; its ids are a "
+        "loss ledger, not a search result"
+    )
+    assert rows[m.id].applied_count == 0
+    assert rows[m.id].explicit_applied_count == 0
+    assert rows[m.id].auto_applied_count == 0
+
+    # Anti-vacuity: the SAME ids arriving as a real settlement do move
+    # both rollups. Without this the assertions above would also hold
+    # for a fixture that could never have moved either way.
+    settled = compute_health(
+        [m],
+        [
+            search,
+            _event(
+                "use",
+                ts=_utc(2026, 2, 1),
+                ids=[m.id, removed_since],
+                outcome="applied",
+                attribution="model",
+            ),
+        ],
+        window_days=30,
+        now=_utc(2026, 5, 1),
+    )
+    assert not settled.dead_weight
+    assert settled.orphan_use_events == 1
 
 
 # ---------------------------------------------------------------------------
@@ -3312,3 +3829,65 @@ def test_unhashable_session_and_nested_id_elements_do_not_blank_rollup() -> None
     # curation_counts shares `_event_id_list`; it must survive too.
     counts = curation_counts([m], events, window_days=30, now=_utc(2026, 5, 1))
     assert counts["dead"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Anti-inert guard for the telemetry-coverage gate
+# ---------------------------------------------------------------------------
+
+
+def test_every_production_dead_weight_call_arms_the_telemetry_gate() -> None:
+    """`hook_telemetry_events=None` means "the caller did not measure;
+    assume covered", which is the right default for the ~15 fixtures in
+    this file that assert on dead weight over synthetic event lists with
+    no Stop-hook rows in them.
+
+    It is also, precisely, the default under which a forgotten
+    production wiring is INVISIBLE: the gate exists, the pure-function
+    tests pass, the three-surface parity tests still agree (0 == 0 == 0
+    agrees, and so does "covered everywhere"), and the shipped tool
+    never gates. Phase 2 shipped two features inert exactly this way.
+
+    So: every call to one of the three gated functions anywhere in
+    `src/` must pass `hook_telemetry_events` explicitly. AST-based, so
+    prose mentioning the parameter is not a false positive, and a new
+    call site added later fails here rather than shipping silently
+    ungated.
+    """
+    import ast
+
+    gated = {"compute_health", "curation_counts", "find_demotion_candidates"}
+    repo_root = Path(__file__).resolve().parents[1]
+    src_root = repo_root / "src"
+    ungated: list[str] = []
+    scanned_calls = 0
+    for py_file in sorted(src_root.rglob("*.py")):
+        tree = ast.parse(py_file.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if isinstance(func, ast.Name):
+                name = func.id
+            elif isinstance(func, ast.Attribute):
+                name = func.attr
+            else:
+                continue
+            if name not in gated:
+                continue
+            scanned_calls += 1
+            if not any(kw.arg == "hook_telemetry_events" for kw in node.keywords):
+                ungated.append(
+                    f"{py_file.relative_to(repo_root)}:{node.lineno} {name}()"
+                )
+    assert scanned_calls >= 4, (
+        "the scan found almost no call sites — the walk is broken, not "
+        "the tree (expected report_for_directory, consolidate, and both "
+        "scope_overview arms at minimum)"
+    )
+    assert not ungated, (
+        f"call site(s) in src/ do not arm the dead-weight telemetry "
+        f"gate: {ungated}. Pass `hook_telemetry_events=` (0 delegates "
+        f"the measurement to the callee's own walk) — leaving it at the "
+        f"default ships that surface reporting a missing Stop hook as rot."
+    )

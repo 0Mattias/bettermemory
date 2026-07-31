@@ -7,6 +7,67 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## Unreleased
+
+### Added — a retrieval that nothing settled is now recorded, not discarded
+
+A use-token that reached its 30-minute wall-clock eviction with nothing having
+settled it — no Stop-hook attribution, no explicit `memory_record_use`, and no
+in-process auto-commit because the session went idle — used to vanish on a bare
+`del`. Downstream the memory then read "retrieved, never applied", which is
+exactly the shape dead-weight curation punishes. The evidence had been thrown
+away, not withheld, and nothing said so.
+
+`SessionState` now stashes evicted tokens the way it already stashes expired
+pending writes, and the handler layer drains the stash and records one batched
+`use_token_expired` event (`ids`, `age_seconds`, `turns_since_issue`, `reason`).
+It deliberately carries no `outcome`/`auto`/`attribution`: an expiry is the
+*absence* of evidence, and settling evidence-free leftovers as `applied` would
+manufacture endorsements out of precisely the retrievals that earned none —
+poisoning the cold-endorsement signal and suppressing dead weight wholesale.
+
+The drain subtracts all three settling surfaces before reporting a loss, and two
+of them are invisible to a naive log scan. A retrieval the Stop hook settled
+before an idle gap is evicted *before* the dedup purge can see it; and an
+explicit `memory_record_use` writes its `use` event only *after* `_advance_turn`
+returns, so no amount of scanning back through the log can find it. Both were
+reproduced, and without the fix the append-only log permanently held one
+retrieval as simultaneously settled and lost.
+
+### Added — curation no longer reads a missing Stop hook as rot
+
+Dead weight means "retrieved but never applied", and settlement is overwhelmingly
+the Stop hook's job. On a store whose hook was never wired, every retrieved
+memory therefore looked like dead weight, and the machinery said so with total
+confidence across three surfaces — `memory_health`'s bucket, `curation_pending`'s
+`dead` count, and the unattended demotion pass that can retag memories to
+`ambient` on disk.
+
+All three now gate on whether the event log carries any Stop-hook settlement
+telemetry at all, via one shared predicate. Hookless stores get an empty bucket
+plus a `telemetry_coverage` field saying why, and the mutating pass refuses with
+a reason rather than silently retagging. The signal is deliberately narrow: an
+in-process `memory_audit_turn` emits `triggered_from="mcp_tool"` and does not
+count, because it is not evidence the hook is wired. Endorsement reporting also
+splits by attribution tier (model / hook / auto) — `endorsement_ratio` no longer
+conflates a hook's containment phrase-match with model deliberation. The
+published `endorsement_rate` and `memory_helped_rate` are untouched.
+
+### Added — a SessionStart hook, so a fresh session starts oriented
+
+The plugin now ships a `SessionStart` hook running a purpose-built
+`bettermemory session-start`, which prints what is stored for the current
+repository. A new session sees its scope counts with zero tool calls.
+
+It is built to be cheap and inert: counts come off the SQLite index rather than
+`load_all`, it reads config directly instead of constructing a `Store` (whose
+initialisation mkdirs, chmods and can trigger a full index rebuild), it stays
+silent on an empty store, an untrusted index, or nothing in scope, and it
+**records no events at all**. That last one is a hard mandate with a standing
+test, because a fresh session id written from a hook manufactures phantom
+sessions in doctor's census and hijacks the in-process session anchor. `doctor`
+gained a check for whether the hook is actually wired.
+
 ## 3.31.1 - 2026-07-31
 
 ### Fixed — `pip install bettermemory` works again (it did not, for any version)

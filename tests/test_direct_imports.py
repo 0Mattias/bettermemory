@@ -544,6 +544,20 @@ def test_cli_serve_direct_import() -> None:
     assert callable(run_serve)
 
 
+def test_cli_session_start_cmd_direct_import() -> None:
+    """The ``_cmd`` suffix is load-bearing, not cosmetic:
+    ``handlers/scope_overview.py`` is the sibling this command mirrors,
+    and a bare ``cli/session_start.py`` would re-create the basename
+    collision the ``audit_turn`` → ``audit_turn_cmd`` rename removed."""
+    from bettermemory.cli import session_start_cmd
+
+    subparser = _registered_parser(session_start_cmd, "session_start_cmd")
+    assert callable(session_start_cmd.run)
+    with pytest.raises(SystemExit) as exc:
+        subparser.parse_args(["--help"])
+    assert exc.value.code == 0
+
+
 def test_cli_sync_direct_import() -> None:
     from bettermemory.cli import sync
 

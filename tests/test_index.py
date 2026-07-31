@@ -2130,6 +2130,118 @@ def test_corpus_document_frequencies_returns_none_when_nothing_is_admitted(
     assert resolved is None
 
 
+# ---------------------------------------------------------------------------
+# Scope counts (the SessionStart hook's cheap half of memory_scope_overview)
+# ---------------------------------------------------------------------------
+
+
+def _scope_counts_from_load_all(
+    store: Store, *, repo_filter: str | None, worktree_filter: str | None
+) -> tuple[int, dict[str, int]]:
+    """The expensive, obviously-correct answer: parse every file.
+
+    This is exactly what `handlers/scope_overview.memory_scope_overview`
+    does (`load_all` + the shared admission predicate); the index path
+    exists only to produce the same numbers without the per-file open +
+    YAML parse. Deriving the expectation this way rather than hardcoding
+    it is the point — a hardcoded pair would still agree with an index
+    path that had silently stopped matching the surface it mirrors.
+    """
+    from bettermemory.search import candidate_admitted
+
+    total = 0
+    counts: dict[str, int] = {}
+    for memory in store.load_all():
+        if not candidate_admitted(
+            memory.scopes,
+            memory.origin,
+            scope_filter=None,
+            excluded=set(),
+            repo_filter=repo_filter,
+            worktree_filter=worktree_filter,
+        ):
+            continue
+        total += 1
+        for scope in memory.scopes:
+            counts[scope] = counts.get(scope, 0) + 1
+    return total, counts
+
+
+def test_scope_counts_agree_with_the_load_all_answer(
+    store: Store, memory_dir: Path
+) -> None:
+    """The columnar scan must produce the SAME counts `load_all` would.
+
+    Mixed origins on purpose: this is where a cheap path can silently
+    diverge, because admission is decided from reconstructed
+    `(repo, worktree_root)` columns rather than from the parsed origin
+    block. A memory scoped to a repo the caller isn't in must not be
+    counted, and the multi-scope rows must contribute 1 to the total and
+    1 to EACH of their scope buckets."""
+    from bettermemory.origin import Origin
+    from bettermemory.search import candidate_admitted
+
+    repo_a = "git@github.com:example/a.git"
+    repo_b = "git@github.com:example/b.git"
+    store.write(content="one", scopes=["tools"], origin=Origin(repo=repo_a))
+    store.write(
+        content="two", scopes=["tools", "learning-style"], origin=Origin(repo=repo_a)
+    )
+    store.write(content="three", scopes=["infrastructure"], origin=Origin(repo=repo_b))
+    # No origin at all — the "global" row that must pass for every caller.
+    store.write(content="four", scopes=["tools"])
+
+    def _admit(scopes: list[str], origin: Origin | None) -> bool:
+        return candidate_admitted(
+            scopes,
+            origin,
+            scope_filter=None,
+            excluded=set(),
+            repo_filter=repo_a,
+            worktree_filter=None,
+        )
+
+    resolved = index.scope_counts(memory_dir, admit=_admit)
+
+    assert resolved is not None
+    assert resolved == _scope_counts_from_load_all(
+        store, repo_filter=repo_a, worktree_filter=None
+    )
+    total, counts = resolved
+    assert total == 3, "repo-B's memory must not be counted for a repo-A caller"
+    assert counts == {"tools": 3, "learning-style": 1}
+
+
+def test_scope_counts_report_zero_rather_than_none_when_nothing_is_admitted(
+    store: Store, memory_dir: Path
+) -> None:
+    """Deliberately the OPPOSITE of `corpus_document_frequencies`.
+
+    There, an empty admitted set means "no denominator, fall back". Here
+    it is a true answer — "this repo has nothing stored" — and folding it
+    into the None channel would leave the caller unable to distinguish it
+    from an unusable index, which wants the opposite handling (one is
+    silence-because-nothing, the other is silence-because-broken)."""
+    store.write(content="alpha", scopes=["tools"])
+
+    assert index.scope_counts(memory_dir, admit=lambda _s, _o: False) == (0, {})
+
+
+def test_scope_counts_degrade_to_none_without_a_usable_index(
+    store: Store, memory_dir: Path, tmp_path: Path
+) -> None:
+    """Absent or corrupt index returns None, never an exception — the
+    caller is a session-start hook that must degrade to silence."""
+    assert index.scope_counts(tmp_path / "nope", admit=_admit_all) is None
+
+    store.write(content="alpha", scopes=["tools"])
+    index_path = index.index_path(memory_dir)
+    assert index_path.exists()
+    index_path.write_bytes(b"this is not a sqlite database" * 40)
+
+    assert index.scope_counts(memory_dir, admit=_admit_all) is None
+
+
 def test_index_round_trips_origin_columns(store: Store, memory_dir: Path) -> None:
     """Schema v6 persists the origin block's repo/worktree, and an UPSERT
     refreshes them — `migrate origin --repair` rewrites origins in place,

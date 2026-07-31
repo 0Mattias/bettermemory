@@ -9,9 +9,13 @@ specific test rather than as a smell in a high-level scenario test.
 
 from __future__ import annotations
 
+import time
+from pathlib import Path
+
 from bettermemory.session import (
     DEFAULT_USE_TOKEN_TTL_TURNS,
     SessionState,
+    _PENDING_USE_TOKEN_TTL_SECONDS,
 )
 
 
@@ -105,6 +109,84 @@ def test_reset_clears_pending_use_tokens() -> None:
     state.issue_use_tokens(["a", "b"])
     state.reset()
     assert _ids(state) == set()
+
+
+def _backdate_past_wall_clock_ttl(state: SessionState, memory_id: str) -> None:
+    """Age one pending token past `_PENDING_USE_TOKEN_TTL_SECONDS`.
+
+    Backdating rather than monkeypatching the constant: the eviction
+    resolves the cutoff at call time from the module constant, and the
+    same call-time-resolution contract is what several end-to-end tests
+    lean on. Mutating the token keeps this test on the eviction's own
+    axis.
+    """
+    state.pending_use_tokens[memory_id].issued_at = (
+        time.time() - _PENDING_USE_TOKEN_TTL_SECONDS - 1
+    )
+
+
+def test_evict_expired_use_tokens_stashes_for_drain() -> None:
+    """The wall-clock safety net must STASH, not delete.
+
+    `_evict_expired_use_tokens` used to be a bare `del` with zero test
+    coverage — a retrieval nothing settled (no hook attribution,
+    no explicit `record_use`, and no in-process auto-commit because the
+    session went idle) vanished at the 30-minute mark with no trace in
+    any surface. The stash is what lets the handler layer emit a
+    `use_token_expired` event for it.
+    """
+    state = SessionState()
+    state.issue_use_tokens(["stale", "fresh"])
+    _backdate_past_wall_clock_ttl(state, "stale")
+
+    state.advance_turn()
+
+    assert _ids(state) == {"fresh"}, "the fresh token must survive the sweep"
+    drained = state.pop_expired_use_tokens()
+    assert [tok.memory_id for tok in drained] == ["stale"]
+    # Idempotent: the stash is emptied by the drain, so a second drain
+    # in the same turn (or on the next turn, with no new eviction)
+    # reports nothing rather than re-reporting the same loss.
+    assert state.pop_expired_use_tokens() == []
+
+
+def test_reset_drops_the_expired_use_token_stash() -> None:
+    """`reset()` clears the live tokens, so leaving the stash behind
+    would make the next drain report losses for retrievals the caller
+    just declared irrelevant."""
+    state = SessionState()
+    state.issue_use_tokens(["stale"])
+    _backdate_past_wall_clock_ttl(state, "stale")
+    state.advance_turn()
+
+    state.reset()
+
+    assert state.pop_expired_use_tokens() == []
+
+
+def test_drain_clears_stash_when_recorder_disabled(tmp_path: Path) -> None:
+    """Telemetry off must not let the stash grow without bound.
+
+    `_drain_expired_use_tokens` pops BEFORE it consults
+    `recorder.enabled` — the same pop-before-record ordering
+    `_drain_pending_expired` uses. Get that backwards and a
+    telemetry-disabled deployment accumulates one dead
+    `PendingUseToken` per unsettled retrieval for the life of the
+    process.
+    """
+    from bettermemory.events import Recorder
+    from bettermemory.handlers._shared import _drain_expired_use_tokens
+
+    state = SessionState()
+    state.issue_use_tokens(["stale"])
+    _backdate_past_wall_clock_ttl(state, "stale")
+    state.advance_turn()
+
+    recorder = Recorder(root=tmp_path, session_id="sess_disabled", enabled=False)
+    lost = _drain_expired_use_tokens(state, recorder)
+
+    assert [tok.memory_id for tok in lost] == ["stale"]
+    assert state.pop_expired_use_tokens() == [], "the stash outlived its drain"
 
 
 def test_misattribution_guard_per_id_aging() -> None:

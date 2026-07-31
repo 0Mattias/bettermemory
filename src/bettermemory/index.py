@@ -1002,6 +1002,95 @@ def corpus_document_frequencies(
             conn.close()
 
 
+def scope_counts(
+    root: Path,
+    *,
+    admit: Callable[[list[str], Origin | None], bool],
+) -> tuple[int, dict[str, int]] | None:
+    """Per-scope memory counts over the collection a caller can retrieve.
+
+    Returns `(total, {scope: count})` where `total` is the number of
+    ADMITTED memories and each count is how many of those carry that
+    scope. A memory with three scopes contributes 1 to `total` and 1 to
+    each of three scope buckets — the same asymmetry
+    `handlers/scope_overview.memory_scope_overview` produces, because
+    this is the cheap half of that surface.
+
+    Why it lives here rather than reusing `Store.load_all()`: the
+    SessionStart hook (`cli/session_start_cmd.py`) runs on every session
+    open and must not pay the per-file open + YAML parse that dominates
+    `load_all` (~148 ms on the dogfood store, ~74 % of the equivalent
+    handler's cost). This reads the same four columns
+    `corpus_document_frequencies` does — `(id, scopes_json, origin_repo,
+    origin_worktree)` — in one columnar scan, and never touches a body.
+
+    `admit` is the caller's admission predicate over `(scopes, origin)`,
+    bound the same way `corpus_document_frequencies`' is: to
+    `search.candidate_admitted` with this caller's repo / worktree
+    filters. Judging admission in Python rather than SQL is not an
+    optimisation left on the table — `repos_match` consults per-process
+    alternate spellings registered by `origin.capture`, so the rule is
+    not expressible in SQL, and any index-side approximation would put
+    a count on screen that `memory_search` then contradicts. Sharing the
+    predicate is what makes "42 memories" here provably the same 42
+    `memory_scope_overview` reports.
+
+    UNLIKE `corpus_document_frequencies`, an empty admitted set returns
+    `(0, {})` rather than None: there, zero admitted rows means "no
+    denominator, fall back"; here it is a true and useful answer ("this
+    repo has nothing stored"), and collapsing it into the None channel
+    would make the caller unable to tell "nothing here" from "index
+    unusable" — the two want opposite handling.
+
+    Returns None — never raises — when the index is absent, unreadable,
+    corrupt, or older than the origin-column schema. The caller degrades
+    to silence rather than to an expensive `load_all`: a session-start
+    hook that stalls the session is worse than one that says nothing.
+    """
+    path = index_path(root)
+    if not path.exists():
+        return None
+    # `_connect` runs `PRAGMA journal_mode = WAL` on open and so raises
+    # on a corrupt file — it sits INSIDE the guard for the same reason
+    # `corpus_document_frequencies`' does.
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = _connect(path)
+        _ensure_schema(conn, path)
+        total = 0
+        counts: dict[str, int] = {}
+        for row in conn.execute(
+            "SELECT id, scopes_json, origin_repo, origin_worktree FROM memories"
+        ):
+            repo = row["origin_repo"]
+            worktree = row["origin_worktree"]
+            origin = (
+                Origin(repo=repo, worktree_root=worktree)
+                if (repo is not None or worktree is not None)
+                else None
+            )
+            # An origin carrying only `cwd` reconstructs as None here;
+            # `should_include_for_caller` reads only `repo` and
+            # `worktree_root`, so the two are indistinguishable to the
+            # admission rule.
+            try:
+                scopes = json.loads(row["scopes_json"])
+            except (TypeError, ValueError):
+                continue
+            scope_list = list(scopes)
+            if not admit(scope_list, origin):
+                continue
+            total += 1
+            for scope in scope_list:
+                counts[scope] = counts.get(scope, 0) + 1
+        return total, counts
+    except (sqlite3.Error, IndexVersionError, OSError):
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 def indexed_ids(root: Path, ids: Sequence[str] | None = None) -> set[str]:
     """Memory ids that currently have a row in the index.
 

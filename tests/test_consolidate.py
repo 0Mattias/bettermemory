@@ -85,6 +85,22 @@ def _memory(
     )
 
 
+def _record_hook_telemetry(rec: Recorder) -> None:
+    """Emit one Stop-hook-sourced telemetry row into `rec`'s log.
+
+    The demotion pass refuses to run on a store with no settlement
+    telemetry (`health.is_hook_telemetry_event` — a store where nothing
+    ever recorded an apply cannot distinguish dead weight from an
+    unwired hook). Every fixture that expects a demotion to HAPPEN
+    therefore has to look like a store whose hook runs.
+
+    `turn_audited` rather than a `use` row on purpose: it proves the
+    hook fires without recording an apply against any memory, so the
+    candidate under test still satisfies `applied_count == 0`.
+    """
+    rec.record("turn_audited", triggered_from="stop_hook", verdict="ok")
+
+
 # ---------------------------------------------------------------------------
 # Keeper selection
 # ---------------------------------------------------------------------------
@@ -1342,6 +1358,7 @@ def test_consolidate_apply_demotes_dead_weight(store: Store, memory_dir: Path) -
     # Seed the audit log with a retrieval (no applied event).
     rec = Recorder(root=memory_dir, session_id="test-session", enabled=True)
     rec.record("search", hit_ids=[m.id])
+    _record_hook_telemetry(rec)
 
     # Shift `now` forward so the memory looks aged-out of the window —
     # creates the same observable state as backdating `created` would,
@@ -1351,6 +1368,77 @@ def test_consolidate_apply_demotes_dead_weight(store: Store, memory_dir: Path) -
     assert any(a.kind == "demoted_to_ambient" for a in report.actions_taken)
     after = store.load_one(m.id)
     assert after.category == Category.AMBIENT
+    assert report.demotion_skipped_reason is None
+
+
+def test_hookless_store_refuses_the_unattended_demotion_pass(
+    store: Store, memory_dir: Path
+) -> None:
+    """The mutating surface, through the applying entry point.
+
+    `find_demotion_candidates` is the only one of the three
+    `_is_dead_weight` consumers that CHANGES the store, and
+    `run_auto_consolidate` drives it from the Stop hook with nobody
+    reviewing the diff. On a store with no settlement telemetry every
+    retrieved memory satisfies `applied == 0`, so an ungated pass
+    retags the entire working set fact->ambient on the strength of a
+    hook that was never wired — a one-way trip `memory_update` cannot
+    reverse.
+
+    This is byte-for-byte the fixture of
+    `test_consolidate_apply_demotes_dead_weight` above MINUS its one
+    Stop-hook row, so that test is this one's positive control: the two
+    differ in exactly the signal under test, and the assertion here is
+    on DISK state, not on the report.
+    """
+    m = store.write(content="durable body content here", scopes=["tools"])
+    rec = Recorder(root=memory_dir, session_id="test-session", enabled=True)
+    rec.record("search", hit_ids=[m.id])
+    # No _record_hook_telemetry — that omission IS the test.
+
+    future_now = datetime.now(timezone.utc) + timedelta(days=60)
+    report = consolidate(store, apply=True, window_days=30, now=future_now)
+
+    assert report.demotion_candidates == []
+    assert not any(a.kind == "demoted_to_ambient" for a in report.actions_taken)
+    # Zero retags on disk — the assertion the report cannot make for us.
+    assert store.load_one(m.id).category is None
+    # ...and the refusal is visible rather than an unexplained empty
+    # list, on both the dataclass and the rendered surfaces.
+    assert report.demotion_skipped_reason is not None
+    assert "Stop-hook" in report.demotion_skipped_reason
+    assert report.to_dict()["demotion_skipped_reason"] == report.demotion_skipped_reason
+    assert "NOT MEASURED" in render_text(report)
+
+
+def test_auto_consolidate_refuses_demotion_on_a_hookless_store(
+    store: Store, memory_dir: Path
+) -> None:
+    """Same refusal on the genuinely unattended path — the Stop hook's
+    own `run_auto_consolidate`, which is where an unreviewed mass retag
+    would actually happen. Positive control:
+    `test_auto_consolidate_demote_preserves_identity`, the same fixture
+    with one hook row, which demotes."""
+    store.write(content="a solitary stale fact worth keeping around", scopes=["tools"])
+    before = store.load_all()[0]
+    rec = Recorder(root=memory_dir, session_id="sess_auto")
+    rec.record("search", query="anything", returned=[before.id])
+    # No hook telemetry.
+
+    result = run_auto_consolidate(
+        store,
+        recorder=rec,
+        session_id="sess_auto",
+        interval_hours=24.0,
+        max_memories=500,
+        now=before.created + timedelta(days=60),
+    )
+
+    assert result is not None and result["status"] == "ran"
+    assert result["demoted"] == 0
+    after = store.load_all()
+    assert len(after) == 1
+    assert after[0].category is None, "unattended pass retagged a hookless store"
 
 
 def test_consolidate_scope_merge_preserves_concurrent_verification(
@@ -1415,6 +1503,7 @@ def test_consolidate_demotion_retag_preserves_concurrent_verification(
     m = store.write(content="durable body content here", scopes=["tools"])
     rec = Recorder(root=memory_dir, session_id="test-session", enabled=True)
     rec.record("search", hit_ids=[m.id])
+    _record_hook_telemetry(rec)
 
     real_load_all = Store.load_all
     calls = {"count": 0}
@@ -2535,6 +2624,7 @@ def test_auto_consolidate_demote_preserves_identity(
     # Retrieved once, never applied → demotion candidate once it ages out.
     rec = Recorder(root=memory_dir, session_id="sess_auto")
     rec.record("search", query="anything", returned=[before.id])
+    _record_hook_telemetry(rec)
     # Run far enough ahead that `before` is older than the 30d demote window.
     future = before.created + timedelta(days=60)
     result = run_auto_consolidate(
