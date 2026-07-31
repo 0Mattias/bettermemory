@@ -259,3 +259,30 @@ jobs:
       # because torch is absent in this job.
       - name: Test (skipping no_extras + no_fastembed tests)
         run: uv run pytest -m "not no_extras and not no_fastembed" -q
+
+  commit-lint:
+    name: commit messages
+    runs-on: ubuntu-latest
+    steps:
+      # `fetch-depth: 0` is required: the linter grades a RANGE, and the
+      # default shallow clone has neither the base commit nor the
+      # intermediate commits of a multi-commit push.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # Only the commits this event introduces are graded. History before
+      # the rules landed was written under the older, looser guidance and
+      # re-grading it would fail every run forever with nothing anyone can
+      # fix. On a first push to a new branch `event.before` is all zeroes
+      # and the range will not resolve — the linter reports that and exits
+      # 0 rather than blocking on an unfixable condition.
+      - name: Lint commit messages
+        env:
+          RANGE: >-
+            ${{ github.event_name == 'pull_request'
+                && format('{0}..{1}',
+                          github.event.pull_request.base.sha,
+                          github.event.pull_request.head.sha)
+                || format('{0}..{1}', github.event.before, github.sha) }}
+        run: python3 tools/commit_lint.py --range "$RANGE"

@@ -7,6 +7,42 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## Unreleased
+
+### Added — a commit-message standard, and a linter that enforces the mechanical half
+
+The log had drifted into first-person narration and aphoristic subjects — entries
+that read as a diary of the session rather than a description of the change.
+`perf(footprint): stop paying for prose and titles nobody reads` is a slogan;
+what a bisecting reader needs is which surface shrank and by how much.
+
+[`tools/commit_lint.py`](tools/commit_lint.py) encodes the part of the standard
+that can be decided without taste: the Conventional Commits envelope, a 72-char
+subject in the imperative mood with no trailing period, a blank line before the
+body, 100-char body wrapping, and two wording rules — no first-person narration
+and no conversational filler. Tone is not machine-checkable and stays in prose in
+CONTRIBUTING.md, enforced by review.
+
+Two things keep the gate from becoming friction. Quoted material is exempt, so a
+commit that records the literal query a search was run with
+(`memory_search("how do I cut a release")`) is a citation rather than a
+violation. And only the commits a push or pull request *introduces* are graded —
+history written before the rules existed is never re-linted, because failing
+every run over something nobody can fix teaches people to bypass the gate.
+
+The new `commit messages` CI job runs the linter over the event's range with
+`fetch-depth: 0`. An unresolvable range (a force push, a first push, a shallow
+clone) reports and exits 0 rather than blocking. For local feedback before the
+commit is recorded, `git config core.hooksPath .githooks` installs the
+`commit-msg` hook, which runs the same rules.
+
+### Removed — 198 abandoned workflow branches
+
+Prior multi-agent runs left one `worktree-wf_*` branch per agent behind after
+their worktrees were pruned. Every one was verified patch-equivalent to main
+(`git cherry`) or, for the single commit git could not match on patch id, checked
+line by line against the tree before deletion.
+
 ## 3.32.0 - 2026-07-31
 
 ### Changed — the always-resident surface is ~12% smaller, with nothing taught less

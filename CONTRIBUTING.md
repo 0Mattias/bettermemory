@@ -45,11 +45,40 @@ Note the scopes differ: `mypy` type-checks `src/` **and** `tests/`, `pyright` on
 ## Pull request conventions
 
 - One logical change per PR. Easier to review, easier to revert.
-- Commit messages follow the form Claude Code is configured to emit (Conventional Commits: `feat:`, `fix:`, `docs:`, `test:`, `ci:`, `perf:`, `refactor:`). The body explains *why*, not just *what*. Several existing commits are good examples of the level of detail the project aims for.
+- Commit messages follow the standard in [Commit messages](#commit-messages) below. It is enforced: the `commit messages` CI job lints every commit a push or PR introduces.
 - Update `CHANGELOG.md` under the `## Unreleased` heading with one of: `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, or `Security`. Keep the entry to a couple of paragraphs at most, but include the *why*. Readers come to the changelog for decisions, not just diffs.
 - New tools, new configuration knobs, or anything else that expands the surface need a corresponding entry in [`docs/api.md`](docs/api.md), under the existing section taxonomy (Retrieval, Writing, Lifecycle, Verification, Curation, Session-local, Episodes). Do not ship a tool whose contract is not pinned in api.md.
 - Tests are required for new behavior. The [`tests/`](tests/) directory has good examples of the hand-written plus property-based mix the project aims for.
 - The Claude Code plugin scaffold at the repo root (`.claude-plugin/marketplace.json` and `plugin/`) carries its own version number that has to stay in sync with `pyproject.toml`. Bumping `pyproject.toml` without bumping `plugin/.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` lights up the version-sync tests in [`tests/test_plugin.py`](tests/test_plugin.py); fix the manifest before pushing.
+
+## Commit messages
+
+The commit log is a permanent technical record that strangers read years later, usually while bisecting a regression at an inconvenient hour. Write it for that reader.
+
+**Form.** Conventional Commits, subject at most 72 characters:
+
+```
+type(scope): imperative description of the change
+
+Body: what changed and why, in plain declarative prose, wrapped at 100.
+```
+
+`type` is one of `feat`, `fix`, `docs`, `test`, `ci`, `perf`, `refactor`, `build`, `chore`, `style`, `revert`, `bench`, `release`. `scope` is optional and lowercase. The description starts lowercase, is written in the imperative mood ("release the lock", not "released the lock"), and does not end with a period. A `!` before the colon marks a breaking change.
+
+**Register.** Describe the change, not the session that produced it, and not how anyone felt about it.
+
+- **No first person.** No "I", "my", "myself". A quoted user utterance or a literal query is a citation and is exempt — `memory_search("how do I cut a release")` is fine.
+- **No narration of the process.** "turns out", "finally!", "oops", "as promised" tell the reader nothing about the code. If a wrong first hypothesis is worth recording, record the *conclusion* it produced and the evidence, not the journey.
+- **No aphorisms, jokes, or slogans in the subject.** The subject is an index entry. `perf(footprint): stop paying for prose and titles nobody reads` is a slogan; `perf(builder): drop pydantic schema titles from the served tool surface` is an index entry.
+- **No anthropomorphism.** Guards do not have patience and ratchets cannot be taught. Say what the code now does.
+
+**Body.** Explain *why* the change is correct and what it costs, at whatever length that honestly takes — this project's bodies are long on purpose and that is not the problem being corrected here. Cite files, symbols, measured numbers, and commit SHAs. Every published number must trace to a committed artifact; see [Project values](#project-values-in-case-they-help-review-judgment).
+
+**Enforcement.** [`tools/commit_lint.py`](tools/commit_lint.py) encodes the mechanical rules — envelope, subject shape and length, blank line before the body, body wrapping, first person, filler. Tone is not machine-checkable and is left to review. The `commit messages` CI job lints exactly the commits a push or pull request introduces; history written before the rules landed is not re-graded. To catch a violation before it is recorded rather than after, install the hook once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
 
 ## Versioning and the compatibility contract
 

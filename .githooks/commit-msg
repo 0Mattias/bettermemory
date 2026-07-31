@@ -1,0 +1,23 @@
+#!/bin/sh
+# Reject a commit message that breaks the house style before it is
+# recorded, so the fix is an edit rather than a rebase.
+#
+# Not installed automatically — git will not run hooks from a tracked
+# directory on its own. Opt in once per clone:
+#
+#     git config core.hooksPath .githooks
+#
+# CI runs the same linter over the pushed range, so skipping the hook
+# only moves the failure later; it does not avoid it.
+#
+# Prefers the repo's own interpreters and falls back to whatever `python3`
+# is on PATH — the linter is stdlib-only, so any 3.11+ interpreter works.
+set -e
+
+for candidate in venv/bin/python .venv/bin/python; do
+    if [ -x "$candidate" ]; then
+        exec "$candidate" tools/commit_lint.py --message-file "$1"
+    fi
+done
+
+exec python3 tools/commit_lint.py --message-file "$1"
