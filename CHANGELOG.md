@@ -7,6 +7,61 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.31.1 - 2026-07-31
+
+### Fixed — `pip install bettermemory` works again (it did not, for any version)
+
+`mcp` was declared as `mcp>=1.0.0` with no upper bound, from the initial commit
+onward. mcp 2.0.0 — published 2026-07-28, four minutes after 1.29.0 — deletes the
+`mcp.server.fastmcp` module that `builder.py`, `handlers/_shared.py` and
+`session.py` import by path. A fresh install therefore resolved 2.0.0, installed
+without complaint, and raised `ModuleNotFoundError` on `import bettermemory`. The
+process could not start, so this was total rather than degraded: no CLI, no
+server, no frame sent to a client.
+
+Because the constraint is baked into the metadata of every wheel already on PyPI,
+this was not confined to the newest release. **Every published version was
+un-installable**, including ones that were correct on the day they shipped — 3.30.0
+resolves mcp 2.0.0 today and fails identically. That removed the usual escape
+hatch of pinning to the previous release, and is why this went out as a hotfix
+ahead of scheduled work.
+
+The dependency is now capped at `mcp>=1.0.0,<2.0.0`. Supporting mcp 2.x means
+porting `FastMCP` to its successor `mcp.server.mcpserver.MCPServer` across those
+modules; that is deliberately a separate change, on the reasoning that a rushed
+port of the SDK the whole tool sits on is worse than a supported 1.x for a few
+more days.
+
+### Added — CI installs from the declared constraints, not from the lockfile
+
+All nine CI legs were green throughout, which is the part worth explaining. Every
+job installs with `uv sync`, which obeys the committed `uv.lock` and its
+`mcp==1.27.0` pin. The suite thus verified — on three platforms, four Pythons and
+both embeddings extras — a resolution that no user of the published package
+receives. A lockfile records a resolution that worked once; `[project.dependencies]`
+is the contract new installs resolve against, and nothing here had ever exercised
+the second one.
+
+The new `install from declared constraints` job builds a bare venv, runs
+`uv pip install .` with no lockfile, then imports the package, calls `build_server()`
+and runs the CLI entry point. Not reading the lockfile is the whole mechanism, and it
+makes the job a forward alarm rather than a regression test: resolving the declared
+constraints afresh takes the newest allowed version of everything, so the next
+upstream major that breaks us goes red on an ordinary push instead of on a user's
+machine after a release. It follows that the job can go red without any local change
+— that is the design, and the fix is a considered constraint edit or a port, never
+deleting the job. It runs inside the reusable workflow `release.yml` gates on, so
+installability is now part of the publish gate. (The command also spells out
+`--resolution highest`, which is uv's own default — written explicitly so a future
+config default cannot disarm the alarm quietly, not because it changes behaviour.)
+
+Verified in both directions before shipping: against `HEAD` as published the smoke
+test exits 1 with the `ModuleNotFoundError`; with the cap it resolves mcp 1.29.0 —
+newer than the lock's 1.27.0, so the guard also covers minor movement the locked
+legs cannot see — and exits 0.
+
+Postmortem: [`docs/incidents/2026-07-31-mcp-2-unbounded-constraint.md`](docs/incidents/2026-07-31-mcp-2-unbounded-constraint.md).
+
 ## 3.31.0 - 2026-07-31
 
 ### Added — search snippets show why the hit came back, not what the memory opens with

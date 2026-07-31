@@ -1,6 +1,6 @@
 [project]
 name = "bettermemory"
-version = "3.31.0"
+version = "3.31.1"
 description = "Memory you can verify — a trust layer between an AI coding agent and its own past: per-hit staleness verdicts, claim-level use attribution, measured effectiveness, episodic run-state. MCP-native, local-first, MIT, no cloud."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -30,8 +30,18 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed",
 ]
+# The `<2` cap on mcp is load-bearing, not defensive hygiene. mcp 2.0.0
+# deleted the `mcp.server.fastmcp` module outright (FastMCP's successor is
+# `mcp.server.mcpserver.MCPServer`), and four modules import from it —
+# `builder.py`, `handlers/_shared.py`, `session.py`, and
+# `tests/test_resident_footprint.py`. With the constraint unbounded, a
+# fresh `pip install bettermemory` resolved mcp 2.0.0 and died at import;
+# `uv.lock` pins 1.x, so every CI leg stayed green through it. The
+# `install from declared constraints` job in ci.yml is the guard that
+# closes that blind spot — it resolves WITHOUT the lockfile. Lift the cap
+# only together with the port; see docs/incidents/2026-07-31-mcp-2-unbounded-constraint.md.
 dependencies = [
-    "mcp>=1.0.0",
+    "mcp>=1.0.0,<2.0.0",
     "pydantic>=2.0",
     "pyyaml>=6.0",
     "platformdirs>=4.0",

@@ -103,6 +103,81 @@ jobs:
       - name: Test
         run: uv run pytest --cov=bettermemory --cov-report=term-missing --cov-fail-under=80 -q
 
+  install-from-constraints:
+    name: install from declared constraints
+    runs-on: ubuntu-latest
+    # Every other job in this file installs through `uv sync`, which
+    # obeys the committed `uv.lock`. That is the right thing for
+    # reproducible test runs and the wrong thing for answering the only
+    # question a user actually asks: "does `pip install bettermemory`
+    # work today?" The lock pins a resolution that was valid when it was
+    # written; `[project.dependencies]` is the contract new installs
+    # resolve against, and nothing verified it.
+    #
+    # It failed silently for exactly that reason. `mcp>=1.0.0` was
+    # unbounded when mcp 2.0.0 deleted `mcp.server.fastmcp`, so 3.31.0
+    # shipped to PyPI dead on arrival while all nine CI legs stayed
+    # green (postmortem:
+    # docs/incidents/2026-07-31-mcp-2-unbounded-constraint.md).
+    #
+    # So this job deliberately does NOT use the lockfile. That single
+    # omission is what makes it a forward alarm: resolving the declared
+    # constraints afresh takes the newest allowed version of every
+    # dependency, so the next upstream major that breaks us fails here,
+    # on a normal push, instead of on a user's machine after a release.
+    # It follows that this job can go red without any local change —
+    # that is the design, and the fix is a considered constraint edit
+    # (or a port), never deleting the job.
+    #
+    # `--resolution highest` below is uv's own default, spelled out
+    # rather than relied upon: it is the behaviour this job's whole
+    # premise rests on, so a future `[tool.uv]` setting or changed
+    # default must not be able to quietly turn the alarm off. It is
+    # belt-and-braces, NOT the mechanism — and it says nothing about
+    # cache freshness, which uv governs separately via `--refresh`.
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      # A bare venv + `uv pip install .` — no `uv sync`, no `uv.lock`,
+      # no extras. This is the default install a new user gets.
+      - name: Install from declared constraints (no lockfile)
+        run: |
+          uv venv --python 3.13 /tmp/constraint-venv
+          uv pip install --python /tmp/constraint-venv/bin/python \
+            --resolution highest .
+
+      - name: Show resolved dependency versions
+        # Printed unconditionally so a future red run says WHICH upstream
+        # moved without anyone having to reproduce it locally.
+        run: uv pip list --python /tmp/constraint-venv/bin/python
+
+      # The import is the whole point: the mcp 2.0.0 breakage was a
+      # module-level `ModuleNotFoundError`, so merely resolving and
+      # installing cleanly would still have shipped it. `build_server()`
+      # goes one step further and exercises the SDK surface we actually
+      # call (tool registration), which is where a subtler upstream
+      # change would land. `BETTERMEMORY_DIR` keeps it hermetic — the
+      # smoke test must not depend on, or create, a real user store.
+      - name: Smoke test (import + build the server + CLI entry point)
+        env:
+          BETTERMEMORY_DIR: /tmp/constraint-smoke-store
+        run: |
+          /tmp/constraint-venv/bin/python -c "
+          import bettermemory
+          from bettermemory import build_server
+          build_server()
+          print('import + build_server OK:', bettermemory.__version__)
+          "
+          /tmp/constraint-venv/bin/bettermemory --version
+
   typecheck-pyright:
     name: type check (pyright)
     runs-on: ubuntu-latest
