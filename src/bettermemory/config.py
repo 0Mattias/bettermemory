@@ -495,6 +495,23 @@ class BehaviorConfig:
     # record of why the gate exists, NOT the current gated set: tools gated
     # since qualify under the membership rule instead, and the measurement
     # predates them.
+    #
+    # This knob stays a BOOL: a third "core" tier below the lean surface was
+    # evaluated 2026-07-31 and closed. Priced per tool against what the
+    # shipped guidance actually instructs, every candidate is spoken for —
+    # memory_show is the rebase step both stale hints hand back,
+    # memory_remove is the only action memory_health's two largest
+    # recommendations offer and the one tool with no CLI counterpart to
+    # fall back on, memory_scope_disable is instructed verbatim by the
+    # system-prompt addendum and the plugin skill (memory_scope_enable is
+    # its undo), and memory_list is in that addendum's tool headline and in
+    # DESC_MEMORY_AUDIT_TURN's retrieval-event set. So the flow-complete
+    # core is the lean surface itself and saves zero; dropping all five
+    # regardless is 9% of the resident tool surface. A schema-deferring
+    # client already pays under 1% by fetching schemas on demand, which is
+    # why the server instructions name the four tools to load first rather
+    # than offering a preset. Full measurement in docs/ROADMAP.md and the
+    # Phase 6 section of docs/audit/upgrade-plan-2026-07-30.md.
     full_tool_surface: bool = True
 
 

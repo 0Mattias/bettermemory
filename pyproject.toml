@@ -173,6 +173,20 @@ module = [
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
+# `jsonschema` ships no inline types and `types-jsonschema` is not in the
+# dev extra. It is NOT optional the way the block above is — `mcp` declares
+# `jsonschema>=4.20.0` unconditionally, so it is present wherever this
+# package can even be imported. It appears in exactly one place:
+# `tests/test_schema_title_scrub.py` re-runs the validation that
+# `mcp/client/session.py` performs on every structured tool result, which
+# is the only honest way to show that scrubbing schema `title` annotations
+# does not change what a client accepts or rejects. Pulling in a stub
+# package to type three call sites of `validate()` would cost a dependency
+# for no safety.
+module = ["jsonschema"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
 # numpy gets its OWN block (not the shared list above) because
 # `ignore_missing_imports` alone does not help once numpy is actually
 # installed — with the `embeddings` extra present, mypy *follows* the

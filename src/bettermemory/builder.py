@@ -381,5 +381,102 @@ def _register_tools(
             handlers.episode_patterns
         )
 
+    _strip_schema_titles(mcp)
+
+
+def _strip_titles(node: object) -> None:
+    """Delete pydantic's auto-generated `title` annotations, in place.
+
+    `title` in JSON Schema is a display annotation: nothing validates
+    against it, and no client behaviour depends on it. Pydantic emits one
+    per property (`content` -> `"title": "Content"`) plus one per schema
+    (`"title": "memory_writeArguments"`), and every byte of that ships to
+    every client on every turn.
+
+    Structure-aware on purpose. Values under `properties` / `$defs` /
+    `definitions` are keyed by CALLER-CHOSEN names, so a parameter
+    literally named `title` would be deleted from the wire by a naive
+    recursive walk — the schema would keep validating and the parameter
+    would silently stop being advertised. Those maps are descended into
+    by value only; `title` is removed from schema NODES. No tool has a
+    parameter by that name today, which is exactly why the guard has to
+    be structural rather than a name check.
+    """
+    if isinstance(node, dict):
+        node.pop("title", None)
+        for key, value in node.items():
+            if key in ("properties", "$defs", "definitions") and isinstance(
+                value, dict
+            ):
+                for sub in value.values():
+                    _strip_titles(sub)
+            else:
+                _strip_titles(value)
+    elif isinstance(node, list):
+        for item in node:
+            _strip_titles(item)
+
+
+def _strip_schema_titles(mcp: FastMCP) -> None:
+    """Scrub the served schemas after registration.
+
+    There is no SDK hook: `Tool.from_function` hard-codes
+    `parameters = arg_model.model_json_schema(by_alias=True)`, and
+    `FastMCP.list_tools` serves that dict verbatim as `inputSchema`. So
+    the only place to do this is the registry, after the fact.
+
+    Two deliberate choices:
+
+    * Both legs are mutated IN PLACE rather than replaced. The MCP
+      `Tool.output_schema` is a `cached_property` over
+      `fn_metadata.output_schema`. Measured on the installed SDK: the
+      cache is COLD at this point (nothing reads `Tool.output_schema`
+      between `add_tool` and here), so assigning a new dict would in fact
+      work today — but it would work by accident of ordering. On a warm
+      cache assignment is silently ignored and the titles ship, while
+      in-place mutation is correct either way. The difference is pinned
+      against the SDK by
+      `test_assigning_a_new_output_schema_would_be_silently_ignored` in
+      `tests/test_schema_title_scrub.py`, so the reason this is not
+      written the more obvious way stays checkable rather than folklore.
+    * The output leg is scrubbed, NOT removed. Registering with
+      `structured_output=False` would drop `structuredContent` from every
+      tool result — a wire-shape change. `FuncMetadata.convert_result`
+      only tests `output_schema is not None` and validates through
+      `output_model`, never through this dict, so scrubbing keeps
+      structured output on and keeps it validating.
+
+    Both accesses are feature-detected rather than pinned to an SDK
+    version: `_tool_manager._tools` is private, and the floor is
+    `mcp>=1.0.0` (the `<2.0.0` cap is a separate, load-bearing
+    constraint — see `docs/incidents/2026-07-31-mcp-2-unbounded-constraint.md`).
+    Raising the floor to protect a size optimisation would be a real
+    install-compat break in exchange for nothing.
+
+    A SILENT NO-OP is the failure mode that matters here: if a future SDK
+    moves either attribute, this returns quietly and every served schema
+    regrows by ~2.8k chars with no diff anywhere in this repo. Two guards
+    watch for it — `tests/test_schema_title_scrub.py` measures that the
+    scrub still finds something to scrub, and
+    `tests/test_resident_footprint.py`'s remainder ceiling is set below
+    the un-scrubbed total so the regrowth cannot fit under it.
+    """
+    registry = getattr(getattr(mcp, "_tool_manager", None), "_tools", None)
+    if not isinstance(registry, dict):
+        log.debug(
+            "MCP tool registry is not at `_tool_manager._tools`; skipping the "
+            "schema title scrub. Served schemas are correct, just larger."
+        )
+        return
+    for tool in registry.values():
+        params = getattr(tool, "parameters", None)
+        if isinstance(params, dict):
+            _strip_titles(params)
+        output_schema = getattr(
+            getattr(tool, "fn_metadata", None), "output_schema", None
+        )
+        if isinstance(output_schema, dict):
+            _strip_titles(output_schema)
+
 
 __all__ = ["build_server", "_register_tools"]

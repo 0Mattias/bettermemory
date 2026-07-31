@@ -54,14 +54,6 @@ DESC_MEMORY_UPDATE = (
     "Refine an existing memory in place. Preferred over "
     "memory_remove + memory_write when correcting a stored fact — "
     "preserves `id`, `created`, and `source`; bumps `updated`.\n\n"
-    "Concurrency: under multi-agent contention, two disjoint edits "
-    "on the same memory used to silently last-write-wins. The handler "
-    "now performs an optimistic-concurrency check against the snapshot "
-    "the caller fetched via memory_show. If another agent updated the "
-    "memory between your read and write, the response is "
-    '`status="stale"` with the current on-disk `updated` timestamp; '
-    "re-fetch with memory_show and retry your edit on top of the "
-    "current snapshot.\n\n"
     "Parameters (pass at least one):\n"
     "- `id`: required.\n"
     "- `content`: new body. Replacing the body clears "
@@ -75,7 +67,9 @@ DESC_MEMORY_UPDATE = (
     "- `category`: accepts `fact` and `ambient`. "
     "`user-inference` is REJECTED here — that category exists "
     "to gate WRITES through the pending-confirm flow; updates "
-    "have no equivalent gate." + DESC_MEMORY_LINKS_TAIL
+    "have no equivalent gate.\n\n"
+    'Returns `status="stale"` when another agent updated the '
+    "memory first; the `hint` says to re-fetch and retry." + DESC_MEMORY_LINKS_TAIL
 )
 
 

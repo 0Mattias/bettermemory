@@ -44,11 +44,11 @@ flagging it. Offline, throwaway store.
   cites, commits landed since it was last confirmed.
 - Nothing is auto-injected; retrieval is a deliberate tool call. The 18
   default tools still charge schema every turn: a serialized
-  `tools/list` of 38,009 bytes, which is 4.84x claude-mem's whole
-  default surface (7,845 B); 28,604 of ours is names and descriptions,
-  measured 2026-07-26 at 3.29.0 ([bench/toolcost][toolcost]). CI caps
-  the descriptions; a trim landed after that run, so a re-measure comes
-  in lower.
+  `tools/list` of 33,714 bytes, 26,846 of it names and descriptions,
+  measured 2026-07-31 at 3.31.1 ([bench/toolcost][toolcost]). CI caps
+  the descriptions. The claude-mem head-to-head in that directory is a
+  2026-07-26 run whose bettermemory arm predates these cuts, so its
+  ratio is dated rather than current.
 - Write gates: transient state, secret-shaped tokens and near-duplicates
   bounce; claims about *you* stage for confirmation.
 - One markdown file per memory. Greppable, git-syncable. Markdown is

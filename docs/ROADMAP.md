@@ -97,6 +97,34 @@ Planned work, in rough priority order. Plans change; the
   skill, the system-prompt addendum, and the swarm fan-in path depend
   on them. Rationale at the episode block in `builder.py`; the
   per-turn cost was addressed by trimming `DESC_EPISODE_SEARCH`.
+- **A "core" tool-surface preset — a third registration tier below the
+  default lean surface.** Measured and closed. Every tool such a preset
+  would drop is named by shipped guidance as a call the model is
+  supposed to make, so a genuinely flow-complete core *is* the lean
+  surface and saves nothing: `memory_show` is the rebase step both
+  optimistic-concurrency stale hints hand back, `memory_remove` is the
+  only action `memory_health`'s two largest recommendations offer and
+  it is the one tool with no `bettermemory` CLI counterpart to fall
+  back on, `memory_scope_disable` is instructed verbatim by the
+  system-prompt addendum and the plugin skill (and
+  `memory_scope_enable` is its documented undo), and `memory_list` sits
+  in the addendum's tool headline and in `memory_audit_turn`'s
+  retrieval-event set. Dropping all five anyway is 9% of the resident
+  tool surface and breaks four of those. Meanwhile a schema-deferring
+  client already pays under 1% by listing tool names and fetching
+  schemas on demand — the same win, two orders of magnitude larger, for
+  free — which is why the server's instructions block names the four
+  tools to load first instead. Rationale next to the knob in
+  `config.py`; the full table is in the Phase 6 section of
+  `docs/audit/upgrade-plan-2026-07-30.md`.
+- **Merging the micro-tool pairs in 3.x** — `memory_write_confirm` /
+  `memory_write_cancel` and `memory_scope_enable` /
+  `memory_scope_disable` into one call each. The compatibility contract
+  forbids removing a tool within a major, and the economics are
+  backwards without the removal: a merged replacement can only be
+  *added* in a minor, so inside 3.x it would grow the description
+  budget rather than shrink it. A 4.0 question — deprecation cycle
+  first, removal at the major with migration notes.
 
 ## Contributing
 

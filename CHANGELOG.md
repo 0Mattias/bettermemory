@@ -9,6 +9,43 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+### Changed — the always-resident surface is ~12% smaller, with nothing taught less
+
+Every tool description and schema this server registers is sent on every turn,
+whether or not a single memory tool is called. That cost was 38,887 chars; it is
+now 34,212 — and the toolcost benchmark's own measure of the served payload drops
+38,424 → 33,714 bytes.
+
+Two independent cuts. **Pydantic annotates every parameter with an auto-generated
+`title` that restates the parameter's own name** (`"title": "Include Bodies"` next
+to `include_bodies`); no client reads them and the SDK offers no way to suppress
+them, so they are now stripped from every served schema after registration —
+2,812 chars across the lean surface, 4,219 across the full one. The scrub is
+structure-aware rather than a blind recursive walk: values under `properties` and
+`$defs` are keyed by caller-chosen names, so a parameter genuinely named `title`
+would otherwise be deleted from the wire. None exists today; the guard is for the
+one that eventually does.
+
+**Roughly 1.9k chars of duplicated policy prose came out of the descriptions.**
+The rule applied throughout: prose earns its place only if nothing else teaches
+the same thing at the moment it is needed. Where a write gate already refuses with
+a hint naming both the remedy and its override flag, the description restating
+that remedy was paying rent twice. Where it did not — `memory_verify`'s
+`verified_*` REPLACE semantics bite on a *successful* verify, so no refusal can
+ever teach them — the prose stayed. Every removed line was traced to what carries
+it now; the descriptions still name every status, and the reject hints did not
+grow to compensate.
+
+Behaviour is unchanged and was checked rather than assumed: an independently
+written stripper reproduces the served schemas exactly, `properties` order,
+`required`, `type` and `additionalProperties` are identical on all 45 tool legs,
+structured output stays enabled, and the guard test re-runs the same validation
+the MCP client performs on every structured result — so a client accepts and
+rejects precisely what it did before.
+
+The description ceiling ratchets 27,500 → 26,000 and the schema-remainder ceiling
+10,000 → 7,500, so the space cannot quietly refill.
+
 ### Added — read a journal without paying for every body
 
 `episode_search` returns full bodies, which is right for reading one session and

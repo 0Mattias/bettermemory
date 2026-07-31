@@ -68,7 +68,7 @@ from typing import Any, NamedTuple
 
 from mcp.server.fastmcp import FastMCP
 
-from bettermemory.builder import build_server
+from bettermemory.builder import _strip_titles, build_server
 from bettermemory.config import (
     BehaviorConfig,
     Config,
@@ -140,11 +140,46 @@ class Footprint(NamedTuple):
 # split it after the fact. Note which leg did NOT move — `input_schemas`
 # is untouched by G2, because a convention is prose and prose is free of
 # the remainder this file governs. Only G1 spent the reserve.
+#
+# RE-MEASURED for the footprint phase's schema title scrub (E5), which is
+# the edit the comment below the table had been waiting for since this
+# module was written. `builder._strip_schema_titles` deletes pydantic's
+# auto-generated `title` annotations from the served schemas after
+# registration:
+#
+#     input_schemas   7,352 -> 5,233   (-2,119, 88 title keys)
+#     output_schemas  1,770 -> 1,077   (-693, 21 title keys)
+#     remainder       9,881 -> 7,069   (-2,812)
+#
+# Both governed legs moved and NOTHING else did — `descriptions`,
+# `instructions` and `skill_frontmatter` are untouched, because the scrub
+# reaches schemas only. That is the shape of a saving that costs nothing:
+# no prose was cut, no parameter removed, no tool degated. `title` is a
+# display annotation in JSON Schema; nothing validates against it and no
+# client behaviour reads it, so the bytes were pure rent. See
+# `tests/test_schema_title_scrub.py` for the proofs, including the one
+# that matters most here — the scrub's failure mode is a SILENT no-op, and
+# the ratcheted ceiling below is the second net under it (the un-scrubbed
+# 9,881 does not fit under 7,500).
+#
+# RE-MEASURED AGAIN for the footprint phase's description cuts (E1), the
+# other half of the same phase:
+#
+#     descriptions   27,398 -> 25,535  (-1,863)
+#
+# and nothing else moved, which is the mirror of the scrub above: E5 touched
+# only schemas, E1 touches only prose, so the two legs are independently
+# attributable. The cut spans are duplicated policy that each gate's reject
+# `hint` already teaches verbatim, plus `memory_audit_turn`'s caller
+# reference — a Stop-hook-dispatched tool whose DESC the model pays for every
+# turn and is told never to act on. `tests/test_server.py`'s
+# `_DESC_BASELINE` carries the per-tool attribution and the argument for
+# each; its ceiling ratcheted 27,500 -> 26,000 in the same commit.
 _FOOTPRINT_BASELINE = Footprint(
     instructions=1_608,
-    descriptions=27_398,
-    input_schemas=7_352,
-    output_schemas=1_770,
+    descriptions=25_535,
+    input_schemas=5_233,
+    output_schemas=1_077,
     skill_frontmatter=759,
     tool_count=18,
 )
@@ -170,21 +205,52 @@ _FOOTPRINT_BASELINE = Footprint(
 # the next round thousand. That left 394 chars of headroom — the reserve
 # plus roughly one more parameter of the widest shape measured above, which
 # is the margin for a parameter whose name runs longer than planned (cost
-# grows with the name: pydantic repeats it in the generated `title`).
+# grows with the name: pydantic repeated it in the generated `title`).
 #
-# WHAT IS LEFT, now that the reserve is gone: 119 chars, which is ONE more
-# parameter of the widest shape and no more — the negative test below
-# re-derives that number rather than trusting this comment. The plan's
-# footprint phase is what restores headroom (stripping the pydantic `title`
-# keys from the served schemas is expected to cut ~2k chars off this
-# remainder); until it lands, the next optional flag added to any tool is
-# the one that fails.
+# RATCHETED DOWN, 10,000 -> 7,500, by the schema title scrub (E5). This is
+# the recalibration the paragraph below always described, taken in the
+# direction it explicitly covers, and it is the reason the literal moves
+# rather than the headroom simply widening: a ceiling left at 10,000 over a
+# 7,069 remainder is not a budget, it is 2,931 chars of licence that nobody
+# argued for. The saving was bought once, from the SDK's annotations, and
+# banking it is the whole point of taking it.
+#
+# THE ARITHMETIC, re-derived rather than inherited:
+#
+#     remainder now                              7,069
+#     ceiling (next round 500 above it)          7,500
+#     headroom                                     431
+#
+# The parameters below are re-measured post-scrub and they got CHEAPER,
+# because the generated `title` was most of what a short flag cost:
+#
+#     memory_write    acknowledge_user_claim  bool         93 -> 60
+#     episode_search  include_bodies          bool         76 -> 51
+#     episode_search  ids                     list|None   106 -> 92
+#                                                 total   275 -> 203
+#
+# So 431 chars is room for roughly seven boolean flags (58 each on the
+# served surface now) or four of the widest `ids` shape — several times the
+# single parameter the pre-scrub ceiling had left, which is what "restores
+# headroom" meant. The negative test below re-derives the count rather than
+# trusting this comment.
 #
 # Anything past that is a deliberate recalibration, same ceremony as the
 # description ceiling: re-measure `_FOOTPRINT_BASELINE` in the same commit
 # and move this literal to a new round number. That includes the ratchet
-# DOWN.
-_REMAINDER_CEILING = 10_000
+# DOWN — this move is that clause being exercised for the first time, and
+# it is worth saying plainly that the ceremony is identical in both
+# directions. The measured total moving is the POINT of a down-ratchet,
+# where in an up-ratchet it would be the thing under suspicion.
+#
+# One more thing this ceiling now backstops. The scrub's failure mode is a
+# SILENT no-op: it feature-detects a private SDK attribute, and if a future
+# `mcp` moves it the function logs at debug and returns, leaving correct
+# schemas that are 2,812 chars fatter with no diff anywhere in this repo.
+# 7,069 + 2,812 = 9,881, which fits under 10,000 and does NOT fit under
+# 7,500. Ratcheting is therefore not only bookkeeping — it is what makes
+# this file able to notice.
+_REMAINDER_CEILING = 7_500
 # Reserve for parameters this plan schedules but has NOT landed. Zero:
 # all three are on the wire (see `_LANDED_PARAMS`), so there is nothing
 # left to hold room for. A future phase that schedules a parameter
@@ -201,12 +267,22 @@ _LANDED_PARAMS: tuple[tuple[str, str], ...] = (
     ("episode_search", "include_bodies"),
     ("episode_search", "ids"),
 )
-_LANDED_PARAM_BUDGET = 275
+# Re-derived post-scrub: the three measure 203 together (60 + 51 + 92),
+# down from 275, because pydantic's generated `title` was between a third
+# and a half of what each short flag cost. Left at 275 the assert would
+# still pass — and would have quietly loosened by 26%, which is the way a
+# budget stops being one. Rounded up to 210 for the same reason the
+# original carried slack: a parameter's cost tracks its NAME, so a rename
+# is a re-measurement, and a guard that fails on a two-character rename is
+# noise rather than signal.
+_LANDED_PARAM_BUDGET = 210
 # Soft line: crossing it warns instead of failing, so the pressure is
 # visible to whoever caused it. Set one `ids`-shaped parameter (the widest
 # measured) below the ceiling — crossing it means the next parameter does
 # not fit, which is the moment to react rather than the moment to discover.
-_REMAINDER_PRESSURE = _REMAINDER_CEILING - 110
+# Re-derived with the ceiling: `ids` is 92 post-scrub, not 106, so the gap
+# rounds to 100.
+_REMAINDER_PRESSURE = _REMAINDER_CEILING - 100
 
 
 def _blob(obj: Any) -> str:
@@ -329,9 +405,8 @@ def _param_cost(schema: dict, name: str) -> int:
     """What one parameter costs in the serialized schema.
 
     Measured by deleting the property and re-serializing, rather than by
-    diffing two probe tools: the schema's own `title` carries the tool
-    name, so a diff across two differently-named tools charges the
-    parameter for the difference in tool names."""
+    diffing two probe tools, which would charge the parameter for
+    everything else that differs between the two schemas."""
     without = copy.deepcopy(schema)
     del without["properties"][name]
     required = without.get("required")
@@ -341,13 +416,26 @@ def _param_cost(schema: dict, name: str) -> int:
 
 
 async def _scheduled_param_costs() -> dict[str, int]:
-    """Live cost of each scheduled parameter, from a throwaway server."""
+    """Live cost of each scheduled parameter, from a throwaway server.
+
+    The probe is a bare `FastMCP`, so it never goes through
+    `_register_tools` and its schema still carries pydantic's `title`
+    annotations. A real server's does not — `builder._strip_schema_titles`
+    deletes them at registration — and the title is between a third and a
+    half of what a short flag costs. Pricing an unlanded parameter off the
+    raw probe would therefore overquote it by ~50%, and the entire point of
+    this machinery is to answer "what will this cost?" before the signature
+    is written. So the probe is scrubbed with the same function the server
+    uses, and is priced on the surface the parameter would actually land
+    on."""
     mcp = FastMCP("resident-footprint-probe")
     mcp.tool(name="probe", description="parameter-cost probe")(
         _scheduled_param_signature
     )
     (tool,) = await mcp.list_tools()
-    return {name: _param_cost(tool.inputSchema, name) for name in _SCHEDULED_PARAMS}
+    schema = copy.deepcopy(tool.inputSchema)
+    _strip_titles(schema)
+    return {name: _param_cost(schema, name) for name in _SCHEDULED_PARAMS}
 
 
 def _served_schemas(mcp: Any) -> dict:
@@ -355,15 +443,18 @@ def _served_schemas(mcp: Any) -> dict:
     parameter the way a code change would.
 
     This reaches through a private attribute deliberately. It is the same
-    path the planned `title`-stripping scrub has to use — the SDK exposes
-    no hook — so if this assertion ever fires, that plan item needs
-    re-designing and this is the cheapest place to find out."""
+    path `builder._strip_schema_titles` uses — the SDK exposes no hook —
+    so if this assertion ever fires, that scrub has silently become a
+    no-op and this is the cheapest place to find out. It no longer
+    describes a plan: the scrub shipped, and
+    `tests/test_schema_title_scrub.py` states the same contract from the
+    other side."""
     manager = getattr(mcp, "_tool_manager", None)
     registry = getattr(manager, "_tools", None)
     assert isinstance(registry, dict) and registry, (
         "FastMCP's tool registry is no longer at `_tool_manager._tools`. The "
         "schema-growth guard below reaches through it to grow a parameter, and "
-        "the planned title-scrub would mutate the same path — re-check both "
+        "the shipped title-scrub mutates the same path — re-check both "
         "against the installed SDK before assuming either still works."
     )
     return registry
@@ -375,12 +466,20 @@ def _grow_one_parameter(mcp: Any, tool_name: str, index: int) -> None:
     Exactly the wire-visible effect of adding an optional flag to a handler
     signature: a new entry in `properties`, no change to `required`. The
     synthetic name is sized close to the real ones, so each injection costs
-    within a few chars of what a real flag costs (cost scales with the name,
-    which pydantic repeats in the generated `title`)."""
+    within a few chars of what a real flag costs (cost still scales with
+    the name — it is the property key).
+
+    NO `title` KEY, and that is a re-measurement rather than a tidy-up.
+    Before the scrub, pydantic emitted one and a real added flag paid for
+    it, so the injection carried one too and cost 89 chars. Now
+    `builder._strip_schema_titles` deletes it before any client sees it, a
+    real flag costs 58, and an injection that still carried a title would
+    overstate every parameter by a third — making the headroom below read
+    as smaller than it is, in a test whose entire job is to report how much
+    room is left."""
     schema = _served_schemas(mcp)[tool_name].parameters
     schema["properties"][f"acknowledge_probe_{index:02d}"] = {
         "default": False,
-        "title": f"Acknowledge Probe {index:02d}",
         "type": "boolean",
     }
 
@@ -615,11 +714,13 @@ async def test_an_unbudgeted_parameter_trips_the_remainder_ceiling(
     # At least whatever the plan still schedules, and never fewer than one:
     # `_SCHEDULED_PARAMS` is empty now that the reserve is spent, and
     # `absorbed >= 0` would be vacuously true of a ceiling already breached.
-    # One is also the honest reading of the headroom at HEAD — 119 chars is
-    # room for a single parameter of the widest shape measured — so this
-    # number going UP is the signal that the footprint phase's ratchet-down
-    # landed, and going to zero is the signal that the ceiling now fails on
-    # the next flag anyone adds.
+    #
+    # The footprint phase's ratchet-down has now landed and this number moved
+    # with it: 431 chars of headroom over a 58-char injection absorbs SEVEN,
+    # against the one the pre-scrub ceiling could take. The floor stays at
+    # one on purpose — it is the assertion that the ceiling has not been
+    # tightened into failing on the next flag anyone adds, which is the
+    # opposite failure from the one above and just as easy to ship.
     required = max(1, len(_SCHEDULED_PARAMS))
     assert absorbed >= required, (
         f"the headroom absorbs only {absorbed} added parameters, fewer than "

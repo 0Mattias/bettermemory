@@ -35,32 +35,32 @@ if TYPE_CHECKING:
     from .._handlers import ToolHandlers
 
 
+# Deliberately compact: this description is default-registered, so its
+# full length is a per-turn context cost paid by the ONLY reader that
+# cannot act on it — the model, which the first sentence tells never to
+# call this. The tool is dispatched by the client's Stop hook, and a hook
+# author reads docs/api.md (`memory_audit_turn`), where the probe
+# construction, the versioned threshold rule and the calibration payload
+# live in full. What stays here is the never-call banner, every parameter,
+# every return-shape key, the side-effects, and the retrieval-event set
+# tests/test_prompts.py pins ("memory_list" — the predicate must stay
+# spelled out, not deferred). Gating the tool behind `full_tool_surface`
+# is not an option; the Stop hook reaches it over the MCP channel.
 DESC_MEMORY_AUDIT_TURN = (
     "Not for in-conversation use. This tool is dispatched by the "
     "client's end-of-turn Stop hook through the MCP channel; the "
     "model should never call this directly.\n\n"
-    "Silent-miss telemetry. Call from a client-side end-of-turn hook "
-    "with the user's message (and optionally the assistant's reply) to "
-    "detect turns where memory *should* have been retrieved but wasn't. "
-    "Runs a cheap search probe over the pool and search mode "
-    "`memory_search` would have used (matches what the model would have "
-    "done), "
-    "then checks whether a `memory_search`, `memory_show`, or "
-    "`memory_list` event fired in the same session within "
-    "`lookback_seconds` (default 60). When "
-    "a high-relevance hit exists AND no retrieval happened in the "
-    "window, emits a `search_miss` event so memory_health / "
-    "memory_scope_overview can surface the rate. Returns a structured "
+    "Silent-miss telemetry (full reference in docs/api.md). Runs the "
+    "search probe `memory_search` would have run for `user_message` "
+    "(`assistant_response` optional), then checks whether a "
+    "`memory_search`, `memory_show`, or `memory_list` event fired in "
+    "the same session within `lookback_seconds` (default 60). A "
+    "high-relevance probe hit with no retrieval in that window is a "
+    "miss. Auto-scopes to the caller's repo so the probe matches the "
+    "model's view; honours session-disabled scopes. Returns a "
     "`MissReport` with `verdict` in {'miss', 'ok', 'no_signal'} plus "
-    "the top probe hits for offline triage. This tool is the "
-    "false-negative half of the retrieval contract — without it, the "
-    "cost of opt-in retrieval (model didn't search when it should "
-    "have) is structurally invisible. Auto-scopes to the caller's "
-    "repo so the probe matches the model's view; honours "
-    "session-disabled scopes. Side-effects: emits `turn_audited` "
-    "always, plus `search_miss` when the verdict is `miss`. Safe to "
-    "call after every turn; cost is one `memory_search`-equivalent "
-    "sweep."
+    "the top probe hits. Side-effects: emits `turn_audited` always, "
+    "plus `search_miss` when the verdict is `miss`."
 )
 
 

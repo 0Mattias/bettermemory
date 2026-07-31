@@ -927,9 +927,21 @@ def surface_claim_counts() -> dict[str, int]:
 # be a floor at all — the README bullet states four figures, and dropping
 # the cue word from it left three of them silently un-governed while the
 # fourth kept the surface above a floor of one.
+#
+# Lowered for the footprint phase's toolcost re-publish. Both doc surfaces
+# dropped the same two figures — the `4.84x` head-to-head ratio and
+# claude-mem's own byte total — because only bettermemory's arm was re-run.
+# Restating a ratio whose numerator moved and whose denominator is a
+# 2026-07-26 probe of someone else's package would have been derivable from
+# the committed pair and still false, which is the one failure mode this
+# module cannot see: it checks that numbers trace to an artifact, never that
+# the artifact still describes the thing the sentence is about. So the
+# ratio left the prose rather than being recomputed, and these floors follow
+# the claims down. README additionally folded its input-schema figure into
+# the internals paragraph, which is why the two surfaces now differ.
 _CLAIM_FLOORS = {
-    "README.md": 4,
-    "docs/internals.md": 4,
+    "README.md": 2,
+    "docs/internals.md": 3,
     _DOCTOR_MODULE: 4,
 }
 
@@ -1066,14 +1078,27 @@ def test_negative_self_test_reaches_the_real_collector(
 
 
 def test_a_changed_digit_on_a_passing_surface_fails() -> None:
-    """The surfaces that pass today must be the reason, not luck."""
+    """The surfaces that pass today must be the reason, not luck.
+
+    The tampered literal has to be one docs/internals.md currently
+    carries, which makes it a lockstep dependency of every re-publish:
+    when the footprint phase retired the 3.29.0 figure this test had
+    pinned since it was written, `tampered == real` and the assert below
+    was the only thing between that and a self-test quietly grading a
+    no-op edit. Hence the explicit inequality — it fires on a stale
+    literal before the interesting assertion can pass vacuously.
+    """
     real = (_REPO_ROOT / "docs/internals.md").read_text(encoding="utf-8")
     assert check_text("docs/internals.md", real, size_rule=True) == []
-    tampered = real.replace("38,009 bytes", "38,999 bytes")
-    assert tampered != real
+    tampered = real.replace("33,714 bytes", "33,999 bytes")
+    assert tampered != real, (
+        "docs/internals.md no longer carries the literal this self-test "
+        "tampers with; re-point it at a byte figure the file currently "
+        "claims, or the tamper is a no-op and proves nothing."
+    )
     failures = check_text("docs/internals.md", tampered, size_rule=True)
     assert [(f.claim.kind, f.claim.subject) for f in failures] == [
-        ("unpinned", "38,999 bytes")
+        ("unpinned", "33,999 bytes")
     ]
 
 

@@ -87,12 +87,28 @@ scope toggles, and episodes. Signatures, defaults, and return shapes:
 
 That default surface is not cheap, and it is charged on every turn
 whether a memory tool is called or not. The full serialized
-`tools/list` measured 38,009 bytes — 28,604 of it names and
-descriptions, 7,096 input schemas — on 2026-07-26 at 3.29.0, which is
-4.84x claude-mem 13.12.4 at its own default. Method, fairness rules and
-the raw JSON: `bench/toolcost/README.md`. A description trim landed
-after that run, so a re-measure comes in slightly lower; CI hard-caps
-the description component so it cannot drift upward unnoticed.
+`tools/list` measured 33,714 bytes — 26,846 of it names and
+descriptions, 5,252 input schemas — on 2026-07-31 at 3.31.1. Method,
+fairness rules and the raw JSON: `bench/toolcost/README.md`. CI
+hard-caps the description component so it cannot drift upward
+unnoticed.
+
+The 2026-07-26 head-to-head against claude-mem 13.12.4 in that same
+directory is deliberately left as it was rather than re-paired. Its
+bettermemory arm is the pre-footprint surface, and re-running only our
+side would produce a ratio whose numerator and denominator came from
+different weeks — the arithmetic would work and the claim would not.
+The pair gets re-run as a pair or not at all; until then the number
+above is what this project charges, and the ratio is historical.
+
+Two serialization conventions live side by side here and are not
+interchangeable. `full_bytes` above is the wire cost: JSON syntax
+around every name, description and schema, and it carries neither the
+server `instructions` block nor the plugin skill frontmatter.
+`tests/test_resident_footprint.py` sums the same components as raw
+Python lengths and adds the two the wire figure omits, so its total is
+the resident-context cost rather than the `tools/list` payload. Quote
+them separately; a review that mixes them will find them disagreeing.
 
 ## CLI
 

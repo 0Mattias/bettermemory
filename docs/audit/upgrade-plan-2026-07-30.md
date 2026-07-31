@@ -970,6 +970,69 @@ Phase 7's G1/G2 DESC deltas land BEFORE E1's final ratchet + toolcost
 re-run, or the just-ratcheted ceiling gets immediately re-recalibrated —
 see the sequencing section)
 
+**PHASE STATUS: DONE 2026-07-31.** E5 and E1 shipped; E3 CLOSED on
+measurement; E2 recorded as a 4.0 line item. All three verifier lenses
+(behaviour, policy-loss, budget) returned PASS. Measured end state:
+
+| surface | entering Phase 6 | after | ceiling |
+|---|---|---|---|
+| lean DESC | 27,398 | **25,773** | 26,000 (was 27,500) |
+| lean schemas (in+out) | 9,122 | **6,310** | — |
+| uncapped remainder | 9,881 | **7,069** | 7,500 (was 10,000) |
+| aggregate resident | 38,887 | **34,212** | — |
+| toolcost `full_bytes` | 38,424 | **33,714** | — |
+
+- **E1 missed the plan's "≤ ~24k" AC and that is the right outcome.**
+  The honest scalpel figure is 25.5k, not 24k. The AC was written before
+  the pin inventory was measured: only ~1.8k of DESC prose is genuinely
+  duplicated policy, and the rest is field-reference prose that ~10 tests
+  pin by exact substring. Cutting to 24k would have meant deleting
+  reference material the model has nowhere else to read. **AC amended to
+  25.5k**; the ceiling ratcheted to a round 26,000 rather than to the
+  achieved number, per the documented two-rule recalibration, with a new
+  rule 3 added explicitly rather than stretching rule 2.
+- **E5 came in 37% larger than the plan's estimate**: 2,812 chars, not
+  ~2,047 — the plan counted inputSchema titles only and missed the 693
+  chars of outputSchema titles. The scrub is `properties`/`$defs`-aware
+  on purpose: a naive recursive walk would delete a parameter literally
+  named `title` from the wire. None exists today across 63 param names;
+  the guard is for the one that eventually does.
+- **The scrub is feature-detected, not floor-pinned.** `Tool.output_schema`
+  is a `cached_property`, so the output leg is scrubbed in place on
+  `fn_metadata.output_schema` rather than reassigned. Raising the `mcp`
+  floor was rejected as a needless install-compat break days after
+  3.31.1 fixed exactly that class of problem.
+- **Behaviour was proven, not asserted.** An independently-written
+  stripper reproduced `served == strip_titles(base)` across all 45 tool
+  legs, with `properties` order, `required`, `type` and
+  `additionalProperties` identical and structured output still enabled.
+  The scrub test re-runs the same validation `mcp/client/session.py`
+  performs on every structured result — the only honest way to show a
+  client accepts and rejects exactly what it did before.
+- **No policy was lost.** All 56 removed lines were traced atom by atom.
+  Every one has a home except a single `memory_audit_turn` cadence
+  sentence, now added to `docs/api.md` at zero resident cost. The one cut
+  that carried a genuinely *preventive* rule (memory_write's transient
+  marker examples) is better covered than before: `DESC_EPISODE_WRITE`
+  already teaches the same content up front AND says where it should go
+  instead. One briefed cut was correctly REFUSED — verify's `verified_*`
+  REPLACE rule bites on a SUCCESSFUL verify, so no reject hint could ever
+  teach it; deleting it would have been real subtraction.
+- **E3 closed on measurement.** A flow-complete core is ~12-13 tools and
+  saves 1,123 chars (3.5%) — far under the bar. Deferred-loading
+  harnesses already solve this for clients that defer; the preset would
+  serve only non-deferring clients, at the cost of a permanent second
+  surface to keep honest.
+- Coordinator follow-ups applied after the lanes: `status="stale"` restored
+  to the update/verify DESCs (E1's own status-index rule, not applied to
+  the two tools that own that status), the `duplicate` bullet re-pointed at
+  its hint, "offending spans" corrected to "what matched" (accurate for
+  `previously_removed`, which returns matched tombstones), and
+  `bench/toolcost/README.md` given a dated re-measure section — the
+  benchmark's own front page still headlined the 3.29.0 figures that the
+  two doc surfaces it links from had already moved past. `_DESC_BASELINE`
+  re-measured for the three DESCs those edits touched: 25,535 → 25,773.
+
 **E5. Strip schema title bloat (do first — biggest clean win).**
 Every param carries an auto-generated pydantic `"title"`; measured
 saving: 2,047 chars of the 7,077-char lean inputSchema, plus outputSchema
@@ -1022,11 +1085,116 @@ tools on demand — so the preset serves non-deferring clients only).
 AC: preset registers a working flow-complete subset, or the item is
 closed with the measured rationale; default surface byte-identical.
 
+**ITEM STATUS: CLOSED 2026-07-31 — measured, not estimated. Nothing
+ships; the default surface is byte-identical because it is untouched.**
+Re-measured on the post-E5 / post-E1 tree: the lean surface is 18 tools,
+25,535 description chars + 6,310 schema chars = **31,845 resident chars**
+(compact, key-sorted JSON — the same serialization E4 uses).
+
+Flow-completeness was priced per tool against what the SHIPPED guidance
+tells the model to call, which is the standard the AC set ("a *working*
+flow-complete subset"). On that standard every candidate the plan named
+is blocked, each anchor re-verified at current line numbers:
+
+| dropped | why it can't go |
+|---|---|
+| `memory_show` | the rebase step BOTH CAS stale hints hand back (`handlers/update.py:314`, `handlers/verify.py:215`) and `docs/api.md:107` / `:164`; also pinned into the plugin skill body by `tests/test_plugin.py:244` |
+| `memory_remove` | the only action `memory_health`'s two largest recommendations offer (`health.py:2115`, `:2161`), and it has **no `bettermemory` CLI counterpart** — whereas the whole design contract of the existing gate is that a lean client keeps an escape hatch (`docs/api.md:3`) |
+| `memory_scope_disable` | instructed verbatim by the always-loaded addendum (`prompts.py:174`, pinned equal to `docs/system_prompt.md` by `tests/test_prompts.py:62`) and by `plugin/skills/bettermemory/SKILL.md:178` |
+| `memory_scope_enable` | the documented undo of that instruction (`handlers/scope_toggle.py:1`, "symmetric pair") — dropping it alone leaves a session-scoped disable with no reversal |
+| `memory_list` | in the addendum's `Tools:` headline (`prompts.py:37`), in `DESC_MEMORY_AUDIT_TURN`'s retrieval-event set (pinned, `tests/test_prompts.py:450`), and in `docs/api.md:143`'s restore-verification triad |
+
+So the strictly flow-complete core **is** the lean 18, and saves nothing:
+
+| tier | tools | saving | % of lean resident |
+|---|---|---|---|
+| T0 — drops nothing shipped guidance instructs | 18 | **0** | 0.0% |
+| T1 — + `memory_audit_turn`, the one candidate with a real CLI counterpart | 17 | −1,123 | 3.5% |
+| T2 — plan's core with `memory_show` kept | 14 | −1,915 | 6.0% |
+| T3 — plan's core as written | 13 | −2,884 | 9.1% |
+| (reference) T2 + the whole episode tier, recorded unavailable 2026-07-30 | 10 | −11,575 | 36.3% |
+
+The plan's estimate is confirmed and slightly *reduced*: it guessed ~2k
+desc + ~1k schema ≈ 3k, and T3 measures 2,884 — because E5 already
+harvested roughly a third of the schema half as pydantic titles, for
+**every** client including the ones that would never opt into a preset.
+The AC asked whether a coherent subset saves materially more than the
+estimate. It saves less than it would have before E5, and the coherent
+one saves zero.
+
+Two inputs were wrong and are corrected here so they are not reused:
+
+1. **The Stop-hook constraint on `memory_audit_turn` was mis-stated** (in
+   the paragraph above and in fact-pack hazard 6(ii)). The shipped plugin
+   Stop hook runs the **CLI** — `uvx bettermemory audit-turn`, in
+   `plugin/hooks/hooks.json`, pinned at `tests/test_plugin.py:312` — not
+   the MCP tool. The real constraint is recorded at
+   `handlers/audit_turn.py:47-48`: some clients dispatch it over the MCP
+   channel, so gating it silently disables their miss telemetry. That
+   makes it the only defensible drop — and 3.5% does not buy a third
+   registration tier.
+2. **`memory_show` was not the only omission from the plan's arithmetic.**
+   `memory_remove` is the harder blocker: gated tools are allowed to
+   disappear from the lean surface precisely because a CLI counterpart
+   survives, and `memory_remove` has none, so a preset that drops it
+   makes the dead-weight and cold-endorsement recommendations
+   unactionable with no fallback.
+
+Against ≤6% sits the standing cost of a permanent third surface: a new
+`[behavior]` key + loader coercion + the deliberate dataclass-vs-loader
+default asymmetry (`config.py`); a second gate predicate over
+registrations that are unconditional today (`builder._register_tools`);
+a `_CORE` / `_CORE_COUNT` membership pin mirroring `_GATED` /
+`_LEAN_COUNT` (`tests/test_tool_surface.py:33`, `:66-67`); the "27 tools,
+18 by default" sentence restated for a third value in `docs/api.md:3`,
+`docs/internals.md:81-82` and `plugin/README.md:12-14`; a third
+denominator for `_FOOTPRINT_BASELINE.tool_count`
+(`tests/test_resident_footprint.py:184`) and for `_lean_descriptions` /
+`_DESC_BASELINE` (hazard 10); a `bench/toolcost` arm, since `probe_tools`
+measures the shipped default only; and coherence work on the addendum and
+SKILL.md every time a tool is added, forever.
+
+And the alternative already beats it by two orders of magnitude. A
+schema-deferring harness lists tool **names** and fetches schemas on
+demand: **276 chars for the lean 18 and 428 for all 27 — 0.9% and 0.8%**
+of the eager 31,845 / 50,574. The audit session that produced this
+measurement is itself the existence proof: all 27 bettermemory tools were
+listed deferred and zero schemas were loaded. The server already ships
+the mitigation in its own instructions block (`builder.py:191-192`):
+"Schema-deferred harness? Load the core set in ONE ToolSearch call…". A
+preset would serve non-deferring clients only, at 6%, for something
+deferring clients already get at 1%.
+
+Recorded in `docs/ROADMAP.md` under "Not planned" and next to the knob in
+`config.BehaviorConfig.full_tool_surface`, so the decision is reachable
+from the code and not only from this document. **Reopening requires new
+evidence**, specifically: a measured client that neither defers schemas
+nor can set `full_tool_surface`, or shipped guidance rewritten so the
+five tools above are no longer instructed.
+
 **E2. Micro-tool merges — 4.0 material, do not do now.** Tool removal is
 forbidden within 3.x by the compatibility contract. A merged replacement
 may be ADDED in a minor with a `Deprecated` changelog entry + runtime
 warnings; removal waits for 4.0. Record as a 4.0 line item; skip
 otherwise.
+
+**ITEM STATUS: RECORDED as a 4.0 line item 2026-07-31 — no code.**
+Entered in `docs/ROADMAP.md` under "Not planned", alongside the existing
+`verified_commits` / `verified_versions` entry that has the same shape.
+The candidates are the two symmetric pairs: `memory_write_confirm` /
+`memory_write_cancel` and `memory_scope_enable` / `memory_scope_disable`.
+`CONTRIBUTING.md:82` puts "removing a tool or parameter" in the forbidden
+class within a major, and the staged-write flow is additionally
+structurally enforced for `category='user-inference'`, with both names
+promised in `DESC_MEMORY_WRITE`, in `DESC_MEMORY_SCOPE_OVERVIEW`'s
+`pending_writes` line, and in `docs/api.md`. The economics are also
+backwards inside 3.x: a merged replacement can only be *added*
+(`CONTRIBUTING.md:72`), so within the major it would **increase**
+description cost rather than reduce it — the saving only arrives with the
+removals. Path if it is ever wanted: the deprecation cycle at
+`CONTRIBUTING.md:93-107` (a `Deprecated` changelog entry plus the
+config/API warning lane), then removal at 4.0 with the migration notes
+`docs/release.md` requires.
 
 ### Phase 7 — Episodes as the primary continuity layer (M)
 

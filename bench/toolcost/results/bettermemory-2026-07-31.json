@@ -1,0 +1,41 @@
+{
+  "bettermemory_version": "3.31.1",
+  "date": "2026-07-31",
+  "machine": {
+    "machine": "arm64",
+    "os": "Darwin 25.5.0"
+  },
+  "protocol": "2025-06-18",
+  "results": [
+    {
+      "bytes_per_tool": 1873,
+      "full_bytes": 33714,
+      "full_chars": 33714,
+      "input_schema_bytes": 5252,
+      "label": "bettermemory (shipped default)",
+      "name_description_bytes": 26846,
+      "name_description_chars": 26846,
+      "tool_count": 18,
+      "tools": [
+        "episode_handoff",
+        "episode_promote",
+        "episode_search",
+        "episode_write",
+        "memory_audit_turn",
+        "memory_list",
+        "memory_record_use",
+        "memory_remove",
+        "memory_scope_disable",
+        "memory_scope_enable",
+        "memory_scope_overview",
+        "memory_search",
+        "memory_show",
+        "memory_update",
+        "memory_verify",
+        "memory_write",
+        "memory_write_cancel",
+        "memory_write_confirm"
+      ]
+    }
+  ]
+}

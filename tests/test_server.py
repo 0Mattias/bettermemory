@@ -5929,7 +5929,7 @@ async def _lean_descriptions(tmp_path: Path) -> dict[str, str]:
 # The budget, as named constants: the failure text, the pressure warning and
 # the recorded measurement all read the same numbers, so none can drift from
 # what the assert enforces.
-_DESC_BUDGET_CEILING = 27_500
+_DESC_BUDGET_CEILING = 26_000
 # Soft line. Crossing it warns instead of failing, so the pressure is visible
 # to whoever caused it rather than only to whoever trips the ratchet later.
 _DESC_BUDGET_PRESSURE = _DESC_BUDGET_CEILING - 100
@@ -5970,6 +5970,39 @@ _DESC_BUDGET_PRESSURE = _DESC_BUDGET_CEILING - 100
 # leaves 452 chars under `_DESC_BUDGET_CEILING` — the ceiling is deliberately
 # NOT moved here, since the later footprint work ratchets it DOWN and more
 # description edits land before then.
+#
+# Re-measured for the footprint phase's description cuts (E1) — the DOWN
+# ratchet the note above was deferring to. Live total 27,398 -> 25,535, and
+# exactly the four rows this commit edits moved:
+#
+#     memory_write       3,325 -> 2,729  (-596)
+#     memory_audit_turn  1,365 ->   822  (-543)
+#     memory_update      2,234 -> 1,782  (-452)
+#     memory_verify      1,817 -> 1,545  (-272)
+#
+# Three different arguments, and they are not interchangeable. memory_write,
+# memory_update and memory_verify shed prose that a gate's reject `hint`
+# already teaches VERBATIM at the only moment it is actionable — the
+# transient / credential / previously_removed / scope_mismatch remedies and
+# the two `status="stale"` rebase paragraphs. What survives is the part a
+# hint cannot carry, because a caller who never trips the gate still needs
+# it: the status NAMES stay as a one-line index (this file's own
+# `test_status_vocabulary_is_documented` in tests/test_server_user_claims.py
+# records why — "a refusal status the model has never read about is a dead
+# end"), the `duplicate` bullet keeps its corroboration semantics, which no
+# hint states, and memory_verify's `verified_*` REPLACE rule MOVED onto the
+# parameter bullets rather than being deleted with the concurrency paragraph
+# it happened to sit in. That rule bites on a SUCCESSFUL verify, so no
+# reject can ever teach it — deleting it would have been the one real
+# subtraction in this commit.
+#
+# memory_audit_turn is the other argument: it is dispatched by the client's
+# Stop hook and its own first sentence tells the model never to call it, so
+# its caller reference was rent paid every turn by the one reader that
+# cannot act on it. Banner, parameters, return shape, side-effects and the
+# pinned retrieval-event set stay; the probe-construction and
+# why-this-matters essay moved to docs/api.md, where the hook author who
+# needs it already reads. Same trade `DESC_EPISODE_SEARCH` made.
 _DESC_BASELINE = {
     "episode_handoff": 1560,
     # Re-measured 2026-07-31: 1597 -> 1700 (+103) for the state-channel
@@ -5995,7 +6028,7 @@ _DESC_BASELINE = {
     # this comment carried until the fixture existed to contradict it.
     "episode_search": 2311,
     "episode_write": 2350,
-    "memory_audit_turn": 1365,
+    "memory_audit_turn": 822,
     "memory_list": 454,
     "memory_record_use": 1556,
     "memory_remove": 463,
@@ -6004,9 +6037,9 @@ _DESC_BASELINE = {
     "memory_scope_overview": 2820,
     "memory_search": 3575,
     "memory_show": 851,
-    "memory_update": 2234,
-    "memory_verify": 1817,
-    "memory_write": 3325,
+    "memory_update": 1892,
+    "memory_verify": 1649,
+    "memory_write": 2753,
     "memory_write_cancel": 216,
     "memory_write_confirm": 515,
 }
@@ -6066,6 +6099,18 @@ async def test_default_on_descriptions_fit_budget(tmp_path: Path) -> None:
        the measured total does not move, `_DESC_BASELINE` is re-measured in
        the same commit, and the new ceiling is a round number rather than
        whatever the current total happens to need plus epsilon.
+    3. LOWERING the ceiling is the same ceremony minus the first clause, and
+       the clause has to be dropped explicitly: a ratchet-down exists BECAUSE
+       the measured total moved, so "the measured total does not move" is
+       rule 2 read in the only direction it was written for. What carries
+       over is the rest — `_DESC_BASELINE` re-measured in the same commit,
+       and a round number. What is added is the part a raise never needs: a
+       lower ceiling is only earned if the prose that left is still taught
+       somewhere a caller reaches, so the commit names where each cut span
+       went. A ratchet-down that cannot answer that is a subtraction wearing
+       a budget's clothes, and this guard would rubber-stamp it — the
+       ceiling only ever measures size, never whether the surface still
+       teaches what it must.
 
     The raise to `_DESC_BUDGET_CEILING` was the second kind, and the case for
     it is what the alternative was costing. The previous 27,250 was itself a
@@ -6086,12 +6131,20 @@ async def test_default_on_descriptions_fit_budget(tmp_path: Path) -> None:
     #             policy-heaviest, memory_search / memory_write) -> 26,976
     #             (3.6.4 audited the remaining 16 default-on descriptions;
     #             residual policy-dup collapsed, all field reference kept) ->
-    #             27,248 at 8e12b99 -> the `_DESC_BASELINE` total here.
+    #             27,248 at 8e12b99 -> 27,398 (Phase 7's episode work) ->
+    #             25,535 (the footprint phase's cuts) = `_DESC_BASELINE`'s.
     #   ceilings: 27,800 -> 27,100 (3.6.4 ratcheted the sweep in) -> 27,250
     #             (3.8.0, for one field-pin: the credential gate's
     #             `credential_warning` status and its `acknowledge_credential`
     #             override, added to DESC_MEMORY_WRITE symmetrically with the
-    #             existing transient pair) -> `_DESC_BUDGET_CEILING`.
+    #             existing transient pair) -> 27,500 -> `_DESC_BUDGET_CEILING`
+    #             (the footprint phase ratcheted the cuts in, rule 3).
+    # Slack held deliberately constant across the last two recalibrations —
+    # 452 chars at 27,500, 465 here — so the ratchet-down tightened the
+    # budget by 1,500 without also tightening the posture toward the next
+    # legitimate field-pin. A ratchet that silently does both is how a
+    # budget starts arbitrating edits that have nothing to do with it,
+    # which is the failure rule 1 above was written against.
     assert total <= _DESC_BUDGET_CEILING, (
         f"lean default-on tool descriptions total {total} chars "
         f"(~{total // 4} tokens), over the {_DESC_BUDGET_CEILING} ceiling. "
