@@ -1,5 +1,22 @@
 # bettermemory upgrade plan — 2026-07-30
 
+> **THIS PLAN IS COMPLETE AND CLOSED. Phases 0–7 all shipped, released as
+> 3.32.0 (tag `v3.32.0`, HEAD `1281d57`, 2026-07-31).**
+>
+> **If you are starting a session, read
+> [`next-entry-2026-07-31.md`](next-entry-2026-07-31.md) instead.** It is the
+> live entry point: the mcp 2.x port (the one substantial open item), the
+> sized-and-anchored deferred backlog, a recommended order, and the hazards —
+> all re-verified at `1281d57`.
+>
+> Keep this document for two things only: the per-phase `PHASE STATUS` blocks,
+> which are an accurate ledger of what was done and what the plan got wrong,
+> and the `## 5. Risk register`, which held up. **Do not trust its numbers** —
+> several were measured mid-program and the tree has moved past them. And note
+> its own prediction at § "Plan rot" came due: the fact packs under
+> `upgrade-plan-facts/` are now badly stale on line numbers (32% exact), though
+> their prose still holds. The entry brief documents which.
+
 Written at HEAD `95af021` (v3.30.0) after a full fresh-eyes audit: four
 parallel claims-vs-code auditors (retrieval, write path, trust machinery,
 economics), live-store probes, a full local suite run (3,779 passed /
@@ -979,8 +996,8 @@ measurement; E2 recorded as a 4.0 line item. All three verifier lenses
 | lean DESC | 27,398 | **25,773** | 26,000 (was 27,500) |
 | lean schemas (in+out) | 9,122 | **6,310** | — |
 | uncapped remainder | 9,881 | **7,069** | 7,500 (was 10,000) |
-| aggregate resident | 38,887 | **34,212** | — |
-| toolcost `full_bytes` | 38,424 | **33,714** | — |
+| aggregate resident | 38,887 | **34,450** | — |
+| toolcost `full_bytes` | 38,424 | **33,960** | — |
 
 - **E1 missed the plan's "≤ ~24k" AC and that is the right outcome.**
   The honest scalpel figure is 25.5k, not 24k. The AC was written before

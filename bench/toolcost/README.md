@@ -17,12 +17,12 @@ Two processes, one JSON-RPC round trip each, a byte count.
 ## Re-measure — 2026-07-31 (bettermemory only)
 
 Phase 6 of the 2026-07-30 upgrade program cut the resident surface. Our
-arm was re-run at 3.31.1; claude-mem was not, so **the 4.84x ratio below
+arm was re-run at 3.32.0; claude-mem was not, so **the 4.84x ratio below
 stays a 2026-07-26 figure** and is not comparable to this row.
 
 | server | tools | full bytes | names+descriptions | input schemas |
 | --- | --- | --- | --- | --- |
-| **bettermemory 3.31.1** | 18 | **33,714** | 26,846 | 5,252 |
+| **bettermemory 3.32.0** | 18 | **33,960** | 27,092 | 5,252 |
 
 Artifact: [`results/bettermemory-2026-07-31.json`](results/bettermemory-2026-07-31.json).
 Two changes account for it: pydantic's auto-generated `title` annotations

@@ -87,7 +87,7 @@ scope toggles, and episodes. Signatures, defaults, and return shapes:
 
 That default surface is not cheap, and it is charged on every turn
 whether a memory tool is called or not. The full serialized
-`tools/list` measured 33,714 bytes — 26,846 of it names and
+`tools/list` measured 33,960 bytes — 27,092 of it names and
 descriptions, 5,252 input schemas — on 2026-07-31 at 3.31.1. Method,
 fairness rules and the raw JSON: `bench/toolcost/README.md`. CI
 hard-caps the description component so it cannot drift upward

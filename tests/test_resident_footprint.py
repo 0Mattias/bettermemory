@@ -175,9 +175,20 @@ class Footprint(NamedTuple):
 # turn and is told never to act on. `tests/test_server.py`'s
 # `_DESC_BASELINE` carries the per-tool attribution and the argument for
 # each; its ceiling ratcheted 27,500 -> 26,000 in the same commit.
+#
+# RE-MEASURED once more after the phase's closing follow-ups: 25,535 ->
+# 25,773 (+238), from restoring `status="stale"` to the update/verify
+# descriptions and re-pointing memory_write's `duplicate` bullet at its
+# hint. Recorded because it is the exact rot this table invites: the
+# assertion below is DIAGNOSTIC, so a stale row never fails, and the
+# +238 sat unnoticed in four PUBLISHED surfaces (README, internals, the
+# toolcost artifact and its README) until a recon lane recomputed them.
+# The rule this file states at the top is not optional — re-measure in
+# the same commit as anything that moves a leg, including the small
+# follow-up edits that feel too minor to bother.
 _FOOTPRINT_BASELINE = Footprint(
     instructions=1_608,
-    descriptions=25_535,
+    descriptions=25_773,
     input_schemas=5_233,
     output_schemas=1_077,
     skill_frontmatter=759,

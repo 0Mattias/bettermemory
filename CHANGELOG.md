@@ -154,6 +154,30 @@ test, because a fresh session id written from a hook manufactures phantom
 sessions in doctor's census and hijacks the in-process session anchor. `doctor`
 gained a check for whether the hook is actually wired.
 
+### Erratum (2026-07-31)
+
+The entry above is left as it shipped. Three of its footprint numbers were
+measured one commit too early: the resident total is **34,450**, not 34,212, and
+the toolcost figure is **33,960**, not 33,714. The description cut was
+1,625 chars, not the ~1.9k the entry implies.
+
+The cause is the erratum's own subject. Phase 6's closing follow-ups restored
+`status="stale"` to the `memory_update` and `memory_verify` descriptions and
+re-pointed `memory_write`'s `duplicate` bullet at its hint — +238 chars, landing
+in the same commit as the numbers but after they were taken. Nothing caught it,
+because the footprint baseline is diagnostic by design: a stale row is not a
+failing row. The published surfaces (`README.md`, `docs/internals.md`, the
+toolcost artifact and its README) carried the pre-follow-up figures until a
+recon pass recomputed them for the next session's brief.
+
+The shape of the claim is unchanged — the resident surface did shrink by roughly
+12%, and both ceilings still hold with room to spare. What was wrong is the
+precision, in a project whose rule is that every published number traces to a
+committed artifact. The artifact
+(`bench/toolcost/results/bettermemory-2026-07-31.json`) has been re-generated
+against the tree it actually describes and now records `3.32.0` rather than the
+`3.31.1` it was stamped with.
+
 ## 3.31.1 - 2026-07-31
 
 ### Fixed — `pip install bettermemory` works again (it did not, for any version)

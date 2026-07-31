@@ -1090,7 +1090,7 @@ def test_a_changed_digit_on_a_passing_surface_fails() -> None:
     """
     real = (_REPO_ROOT / "docs/internals.md").read_text(encoding="utf-8")
     assert check_text("docs/internals.md", real, size_rule=True) == []
-    tampered = real.replace("33,714 bytes", "33,999 bytes")
+    tampered = real.replace("33,960 bytes", "33,999 bytes")
     assert tampered != real, (
         "docs/internals.md no longer carries the literal this self-test "
         "tampers with; re-point it at a byte figure the file currently "
