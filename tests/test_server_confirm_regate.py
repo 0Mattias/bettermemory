@@ -30,12 +30,12 @@ would hand that back), and the TTL has to be re-applied on load or the
 """
 
 from __future__ import annotations
-from ._mcp import call_tool as _mcp_call
+from ._mcp import call_tool as _mcp_call, fake_ctx as _mcp_fake_ctx
 
 import json
 import sys
 import time
-from dataclasses import dataclass, fields
+from dataclasses import fields
 from pathlib import Path
 from typing import Any
 
@@ -67,16 +67,15 @@ from bettermemory.session import (
 from bettermemory.store import Store
 
 
-# `SessionRegistry._key_for_ctx` reads `.client_id` and nothing else.
-@dataclass
-class _FakeCtx:
-    client_id: str | None = None
-
-
 def _fake_ctx(client_id: str) -> Any:
-    """Typed `Any` so strict mypy accepts the duck-typed stand-in where a
-    real FastMCP `Context` is annotated."""
-    return _FakeCtx(client_id=client_id)
+    """A stand-in `Context` carrying `client_id`, from `tests/_mcp.py`.
+
+    The forged shape used to be a private copy here and a byte-identical
+    private copy in `tests/test_session_registry.py`; the 2.x port moved
+    the client id off `Context.client_id` and both broke at once. It lives
+    in tests/_mcp.py now for the same reason the return-shape unpack does.
+    """
+    return _mcp_fake_ctx(client_id)
 
 
 async def _call(server: Any, name: str, **kwargs: Any) -> Any:

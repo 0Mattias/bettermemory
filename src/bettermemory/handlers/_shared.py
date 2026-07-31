@@ -21,7 +21,7 @@ from __future__ import annotations
 import time
 from typing import Any, TypeAlias
 
-from mcp.server.fastmcp import Context as _FastMCPContext
+from mcp.server.mcpserver import Context as _SDKContext
 
 from ..events import Recorder, iter_events
 from ..models import Category, Confidence, Source, validate_scope
@@ -29,15 +29,23 @@ from ..session import PendingUseToken, SessionState
 from ..time_utils import parse_event_ts
 
 
-# Local alias filling FastMCP's three generic params with Any — the
-# handlers only ever read `ctx.client_id`, never the typed
-# lifespan/request/session data, so unconstrained generics are the
-# right shape. Aliasing once via `TypeAlias` (not a bare runtime
-# assignment) keeps every handler signature readable AND keeps strict
-# checkers happy — a plain `Context = X[Any, ...]` would type-check on
-# mypy but trip "Variable not allowed in type expression" on
-# Pyright/Pylance.
-Context: TypeAlias = _FastMCPContext[Any, Any, Any]
+# Local alias filling the SDK Context's two generic params with Any —
+# the handlers only ever read the request's client id, never the typed
+# lifespan/request data, so unconstrained generics are the right shape.
+# Aliasing once via `TypeAlias` (not a bare runtime assignment) keeps
+# every handler signature readable AND keeps strict checkers happy — a
+# plain `Context = X[Any, ...]` would type-check on mypy but trip
+# "Variable not allowed in type expression" on Pyright/Pylance.
+#
+# The arity is load-bearing and version-specific: mcp 1.x was
+# `Generic[ServerSessionT, LifespanContextT, RequestT]` and 2.x dropped
+# the session parameter, so this is `[Any, Any]` and a stale `[Any, Any,
+# Any]` is an import-time TypeError, not a slow type-checker complaint.
+# Every handler signature resolves through this one alias, so it is also
+# the single site the SDK's ctx injection matches against — see the
+# subclass assertion in `tests/test_session_registry.py`, which exists
+# because a Context pointing at the wrong class stops injection silently.
+Context: TypeAlias = _SDKContext[Any, Any]
 
 
 # ---------------------------------------------------------------------------

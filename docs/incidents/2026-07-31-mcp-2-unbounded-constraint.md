@@ -38,7 +38,7 @@ This removes the workaround that would normally absorb a bad release. A user who
 
 **An upper bound that was never there.** `pyproject.toml` has declared `mcp>=1.0.0` since `bac0d9a`, the initial commit (2026-05-07). No release ever narrowed it. For the project's whole 85-day life that was harmless, because there was no major above 1.
 
-**Upstream removed the module, in a major, as it is entitled to.** mcp 2.0.0 deleted `mcp.server.fastmcp`; the successor is `mcp.server.mcpserver.MCPServer`. That is a correct thing to do in a major version bump, and the entire mechanism for surviving it — a `<2` cap — is the caller's responsibility. Four modules import from the deleted path: `builder.py`, `handlers/_shared.py`, `session.py`, and `tests/test_resident_footprint.py`.
+**Upstream removed the module, in a major, as it is entitled to.** mcp 2.0.0 deleted `mcp.server.fastmcp`; the successor is `mcp.server.mcpserver.MCPServer`. That is a correct thing to do in a major version bump, and the entire mechanism for surviving it — a `<2` cap — is the caller's responsibility. Four modules imported the deleted path at 3.31.0: `builder.py`, `handlers/_shared.py`, `session.py`, and `tests/test_resident_footprint.py`. That inventory is the count as it stood at the incident and is preserved as such; it is not the count today. The test module was rerouted through `tests/_mcp.py` in the pre-port prep, and the remaining three moved to `mcp.server.mcpserver` when the port shipped in 3.33.0 — see "Follow-on work" below.
 
 **The timing was tight enough to be worth recording.** mcp 1.29.0 was uploaded to PyPI at 2026-07-28T13:41:40 and 2.0.0 at 13:45:28 — four minutes apart. bettermemory 3.31.0 was released three days later. It was therefore the first release published into a world where the unbounded constraint had a live 2.x to resolve to, and it broke on arrival without a single line of its own diff being at fault.
 
@@ -103,12 +103,17 @@ Note the second row: the capped resolution picks 1.29.0, which is *newer* than t
 
 ## Follow-on work
 
-Capping at `<2` restores installs and does not address mcp 2.x. The port — `mcp.server.fastmcp.FastMCP` → `mcp.server.mcpserver.MCPServer`, across the four importing modules — is tracked as a separate item rather than folded into a hotfix, on the reasoning that a rushed port of the SDK surface the entire tool sits on is a worse outcome than a supported 1.x for a few more days. The new guard job will go red the day the cap is lifted without the port, which is the correct order of operations.
+Capping at `<2` restored installs and did not address mcp 2.x. The port — `mcp.server.fastmcp.FastMCP` → `mcp.server.mcpserver.MCPServer` — was tracked as a separate item rather than folded into a hotfix, on the reasoning that a rushed port of the SDK surface the entire tool sits on is a worse outcome than a supported 1.x for a few more days.
+
+**Resolved in 3.33.0.** The bound is now `mcp>=2.0.0,<3.0.0`, and the order of operations held: the test-side reroute landed first (so the port edited one helper module rather than 83 sites), then the three `src/` changes, and the `install from declared constraints` job — which resolves without the lockfile — was green on the ported tree before the tag. Two things worth carrying forward from doing it this way:
+
+- **The guard was run as a negative control, not just observed passing.** The ported tree against a clean `mcp==1.29.0` fails at `builder.py`'s import; the pre-port tree against the same install builds a server. So the floor is enforced by the code and not merely asserted by the metadata — the symmetry this directory's other entries kept failing to establish.
+- **The cap outlived the port and now carries more weight than it did here.** Under mcp 1.x, `pydantic<3.0.0` was also inherited transitively from the SDK's own bound. mcp 2.0.0 declares `pydantic>=2.12.0` with no ceiling, so that inheritance is gone and the pydantic cap declared in `pyproject.toml` is the only one left. The gun this incident describes was re-armed by the port and is held down by a line that now has no backup.
 
 ## References
 
 - Constraint introduced: `bac0d9a`, "Initial commit: memory-mcp v0.1.0" — unbounded from the first commit and never narrowed.
 - Upstream: `mcp` 1.29.0 (2026-07-28T13:41:40) and 2.0.0 (2026-07-28T13:45:28) on PyPI; 2.0.0 removes `mcp.server.fastmcp` in favour of `mcp.server.mcpserver`.
 - Fixed in 3.31.1, this commit; guard job `install from declared constraints` in `.github/workflows/ci.yml`.
-- Importing modules: `src/bettermemory/builder.py:37`, `src/bettermemory/handlers/_shared.py:23`, `src/bettermemory/session.py:57`, `tests/test_resident_footprint.py:69`.
+- Importing modules, as of the port (all three now on `mcp.server.mcpserver`): `src/bettermemory/builder.py:37`, `src/bettermemory/handlers/_shared.py:24`, `src/bettermemory/session.py:59`. `tests/test_resident_footprint.py` no longer imports the SDK at all — it goes through `tests/_mcp.py`, which is what kept it collectable across the rename.
 - Related incidents: [`2026-07-30-ingest-force-refused-by-its-own-gate.md`](2026-07-30-ingest-force-refused-by-its-own-gate.md), [`2026-07-26-staleness-verdict-constant-function.md`](2026-07-26-staleness-verdict-constant-function.md), [`2026-07-25-doctor-false-green-on-importable-extra.md`](2026-07-25-doctor-false-green-on-importable-extra.md) — the last two are false greens from an instrument pointed at the wrong input, which is this one's class exactly.

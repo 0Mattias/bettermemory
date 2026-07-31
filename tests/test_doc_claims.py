@@ -549,6 +549,20 @@ _ALLOWLIST: dict[tuple[str, str, str], str] = {
         "when this entry shipped; the Round-3 wiring extraction moved it "
         "to builder.py. Accurate release note, since-refactored code."
     ),
+    (
+        _CHANGELOG,
+        "symbol",
+        "_FakeCtx in tests/test_session_registry.py",
+    ): (
+        "Frozen history. The 1.3.3 entry describes a duck-typed Context "
+        "stand-in that lived in that module, and the arity it names "
+        "(`Context[Any, Any, Any]`) dates it precisely: that was mcp 1.x. "
+        "The 2.x port moved the client id off `Context.client_id`, which "
+        "broke this copy and the byte-identical one in "
+        "test_server_confirm_regate.py at the same instant, so the forged "
+        "shape moved to tests/_mcp.py. Accurate release note, since-moved "
+        "test helper."
+    ),
 }
 # NOTE on two RETIRED entries — the swarm plan's line-ref pair,
 # (docs/swarm-convergence-plan.md, line-ref, events.py:237) and

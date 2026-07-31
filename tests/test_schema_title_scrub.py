@@ -11,10 +11,14 @@ every turn, including the turns that never touch memory.
 `builder._strip_schema_titles` deletes them after registration. The SDK
 offers no hook (`Tool.from_function` hard-codes
 `parameters = arg_model.model_json_schema(by_alias=True)`), so the scrub
-reaches through `FastMCP._tool_manager._tools` — a private attribute,
-feature-detected rather than version-pinned, because the `mcp>=1.0.0`
-floor is an install-compat promise and raising it to protect a size
-optimisation would trade a real break for a saving.
+reaches through the server's `_tool_manager._tools` — a private attribute,
+feature-detected rather than version-pinned. It stays feature-detected
+even though the floor moved to `mcp>=2.0.0` for the 2.x port: the whole
+reach-through survived that major unchanged, which is evidence it is
+stable and not a guarantee. What the port did not change is why the floor
+is not a lever — an install-compat promise is not something to spend on a
+size optimisation, so a floor moves as a deliberate, announced act or not
+at all.
 
 WHAT THIS MODULE HAS TO PROVE, and why each proof is shaped the way it is:
 
@@ -152,7 +156,7 @@ async def test_served_schemas_are_the_pydantic_schemas_minus_titles(
     """The whole diff, tool by tool and leg by leg.
 
     Reconstructs what pydantic emits for each tool from a throwaway
-    `FastMCP` that never went through the scrub, and requires the served
+    server that never went through the scrub, and requires the served
     schema to be exactly that minus its titles. Anything else the scrub
     touched — a reordered key, a dropped constraint, a mangled `anyOf` —
     fails here rather than in a client six months later."""
@@ -433,7 +437,16 @@ async def test_the_served_schema_is_not_on_the_call_path(tmp_path: Path) -> None
     ]
 
     async def transcript(mcp: Any) -> list[Any]:
-        return [_stable((await mcp.call_tool(name, args))[1]) for name, args in calls]
+        # Raw `mcp.call_tool`, not `tests/_mcp.py`'s helper: that helper
+        # falls back to the text block when the structured leg is absent,
+        # and the structured leg IS what this battery compares. Reading
+        # `.structured_content` off the SDK's `CallToolResult` directly
+        # means a server that stopped returning one fails here loudly
+        # instead of quietly comparing two text transcripts.
+        return [
+            _stable((await mcp.call_tool(name, args)).structured_content)
+            for name, args in calls
+        ]
 
     assert await transcript(control) == await transcript(vandalised), (
         "vandalising the served inputSchema changed what calls return, so the "
@@ -484,7 +497,7 @@ async def test_structured_output_survives_the_scrub(tmp_path: Path) -> None:
     result = await mcp.call_tool(
         "memory_write", {"content": "the venv lives at .venv", "scopes": ["tools"]}
     )
-    structured = result[1]
+    structured = result.structured_content
     assert isinstance(structured, dict) and structured, (
         "the call no longer returns structuredContent alongside the text block"
     )
@@ -504,7 +517,9 @@ async def test_client_side_validation_is_unaffected(tmp_path: Path) -> None:
     result = await mcp.call_tool(
         "memory_write", {"content": "ruff runs in pre-commit", "scopes": ["tools"]}
     )
-    jsonschema_validate(result[1], _output_schema(tools["memory_write"]))
+    jsonschema_validate(
+        result.structured_content, _output_schema(tools["memory_write"])
+    )
 
     search = _output_schema(tools["memory_search"])
     jsonschema_validate({"result": []}, search)

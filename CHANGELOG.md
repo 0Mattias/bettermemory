@@ -9,38 +9,78 @@ spells out exactly what's stable.
 
 ## Unreleased
 
-### Changed — the mcp 2.x port is now a handful of edits instead of eighty-three
+### Changed — bettermemory runs on the mcp 2.x SDK. **The floor is now `mcp>=2.0.0`**
 
-mcp 2.0.0 deletes `mcp.server.fastmcp` outright, changes what `call_tool`
-returns, and renames `Tool.inputSchema` / `outputSchema` to snake_case. Against
-this tree that was 44 unpack sites across 44 test files, 43 schema reads across
-6, and 2 files that would not even collect — all of it mechanical, all of it
-spread thin enough that "83 edits" was an estimate nobody could de-risk.
+**Upgrade note.** This is the one thing in this release that can require
+action. `mcp.server.fastmcp` does not exist in mcp 2.x and
+`mcp.server.mcpserver` exists in no 1.x, so there is no overlap version and no
+way to support both without a permanently forked type surface. If you need to
+stay on mcp 1.x, pin `bettermemory<3.33.0`. That pin genuinely works, which is
+the difference between this and 3.31.1: there, an unbounded constraint had
+already poisoned every published wheel, so "stay on the last good version" was
+advice with no version behind it.
 
-Every one of those now routes through `tests/_mcp.py`, which accepts both SDK
-shapes: `call_tool` discriminates the return by shape rather than by version,
-`input_schema` / `output_schema` try both attribute names, and `probe_server`
-builds the bare SDK object the two title-scrub oracles need. Nothing here is a
-compatibility shim for the package — `src/` still imports `mcp.server.fastmcp`
-directly and still breaks under 2.0.0, which is the port's job. This is scoped
-to what the suite reads, and it costs nothing today: the helpers are correct
-under 1.x and under 2.x, with no flag day between.
+**It is still a minor, and the wire is why.** No tool, parameter, or response
+field is renamed, removed or reshaped. The SDK's rename of
+`Tool.inputSchema` → `input_schema` is a Python attribute change only:
+`mcp_types.MCPModel` sets an alias generator and the transport serialises
+`by_alias=True`, so a connected client receives the same `inputSchema` bytes it
+received from 1.27.0. Nothing the schema-title scrub reaches through moved
+either — `_tool_manager._tools`, `tool.parameters`, `fn_metadata.output_schema`
+and the `cached_property` on `Tool.output_schema` were each checked against a
+real 2.0.0 install and are identical, so the scrub is still needed and still
+mutates in place.
 
-`pydantic` is now capped at `<3.0.0`. Until this, protection from a pydantic 3.0
-release came only transitively from mcp 1.x's own bound — so lifting the mcp cap
-for the port would have removed the only ceiling and re-armed exactly the gun
-that fired on 3.31.0, where an unbounded dependency resolved to a new major and
-every published wheel died at import.
+**Three changes in `src/`.** The server-class import and its annotations in
+`builder.py`; the `Context` generic arity, which went from three parameters to
+two when 2.x dropped the session type, in `handlers/_shared.py` and
+`session.py`; and one accessor in `session.py`, where the per-client id moved
+from the `Context.client_id` property 1.x offered to a mapping read on the
+request's `_meta`. That last one is reachable rather than lost: 2.x types
+`_meta` as `RequestParamsMeta`, an open `TypedDict` with `extra_items=Any`, so
+arbitrary keys still round-trip and `meta.get("client_id")` returns what
+`ctx.client_id` used to.
 
-`tests/test_session_registry.py` gains the assertion the port's worst failure
-mode needs. 2.0.0 decides whether to inject a `Context` by matching a handler's
-resolved type hints against its own `Context` class; if the alias in
-`handlers/_shared.py` ever points at a different class, injection silently stops
-firing, `ctx` arrives as `None` on every call, and every client collapses into
-one shared session — with no exception and no failing test, because
-`SessionRegistry._key_for_ctx` swallows that shape by design. The new tests
-assert the identity positively, and that a registered handler still declares a
-resolvable `ctx` hint.
+**The floor was verified as a floor, in both directions.** The
+`install from declared constraints` job — which resolves without the lockfile,
+and exists because of the 3.31.0 incident — is green on the ported tree. As a
+negative control, the ported tree against a clean `mcp==1.29.0` fails at
+`builder.py`'s import while the pre-port tree against that same install builds
+a server. The break is exactly the port and nothing else.
+
+**Why the test suite did not need 83 edits.** mcp 2.0.0 also changed what
+`call_tool` returns and which attribute names carry the schemas — 44 unpack
+sites across 44 test files, 43 schema reads across 6, and 2 files that would not
+even collect. All of it was routed through `tests/_mcp.py` first, so the port
+edited one helper module instead of the suite. With one major now in play, the
+1.x branches in that module are gone: a branch no installable configuration can
+reach is not compatibility, it is untested code that reads like a promise. The
+forged request `Context` two test modules each kept a private copy of moved
+there too — both copies broke on the same change, which is the tax that module
+exists to stop paying.
+
+**`pydantic` is capped at `<3.0.0`, and that line now stands alone.** Under mcp
+1.x we also inherited a `pydantic<3.0.0` bound from the SDK itself. mcp 2.0.0
+declares `pydantic>=2.12.0` with no ceiling of its own, so the port removed that
+inheritance and this cap is the only ceiling left — the same gun that fired on
+3.31.0, held down by one line with no backup.
+
+**The failure mode that ships silently is guarded.** 2.0.0 decides whether to
+inject a `Context` by matching a handler's resolved type hints against its own
+`Context` class. If the alias in `handlers/_shared.py` ever points at a
+different class, injection stops firing, `ctx` arrives as `None` on every call,
+and every client collapses into one shared session — with no exception and no
+failing test, because `SessionRegistry._key_for_ctx` swallows exactly that shape
+by design. `tests/test_session_registry.py` asserts the identity positively, and
+that a registered handler still declares a resolvable `ctx` hint.
+
+Two guards were rewritten rather than re-pinned, because both were pinned to the
+SDK's spelling for no reason the rename made worth keeping: the AST reader that
+extracts the server `instructions` block now matches on the `instructions=`
+keyword instead of on a call to a class named `FastMCP`, and the two passages
+asserting that the mcp floor is an install-compat promise now say what actually
+binds — the *manner* a floor moves, deliberately and announced, not the
+particular number it was sitting at.
 
 ### Removed — the internal audit plans, which belong in a memory store rather than a public repo
 
@@ -51,10 +91,13 @@ exact. The prose in them was sound and the coordinates had rotted — which is
 what a snapshot does, and why the directory sat deliberately outside the
 doc-claims checker's corpus, where nothing could ever fail on it.
 
-The mcp 2.x port analysis moved to `docs/ROADMAP.md` and the durable store; the
-deferred backlog it carried is now a "Small and anchored" section of the
-roadmap, in house voice. Kept: `docs/audit/extractor-hunt-2026-06-09.{md,json}`,
-a measurement artifact three changelog entries cite by path.
+The mcp 2.x port analysis moved to the durable store and, briefly, to
+`docs/ROADMAP.md` — briefly because the port shipped in this same release, so
+the roadmap entry is already gone and what survives of the analysis is the
+section above. The deferred backlog it carried is now a "Small and anchored"
+section of the roadmap, in house voice. Kept:
+`docs/audit/extractor-hunt-2026-06-09.{md,json}`, a measurement artifact three
+changelog entries cite by path.
 
 Also corrected in passing: the roadmap described `apply_write_gates` and
 `memory_verify`'s attestation refusal as unreleased. Both shipped in 3.31.0.

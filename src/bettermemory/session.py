@@ -46,17 +46,19 @@ from .models import Category, Confidence, Source
 from .origin import Origin
 
 if TYPE_CHECKING:
-    # `mcp.server.fastmcp.Context` is the FastMCP request-scoped context
-    # that exposes `client_id` and `request_id`. It's imported under
-    # TYPE_CHECKING so the session module stays usable in environments
-    # that don't have the MCP server extras loaded (the same way the
-    # rest of the package handles optional imports). `Context` is
-    # generic over three type parameters that callers here don't
-    # constrain — alias it as `_Ctx` so mypy gets the explicit
-    # `Any, Any, Any` once instead of every annotation site repeating it.
-    from mcp.server.fastmcp import Context
+    # `mcp.server.mcpserver.Context` is the SDK's request-scoped context,
+    # which exposes `request_context` (and through it the request's
+    # wire-level _meta map) and `request_id`. It's imported under TYPE_CHECKING so
+    # the session module stays usable in environments that don't have the
+    # MCP server extras loaded (the same way the rest of the package
+    # handles optional imports). `Context` is generic over two type
+    # parameters that callers here don't constrain — alias it as `_Ctx`
+    # so mypy gets the explicit `Any, Any` once instead of every
+    # annotation site repeating it. The arity is version-specific: mcp
+    # 1.x had a third (session) parameter and 2.x dropped it.
+    from mcp.server.mcpserver import Context
 
-    _Ctx: TypeAlias = Context[Any, Any, Any]
+    _Ctx: TypeAlias = Context[Any, Any]
 
 
 log = logging.getLogger("bettermemory.session")
@@ -1239,8 +1241,8 @@ class SessionSource(Protocol):
     Both `SessionState` (single-state, test-friendly) and
     `SessionRegistry` (per-client routing, production-friendly) satisfy
     this protocol, so `_register_tools` can take either without
-    branching. `for_request(ctx)` is the entry point: pass the
-    FastMCP `Context` (or `None` when not running under FastMCP) and
+    branching. `for_request(ctx)` is the entry point: pass the SDK
+    `Context` (or `None` for an in-process call outside a request) and
     receive the right `SessionState` for this request.
     """
 
@@ -1250,7 +1252,7 @@ class SessionSource(Protocol):
 class SessionRegistry:
     """Per-client `SessionState` map for multi-client server processes.
 
-    Keys are FastMCP `client_id` strings (or `_DEFAULT_CLIENT_KEY` when
+    Keys are the request's client id (or `_DEFAULT_CLIENT_KEY` when
     the transport doesn't supply one). States are created lazily on
     first `for_request` for a given key, so an idle client doesn't
     pre-allocate anything.
@@ -1323,13 +1325,22 @@ class SessionRegistry:
         if ctx is None:
             return _DEFAULT_CLIENT_KEY
         try:
-            client_id = ctx.client_id
+            meta = ctx.request_context.meta
+            client_id = meta.get("client_id") if meta is not None else None
         except (AttributeError, ValueError):
-            # `ctx.client_id` reads the request context and may raise
-            # ValueError if no request is in progress (FastMCP construct
-            # outside a tool call). Treat that as "no identifier" and
-            # bucket into the default; the alternative would be to
-            # crash the tool call for a degenerate context shape.
+            # `ctx.request_context` may raise ValueError if no request is
+            # in progress (a Context constructed outside a tool call).
+            # Treat that as "no identifier" and bucket into the default;
+            # the alternative would be to crash the tool call for a
+            # degenerate context shape. AttributeError covers the stand-in
+            # contexts the suite forges, which carry no request context.
+            #
+            # mcp 1.x exposed this as a `Context.client_id` property that
+            # did the same `getattr(request_context.meta, ...)` read; 2.x
+            # dropped the property, and `meta` went from a pydantic model
+            # to `RequestParamsMeta`, an open TypedDict (`extra_items=Any`)
+            # that round-trips arbitrary keys — so the key is still
+            # reachable, by mapping read instead of attribute read.
             return _DEFAULT_CLIENT_KEY
         if not client_id:
             return _DEFAULT_CLIENT_KEY

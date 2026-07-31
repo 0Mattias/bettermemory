@@ -5,19 +5,6 @@ Planned work, in rough priority order. Plans change; the
 
 ## Planned
 
-- **The mcp 2.x port.** `mcp.server.fastmcp` does not exist in mcp 2.0.0
-  and there is no overlap version, so `pyproject.toml` caps the SDK at
-  `<2.0.0` — upstream's own recommended posture until a consumer
-  migrates. Three lines in `src/` change: the server-class import in
-  `builder.py`, the `Context` generic arity in `handlers/_shared.py` and
-  `session.py`, and one accessor in `session.py` where the client id moves
-  from an attribute to a mapping read. Nothing the schema-title scrub reaches
-  through moves, and the wire is byte-identical, so this is a minor.
-  The test-side cost is already paid: the SDK's tool-invocation return
-  shape and its schema attribute names are routed through
-  `tests/_mcp.py`, which accepts both majors. Ship it as a floor bump,
-  not a compatibility shim — dual support means a permanently branched
-  type surface past two type-checkers, for users who can pin instead.
 - **Truncation as a write-time gate, deferred on budget.** `doctor`'s
   `memory_body_completeness` check reports bodies that end mid-sentence,
   which is detection after the fact. The gate that would prevent the loss

@@ -699,14 +699,19 @@ def instructions_text() -> str:
     fixture and no store. The reading is verified against a live server
     below, which is what keeps a silent divergence from turning this surface
     into an empty sweep.
+
+    Matched on the `instructions=` KEYWORD, not on the server class's name.
+    It used to require a call to `FastMCP`, which meant the mcp 2.x port —
+    a rename of that class and nothing else about this block — tripped the
+    assertion below for no reason a reader of the failure could act on. The
+    keyword is the thing this corpus is actually about, it is unique in
+    `_BUILDER_MODULE`, and it does not move when the SDK reorganises. The
+    loud failure is the property worth keeping and it is unchanged: sweeping
+    nothing still raises rather than passing an empty corpus.
     """
     tree = ast.parse((_REPO_ROOT / _BUILDER_MODULE).read_text(encoding="utf-8"))
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
-            continue
-        func = node.func
-        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
-        if name != "FastMCP":
             continue
         for keyword in node.keywords:
             if keyword.arg != "instructions":
@@ -715,9 +720,10 @@ def instructions_text() -> str:
             assert isinstance(value, str)
             return value
     raise AssertionError(
-        f"no `FastMCP(instructions=...)` literal found in {_BUILDER_MODULE}; "
-        f"the instructions surface would silently sweep nothing. If the block "
-        f"moved to a module constant, read it from there instead"
+        f"no `instructions=...` string literal found at any call site in "
+        f"{_BUILDER_MODULE}; the instructions surface would silently sweep "
+        f"nothing. If the block moved to a module constant, read it from there "
+        f"instead"
     )
 
 

@@ -30,26 +30,39 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed",
 ]
-# The `<2` cap on mcp is load-bearing, not defensive hygiene. mcp 2.0.0
-# deleted the `mcp.server.fastmcp` module outright (FastMCP's successor is
-# `mcp.server.mcpserver.MCPServer`), and four modules import from it —
-# `builder.py`, `handlers/_shared.py`, `session.py`, and
-# `tests/test_resident_footprint.py`. With the constraint unbounded, a
-# fresh `pip install bettermemory` resolved mcp 2.0.0 and died at import;
-# `uv.lock` pins 1.x, so every CI leg stayed green through it. The
-# `install from declared constraints` job in ci.yml is the guard that
-# closes that blind spot — it resolves WITHOUT the lockfile. Lift the cap
-# only together with the port; see docs/incidents/2026-07-31-mcp-2-unbounded-constraint.md.
-# The `<3` cap on pydantic is the same lesson applied before it bites.
-# Today we are protected from a pydantic 3.0 release only TRANSITIVELY, by
-# mcp 1.x's own `pydantic<3.0.0` bound — so the moment the mcp cap above is
-# lifted for the port, our only pydantic ceiling disappears with it, and
-# pydantic 3.0 lands in `install from declared constraints` exactly the way
-# mcp 2.0 did. Declaring it here means the port cannot re-arm that gun as a
-# side effect. (mcp 2.0.0 declares `pydantic>=2.12.0` with no upper bound
-# of its own, so this bound outlives the port.)
+# BOTH halves of the mcp bound are load-bearing, for different reasons.
+#
+# The `>=2.0.0` FLOOR is the port, not a preference. mcp 2.0.0 deleted
+# `mcp.server.fastmcp` outright (the successor is
+# `mcp.server.mcpserver.MCPServer`) and no 1.x ships `mcp.server.mcpserver`
+# — there is NO overlap version, so a package importing a server class has
+# to pick a side. `builder.py`, `handlers/_shared.py` and `session.py`
+# import from the 2.x path and will not run on 1.x. A floor is a real
+# install-compat break, so it moved once, deliberately, announced in the
+# changelog — never as a side effect. Users who need 1.x pin
+# `bettermemory<3.32.0`, which is a workaround that genuinely exists; the
+# defect in docs/incidents/2026-07-31-mcp-2-unbounded-constraint.md left no
+# working pin at all, which is the whole asymmetry.
+#
+# The `<3.0.0` CAP is that incident's lesson, kept armed. It was unbounded
+# when mcp 2.0.0 landed; a fresh `pip install bettermemory` resolved the new
+# major and died at import, while every CI leg stayed green because they all
+# install from `uv.lock`. The `install from declared constraints` job in
+# ci.yml is the guard that closes that blind spot — it resolves WITHOUT the
+# lockfile, so the next upstream major goes red on an ordinary push instead
+# of on a user's machine. Lift this cap only together with the next port.
+#
+# The `<3` cap on pydantic is now the ONLY pydantic ceiling we have, and the
+# port is what made that true. Under mcp 1.x we were protected from a
+# pydantic 3.0 release transitively, by mcp's own `pydantic<3.0.0` bound;
+# mcp 2.0.0 declares `pydantic>=2.12.0` with no upper bound of its own, so
+# that inherited ceiling is gone and this line is load-bearing on its own.
+# The floor stays at the version THIS code needs (2.0); the effective
+# resolved floor is 2.12.0, raised by mcp, and is not restated here so the
+# constraint keeps expressing our requirement rather than mirroring a
+# dependency's.
 dependencies = [
-    "mcp>=1.0.0,<2.0.0",
+    "mcp>=2.0.0,<3.0.0",
     "pydantic>=2.0,<3.0.0",
     "pyyaml>=6.0",
     "platformdirs>=4.0",

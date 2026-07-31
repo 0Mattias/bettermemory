@@ -1,4 +1,4 @@
-"""FastMCP wiring layer — instantiate a server, bind every tool.
+"""MCP SDK wiring layer — instantiate a server, bind every tool.
 
 Pre-Round-3 ``build_server`` and ``_register_tools`` lived in
 ``server.py``. The colocation was historical: ``server.py`` was both the
@@ -23,7 +23,7 @@ What's here:
   injections (tests use them for hermeticity; ``run_serve`` lets
   ``load_config`` resolve everything).
 * ``_register_tools(mcp, ...)``: binds each ``ToolHandlers`` method
-  against the FastMCP instance, one ``mcp.tool(...)`` call per tool.
+  against the ``MCPServer`` instance, one ``mcp.tool(...)`` call per tool.
 
 ``server.py`` re-exports ``build_server`` so any out-of-tree caller
 and the full test suite (forty+ files import ``from bettermemory.server
@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import logging
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from ._handlers import (
     DESC_EPISODE_HANDOFF,
@@ -90,8 +90,8 @@ def build_server(
     store: Store | None = None,
     state: SessionState | SessionSource | None = None,
     recorder: Recorder | None = None,
-) -> FastMCP:
-    """Return a configured FastMCP instance.
+) -> MCPServer:
+    """Return a configured `MCPServer` instance.
 
     Tests pass in their own `store`, `state`, and `recorder` to keep
     things hermetic. The real entry point in `main()` lets
@@ -103,10 +103,10 @@ def build_server(
 
     * A bare `SessionState` (back-compat / single-client tests):
       every request resolves to the same state regardless of the
-      FastMCP `Context.client_id`. The MVP single-process/stdio
+      client id the request carries. The MVP single-process/stdio
       assumption — what every test in the suite still uses.
     * A `SessionRegistry` (multi-client): each distinct
-      `Context.client_id` gets its own `SessionState`, so pending
+      client id gets its own `SessionState`, so pending
       writes / disabled scopes / use-tokens from one MCP client
       can't leak into another. `main()` uses the
       process-wide `get_default_registry()` for production runs.
@@ -150,7 +150,7 @@ def build_server(
     # never touch the file.
     _configure_persistent_embeddings(config, store)
 
-    mcp = FastMCP(
+    mcp = MCPServer(
         "bettermemory",
         # The server-level instructions block is the canonical "what is
         # this server" message every MCP client surfaces at the
@@ -211,14 +211,14 @@ def build_server(
 
 
 def _register_tools(
-    mcp: FastMCP,
+    mcp: MCPServer,
     *,
     config: Config,
     store: Store,
     sessions: SessionSource,
     recorder: Recorder,
 ) -> None:
-    """Bind each `ToolHandlers` method against the FastMCP instance.
+    """Bind each `ToolHandlers` method against the `MCPServer` instance.
 
     `sessions` is the SessionSource captured by every handler. Each
     handler resolves its per-request `state` by calling
@@ -417,13 +417,14 @@ def _strip_titles(node: object) -> None:
             _strip_titles(item)
 
 
-def _strip_schema_titles(mcp: FastMCP) -> None:
+def _strip_schema_titles(mcp: MCPServer) -> None:
     """Scrub the served schemas after registration.
 
     There is no SDK hook: `Tool.from_function` hard-codes
     `parameters = arg_model.model_json_schema(by_alias=True)`, and
-    `FastMCP.list_tools` serves that dict verbatim as `inputSchema`. So
-    the only place to do this is the registry, after the fact.
+    `MCPServer.list_tools` serves that dict verbatim as the served
+    tool's `input_schema`. So the only place to do this is the
+    registry, after the fact.
 
     Two deliberate choices:
 
@@ -446,12 +447,21 @@ def _strip_schema_titles(mcp: FastMCP) -> None:
       `output_model`, never through this dict, so scrubbing keeps
       structured output on and keeps it validating.
 
-    Both accesses are feature-detected rather than pinned to an SDK
-    version: `_tool_manager._tools` is private, and the floor is
-    `mcp>=1.0.0` (the `<2.0.0` cap is a separate, load-bearing
-    constraint — see `docs/incidents/2026-07-31-mcp-2-unbounded-constraint.md`).
-    Raising the floor to protect a size optimisation would be a real
-    install-compat break in exchange for nothing.
+    Both accesses stay feature-detected rather than pinned to an SDK
+    version, and that is unchanged by the 2.x port even though the floor
+    moved. `_tool_manager._tools` is private; the whole reach-through
+    survived the major intact (verified attribute by attribute against a
+    real 2.0.0 install), which is evidence that it is stable, not that it
+    is guaranteed. The floor is `mcp>=2.0.0,<3.0.0`, and the reason it
+    reads that way is the port — `mcp.server.fastmcp` does not exist in
+    2.x and there is no overlap version, so this module could not import
+    a server class at all without moving. What has NOT changed is the
+    manner the floor binds: raising it to protect a size optimisation
+    would still be a real install-compat break in exchange for nothing.
+    A floor moves only as a deliberate, announced, changelog'd act, never
+    as a side effect of a tidy-up here. See
+    `docs/incidents/2026-07-31-mcp-2-unbounded-constraint.md` for why the
+    `<3.0.0` half is load-bearing rather than reflexive pessimism.
 
     A SILENT NO-OP is the failure mode that matters here: if a future SDK
     moves either attribute, this returns quietly and every served schema

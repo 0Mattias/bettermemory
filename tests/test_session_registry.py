@@ -1,7 +1,7 @@
 """Unit + integration tests for `SessionRegistry`.
 
 The registry is the routing layer for multi-client server processes:
-each FastMCP `Context.client_id` resolves to its own `SessionState`, so
+each request's client id resolves to its own `SessionState`, so
 pending writes / disabled scopes / use-tokens from one client can't
 leak into another. The pre-registry shape was a process-level
 singleton — fine for stdio (one client per process), wrong the moment
@@ -21,7 +21,6 @@ Two test layers:
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -35,22 +34,18 @@ from bettermemory.session import (
     get_default_registry,
 )
 from bettermemory.store import Store
-
-
-# `SessionRegistry._key_for_ctx` only reads `ctx.client_id` — a duck-typed
-# stand-in is enough for unit tests. Using a real FastMCP Context would
-# require constructing a full request context just to set one attribute.
-@dataclass
-class _FakeCtx:
-    client_id: str | None = None
+from ._mcp import fake_ctx as _mcp_fake_ctx
 
 
 def _fake_ctx(*, client_id: str | None = None) -> Any:
-    """Return a `_FakeCtx` typed as `Any` so strict mypy accepts it where
-    `for_request` expects a real FastMCP `Context`. The registry only
-    reads `.client_id`, so the duck-typed stand-in is structurally
-    compatible; the cast is purely a type-checker concession."""
-    return _FakeCtx(client_id=client_id)
+    """A stand-in `Context` carrying `client_id`, from `tests/_mcp.py`.
+
+    Kept as a keyword-only wrapper so the call sites below read the way
+    they always have. The forged shape itself lives in tests/_mcp.py
+    because it mirrors the SDK's request shape, which moved in the 2.x
+    port — see that module for why two private copies of it were a tax.
+    """
+    return _mcp_fake_ctx(client_id)
 
 
 # ---------------------------------------------------------------------------
@@ -510,7 +505,7 @@ def test_the_handler_context_alias_is_the_sdk_class_injection_matches() -> None:
     """
     import typing
 
-    from mcp.server.fastmcp import Context as SDKContext
+    from mcp.server.mcpserver import Context as SDKContext
 
     from bettermemory.handlers import _shared
 
