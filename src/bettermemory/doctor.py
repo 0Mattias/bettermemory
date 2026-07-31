@@ -58,6 +58,7 @@ from .config import Config, TelemetryConfig, load_config
 from .eval import is_admin_recorded_event
 from .events import EVENT_LOG_FILENAME, iter_all_events
 from .init import KNOWN_CLIENTS, command_launches_bettermemory, find_binary
+from .models import looks_truncated
 from .semantic_setup import _semantic_rank_leg_active
 from .store import Store, count_active_memory_files, count_unparseable_memory_files
 
@@ -459,6 +460,80 @@ def _check_memory_parse_health(directory: Path) -> Diagnosis:
             "to read memories written under the newer version."
         ),
         details={"parsed": parsed, "files_on_disk": on_disk, "skipped": skipped},
+    )
+
+
+def _check_memory_body_completeness(directory: Path) -> Diagnosis:
+    """Report active memories whose body reads as cut off mid-sentence.
+
+    The gap this closes: `memory_parse_health` above answers "does the
+    frontmatter parse", which is a true statement about file structure
+    and says nothing about whether the CONTENT is whole. A body that
+    arrived truncated from the caller — an interrupted tool call, an LLM
+    that hit its output cap mid-argument, a copy-paste that lost its tail
+    — round-trips byte-exactly through the store and is reported healthy
+    by every check here. One memory in the maintainer's store sat cut off
+    at "The whole security/red-team stack (Hak5" for ten days with a
+    clean bill of health, and the lost tail held a correction another
+    memory pointed at. There was no surface that would have said so.
+
+    `warn`, never `fail`, and it names the ids rather than prescribing a
+    repair: `models.looks_truncated` is a heuristic with a real if small
+    false-positive rate (its own docstring carries the measurement), and
+    the one thing doctor must not do is tell an operator that a
+    legitimately-worded memory is damaged. A hit is a prompt to look, not
+    a verdict.
+    """
+    if not directory.exists():
+        return Diagnosis(
+            name="memory_body_completeness",
+            status="ok",
+            message="Storage dir does not exist yet — nothing to check.",
+        )
+    try:
+        memories = Store(directory).load_all()
+    except Exception as exc:  # noqa: BLE001
+        # Deliberately not a `fail`: `memory_parse_health` runs first and
+        # owns the "cannot read the store" verdict. Reporting the same
+        # breakage twice, in two voices, sends the operator looking for
+        # two problems.
+        return Diagnosis(
+            name="memory_body_completeness",
+            status="ok",
+            message=f"Skipped — could not list memories ({exc}).",
+        )
+
+    suspect = [m.id for m in memories if looks_truncated(m.body)]
+    if not suspect:
+        return Diagnosis(
+            name="memory_body_completeness",
+            status="ok",
+            message=f"All {len(memories)} active memory bodies end intact.",
+            details={"checked": len(memories), "suspect": 0},
+        )
+    shown = suspect[:10]
+    more = len(suspect) - len(shown)
+    return Diagnosis(
+        name="memory_body_completeness",
+        status="warn",
+        message=(
+            f"{len(suspect)} of {len(memories)} active memories end "
+            f"mid-sentence, which is what a body truncated in transit looks "
+            f"like: {', '.join(shown)}"
+            f"{f' (+{more} more)' if more else ''}."
+        ),
+        fix_hint=(
+            "Run `memory_show` on each and read the last line. A body that "
+            "stops mid-word lost its tail on the way in and the store has no "
+            "older copy — re-derive the content and `memory_update`. A body "
+            "that legitimately ends on a list item or a bare identifier is a "
+            "false positive; nothing needs doing."
+        ),
+        details={
+            "checked": len(memories),
+            "suspect": len(suspect),
+            "suspect_ids": suspect,
+        },
     )
 
 
@@ -3138,6 +3213,16 @@ def run_diagnostics() -> DoctorReport:
             _safe(
                 "memory_parse_health",
                 lambda: _check_memory_parse_health(directory),
+            )
+        )
+        # Reads the bodies `memory_parse_health` only counted: parsing
+        # cleanly and being complete are different claims, and until this
+        # check existed the report made the first and was read as the
+        # second.
+        checks.append(
+            _safe(
+                "memory_body_completeness",
+                lambda: _check_memory_body_completeness(directory),
             )
         )
         # After memory_parse_health deliberately: that check constructs

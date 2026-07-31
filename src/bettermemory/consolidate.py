@@ -2314,12 +2314,37 @@ def _apply_llm_proposal(
         keeper = by_id.get(proposal.keeper_id)
         if keeper is None:
             raise RuntimeError(f"merge keeper {proposal.keeper_id} not found in store")
+        # Carry the duplicates' scopes onto the keeper, for exactly the
+        # reason the non-LLM dedup path states at the top of its own
+        # merge block: similarity is scope-blind, so two near-identical
+        # bodies in disjoint project scopes cluster at well over the
+        # threshold, and a keeper that does not inherit the duplicate's
+        # scope becomes invisible to that project's auto-scoped
+        # retrieval — the fact vanishes there with no error and no
+        # report entry. This path's clusters are seeded from the SAME
+        # scope-blind `find_dedup_candidates` pass, so it is exposed to
+        # the identical case, and `MergeProposal` carries no scopes
+        # field, so nothing downstream can recover them.
+        #
+        # Over-cap unions are left to `Store._write_path`'s
+        # re-validation: it refuses loudly and `consolidate_llm` reports
+        # the cluster as failed, which is correct — merging is optional,
+        # losing a record is not.
+        #
         # `updated` is stamped by `Store.update` itself; passing a
         # pre-bumped value would break the W2 CAS check (caller's
         # `memory.updated` is the snapshot timestamp the CAS compares
         # against the on-disk record). The `model_copy` preserves the
         # keeper's snapshot `updated`, which IS what the CAS needs.
-        merged = keeper.model_copy(update={"body": proposal.new_body})
+        merged_scopes = set(keeper.scopes)
+        for dup_id in proposal.duplicate_ids:
+            dup = by_id.get(dup_id)
+            if dup is not None:
+                merged_scopes.update(dup.scopes)
+        update_fields: dict[str, Any] = {"body": proposal.new_body}
+        if merged_scopes != set(keeper.scopes):
+            update_fields["scopes"] = sorted(merged_scopes)
+        merged = keeper.model_copy(update=update_fields)
         store.update(merged)
         actions.append(
             LLMProposalAction(

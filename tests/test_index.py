@@ -993,8 +993,9 @@ def test_genuine_v3_index_migrates_and_rebuild_restores_search(
         conn.executescript(_V3_SCHEMA)
         rows = list(store.iter_active())
         for path, memory in rows:
-            # The v3 `_insert_memory` shape: raw body, space-padded
-            # scopes_text, no preprocessed columns.
+            # The v3 row shape, as the since-removed plain-INSERT writer
+            # produced it: raw body, space-padded scopes_text, no
+            # preprocessed columns.
             conn.execute(
                 "INSERT INTO memories("
                 "id, created, updated, last_verified_at, confidence, "

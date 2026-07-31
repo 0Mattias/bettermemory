@@ -685,6 +685,17 @@ def rebuild(root: Path, items: Iterable[tuple[Path, Memory]]) -> int:
     try:
         try:
             return _rebuild_data(conn, entries)
+        except sqlite3.IntegrityError:
+            # NOT a corruption signal, so it must not reach the nuclear
+            # path below. A constraint violation is produced by the
+            # ENTRIES, not by the file: re-running the identical feed
+            # against a fresh file fails identically, and the only thing
+            # the fallback accomplishes is unlinking a perfectly healthy
+            # index — turning a recoverable feed problem into a store
+            # whose `reindex` can never succeed again, with `doctor`
+            # advising the very command that cannot work. Propagate with
+            # the real error instead.
+            raise
         except sqlite3.DatabaseError as exc:
             log.warning(
                 "index rebuild data phase failed on the existing file "
@@ -713,9 +724,25 @@ def _rebuild_data(conn: sqlite3.Connection, entries: list[tuple[Path, Memory]]) 
     with conn:
         conn.execute("DELETE FROM memories")
         count = 0
+        seen: set[str] = set()
         for entry_path, memory in entries:
-            _insert_memory(conn, memory, entry_path.name)
-            count += 1
+            # An upsert, not the plain INSERT this loop used to run: two
+            # active `.md` files can legitimately carry the same id — an iCloud or
+            # Dropbox conflicted copy, a `cp` before a hand-edit, a
+            # backup restored by copying files back in. Those are the
+            # exact situations `reindex` exists for. A plain INSERT
+            # raised `UNIQUE constraint failed: memories.id` on the
+            # second file, which used to take the corruption fallback
+            # and unlink a healthy index. `scan_active_memory_ids`
+            # already documents the contract this restores: "Duplicate
+            # ids across two files collapse into one entry (last file in
+            # directory order wins)" — which is exactly what the upsert's
+            # `ON CONFLICT(id) DO UPDATE` does, and what the incremental
+            # hook path has always done.
+            _upsert_memory(conn, memory, entry_path.name)
+            if memory.id not in seen:
+                seen.add(memory.id)
+                count += 1
         conn.execute(
             "INSERT OR REPLACE INTO meta(key, value) VALUES ('indexed_count', ?)",
             (str(count),),
@@ -1502,47 +1529,24 @@ def _isoformat_optional(dt: datetime | None) -> str | None:
     return dt.isoformat() if dt is not None else None
 
 
-def _insert_memory(conn: sqlite3.Connection, memory: Memory, filename: str) -> None:
-    """Insert a new row. Caller has already cleared the table or
-    confirmed no row with this id exists.
+def _upsert_memory(conn: sqlite3.Connection, memory: Memory, filename: str) -> None:
+    """INSERT OR REPLACE on the id key. Trigger logic keeps the FTS
+    virtual table in sync — the AFTER UPDATE trigger handles the
+    delete-then-insert dance internally so callers don't have to.
+
+    The only row writer. A plain-INSERT sibling used to serve `rebuild`
+    on the premise that a freshly truncated table cannot collide; that
+    premise was false — two active `.md` files can carry the same id
+    (a conflicted copy, a `cp` before a hand-edit) — and the resulting
+    `IntegrityError` cost the store its index. Upserting everywhere
+    means the rebuild collapses duplicate ids exactly as the
+    incremental path and `scan_active_memory_ids` already do.
 
     `filename` is the actual on-disk filename — the caller threads it
     through from the path it just wrote. The store's collision suffix
     (`<slug>-<short_id>.md`) means we can't re-derive this from the
     Memory fields alone, and getting it wrong points `filenames_for_ids`
     at the wrong file."""
-    conn.execute(
-        "INSERT INTO memories("
-        "id, created, updated, last_verified_at, confidence, category, "
-        "body, body_fts, scopes_text, scopes_fts, scopes_json, filename, "
-        "origin_repo, origin_worktree) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (
-            memory.id,
-            memory.created.isoformat(),
-            memory.updated.isoformat(),
-            _isoformat_optional(memory.last_verified_at),
-            memory.confidence.value,
-            memory.category.value if memory.category is not None else None,
-            memory.body,
-            fts_index_text(memory.body),
-            _scopes_text(memory.scopes),
-            fts_index_text(" ".join(memory.scopes)),
-            json.dumps(memory.scopes),
-            filename,
-            memory.origin.repo if memory.origin else None,
-            memory.origin.worktree_root if memory.origin else None,
-        ),
-    )
-    _sync_links(conn, memory)
-
-
-def _upsert_memory(conn: sqlite3.Connection, memory: Memory, filename: str) -> None:
-    """INSERT OR REPLACE on the id key. Trigger logic keeps the FTS
-    virtual table in sync — the AFTER UPDATE trigger handles the
-    delete-then-insert dance internally so callers don't have to.
-
-    See `_insert_memory` for the `filename` contract."""
     conn.execute(
         "INSERT INTO memories("
         "id, created, updated, last_verified_at, confidence, category, "

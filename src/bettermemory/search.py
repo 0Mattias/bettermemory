@@ -920,7 +920,7 @@ def fts_index_text(text: str) -> str:
     pipeline's own output removes the second spelling authority: both
     sides of a MATCH are `tokenize` tokens.
 
-    Used by `index._insert_memory` / `_upsert_memory` / `rebuild` for the
+    Used by `index._upsert_memory` / `rebuild` for the
     `body_fts` column (and for `scopes_fts` over the space-joined scope
     list). Raw bodies stay canonical on disk and in `memories.body`; this
     is derived-index content only.

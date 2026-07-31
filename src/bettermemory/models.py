@@ -69,7 +69,11 @@ def generate_ulid() -> str:
     return _encode_crockford(ts_ms, 10) + _encode_crockford(rand, 16)
 
 
-_ULID_RE = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
+# `\Z`, not `$`: Python's `$` also matches immediately BEFORE a single
+# trailing newline, so `"01ARZ3NDEKTSV4RRFFQ69G5FAV\n"` validated as a
+# ULID. A `MemoryLink.target_id` carrying that newline is accepted and
+# then equality-matches no memory id that will ever exist.
+_ULID_RE = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}\Z")
 
 
 def is_valid_ulid(s: str) -> bool:
@@ -167,7 +171,15 @@ _PROPOSABLE_CATEGORIES: frozenset[str] = frozenset(
 # Scopes are lowercase, alphanumeric, hyphens and colons (for nesting like
 # `projects:foo`). No whitespace, no uppercase. Reject everything else at
 # write time so the on-disk format stays grep-friendly.
-_SCOPE_RE = re.compile(r"^[a-z0-9]+(?:[-:][a-z0-9]+)*$")
+#
+# `\Z` rather than `$` for the same reason as `_ULID_RE`: `$` matches
+# before a single trailing newline, so `"projects:foo\n"` passed
+# validation and was persisted verbatim. Nothing on the write path strips
+# it, so the record was filed under a scope that no scope filter,
+# auto-scope resolution or `memory_list` query can ever equal — and on
+# disk the YAML renders as `- 'projects:foo` plus a blank line, which does
+# not look wrong either. Silent invisibility, from one stray keystroke.
+_SCOPE_RE = re.compile(r"^[a-z0-9]+(?:[-:][a-z0-9]+)*\Z")
 
 
 def validate_scope(scope: str) -> str:
@@ -857,6 +869,48 @@ def _word_ending_at(text: str, end: int) -> str:
     return text[i:end]
 
 
+# Characters a complete memory body is allowed to end on. Sentence
+# punctuation, the closers of quoted or bracketed material, and the
+# markdown emphasis/table marks a body legitimately trails. Measured
+# against the 234 active memories and 20 tombstones of the maintainer's
+# live store: 233 of 234 bodies end on one of these, and the single
+# exception is a bullet list whose last item is a bare word.
+_BODY_TERMINALS = frozenset(".!?:;)\"'`»]}>*_|")
+
+
+def looks_truncated(body: str) -> bool:
+    """Heuristic: does this body read as if it was cut off mid-sentence?
+
+    Detection only — nothing refuses a write on this. It exists because
+    the store's canonical-file promise has a blind spot: a body that
+    arrives already truncated from the CALLER is persisted, indexed,
+    served by `memory_show` and reported healthy by `doctor` forever.
+    That is not the store dropping data — the round trip is byte-exact —
+    but it is silent content loss the operator has no surface to notice.
+    One memory in the maintainer's store sat truncated mid-word for ten
+    days ("The whole security/red-team stack (Hak5") with every check
+    green, and the tail was unrecoverable by the time anyone looked.
+
+    The predicate is deliberately the narrow one: the last non-whitespace
+    character of the body is not sentence- or structure-terminal. On the
+    real store that is 1 false positive in 234 records (0.4%), and
+    against mid-body cuts taken at random offsets in those same bodies it
+    catches 93.9%. The obvious tighter variant — also requiring an
+    unclosed bracket on the final line — is 0% false positive but only
+    20.4% recall, which is the wrong trade for a report the operator
+    reads rather than a gate that blocks a write.
+
+    Not used as a write-time gate. Making it one costs a new parameter
+    and a description sentence on `memory_update`, and the always-
+    resident tool surface has 127 characters of margin before it warns;
+    see the roadmap entry for the deferred decision and its numbers.
+    """
+    text = body.strip()
+    if not text:
+        return False
+    return text[-1] not in _BODY_TERMINALS
+
+
 def first_summary_line(body: str, max_chars: int = 80) -> str:
     """First sentence or first ~80 chars of `body`, single line.
 
@@ -977,6 +1031,7 @@ __all__ = [
     "make_slug",
     "build_filename",
     "first_summary_line",
+    "looks_truncated",
     "snippet_for",
     "snippet_window",
 ]

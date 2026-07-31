@@ -5,6 +5,26 @@ Planned work, in rough priority order. Plans change; the
 
 ## Planned
 
+- **Truncation as a write-time gate, deferred on budget.** `doctor`'s
+  `memory_body_completeness` check reports bodies that end mid-sentence,
+  which is detection after the fact. The gate that would prevent the loss
+  belongs on `memory_update`, where both the old and the new body are in
+  hand: return `status="truncation_warning"` when a body edit shrinks the
+  record and ends mid-sentence, with `acknowledge_truncation=True` as the
+  override, mirroring `credential_warning`.
+  **What blocks it is measured, not doubt about the value.** The predicate
+  is 0.4% false positive and 93.9% recall on a 234-record store, and a
+  false positive costs one round-trip. But the parameter plus a
+  description sentence on `memory_update` runs ~112–150 characters against
+  **127 characters** of margin before `_DESC_BUDGET_PRESSURE` warns
+  (25,773 live against a 26,000 ceiling). Ship it in a cycle that also
+  frees DESC budget, or alongside a ratchet-down; do not spend the last
+  of the margin on it.
+  Rejected alternatives, recorded so they are not re-derived: a
+  "new body is a strict prefix of the old" guard is 0% false positive but
+  misses the incident that motivated this (it was a rewrite that got cut,
+  not a prefix); "new body is >30% shorter" false-positives on condensing
+  edits, the single most common update shape on the dogfood store.
 - **Write-path hardening, remaining items.** `apply_write_gates` is the
   shared gate chain and `memory_verify` refuses unverifiable path
   attestations (both Unreleased). Remaining:

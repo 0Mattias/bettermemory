@@ -7,6 +7,7 @@ objects and get them back.
 
 from __future__ import annotations
 
+import contextlib
 import errno
 import logging as _logging
 import stat
@@ -17,6 +18,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 import yaml
+from pydantic import ValidationError as PydanticValidationError
 
 from . import _frontmatter as frontmatter
 from ._decorators import best_effort
@@ -1453,6 +1455,30 @@ class Store:
                 _atomic_write_post(
                     active_path, post, max_file_bytes=frontmatter._MAX_FILE_BYTES
                 )
+                # Prove the record is re-admittable BEFORE destroying the
+                # tombstone. `_find_tombstone_path_for_id` accepts anything
+                # whose frontmatter parses and whose `id` matches, which is a
+                # strictly wider set than what `_parse_memory_file` will
+                # re-admit — a tombstone written by a NEWER bettermemory
+                # (`schema_version` above this reader's, the state a `sync
+                # pull` from a newer host or a downgrade produces) parses as
+                # frontmatter and then fails re-admission. With the unlink
+                # first, that record ended up in neither listing: invisible to
+                # `list_tombstones` (file gone) and to `load_all` (active file
+                # unparseable), with a retry raising `NotTombstonedError`.
+                #
+                # A failure here rolls the whole restore back rather than
+                # just declining to finish it: the unparseable active file
+                # has to go too, because `_find_path_for_id` finds it and
+                # every later `restore` would refuse with "is active;
+                # nothing to restore" — the same dead end by another route.
+                # Costs one parse of a file already in page cache.
+                try:
+                    restored = self._load_path(active_path)
+                except Exception:
+                    with contextlib.suppress(OSError):
+                        active_path.unlink()
+                    raise
                 try:
                     tombstone_path.unlink()
                 except OSError as exc:
@@ -1474,8 +1500,8 @@ class Store:
                 # LOCK, so a concurrent `update()` / `verify()` on the
                 # restored id (which holds `_locked(active_path)`) can't
                 # interleave its SQLite upsert with ours and leave the index
-                # pointing at the deleted body.
-                restored = self._load_path(active_path)
+                # pointing at the deleted body. `restored` was loaded above,
+                # before the unlink, as the re-admission proof.
                 _index_upsert_quietly(self.root, restored, filename=active_path.name)
         return restored
 
@@ -1866,7 +1892,7 @@ class Store:
         memory: Memory,
         *,
         max_file_bytes: int = frontmatter._MAX_WRITE_BYTES,
-        max_yaml_bytes: int = frontmatter._MAX_YAML_BYTES,
+        max_yaml_bytes: int | None = None,
     ) -> None:
         # `max_file_bytes` defaults to the headroom-reserved write cap, which is
         # correct for new-content admission (`write`, `update`): a freshly
@@ -1878,10 +1904,17 @@ class Store:
         # serialized size merely sits in the reserved band (e.g. a pre-3.14.1
         # record written before the total-file cap existed) would freeze it
         # from ever being verified/renamed (F1). `max_yaml_bytes` is the
-        # frontmatter-YAML-axis mirror: it defaults to the flat YAML cap for a
-        # first write, and those same re-dump callers pass a reduced ceiling
-        # (`_lifecycle_redump_yaml_cap`) so a legal attestation can't grow the
-        # frontmatter into the removal-metadata budget of the YAML cap either.
+        # frontmatter-YAML-axis mirror, and it reserves the same budget at
+        # admission (`_yaml_admission_cap`); those same re-dump callers pass a
+        # band ceiling (`_lifecycle_redump_yaml_cap`) so a legal attestation
+        # can't grow the frontmatter into the removal-metadata budget either.
+        #
+        # `None` rather than the constant as the default only because
+        # `_REMOVAL_META_BUDGET_BYTES` is defined below this class and a
+        # default argument is evaluated when the `def` executes.
+        if max_yaml_bytes is None:
+            max_yaml_bytes = _yaml_admission_cap()
+        _revalidate_before_persist(memory)
         post = frontmatter.Post(memory.body.strip() + "\n")
         post.metadata = _memory_metadata(memory)
         _atomic_write_post(
@@ -1892,6 +1925,57 @@ class Store:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _revalidate_before_persist(memory: Memory) -> None:
+    """Re-run every `Memory` field validator before the record hits disk.
+
+    `model_copy(update=...)` does not run field validators. Almost every
+    mutation in this codebase is a `model_copy` — `Store.update`'s
+    verification carry-over, `mark_verified`, `record_corroboration`,
+    `rename_scope`, `handlers/update.py`, `handlers/conflicts.py`,
+    `consolidate`'s dedup merge and its LLM-proposal appliers — so the
+    validators that bound `scopes`, `links` and the `verified_*` lists are
+    live on the *admission* path and dead on every *mutation* path.
+
+    The consequence is the project's worst failure mode, and it was
+    reachable from three separate surfaces: the over-cap record serialises
+    happily (64 entries is nowhere near the 64 KB YAML cap, so
+    `_frontmatter.dumps` sees nothing wrong), the write reports committed,
+    and then `_load_path` re-constructs through `Memory(...)`, the
+    validator raises, and `load_all` / `load_one` catch-and-skip it. The
+    record is gone from search, list, show and health while its file sits
+    on disk looking fine. Measured before this guard existed:
+    `memory_curate` merging two 33-scope duplicates destroyed BOTH records
+    and reported `failures: []`; `memory_conflicts` appending a 65th link
+    destroyed the source and reported `link_written: true`;
+    `memory_update` did the same whenever `max_scopes_per_write` was raised
+    above 64 or set to the documented "disable" value of 0.
+
+    Fixing those three call sites individually would have left the fourth.
+    This is the byte-axis lesson applied to the semantic axis:
+    `_frontmatter.dumps` is the one chokepoint every persist routes through
+    for size, and `_write_path` is the one chokepoint every persist routes
+    through for the model. Validate here and the class is closed for all
+    fields, present and future.
+
+    Cost is one pydantic round-trip per persisted record — tens of
+    microseconds against an fsync'd write, i.e. unmeasurable next to the
+    I/O it precedes.
+
+    Raises `ValueError` (pydantic's `ValidationError` is a subclass) so the
+    existing handler-boundary translations, which already catch `ValueError`
+    from the size caps on this same path, surface it as a clean structured
+    error instead of a committed-then-vanished record.
+    """
+    try:
+        Memory.model_validate(memory.model_dump())
+    except PydanticValidationError as exc:
+        raise ValueError(
+            f"refusing to persist memory {memory.id}: the record fails its own "
+            f"model validation and would be silently dropped on the next read "
+            f"({exc.error_count()} error(s)): {exc}"
+        ) from exc
 
 
 _INDEX_LOG = _logging.getLogger("bettermemory.store")
@@ -2650,6 +2734,36 @@ _REMOVAL_META_BUDGET_BYTES = (
 assert _REMOVAL_META_BUDGET_BYTES <= frontmatter._MAINTENANCE_HEADROOM_BYTES, (
     "tombstone removal metadata worst case exceeds the maintenance headroom"
 )
+
+
+def _yaml_admission_cap() -> int:
+    """Frontmatter-YAML ceiling for a CONTENT-ADMITTING write.
+
+    The file axis has had an admission reservation since 3.14.1
+    (`_MAX_WRITE_BYTES` = read cap minus maintenance headroom): a record
+    the store newly ACCEPTS must leave room for its own removal metadata,
+    or it is minted un-removable. The YAML axis had only the lifecycle
+    band ceiling, on the reading that a first write cannot realistically
+    approach 64 KiB of frontmatter.
+
+    That reading missed `memory_update`, which admits content on the same
+    default and can grow the frontmatter without touching the body. A
+    single legal call — 64 links, each with a ~950-character `note`, both
+    within their caps — landed a 65,556-byte record whose frontmatter sat
+    79 bytes under `_MAX_YAML_BYTES`. `memory_remove` then failed forever
+    ("even trimmed removal metadata does not fit"), and so did both
+    escape hatches `handlers/remove.py` names: `memory_verify` is refused
+    by the freeze arm of `_lifecycle_redump_yaml_cap`, and shortening the
+    BODY does not help because the bloat is in the frontmatter. Only an
+    undocumented `memory_update(links=[])` unwedged it.
+
+    Reserving the budget at admission, exactly as the file axis does,
+    means the state cannot be minted. A record already above the ceiling
+    (legacy, or minted before this existed) is refused a content edit
+    rather than frozen — the same trade `_MAX_WRITE_BYTES` already makes,
+    and the lifecycle paths that must never freeze pass their own ceiling.
+    """
+    return frontmatter._MAX_YAML_BYTES - _REMOVAL_META_BUDGET_BYTES
 
 
 def _lifecycle_redump_cap(current_size: int) -> int:

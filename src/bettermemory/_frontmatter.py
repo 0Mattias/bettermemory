@@ -96,6 +96,25 @@ _MAX_WRITE_BYTES = _MAX_FILE_BYTES - _MAINTENANCE_HEADROOM_BYTES
 _MAX_DUMP_NODES = 64 * 1024
 _MAX_DUMP_DEPTH = 64
 
+# Companion BYTE budget for the same walk, and the load-bearing half of the
+# guard. Counting nodes alone bounds an alias bomb built from MANY SMALL
+# scalars and completely misses one built from A FEW LARGE ones: a 50 KB
+# file whose frontmatter is one 50,000-character scalar plus four levels of
+# ten-way aliases expands to 12,359 nodes — comfortably under the 64 K node
+# budget — and then spends 218 seconds and 1.1 GB of RSS inside `yaml.dump`
+# producing a 555 MB string, which the post-hoc `_MAX_YAML_BYTES` check
+# finally rejects. Measured, not estimated. The record is also left
+# permanently un-removable, because `tombstone` has to re-serialise it and
+# pays the expansion twice on every attempt.
+#
+# The multiple over `_MAX_YAML_BYTES` is deliberate slack: this walk counts
+# raw scalar lengths, while the emitted YAML adds quoting, escaping,
+# indentation and key overhead, so a structure that is legitimately just
+# under the byte cap can measure somewhat over it here. 4x is far below any
+# bomb (which overshoots by four or more orders of magnitude) and far above
+# the densest real record (~1,200 nodes, a few KB of scalars).
+_MAX_DUMP_SCALAR_BYTES = 4 * _MAX_YAML_BYTES
+
 
 @dataclass
 class Post:
@@ -112,7 +131,20 @@ def loads(text: str) -> Post:
     metadata is empty — same as python-frontmatter.
     """
     # Split into lines but remember whether the input had a trailing newline,
-    # so the body round-trips. Strip CR so CRLF line endings work.
+    # so the body round-trips. `lines` is the CR-stripped view used for
+    # DELIMITER DETECTION only, so a frontmatter block written with CRLF
+    # endings still matches `---`. `raw_lines` keeps the original bytes and
+    # is what the body is rebuilt from.
+    #
+    # Those two must stay separate. Applying the strip to the body region as
+    # well made every `\r` in a body vanish on read while `dumps` faithfully
+    # wrote it back out, so the file on disk and every reader disagreed — a
+    # body written `alpha\r\nbeta` came back `alpha\nbeta`, and the first
+    # tombstone / restore / rename / update re-dump erased the CRs from disk
+    # for good. It also stripped MULTIPLE trailing CRs, not just the one
+    # belonging to a CRLF pair, so `alpha\r\r\n` lost both. Any body composed
+    # on a Windows client, or one deliberately containing a CRLF example,
+    # was silently rewritten.
     raw_lines = text.split("\n")
     lines = [ln.rstrip("\r") for ln in raw_lines]
 
@@ -141,10 +173,14 @@ def loads(text: str) -> Post:
             f"frontmatter YAML exceeds {_MAX_YAML_BYTES}-byte cap "
             f"({len(yaml_text)} chars); refusing to parse"
         )
-    body_lines = lines[close_idx + 1 :]
+    # Rebuilt from `raw_lines`, not `lines`, so the body is byte-exact —
+    # see the note at the top of this function.
+    body_lines = raw_lines[close_idx + 1 :]
     # Drop a single separator blank line, mirroring python-frontmatter's
-    # `---\n\n<body>` shape.
-    if body_lines and body_lines[0] == "":
+    # `---\n\n<body>` shape. Tested against the CR-stripped view so a
+    # CRLF-written separator (`\r`, once the `\n` is consumed by the split)
+    # is recognised as the blank line it is.
+    if body_lines and lines[close_idx + 1] == "":
         body_lines = body_lines[1:]
     body = "\n".join(body_lines)
 
@@ -236,17 +272,43 @@ def _guard_dump_expansion(metadata: dict[str, Any]) -> None:
     it would count each shared node once and so *miss* the bomb, which is
     precisely the structure built from shared references.
 
+    It also accumulates SCALAR BYTES against :data:`_MAX_DUMP_SCALAR_BYTES`,
+    and that half is what catches the bomb the node budget cannot see. A
+    node count treats a 50,000-character string and the letter ``a`` as the
+    same cost, so a bomb assembled from a few huge scalars instead of many
+    small ones passes the node budget outright — measured: 12,359 expanded
+    nodes against a 64 K budget, 218 seconds and 1.1 GB of RSS inside
+    ``yaml.dump``, and a 555 MB string for the post-hoc byte cap to reject.
+    Summing scalar lengths on the same expanding walk aborts that in
+    microseconds, before ``yaml.dump`` allocates anything.
+
     Also bounds nesting depth (:data:`_MAX_DUMP_DEPTH`) to stop a deep-nesting
     bomb and the unbounded Python recursion it would otherwise drive.
 
     Raises ``ValueError`` on a pathological structure; returns ``None`` for
     anything a real memory could hold (largest legitimate frontmatter is
-    ~270 nodes, ~3 levels deep — orders of magnitude under both bounds).
+    ~270 nodes, ~3 levels deep — orders of magnitude under all three bounds).
     """
     count = 0
+    scalar_bytes = 0
 
     def walk(obj: Any, depth: int) -> None:
-        nonlocal count
+        nonlocal count, scalar_bytes
+        if isinstance(obj, (str, bytes)):
+            # Counted with expansion, exactly like `count`: a scalar shared
+            # by N alias paths is re-emitted N times, so it must be charged
+            # N times. `len` rather than an encode, because the point is a
+            # cheap bound — a character count is within a small factor of
+            # the emitted byte count and the 4x slack absorbs the rest.
+            scalar_bytes += len(obj)
+            if scalar_bytes > _MAX_DUMP_SCALAR_BYTES:
+                raise ValueError(
+                    f"frontmatter metadata expands past "
+                    f"{_MAX_DUMP_SCALAR_BYTES} scalar bytes; refusing to "
+                    "serialize — shared references expand to literal copies "
+                    "on dump, so this would materialize a multi-MB blob "
+                    "(alias bomb?)"
+                )
         if depth > _MAX_DUMP_DEPTH:
             raise ValueError(
                 f"frontmatter metadata nests deeper than {_MAX_DUMP_DEPTH} "
@@ -294,6 +356,30 @@ class _NoAliasDumper(yaml.SafeDumper):
 
     def ignore_aliases(self, data: Any) -> bool:
         return True
+
+
+def _represent_str(dumper: yaml.SafeDumper, data: str) -> yaml.ScalarNode:
+    """Force double-quoted style for strings pyyaml would emit lossily.
+
+    U+0085 (NEL) is a line break in YAML 1.1. With `allow_unicode=True`
+    pyyaml writes it raw inside a single-quoted scalar, and the loader
+    then folds it back to a space — so `dumps` -> `loads` silently
+    rewrote the value. An episode takeaway "ran the migration\\x85then
+    reverted it" read back as "...migration then reverted...", a tombstone
+    `removed_reason` lost its break the same way, and two adjacent NELs
+    collapsed to a single newline. Every frontmatter string is affected:
+    `links[].note`, `origin.cwd`, `verified_paths` entries.
+
+    Double-quoted style emits it as the `\\N` escape, which round-trips
+    exactly. Scoped to strings that actually contain the character so the
+    on-disk format — which people grep — is otherwise unchanged.
+    """
+    if "\x85" in data:
+        return dumper.represent_scalar("tag:yaml.org,2002:str", data, style='"')
+    return dumper.represent_str(data)
+
+
+_NoAliasDumper.add_representer(str, _represent_str)
 
 
 def dumps(

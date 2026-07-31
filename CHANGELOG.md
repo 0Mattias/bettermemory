@@ -9,6 +9,151 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+### Fixed — six ways a committed record could disappear, and the chokepoint that closes the class
+
+An adversarial sweep over the persistence, parse, gate and index surfaces
+found one defect reached from six directions: **a write reports `committed`
+and the record is then invisible to every read surface.**
+
+The mechanism is that `model_copy(update=...)` runs no pydantic field
+validators, and nearly every mutation in the codebase is a `model_copy`. An
+over-cap record therefore serialises happily — 65 links is nowhere near the
+64 KB YAML cap, so `_frontmatter.dumps` sees nothing wrong — the write
+returns normally, and the next read re-constructs through `Memory(...)`,
+raises, and `load_all` catch-and-skips the file. The record leaves search,
+list, show and health while its `.md` sits on disk looking healthy. Three
+call sites had each been patched individually before this; three had not:
+
+- `memory_curate` merging two 33-scope duplicates produced a 66-scope keeper,
+  **destroyed both records**, and reported `applied: true, failures: []`.
+- `memory_conflicts` resolving a contradiction appended a 65th link to a
+  source already at the cap and reported `link_written: true`.
+- `memory_update` did the same with scopes whenever `max_scopes_per_write`
+  was raised above 64 or set to `0` — the value `config.py` documents as
+  "disable the handler cap (the model-layer cap still fires at 64)", which
+  was true for `memory_write` and false here.
+
+Rather than patch the three and leave the fourth caller open, `Store`
+re-validates at the single chokepoint every persist routes through
+(`_write_path`), and refuses with a `ValueError` naming the failing field.
+This is the byte-axis lesson — `dumps` is the one place size is checked —
+applied to the semantic axis. Cost is one pydantic round-trip per write,
+against an fsync.
+
+A sixth route reached the same end state without any cap: `_SCOPE_RE` and
+`_ULID_RE` anchored with `$`, which in Python matches before a trailing
+newline, so `"projects:foo\n"` validated and persisted verbatim. The record
+was then filed under a scope that no filter, auto-scope resolution or
+`memory_list` query can equal — and on disk it renders as `- 'projects:foo`
+plus a blank line, which does not look wrong either. Both now anchor `\Z`.
+
+### Fixed — the index rebuild destroyed the index it was repairing
+
+Two active `.md` files can legitimately carry one id: an iCloud or Dropbox
+conflicted copy, a `cp` before a hand-edit, a backup restored by copying
+files back in — the exact situations `bettermemory reindex` exists for. The
+rebuild `INSERT`ed each file, hit `UNIQUE constraint failed: memories.id` on
+the second, and fell into the corruption fallback, which unlinked the healthy
+index, retried the identical feed, and failed again. The store was left with
+an empty `needs_rebuild` index and `doctor` recommending the one command that
+could no longer succeed.
+
+The rebuild now upserts, collapsing duplicate ids exactly as the incremental
+path and `scan_active_memory_ids` already document. Independently,
+`sqlite3.IntegrityError` no longer reaches the corruption fallback at all: a
+constraint violation is a statement about the entries, never about the file,
+so unlinking a valid index over one was always wrong.
+
+### Fixed — a restore that could not re-admit the record destroyed the tombstone anyway
+
+`restore` wrote the active file, unlinked the tombstone, and only then tried
+to load what it had written. A tombstone whose frontmatter parses but which
+`Memory` will not re-admit — one written by a newer `schema_version`, the
+state a `sync pull` from a newer host or a downgrade produces — left the
+record in neither listing: gone from `list_tombstones`, unparseable in
+`load_all`, with a retry raising `NotTombstonedError`. The load now happens
+first and a failure rolls the whole restore back.
+
+### Fixed — an update could mint a permanently un-removable record
+
+The file axis has reserved room for a record's own removal metadata at
+admission since 3.14.1; the frontmatter-YAML axis reserved it only on
+lifecycle re-dumps, on the reading that a first write cannot approach 64 KiB
+of frontmatter. `memory_update` admits content on the same path and can grow
+the frontmatter without touching the body: 64 links each carrying a ~950-char
+note, all individually legal, landed a record whose `memory_remove` then
+failed forever — as did both escape hatches `handlers/remove.py` names. The
+YAML axis now reserves the budget at admission too.
+
+### Fixed — a serialisation bomb the expansion guard could not see
+
+`_guard_dump_expansion` charged one node per value regardless of size, so a
+bomb built from a few large scalars rather than many small ones walked
+through it: a 50 KB file expanded to 12,359 nodes against a 65,536 budget,
+then spent 218 seconds and 1.1 GB of RSS inside `yaml.dump` producing a
+555 MB string for the post-hoc byte cap to reject — the precise failure the
+guard's own docstring says it prevents. Reachable through the documented
+threat model, a hostile `sync pull` or hand-edit dropping a `.md` into the
+memory directory, and it left the record un-removable because `tombstone`
+re-serialises. The walk now carries a scalar-byte budget beside the node
+budget; the same bomb is refused in under a millisecond at 66 MB of RSS, and
+the densest realistic record still serialises.
+
+### Fixed — two round trips that rewrote what they stored
+
+`_frontmatter.loads` stripped the CRs that precede a newline anywhere in the
+file, including in the body, while `dumps` wrote them back verbatim: a body
+written `alpha\r\nbeta` came back `alpha\nbeta`, the file and every reader
+disagreed, and the first lifecycle re-dump made the reader's version
+permanent. `alpha\r\r\nbeta` lost both CRs, so it was never only the one
+belonging to a CRLF pair. The delimiter scan still needs the CR-stripped
+view; the body is now rebuilt from the original lines. Fixed on the read
+side rather than by normalising on write, so the store keeps storing what
+it was given.
+
+Separately, U+0085 (NEL) is a YAML 1.1 line break, and pyyaml emitted it raw
+inside single-quoted scalars, so the loader folded it back to a space. Every
+frontmatter string was affected — an episode takeaway, a tombstone's
+`removed_reason`, a link note. Strings containing it now serialise
+double-quoted, which round-trips.
+
+### Fixed — `consolidate --llm` merges dropped the duplicate's scopes
+
+The non-LLM dedup path merges them, with a comment explaining why:
+similarity is scope-blind, so two near-identical bodies in disjoint project
+scopes cluster well over the threshold, and a keeper that does not inherit
+the duplicate's scope is invisible to that project's auto-scoped retrieval.
+The LLM path seeds its clusters from the same scope-blind pass and did not
+merge, so `consolidate --llm --apply --yes` silently removed the fact from
+one project. Measured: the same pair keeps one hit through `consolidate
+--apply` and zero through the LLM path.
+
+### Added — `doctor` reports memory bodies that end mid-sentence
+
+`memory_parse_health` answers "does the frontmatter parse", which is a true
+statement about file structure and says nothing about whether the content is
+whole. A body that arrives already truncated from the caller — an interrupted
+tool call, a model that hit its output cap mid-argument — round-trips
+byte-exactly and is reported healthy by every check. One memory in the
+maintainer's store sat cut off at "The whole security/red-team stack (Hak5"
+for ten days with a clean bill of health; the lost tail held a correction
+another memory pointed at, and it is unrecoverable.
+
+To be clear about the cause, since it was an open question: **no code path in
+bettermemory truncates a body.** Every size cap raises rather than trims,
+every write path was traced, and the event log shows an ordinary
+`memory_update` carrying `fields: ["content"]`. The store persisted exactly
+what it was handed. What was missing was any surface that would say so.
+
+`models.looks_truncated` is the predicate — the last non-whitespace character
+is not sentence- or structure-terminal — and the new `memory_body_completeness`
+check reports the ids that trip it. Measured on the maintainer's 234-record
+store: 1 false positive (a bullet list ending in a bare word), 93.9% recall
+against mid-body cuts. It warns and names ids; it never fails, and it is
+deliberately not a write-time gate — that would cost a parameter and a
+description sentence against 127 characters of resident-surface margin. See
+`docs/ROADMAP.md`.
+
 ### Added — a commit-message standard, and a linter that enforces the mechanical half
 
 The log had drifted into first-person narration and aphoristic subjects — entries
