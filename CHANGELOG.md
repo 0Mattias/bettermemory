@@ -7,7 +7,7 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
-## Unreleased
+## 3.33.0 - 2026-07-31
 
 ### Changed — bettermemory runs on the mcp 2.x SDK. **The floor is now `mcp>=2.0.0`**
 
