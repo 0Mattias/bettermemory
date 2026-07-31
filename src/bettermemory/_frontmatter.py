@@ -131,20 +131,19 @@ def loads(text: str) -> Post:
     metadata is empty — same as python-frontmatter.
     """
     # Split into lines but remember whether the input had a trailing newline,
-    # so the body round-trips. `lines` is the CR-stripped view used for
-    # DELIMITER DETECTION only, so a frontmatter block written with CRLF
-    # endings still matches `---`. `raw_lines` keeps the original bytes and
-    # is what the body is rebuilt from.
+    # so the body round-trips. Strip CR so CRLF line endings work — a file
+    # checked out with `core.autocrlf`, written by a Windows editor, or
+    # arriving over `sync pull` from a Windows host must parse, and its body
+    # must read the same on every platform.
     #
-    # Those two must stay separate. Applying the strip to the body region as
-    # well made every `\r` in a body vanish on read while `dumps` faithfully
-    # wrote it back out, so the file on disk and every reader disagreed — a
-    # body written `alpha\r\nbeta` came back `alpha\nbeta`, and the first
-    # tombstone / restore / rename / update re-dump erased the CRs from disk
-    # for good. It also stripped MULTIPLE trailing CRs, not just the one
-    # belonging to a CRLF pair, so `alpha\r\r\n` lost both. Any body composed
-    # on a Windows client, or one deliberately containing a CRLF example,
-    # was silently rewritten.
+    # This normalisation is HALF of a pair, and it was the only half for a
+    # long time: `dumps` wrote the body verbatim, so a CRLF body went to disk
+    # with its CRs while every reader returned it without them — the file and
+    # its readers disagreed, and the first lifecycle re-dump made the readers'
+    # version permanent. The fix is the matching normalisation in `dumps`, NOT
+    # dropping this one: removing it makes a Windows-authored memory read back
+    # with CRs in its body on every platform, which then flow into the FTS
+    # text, snippets and the next re-dump.
     raw_lines = text.split("\n")
     lines = [ln.rstrip("\r") for ln in raw_lines]
 
@@ -173,14 +172,10 @@ def loads(text: str) -> Post:
             f"frontmatter YAML exceeds {_MAX_YAML_BYTES}-byte cap "
             f"({len(yaml_text)} chars); refusing to parse"
         )
-    # Rebuilt from `raw_lines`, not `lines`, so the body is byte-exact —
-    # see the note at the top of this function.
-    body_lines = raw_lines[close_idx + 1 :]
+    body_lines = lines[close_idx + 1 :]
     # Drop a single separator blank line, mirroring python-frontmatter's
-    # `---\n\n<body>` shape. Tested against the CR-stripped view so a
-    # CRLF-written separator (`\r`, once the `\n` is consumed by the split)
-    # is recognised as the blank line it is.
-    if body_lines and lines[close_idx + 1] == "":
+    # `---\n\n<body>` shape.
+    if body_lines and body_lines[0] == "":
         body_lines = body_lines[1:]
     body = "\n".join(body_lines)
 
@@ -457,7 +452,28 @@ def dumps(
             "no room for the record's own removal metadata, making it "
             "un-removable. Shrink the frontmatter (verified_paths / scopes)."
         )
-    body = post.content.rstrip()
+    # Normalise CRLF to LF, the missing half of the pair `loads` has always
+    # had. `loads` strips the CR off every line so a Windows-authored or
+    # `core.autocrlf`-checked-out file reads the same everywhere; writing the
+    # body verbatim meant a CRLF body reached disk with its CRs while every
+    # reader returned it without them. The file and its readers disagreed —
+    # `alpha\r\nbeta` on disk, `alpha\nbeta` from `memory_show` — until the
+    # first tombstone / restore / rename / update re-dump silently made the
+    # readers' version permanent. Normalising here makes the two agree at
+    # every step instead of eventually.
+    #
+    # Applied as the SAME per-line `rstrip("\r")` `loads` performs, not as a
+    # `replace("\r\n", "\n")`: the output has to be a fixed point of the read
+    # normalisation, or the disagreement just moves one carriage return
+    # deeper. `alpha\r\r\nbeta` under a plain replace lands `alpha\r\nbeta` on
+    # disk, which `loads` then reads back as `alpha\nbeta` — the identical
+    # bug. Mirroring the operation exactly means disk equals reader for every
+    # input, with no shape left over.
+    #
+    # A lone `\r` not followed by a newline survives both sides untouched: it
+    # is content, not a line terminator this format knows about. Like the
+    # `rstrip` below, this normalises PRESENTATION, not content.
+    body = "\n".join(ln.rstrip("\r") for ln in post.content.split("\n")).rstrip()
     final = f"{_DELIM}\n{yaml_text}\n{_DELIM}\n\n{body}"
     # Total-file cap: the `_MAX_YAML_BYTES` check above bounds only the
     # frontmatter region, but `load` rejects the WHOLE file (frontmatter +

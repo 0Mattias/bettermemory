@@ -291,33 +291,54 @@ def test_an_update_cannot_mint_an_un_removable_record(store: Store) -> None:
 
 
 @pytest.mark.parametrize(
-    "body",
+    "body,expected",
     [
-        "alpha\r\nbeta\r\ngamma",
-        "alpha\r\r\nbeta",
-        "plain\nbody",
-        "a line that is exactly\n---\nand more",
+        # CRLF normalises on the way in, so the file and every reader
+        # agree from the first write rather than after the first re-dump.
+        ("alpha\r\nbeta\r\ngamma", "alpha\nbeta\ngamma"),
+        # Both CRs go, because `dumps` mirrors the read normalisation rather
+        # than approximating it — otherwise the disagreement just moves one
+        # carriage return deeper.
+        ("alpha\r\r\nbeta", "alpha\nbeta"),
+        # A lone CR is content, not a terminator this format knows about.
+        ("alpha\rbeta", "alpha\rbeta"),
+        ("plain\nbody", "plain\nbody"),
+        (
+            "a line that is exactly\n---\nand more",
+            "a line that is exactly\n---\nand more",
+        ),
     ],
 )
-def test_bodies_round_trip_byte_exactly_through_frontmatter(body: str) -> None:
-    """`loads` stripped every `\\r` in the file, including the body's, while
-    `dumps` wrote them back verbatim — so the bytes on disk and every
-    reader disagreed, and the first lifecycle re-dump made the reader's
-    version permanent. The delimiter scan still needs the CR-stripped
-    view; the body must not be rebuilt from it.
+def test_bodies_round_trip_through_frontmatter(body: str, expected: str) -> None:
+    """`loads` strips the CR off every line so a Windows-authored file reads
+    the same everywhere, and `dumps` used to write the body verbatim — so a
+    CRLF body sat on disk with its CRs while every reader returned it
+    without them, until the first lifecycle re-dump made the readers'
+    version permanent. `dumps` now normalises to match, which is the half
+    that was missing.
     """
     post = frontmatter.Post(content=body, metadata={"id": generate_ulid()})
-    assert frontmatter.loads(frontmatter.dumps(post)).content == body.rstrip()
+    assert frontmatter.loads(frontmatter.dumps(post)).content == expected
 
 
-def test_crlf_survives_a_tombstone_and_restore_cycle(store: Store) -> None:
-    """The write/read disagreement was silent until a lifecycle re-dump
-    laundered it. This is the end-to-end version of the test above.
+def test_disk_and_readers_agree_on_a_crlf_body_from_the_first_write(
+    store: Store,
+) -> None:
+    """The end-to-end version, and the property that actually matters: what
+    `memory_show` returns is what the bytes on disk say, with no lifecycle
+    event needed to reconcile them.
     """
     memory = store.write(content="alpha\r\nbeta\r\ngamma", scopes=["infra"])
+    path = next(Path(store.root).glob("*.md"))
+    assert b"\r" not in path.read_bytes()
+    assert store.load_one(memory.id).body == "alpha\nbeta\ngamma\n"
+
+    # And a re-dump changes nothing, because there is nothing left to
+    # launder — the failure mode was that this step silently rewrote the file.
+    before = path.read_bytes()
     store.tombstone(memory.id, reason="cycle", session_id="s1")
     store.restore(memory.id)
-    assert store.load_one(memory.id).body == "alpha\r\nbeta\r\ngamma\n"
+    assert next(Path(store.root).glob("*.md")).read_bytes() == before
 
 
 @pytest.mark.parametrize(
@@ -457,3 +478,22 @@ def test_looks_truncated_ignores_an_empty_body() -> None:
     predicate's business to report it as truncated as well."""
     assert not looks_truncated("")
     assert not looks_truncated("   \n  ")
+
+
+def test_dumps_output_is_a_fixed_point_of_loads(store: Store) -> None:
+    """The general property, rather than one shape at a time: whatever
+    `dumps` writes must survive `loads` unchanged, or some body somewhere
+    reads back as something other than the bytes on disk.
+    """
+    for body in (
+        "alpha\r\nbeta",
+        "alpha\r\r\nbeta",
+        "alpha\rbeta",
+        "\r\n\r\nleading blanks",
+        "trailing\r\n\r\n",
+        "plain",
+    ):
+        post = frontmatter.Post(content=body, metadata={"id": generate_ulid()})
+        once = frontmatter.dumps(post)
+        twice = frontmatter.dumps(frontmatter.loads(once))
+        assert once == twice, f"{body!r} is not a fixed point"
