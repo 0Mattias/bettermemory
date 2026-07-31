@@ -101,7 +101,13 @@ async def call_tool(server: Any, name: str, arguments: dict[str, Any]) -> Any:
 
 
 def input_schema(tool: Any) -> dict[str, Any]:
-    """A registered tool's JSON input schema, under either attribute name.
+    """A SERVED tool's JSON input schema, under either attribute name.
+
+    Served, meaning an element of `await server.list_tools()`. The registry
+    object behind `_tool_manager.get_tool(name)` is a DIFFERENT type that
+    carries the schema as `.parameters` and `.fn_metadata.output_schema`,
+    and it has never had either attribute this reads — under 1.x or 2.0.0.
+    Passing one here raises rather than silently returning the wrong thing.
 
     1.x spells it `inputSchema`, 2.0.0 spells it `input_schema`. The WIRE
     is unchanged in both — `mcp_types.MCPModel` sets an alias generator and
