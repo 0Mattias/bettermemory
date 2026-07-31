@@ -1,0 +1,154 @@
+{
+  "corpus": "longmemeval_s_cleaned.json",
+  "corpus_sha256": "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442",
+  "instances": 500,
+  "scored": 500,
+  "retrieval_depth": 200,
+  "k_values": [
+    1,
+    5,
+    10
+  ],
+  "notes": [
+    "claude-mem arms are NOT implemented yet \u2014 this run measures bettermemory only and licenses no comparative claim.",
+    "ingest bypasses memory_write guardrails by design (Store.write, src/bettermemory/store.py:411); stores hold ~245 items, below the 500-item index threshold, so bm25 prefiltering never engages and the full store is ranked."
+  ],
+  "results": [
+    {
+      "arm": "lexical",
+      "n": 500,
+      "seconds": 321.2,
+      "items_written": 124361,
+      "rounds_offered": 124361,
+      "dup_session_questions": 13,
+      "macro": {
+        "1": 0.5246,
+        "5": 0.8935,
+        "10": 0.9443
+      },
+      "micro": {
+        "1": 0.4357,
+        "5": 0.8671,
+        "10": 0.9325
+      },
+      "ceiling": {
+        "1": 0.6442,
+        "5": 0.999,
+        "10": 1.0
+      },
+      "depth_truncated": {
+        "1": 0,
+        "5": 2,
+        "10": 9
+      },
+      "by_type": {
+        "knowledge-update": {
+          "1": 0.4615,
+          "5": 0.9808,
+          "10": 0.9872
+        },
+        "multi-session": {
+          "1": 0.3605,
+          "5": 0.8487,
+          "10": 0.9301
+        },
+        "single-session-assistant": {
+          "1": 1.0,
+          "5": 1.0,
+          "10": 1.0
+        },
+        "single-session-preference": {
+          "1": 0.2667,
+          "5": 0.7333,
+          "10": 0.8667
+        },
+        "single-session-user": {
+          "1": 0.8714,
+          "5": 0.9714,
+          "10": 0.9857
+        },
+        "temporal-reasoning": {
+          "1": 0.401,
+          "5": 0.8372,
+          "10": 0.9055
+        }
+      },
+      "type_n": {
+        "single-session-user": 70,
+        "multi-session": 133,
+        "single-session-preference": 30,
+        "temporal-reasoning": 133,
+        "knowledge-update": 78,
+        "single-session-assistant": 56
+      }
+    },
+    {
+      "arm": "semantic",
+      "n": 500,
+      "seconds": 1271.2,
+      "items_written": 124361,
+      "rounds_offered": 124361,
+      "dup_session_questions": 13,
+      "macro": {
+        "1": 0.5622,
+        "5": 0.9185,
+        "10": 0.9561
+      },
+      "micro": {
+        "1": 0.4662,
+        "5": 0.8903,
+        "10": 0.9441
+      },
+      "ceiling": {
+        "1": 0.6442,
+        "5": 0.999,
+        "10": 1.0
+      },
+      "depth_truncated": {
+        "1": 0,
+        "5": 2,
+        "10": 9
+      },
+      "by_type": {
+        "knowledge-update": {
+          "1": 0.4744,
+          "5": 0.9808,
+          "10": 0.9936
+        },
+        "multi-session": {
+          "1": 0.3768,
+          "5": 0.8667,
+          "10": 0.9326
+        },
+        "single-session-assistant": {
+          "1": 1.0,
+          "5": 1.0,
+          "10": 1.0
+        },
+        "single-session-preference": {
+          "1": 0.6333,
+          "5": 0.9667,
+          "10": 0.9667
+        },
+        "single-session-user": {
+          "1": 0.8714,
+          "5": 0.9714,
+          "10": 0.9857
+        },
+        "temporal-reasoning": {
+          "1": 0.4361,
+          "5": 0.8608,
+          "10": 0.9211
+        }
+      },
+      "type_n": {
+        "single-session-user": 70,
+        "multi-session": 133,
+        "single-session-preference": 30,
+        "temporal-reasoning": 133,
+        "knowledge-update": 78,
+        "single-session-assistant": 56
+      }
+    }
+  ]
+}

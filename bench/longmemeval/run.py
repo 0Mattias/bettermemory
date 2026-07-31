@@ -207,6 +207,37 @@ def distinct_sessions(
     return seen
 
 
+def question_record(inst: dict[str, Any], ranked: list[str]) -> dict[str, Any]:
+    """One question's retrieval outcome, in the smallest form every
+    published aggregate can be rebuilt from.
+
+    `evidence_ranks` holds the 0-based rank of each evidence session in
+    the DISTINCT-SESSION ranking, positionally aligned with the deduped
+    `answer_session_ids`; `null` means that session never surfaced within
+    `RETRIEVAL_DEPTH`. Given these plus `n_ranked`:
+
+        recall@k  = len([r for r in evidence_ranks if r is not None and r < k])
+                    / n_evidence
+        complete@k = recall@k == 1.0     partial@k = 0 < recall@k < 1
+        depth-truncated@k = n_ranked < k
+
+    which is the whole of the by-type table AND the partial/complete
+    split that motivated read-side rescue. That split was measured once
+    by a throwaway re-run because this runner persisted `by_type`
+    aggregates only; anything derived from a run that is not in its own
+    result file has to be re-earned every time somebody asks.
+    """
+    rank_of = {sid: i for i, sid in enumerate(ranked)}
+    evidence = list(dict.fromkeys(inst["answer_session_ids"]))
+    return {
+        "qid": inst.get("question_id", ""),
+        "type": inst.get("question_type", "unknown"),
+        "n_evidence": len(evidence),
+        "evidence_ranks": [rank_of.get(sid) for sid in evidence],
+        "n_ranked": len(ranked),
+    }
+
+
 @dataclass
 class ArmResult:
     arm: str
@@ -226,6 +257,9 @@ class ArmResult:
     rounds_offered: int = 0
     dup_session_questions: int = 0
     seconds: float = 0.0
+    # Always collected (500 small dicts); written out only under
+    # --per-question, so the published summary shape stays byte-stable.
+    per_question: list[dict[str, Any]] = field(default_factory=list)
 
     def recall_macro(self, k: int) -> float:
         return self.macro[k] / self.n if self.n else 0.0
@@ -278,6 +312,7 @@ def run_arm(
         finally:
             shutil.rmtree(root, ignore_errors=True)
 
+        res.per_question.append(question_record(inst, ranked))
         res.items_written += n_items
         res.rounds_offered += sum(len(rounds_of(s)) for s in inst["haystack_sessions"])
         res.n += 1
@@ -379,6 +414,17 @@ def main() -> int:
     p.add_argument("--limit", type=int, default=None, help="First N instances (smoke).")
     p.add_argument("--json", action="store_true")
     p.add_argument("--quiet", action="store_true")
+    p.add_argument(
+        "--per-question",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Also write a per-question sidecar JSON to PATH. Carries this "
+            "run's meta and, per arm, one record per scored question "
+            "(see question_record). The published summary keeps its own "
+            "shape; this is a separate dated artifact."
+        ),
+    )
     args = p.parse_args()
 
     corpus_path = Path(args.corpus).expanduser()
@@ -466,6 +512,24 @@ def main() -> int:
         "k_values": list(K_VALUES),
         "notes": notes,
     }
+
+    if args.per_question:
+        pq_path = Path(args.per_question).expanduser()
+        if not pq_path.is_absolute():
+            pq_path = (_HERE / pq_path).resolve()
+        pq_path.parent.mkdir(parents=True, exist_ok=True)
+        # `meta` rides along so a sidecar carries its own SUBSET /
+        # UNPINNED / ORACLE notes: a per-question file separated from its
+        # summary must still be able to disqualify itself.
+        pq_path.write_text(
+            json.dumps(
+                {**meta, "arms": {r.arm: r.per_question for r in rows}},
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        print(f"per-question records written to {pq_path}", file=sys.stderr)
 
     if args.json:
         print(

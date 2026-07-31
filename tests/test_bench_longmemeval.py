@@ -127,6 +127,158 @@ def test_both_runners_use_the_same_retrieval_depth() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Per-question records
+#
+# The partial/complete split that motivated read-side rescue was measured
+# by a throwaway re-run, because this runner persisted `by_type`
+# aggregates only. Per-question records exist so that analysis is a
+# property of the committed artifact. Their whole value is that the
+# published aggregates are DERIVABLE from them — a record set that
+# disagrees with the summary it ships beside is worse than no record set,
+# so the agreement is pinned rather than assumed.
+# ---------------------------------------------------------------------------
+
+
+def test_question_record_ranks_align_with_deduped_evidence() -> None:
+    inst = {
+        "question_id": "q1",
+        "question_type": "multi-session",
+        "answer_session_ids": ["sB", "sA", "sB"],
+    }
+    rec = bm.question_record(inst, ["sC", "sA", "sB"])
+    # Deduped in first-occurrence order, and each rank is that session's
+    # position in the distinct-session ranking.
+    assert rec["n_evidence"] == 2
+    assert rec["evidence_ranks"] == [2, 1]
+    assert rec["n_ranked"] == 3
+    assert rec["qid"] == "q1"
+    assert rec["type"] == "multi-session"
+
+
+def test_question_record_marks_unretrieved_evidence_as_null() -> None:
+    """`null` has to mean 'never surfaced within the depth', not rank 0 —
+    the two are opposite outcomes and JSON has no other way to say it."""
+    inst = {"question_id": "q2", "answer_session_ids": ["sA", "sGONE"]}
+    rec = bm.question_record(inst, ["sA"])
+    assert rec["evidence_ranks"] == [0, None]
+    assert rec["type"] == "unknown"
+
+
+def _synthetic_instance(
+    qid: str,
+    qtype: str,
+    question: str,
+    sessions: list[tuple[str, list[str]]],
+    evidence: list[str],
+) -> dict:
+    return {
+        "question_id": qid,
+        "question_type": qtype,
+        "question": question,
+        "answer_session_ids": evidence,
+        "haystack_session_ids": [sid for sid, _ in sessions],
+        "haystack_sessions": [
+            [{"role": "user", "content": t} for t in turns] for _, turns in sessions
+        ],
+        "haystack_dates": ["" for _ in sessions],
+    }
+
+
+def test_per_question_records_reproduce_the_aggregate_recall() -> None:
+    """Derive every published aggregate from the records and compare to
+    the aggregate the runner computed independently."""
+    corpus = [
+        _synthetic_instance(
+            "qa",
+            "single-session-user",
+            "kangaroo",
+            [("sA", ["I saw a kangaroo"]), ("sB", ["unrelated pottery"])],
+            ["sA"],
+        ),
+        _synthetic_instance(
+            "qb",
+            "multi-session",
+            "kangaroo pottery",
+            [
+                ("sC", ["a kangaroo hopped past"]),
+                ("sD", ["the pottery kiln"]),
+                ("sE", ["nothing whatsoever"]),
+            ],
+            ["sC", "sD"],
+        ),
+    ]
+    res = bm.run_arm(corpus, arm="lexical", semantic_model=None, progress=False)
+
+    assert len(res.per_question) == res.n == 2
+    assert [r["qid"] for r in res.per_question] == ["qa", "qb"]
+
+    for k in bm.K_VALUES:
+        derived = sum(
+            len([r for r in rec["evidence_ranks"] if r is not None and r < k])
+            / rec["n_evidence"]
+            for rec in res.per_question
+        ) / len(res.per_question)
+        assert derived == pytest.approx(res.recall_macro(k)), k
+
+        derived_trunc = len([rec for rec in res.per_question if rec["n_ranked"] < k])
+        assert derived_trunc == res.truncated[k], k
+
+    for qtype in res.type_n:
+        recs = [rec for rec in res.per_question if rec["type"] == qtype]
+        derived = sum(
+            len([r for r in rec["evidence_ranks"] if r is not None and r < 5])
+            / rec["n_evidence"]
+            for rec in recs
+        ) / len(recs)
+        assert derived == pytest.approx(res.type_recall(qtype, 5)), qtype
+
+
+def test_per_question_sidecar_carries_the_disqualifying_notes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A sidecar read apart from its summary must still be able to say
+    'this run is not publishable'."""
+    corpus_path = tmp_path / "tiny.json"
+    corpus_path.write_text(
+        json.dumps(
+            [
+                _synthetic_instance(
+                    "qa",
+                    "single-session-user",
+                    "kangaroo",
+                    [("sA", ["I saw a kangaroo"])],
+                    ["sA"],
+                )
+            ]
+        ),
+        encoding="utf-8",
+    )
+    out = tmp_path / "pq.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run.py",
+            "--corpus",
+            str(corpus_path),
+            "--arms",
+            "lexical",
+            "--json",
+            "--quiet",
+            "--per-question",
+            str(out),
+        ],
+    )
+    assert bm.main() == 0
+    capsys.readouterr()
+
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert any("UNPINNED CORPUS" in n for n in payload["notes"])
+    assert payload["retrieval_depth"] == bm.RETRIEVAL_DEPTH
+    assert [r["qid"] for r in payload["arms"]["lexical"]] == ["qa"]
+
+
+# ---------------------------------------------------------------------------
 # Guards that exist because a specific bug happened
 # ---------------------------------------------------------------------------
 

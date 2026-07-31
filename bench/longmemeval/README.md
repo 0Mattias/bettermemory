@@ -8,7 +8,35 @@ against labels that neither this project nor claude-mem authored.
 .venv/bin/python bench/longmemeval/run.py --limit 20      # smoke
 .venv/bin/python bench/longmemeval/run.py                 # full, ~27 min
 .venv/bin/python bench/longmemeval/run.py --json
+.venv/bin/python bench/longmemeval/run.py --json \
+  --per-question results/per-question/YYYY-MM-DD.json     # + per-question sidecar
 ```
+
+(Paths are resolved relative to this directory, same rule as `--corpus`.)
+
+`--per-question` writes a second file: this run's meta (corpus, sha,
+notes) plus, per arm, one record per scored question — `qid`, `type`,
+`n_evidence`, `evidence_ranks`, `n_ranked`. `evidence_ranks` holds each
+evidence session's 0-based rank in the distinct-session ranking, `null`
+when it never surfaced within the retrieval depth. Every published
+aggregate is a function of those fields:
+
+```
+recall@k          = |{r in evidence_ranks : r is not None and r < k}| / n_evidence
+complete@k        = recall@k == 1        partial@k = 0 < recall@k < 1
+depth-truncated@k = n_ranked < k
+```
+
+The summary emit keeps its own shape, so per-question records are a
+separate dated artifact rather than a change to the published one.
+
+Sidecars live in `results/per-question/`, one directory below the
+summaries, and that placement is deliberate: `tests/test_number_claims.py`
+globs `bench/*/results/*.json` one level deep to build the pool of
+numbers a prose claim may pin against. A file holding 1,000 rank integers
+would let almost any small number in any document find a "pin", which is
+the one thing that guard exists to prevent. Sidecars are analysis input,
+not citable evidence.
 
 The corpus is not vendored (265 MB). Fetch it:
 
@@ -315,13 +343,17 @@ favour.** Three for three here. The invalid artifact is retained as
    fuses rankers that agree on the dominant sub-topic, so fusion
    reinforces the monopoly rather than breaking it.
 
-   Prerequisite before iterating: this runner persists `by_type`
-   aggregates only, so the table above is **not reproducible from the
-   files in `results/`** — it needed a re-run. Add per-question output
-   first. Per-type ceilings also belong in the tables above; computed from
-   the corpus they are ~100% at k=5 for every class (temporal-reasoning
-   99.6%), which *strengthens* the reading that this headroom is real
-   rather than arithmetic.
+   **Prerequisite CLOSED 2026-07-30**, and closing it refuted the
+   paragraph above. `--per-question` now persists per-question records,
+   and `results/baseline-both-arms-2026-07-30.json` +
+   `results/per-question/baseline-2026-07-30.json` are a fresh both-arms
+   run against unmodified ranking. It reproduces every published figure
+   exactly — pooled 89.35 / 91.85, temporal-reasoning 83.72,
+   multi-session 84.87 — and the partial/complete table above to the
+   tenth of a point, this time derivable from a committed file instead
+   of a throwaway re-run. Per-type ceilings are ~100% at k=5 for every
+   class (temporal-reasoning 99.6%), so the headroom is real rather than
+   arithmetic.
 
 1. **An above-threshold arm.** Per-question stores hold ~249 items
    against a 500-item index threshold, so bm25 prefiltering never
