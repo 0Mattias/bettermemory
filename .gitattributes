@@ -9,6 +9,15 @@
 # platform-independent rather than platform-independent-on-Linux.
 bench/rot/frame/*.json -text
 
+# Same rule, same reason, one directory over. `bench/retrieval`'s corpora are
+# sha256-pinned inside every result artifact, and 2026-07-30's prefilter arm
+# added the first test that re-hashes them on every platform rather than only
+# where the corpus happens to be downloaded. Windows checked them out with
+# CRLF and the check correctly refused: the bytes really were not the bytes
+# that were scored. Marking them binary is the fix, not relaxing the check —
+# a corpus hash that is allowed to differ per platform is not an anchor.
+bench/retrieval/*.jsonl -text
+
 # DELIBERATELY ABSENT: any `*.py diff=python` rule.
 #
 # Git's default funcname heuristic — not the Python driver — is what produces
