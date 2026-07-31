@@ -2371,7 +2371,18 @@ async def test_cli_consolidate_via_subprocess(
         capture_output=True,
         text=True,
         env={**__import__("os").environ, "BETTERMEMORY_DIR": str(memory_dir)},
-        timeout=15,
+        # 15s was too tight and CI proved it. This timeout is a HANG
+        # guard, not a performance assertion: on the embeddings leg the
+        # first `bettermemory consolidate` in a fresh install byte-compiles
+        # the whole semantic stack, measured at 27.3s cold against 3.6s
+        # warm on the same machine. The `_cli_is_functional` probe above
+        # cannot absorb that cost for us — it runs `--help`, which is
+        # argparse-only and never imports the semantic path, so it passes
+        # its own 10s budget and leaves these tests unskipped with the
+        # cache still cold. 120s matches the convention the other
+        # world-importing subprocess tests already use (test_fsutil,
+        # test_origin) and still catches a real hang.
+        timeout=120,
     )
     assert result.returncode == 0
     assert "Consolidate report" in result.stdout
@@ -2391,7 +2402,18 @@ async def test_cli_consolidate_json_via_subprocess(
         capture_output=True,
         text=True,
         env={**__import__("os").environ, "BETTERMEMORY_DIR": str(memory_dir)},
-        timeout=15,
+        # 15s was too tight and CI proved it. This timeout is a HANG
+        # guard, not a performance assertion: on the embeddings leg the
+        # first `bettermemory consolidate` in a fresh install byte-compiles
+        # the whole semantic stack, measured at 27.3s cold against 3.6s
+        # warm on the same machine. The `_cli_is_functional` probe above
+        # cannot absorb that cost for us — it runs `--help`, which is
+        # argparse-only and never imports the semantic path, so it passes
+        # its own 10s budget and leaves these tests unskipped with the
+        # cache still cold. 120s matches the convention the other
+        # world-importing subprocess tests already use (test_fsutil,
+        # test_origin) and still catches a real hang.
+        timeout=120,
     )
     assert result.returncode == 0
     parsed = json.loads(result.stdout)
@@ -2432,7 +2454,18 @@ async def test_cli_consolidate_acknowledge_misses_via_subprocess(
         capture_output=True,
         text=True,
         env={**__import__("os").environ, "BETTERMEMORY_DIR": str(memory_dir)},
-        timeout=15,
+        # 15s was too tight and CI proved it. This timeout is a HANG
+        # guard, not a performance assertion: on the embeddings leg the
+        # first `bettermemory consolidate` in a fresh install byte-compiles
+        # the whole semantic stack, measured at 27.3s cold against 3.6s
+        # warm on the same machine. The `_cli_is_functional` probe above
+        # cannot absorb that cost for us — it runs `--help`, which is
+        # argparse-only and never imports the semantic path, so it passes
+        # its own 10s budget and leaves these tests unskipped with the
+        # cache still cold. 120s matches the convention the other
+        # world-importing subprocess tests already use (test_fsutil,
+        # test_origin) and still catches a real hang.
+        timeout=120,
     )
     assert result.returncode == 0, result.stderr
     assert cutoff in result.stdout
