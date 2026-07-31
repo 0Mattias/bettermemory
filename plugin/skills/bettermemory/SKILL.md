@@ -119,15 +119,36 @@ Use episodes when `memory_write` would reject (or should reject) your content as
 - *"currently blocked on Y; next step is Z"* → `episode_write`
 - *"this branch's release plan"* (state that changes weekly) → `episode_write`
 
-Storage layout: `<root>/episodes/<session_id>/<ulid>.md`. Default 30-day TTL, pruned on each write. Episodes are **invisible to `memory_search` / `memory_health` / `memory_list`** — they live in a sibling subtree the memory iterators never see.
+Storage layout: `<root>/episodes/<session_id>/<ulid>.md`. Default 30-day TTL, pruned on each write. Episode *content* is **invisible to `memory_search` / `memory_health` / `memory_list`** — they live in a sibling subtree the memory iterators never see. The one thing that crosses over is aggregate size: `memory_health` returns `episode_volume` (`{sessions, episodes, bytes, prunable_sessions, ttl_days}`), a stat-only gauge. Check `prunable_sessions` if a long read-only loop has been running — pruning happens on `episode_write` and `bettermemory episodes prune`, so a loop that only reads never collects.
+
+### The state channel: write state here, mint facts at close
+
+Treat this as the routing rule, not one option among several. **Working state goes to `episode_write` while the run is in flight; at session close, the takeaways that hardened go through `episode_promote`.**
+
+Without the rule, here is what happens instead, and it is not hypothetical — it is the dominant shape in a mature store. `memory_write`'s durability gate rejects state-shaped content. But rejecting it does not remove your need to write down where you are in a long run, so the state gets rephrased until it clears the gate and lands in the durable store dressed as a fact. Nothing ages it out, and every later `memory_search` steps over it.
+
+Promoting at close is also simply a better write:
+
+- The claim **survived its own session**. That is most of what the durability gate is trying to guess at from one sentence, and you get it for free by waiting.
+- You can see the **whole session's takeaways at once**, so you promote one consolidated claim instead of the three in-flight fragments that would have hit dedup as separate near-duplicates.
+- What did not harden costs nothing to abandon — it expires on the TTL instead of becoming curation debt.
+
+The mirror-image rule matters as much: content that is *still* run-state at close does **not** get promoted "to be safe". Leaving it in the journal is the point.
 
 ### Loop-iteration pattern
 
 A `/loop` iteration (or any agent resuming work in a worktree) should:
 
 1. **At entry**: call `episode_handoff()`. Returns the prior session's recent takeaways with `{prior_session_id, episodes: [{id, created, takeaway, body, scopes}, ...]}`. Distinguish `prior_session_id is None` (no baseline) from `episodes == []` (prior session left no journal).
-2. **At exit**: call `episode_write(body=..., takeaway="one-line summary")`. The takeaway is what the next iteration sees first.
-3. **When a takeaway hardens into a durable fact**: call `episode_promote(episode_id, scopes=[...])`. Routes through `memory_write` so the durability gate fires; the source episode is deleted on commit, left in place on any rejection so you can adjust and retry.
+2. **Each iteration**: call `episode_write(body=..., takeaway="one-line summary")`. The takeaway is what the next iteration sees first. This is where run-state lives — no judgement call needed, write it every time.
+3. **At session close**: scan what this session concluded, then promote the survivors:
+
+```python
+episode_search(parent_session_id=<this session id>, include_bodies=False)  # cheap takeaway-only scan
+episode_promote(episode_id="01K...", scopes=["projects:bettermemory"])     # only the ones that hardened
+```
+
+Step 3's promote is a **filter, not a loop** over the scan — a twelve-takeaway session typically promotes zero or one. `episode_promote` routes through `memory_write`, so a promotion that should not have happened still meets the durability gate, dedup and (for `user-inference`) the confirmation flow; the source episode is deleted on commit and left in place on any rejection, so guessing wrong costs a status code rather than the work.
 
 `memory_search(since_prior_session=True)` is the memory-tier companion: filter the durable memory store to entries `updated` since the prior session boundary. The semantic is "what THIS session has changed since the last other-session activity" — your own intra-session diff. For what the *prior* iteration did, use `episode_handoff` instead.
 

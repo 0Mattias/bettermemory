@@ -685,6 +685,15 @@ def _render_overview(report: Any, *, tombstone_count: int | None = None) -> str:
         )
     if tombstone_count is not None:
         cards.append(("tombstones", tombstone_count, ""))
+    volume = getattr(report, "episode_volume", None)
+    if volume is not None and volume.prunable_sessions:
+        # Conditional, like commit-drift above: a zero here is the
+        # healthy default and a permanent "0 collectable" tile would be
+        # noise. Non-zero is actionable and easy to miss — episode GC
+        # runs on `episode_write` and `bettermemory episodes prune` only,
+        # so a store driven by a read-only loop accumulates collectable
+        # session directories that nothing is going to take.
+        cards.append(("collectable episode sessions", volume.prunable_sessions, "warn"))
 
     parts: list[str] = []
     parts.append('<div class="bucket-summary">')
@@ -694,11 +703,22 @@ def _render_overview(report: Any, *, tombstone_count: int | None = None) -> str:
             f'<span class="value {cls}">{int(value)}</span></div>'
         )
     parts.append("</div>")
-    parts.append(
+    footer = (
         f'<p class="muted">{int(report.total_events)} events · '
         f"{int(report.distinct_sessions)} sessions · "
-        f"window {int(report.window_days)}d</p>"
+        f"window {int(report.window_days)}d"
     )
+    if volume is not None:
+        # Sibling-tier scale, in the same muted line as the other
+        # store-scale facts. Aggregate only — no episode body, takeaway
+        # or scope reaches this page, or any other memory surface.
+        footer += (
+            f" · {int(volume.episodes)} episodes in "
+            f"{int(volume.sessions)} session"
+            f"{'' if volume.sessions == 1 else 's'} "
+            f"({int(volume.bytes):,} bytes)"
+        )
+    parts.append(footer + "</p>")
 
     if report.heavily_used:
         parts.append("<h2>Most-applied memories</h2>")
@@ -1013,6 +1033,10 @@ _HEALTH_RENDERED_BUCKETS = frozenset(
         # otherwise the section's absence already means "nothing to
         # show". See the warn row in `_render_health`.
         "telemetry_coverage",
+        # Sibling episode-tier size gauge. Always in the overview's
+        # muted footer line; the `prunable_sessions` half additionally
+        # gets a warn tile when non-zero. See `_render_overview`.
+        "episode_volume",
     }
 )
 

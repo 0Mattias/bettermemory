@@ -12,8 +12,10 @@ Use cases:
   episode_handoff with explicit `prior_session_id` for the common
   case, but episode_search is the no-cap form).
 
-Excluded surfaces: episodes still don't appear in memory_search /
-memory_health / memory_list — this is a dedicated episodic-tier read.
+Excluded surfaces: episode content still doesn't appear in
+memory_search / memory_health / memory_list — this is a dedicated
+episodic-tier read. memory_health carries the subtree's aggregate
+volume (`episode_volume`) only.
 """
 
 from __future__ import annotations
@@ -59,7 +61,7 @@ DESC_EPISODE_SEARCH = (
     "checkout), when the recorded worktree is gone from disk, and when "
     "you are in a LINKED worktree of the checkout that wrote it, so "
     "under agent fan-out the primary checkout's episodes stay visible. "
-    "An EXPLICIT `swarm_id` / `parent_session_id` is never "
+    "An EXPLICIT `swarm_id` / `parent_session_id` / `ids` is never "
     "worktree-filtered: naming a cohort or session is deliberate "
     "cross-worktree intent.\n\n"
     "Parameters (full reference in docs/api.md):\n"
@@ -72,7 +74,11 @@ DESC_EPISODE_SEARCH = (
     "- `since` (optional ISO-8601): created at-or-after this instant.\n"
     "- `auto_scope` (default True): worktree-scope the bare walk (see "
     "WORKTREE SCOPING). False sweeps every worktree sharing the root.\n"
-    "- `max_results` (default 20, cap 200): surfaces the most-recent N."
+    "- `max_results` (default 20, cap 200): surfaces the most-recent N.\n"
+    "- `ids` (optional): only these episode ULIDs — explicit selector, "
+    "never worktree-filtered; unknown ids are absent, not an error.\n"
+    "- `include_bodies` (default True): False OMITS `body` — "
+    "takeaway-only rows. Scan, then re-read one via `ids`."
 )
 
 
@@ -84,9 +90,18 @@ async def episode_search(
     since: str | None = None,
     max_results: int | None = None,
     auto_scope: bool = True,
+    include_bodies: bool = True,
+    ids: list[str] | None = None,
     ctx: Context | None = None,
 ) -> list[dict[str, Any]]:
-    """Handler body for the `episode_search` MCP tool."""
+    """Handler body for the `episode_search` MCP tool.
+
+    `include_bodies` / `ids` are also spelled out on the `_handlers.py`
+    facade — FastMCP builds the served schema from THAT signature, and a
+    parameter present only here is dropped by the argument model without
+    an error (the call succeeds and ignores the flag). See
+    `tests/test_episode_search_scan_and_fetch.py` for the wire proof.
+    """
     # Route capture_origin through the parent ``_handlers`` module so the
     # test suite's monkey-patch propagates here too — the same shim
     # discipline `memory_search` / `episode_handoff` use.
@@ -107,6 +122,12 @@ async def episode_search(
             raise ValueError(f"since must be an ISO-8601 timestamp; got {since!r}")
 
     scope_filter: set[str] | None = set(scopes) if scopes else None
+    # `ids=[]` is UNSET, not "select nothing" — the same reading `scopes`
+    # gets on the line above. That matters beyond ergonomics: an empty
+    # list read as an explicit selection would take the worktree carve-out
+    # below and turn every client that defaults the argument to `[]` into
+    # a silent cross-worktree sweep.
+    id_filter: set[str] | None = set(ids) if ids else None
     # Session-disabled scopes are an opt-out hide; honored uniformly
     # across the read surface (memory_search, memory_list) — episodes
     # are the third leg, so we mirror the same `excluded & scopes`
@@ -115,18 +136,19 @@ async def episode_search(
 
     # Worktree isolation, opt-in by default (mirrors `memory_search`'s
     # `auto_scope`), applied ONLY to the bare discovery walk — the branch
-    # below where the caller named NEITHER `swarm_id` NOR
-    # `parent_session_id`. episode_search spans every session directory
-    # under the shared memory root (BETTERMEMORY_DIR), so an unscoped sweep
+    # below where the caller named NO explicit selector (`swarm_id`,
+    # `parent_session_id`, `ids`). episode_search spans every session
+    # directory under the shared memory root (BETTERMEMORY_DIR), so a sweep
     # across two worktrees of the same repository that share a root would
     # otherwise leak each other's journal bodies — the asymmetric
     # cross-worktree read `episode_handoff` guards against on the
     # iteration-entry path (`_worktrees_equal_strict`).
     #
-    # An EXPLICIT `swarm_id` or `parent_session_id` is exempt: naming a
-    # cohort or a specific session IS the scoping intent, and the
-    # cross-worktree read is deliberate, not a leak — mirroring how
-    # `episode_handoff` respects an explicit `prior_session_id` verbatim
+    # An EXPLICIT `swarm_id`, `parent_session_id` or `ids` is exempt:
+    # naming a cohort, a session or specific episodes IS the scoping
+    # intent, and the cross-worktree read is deliberate, not a leak —
+    # mirroring how `episode_handoff` respects an explicit
+    # `prior_session_id` verbatim
     # ("explicit consent that they own the cross-tree concern"). The swarm
     # fan-in is the load-bearing case: a coordinator gathers sub-agents
     # that each ran in their OWN worktree, so filtering by the
@@ -134,6 +156,16 @@ async def episode_search(
     # silently defeat `list_by_swarm`. So the filter guards only the
     # no-selector walk, the one path where an unintended cross-worktree
     # leak is the genuine concern.
+    #
+    # `ids` is the third member for the same reason and one more: it is
+    # the fetch half of the scan-then-fetch pattern, and the scans that
+    # produce the ids are very often the two cross-worktree reads above.
+    # Filtering it would hand a coordinator ids its own next call cannot
+    # resolve. `episode_promote` already resolves a caller-supplied ULID
+    # across every session directory on precisely this argument — and it
+    # DELETES on commit, so a read that refused what that write accepts
+    # would be the stranger asymmetry. `ids=[]` is unset (above), so the
+    # exemption needs the FILTER, not the raw argument.
     #
     # We use the permissive `worktrees_match` (either side None → True)
     # rather than the handoff's strict rule because the bare walk is a
@@ -143,7 +175,10 @@ async def episode_search(
     # `auto_scope=False` is the explicit escape hatch for an intentional
     # cross-worktree sweep of the bare walk.
     apply_worktree_filter = (
-        auto_scope and swarm_id is None and parent_session_id is None
+        auto_scope
+        and swarm_id is None
+        and parent_session_id is None
+        and id_filter is None
     )
     caller_worktree: str | None = None
     if apply_worktree_filter:
@@ -188,6 +223,19 @@ async def episode_search(
 
     matched: list[Episode] = []
     for ep in candidates:
+        # The id filter first — it is the cheapest test, and on the
+        # fetch-by-id path it rejects almost everything the walk loaded.
+        #
+        # Post-load membership, deliberately, rather than building
+        # `<session_dir>/<id>.md` and stat-ing it: the ULID IS the
+        # filename, so the fast path is tempting, but a caller-supplied
+        # id used as a path component is a traversal surface and episode
+        # ids have no charset guard (unlike session ids — see
+        # `_session_dir`). `episode_promote` builds that path only AFTER
+        # resolving the id through a walk, so its id is known-good by
+        # then. This costs exactly what the walk already cost.
+        if id_filter is not None and ep.id not in id_filter:
+            continue
         # Skip session-tag floor episodes (E2 crash-recovery anchors).
         # They carry empty takeaways and a placeholder body; surfacing
         # them in a journal-summary surface like episode_search would
@@ -199,6 +247,8 @@ async def episode_search(
         # written for in the first place. Both reads use
         # `list_by_session`, but only the summary surfaces filter the
         # flag; that asymmetry is the load-bearing piece of the fix.
+        # Naming a floor in `ids` does not reopen it: one rule, and the
+        # DESC / docs/api.md both say floors are off this surface.
         if ep.is_floor:
             continue
         if since_dt is not None and ep.created < since_dt:
@@ -238,13 +288,18 @@ async def episode_search(
     # oldest-first within the surfaced subset.
     matched = matched[-max_results:]
 
+    # `include_bodies=False` OMITS the `body` key rather than emitting it
+    # empty. Emitting `""` would save ~11 characters of a row whose body
+    # averages ~3,000 — the entire point of the flag is the body — and it
+    # would leave a key present whose value is now a lie, which a caller
+    # can neither branch on nor distinguish from a genuinely empty entry.
     out: list[dict[str, Any]] = [
         {
             "id": ep.id,
             "session_id": ep.session_id,
             "created": ep.created.isoformat().replace("+00:00", "Z"),
             "takeaway": ep.takeaway,
-            "body": ep.body.strip(),
+            **({"body": ep.body.strip()} if include_bodies else {}),
             "scopes": ep.scopes,
             "swarm_id": ep.swarm_id,
         }
@@ -259,6 +314,10 @@ async def episode_search(
         since=since,
         max_results=max_results,
         auto_scope=auto_scope,
+        include_bodies=include_bodies,
+        # The COUNT, not the ids: the payload is telemetry, and a batch of
+        # ULIDs there would be bulk with no analysis reading it.
+        ids=len(id_filter) if id_filter is not None else None,
         returned=len(out),
     )
     return out

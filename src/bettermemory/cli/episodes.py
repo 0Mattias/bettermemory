@@ -153,27 +153,21 @@ def _cli_episodes_prune(*, ttl_days: int, dry_run: bool, json_out: bool) -> None
     ep_store = EpisodeStore(ctx.directory)
 
     if dry_run:
-        # Reimplement the TTL-cutoff check locally so dry-run doesn't
-        # touch disk. Same logic the store applies — keep them aligned.
-        from datetime import timedelta
-        from ..models import utcnow
-        from ..episodes import _newest_mtime_in_dir
-
-        candidates: list[str] = []
-        # Mirror `EpisodeStore.prune_old_sessions`' guard exactly: it
-        # early-returns `[]` for `ttl_days <= 0` (a non-positive TTL is a
-        # no-op, never "delete everything"). Without this guard the
-        # dry-run would list every session as "would delete" while a real
-        # prune deletes nothing — i.e. the dry-run would lie. Skip the
-        # disk walk entirely so the two predicates agree at the boundary.
-        if ttl_days > 0 and ep_store.episodes_dir.exists():
-            cutoff = (utcnow() - timedelta(days=ttl_days)).timestamp()
-            for session_dir in ep_store.episodes_dir.iterdir():
-                if not session_dir.is_dir() or session_dir.is_symlink():
-                    continue
-                newest = _newest_mtime_in_dir(session_dir)
-                if newest is None or newest < cutoff:
-                    candidates.append(session_dir.name)
+        # `prunable_session_ids` is the shared predicate — read-only (it
+        # stats, it never deletes). It is what this block used to
+        # transcribe for itself, under a comment asking the next reader
+        # to keep the two aligned. `memory_health`'s
+        # `episode_volume.prunable_sessions` reports the same number but
+        # reaches it inline inside `volume()`'s single directory pass
+        # rather than by calling here — a parity test is what holds those
+        # two together, not a shared call.
+        # The store-side docstring records the two guards that matter
+        # here: `ttl_days <= 0` is a no-op (a non-positive TTL never
+        # means "delete everything" — without that guard the dry-run
+        # would list every session while a real prune deletes nothing,
+        # i.e. the dry-run would lie), and a directory holding no regular
+        # file is collectable.
+        candidates = ep_store.prunable_session_ids(ttl_days=ttl_days)
 
         if json_out:
             sys.stdout.write(

@@ -14,14 +14,20 @@ The session-id-keyed directory is what makes `episode_handoff` cheap
 (list one dir, read takeaways, return) and `prune_old_sessions` cheap
 (stat session dirs, drop ones whose newest mtime is past the TTL).
 
-Episodes are deliberately excluded from `memory_search`,
+Episode CONTENT is deliberately excluded from `memory_search`,
 `memory_health`, `memory_list`, and `Store.load_all` — they live in a
-sibling subtree, so the existing iteration helpers never see them.
+sibling subtree, so the existing iteration helpers never see them. The
+one exception is aggregate volume: `memory_health` reports
+`episode_volume` (`EpisodeStore.volume`), a stat-only count of sessions,
+episodes, bytes and past-TTL directories. No body, no takeaway, no
+scopes — just how big the subtree has grown, because GC only fires on
+write and a read-only loop would otherwise grow it silently.
 """
 
 from __future__ import annotations
 
 import shutil
+import stat
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -46,6 +52,52 @@ EPISODES_DIR = "episodes"
 # window `compute_health` uses for `window_days`, so the curation
 # horizon stays consistent across primitives.
 DEFAULT_EPISODE_TTL_DAYS = 30
+
+
+@dataclass(frozen=True)
+class EpisodeVolume:
+    """How big the episode subtree is — the journal-growth gauge.
+
+    A volume reading, NOT a read of the journal: it costs one `iterdir`
+    per session directory plus one `stat` per file and parses ZERO
+    frontmatter. That is the whole point. `memory_health` attaches this
+    so a curation pass can see the subtree growing without anyone paying
+    `list_by_session`'s per-file `frontmatter.load`.
+
+    `prunable_sessions` is the actionable field. Episode GC
+    (`prune_old_sessions`) fires ONLY on `episode_write` and the
+    `bettermemory episodes prune` CLI — so a read-only loop, one that
+    calls `episode_handoff` / `episode_search` and never writes, never
+    collects anything and the subtree grows unbounded with nothing
+    reporting it. A non-zero count here is that missing report: "N
+    session directories are already collectable; the next `episode_write`
+    (or one CLI prune) takes them."
+
+    It predicts `prune_old_sessions` rather than sharing its body — that
+    method's two branches are wrapped in per-session flocks and rmtree
+    recovery it would be wrong to run from a read-only gauge. The
+    predicate itself IS shared, via `prunable_session_ids`, and
+    `tests/test_episode_volume_rollup.py` pins the two against each
+    other. One deliberate divergence: `prune_old_sessions(keep_session_id=…)`
+    exempts the live session and the gauge has no way to know which one
+    that is, so a currently-active-but-idle session can be counted
+    prunable while the write path would spare it.
+    """
+
+    sessions: int
+    episodes: int
+    bytes: int
+    prunable_sessions: int
+    ttl_days: int
+
+    def to_dict(self) -> dict[str, int]:
+        return {
+            "sessions": self.sessions,
+            "episodes": self.episodes,
+            "bytes": self.bytes,
+            "prunable_sessions": self.prunable_sessions,
+            "ttl_days": self.ttl_days,
+        }
 
 
 @dataclass
@@ -369,6 +421,157 @@ class EpisodeStore:
         for entry in self.episodes_dir.iterdir():
             if entry.is_dir() and not entry.is_symlink():
                 yield entry.name
+
+    # ---- volume (stat-only; never parses an episode) ----------------------
+
+    def _scan_sessions(self) -> Iterator[tuple[str, int, int, float | None]]:
+        """Per session dir: `(session_id, episodes, bytes, newest_mtime)`.
+
+        One `iterdir` + one `stat` per file, no `frontmatter.load`. The
+        two tallies deliberately cover different file sets, each matching
+        the consumer it feeds:
+
+        - `episodes` / `bytes` count `.md` regular files only — the same
+          set `_iter_session_paths` yields, i.e. what an episode IS.
+        - `newest_mtime` spans EVERY regular file, because that is what
+          `_newest_mtime_in_dir` does and `prune_old_sessions` keys its
+          TTL cutoff on that value. Narrowing it to `.md` here would make
+          the prunable count disagree with the GC it is predicting.
+
+        `newest_mtime is None` means the directory holds no regular file
+        at all — the empty-dir case `prune_old_sessions` also reclaims.
+        """
+        for session_id in self.iter_session_ids():
+            session_dir = self.episodes_dir / session_id
+            episodes = 0
+            total_bytes = 0
+            newest: float | None = None
+            try:
+                entries = list(session_dir.iterdir())
+            except OSError:
+                # Vanished or unreadable between the parent listing and
+                # this one (a peer prune, a permissions change). Report it
+                # as an empty session rather than crashing a read-only
+                # gauge — same defensive posture `_newest_mtime_in_dir`
+                # takes on OSError.
+                yield session_id, 0, 0, None
+                continue
+            for entry in entries:
+                # ONE `lstat` per entry, and it is exactly the predicate
+                # `_newest_mtime_in_dir` spells as `is_file() and not
+                # is_symlink()` — `S_ISREG` on an lstat result is false
+                # for a symlink by definition, whatever it points at. The
+                # single call is both cheaper (that form costs three
+                # syscalls per file) and tighter: there is no window
+                # between the two checks and the read for the entry to
+                # change type underneath us.
+                try:
+                    stat_result = entry.lstat()
+                except OSError:
+                    continue
+                if not stat.S_ISREG(stat_result.st_mode):
+                    continue
+                if newest is None or stat_result.st_mtime > newest:
+                    newest = stat_result.st_mtime
+                if entry.suffix == ".md":
+                    episodes += 1
+                    total_bytes += stat_result.st_size
+            yield session_id, episodes, total_bytes, newest
+
+    def prunable_session_ids(
+        self,
+        *,
+        ttl_days: int = DEFAULT_EPISODE_TTL_DAYS,
+        now: datetime | None = None,
+    ) -> list[str]:
+        """Session ids `prune_old_sessions` would collect right now.
+
+        The shared statement of "is this session past the TTL?", called
+        by `bettermemory episodes prune --dry-run`. Before this existed
+        the CLI carried its own transcription of the predicate under a
+        comment asking the next reader to keep the two aligned.
+
+        `volume()` does NOT call this — it evaluates the same rule inline
+        so the gauge costs one `_scan_sessions` pass rather than two. So
+        the rule is written twice on purpose, and what keeps the copies
+        honest is a test, not a call graph:
+        `test_prunable_sessions_predicts_exactly_what_prune_collects`
+        asserts the two agree over a fixture covering both collect
+        branches, and a companion pins the `ttl_days <= 0` boundary for
+        both. Change one copy without the other and that test fails.
+
+        Mirrors `prune_old_sessions` exactly on its two collect branches —
+        `ttl_days <= 0` is a no-op (never "delete everything"), a
+        directory with no regular file is collectable, and otherwise the
+        newest mtime must be strictly older than the cutoff. It does NOT
+        model `keep_session_id`: the caller that knows which session is
+        live can subtract it.
+        """
+        if ttl_days <= 0 or not self.episodes_dir.exists():
+            return []
+        cutoff_epoch = ((now or utcnow()) - timedelta(days=ttl_days)).timestamp()
+        return [
+            session_id
+            for session_id, _episodes, _bytes, newest in self._scan_sessions()
+            if newest is None or newest < cutoff_epoch
+        ]
+
+    def volume(
+        self,
+        *,
+        ttl_days: int = DEFAULT_EPISODE_TTL_DAYS,
+        now: datetime | None = None,
+    ) -> EpisodeVolume:
+        """Aggregate size of the subtree — see `EpisodeVolume`.
+
+        Cost is one `iterdir` per session directory plus one `stat` per
+        file: the same syscall shape `prune_old_sessions` already pays on
+        every `episode_write`, and strictly cheaper than any `list_by_*`
+        because nothing here parses frontmatter. Even so it is wired into
+        exactly one caller — `health.report_for_directory`, which backs
+        `memory_health` and `bettermemory health`, neither of which runs
+        per turn. It must not acquire a per-turn caller; the point of the
+        gauge is to report growth, not to add a walk to the surfaces that
+        already have one.
+        """
+        if not self.episodes_dir.exists():
+            return EpisodeVolume(
+                sessions=0,
+                episodes=0,
+                bytes=0,
+                prunable_sessions=0,
+                ttl_days=ttl_days,
+            )
+        cutoff_epoch: float | None = None
+        if ttl_days > 0:
+            cutoff_epoch = ((now or utcnow()) - timedelta(days=ttl_days)).timestamp()
+        sessions = 0
+        episodes = 0
+        total_bytes = 0
+        prunable = 0
+        # One pass, both answers: `_scan_sessions` already hands back the
+        # newest mtime, so evaluating the `prunable_session_ids` predicate
+        # inline costs nothing beyond a comparison. Calling that method
+        # instead would double the syscalls for no correctness gain — the
+        # predicate below is the same one, and the parity test pins them.
+        for (
+            _session_id,
+            session_episodes,
+            session_bytes,
+            newest,
+        ) in self._scan_sessions():
+            sessions += 1
+            episodes += session_episodes
+            total_bytes += session_bytes
+            if cutoff_epoch is not None and (newest is None or newest < cutoff_epoch):
+                prunable += 1
+        return EpisodeVolume(
+            sessions=sessions,
+            episodes=episodes,
+            bytes=total_bytes,
+            prunable_sessions=prunable,
+            ttl_days=ttl_days,
+        )
 
     def _load_path(self, path: Path) -> Episode:
         post = frontmatter.load(path)
@@ -851,4 +1054,5 @@ __all__ = [
     "DEFAULT_EPISODE_TTL_DAYS",
     "EPISODES_DIR",
     "EpisodeStore",
+    "EpisodeVolume",
 ]

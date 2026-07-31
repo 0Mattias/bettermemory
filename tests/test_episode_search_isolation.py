@@ -25,7 +25,16 @@
     episodes pass through, and `auto_scope=False` is the explicit
     cross-worktree escape hatch.
 
-Both tests drive the registered MCP tool through `build_server` /
+(c) THE `ids` CARVE-OUT — the by-id read added with `include_bodies`
+    (`tests/test_episode_search_scan_and_fetch.py` owns its filtering and
+    projection semantics) lands squarely in (b)'s territory, because a
+    caller-supplied ULID is an explicit selection and therefore the THIRD
+    exemption from the bare walk's worktree filter. The cases that matter
+    are the boundary ones: a named id resolves across worktrees, and
+    `ids=[]` is unset rather than an explicit selection of nothing — the
+    reading that would otherwise re-open (b) through a new door.
+
+Every test here drives the registered MCP tool through `build_server` /
 `call_tool`, the same idiom the rest of the episode handler tests use.
 """
 
@@ -67,6 +76,27 @@ def _make_capture(origin: Origin) -> Any:
         return origin
 
     return _capture
+
+
+def _sibling_worktrees(memory_dir: Path) -> tuple[Origin, Origin]:
+    """Two origins for sibling checkouts of one repo, whose worktree roots
+    EXIST on disk.
+
+    Existence is the load-bearing part for any test that asserts an
+    episode is HIDDEN: `worktrees_match` deliberately degrades permissive
+    when the recorded worktree is gone from disk, so a test built on
+    `/wt/...` paths that were never created would see the episode pass
+    through for that reason instead of the one under test — and would keep
+    passing if the filter were deleted outright."""
+    wt_a = memory_dir.parent / "wt-repo-a"
+    wt_b = memory_dir.parent / "wt-repo-b"
+    wt_a.mkdir(exist_ok=True)
+    wt_b.mkdir(exist_ok=True)
+    repo = "git@github.com:example/repo.git"
+    return (
+        Origin(cwd=str(wt_a), repo=repo, branch="a", worktree_root=str(wt_a)),
+        Origin(cwd=str(wt_b), repo=repo, branch="b", worktree_root=str(wt_b)),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -441,4 +471,90 @@ async def test_episode_search_explicit_parent_session_crosses_worktrees(
     res = _unwrap(await _call(server_b, "episode_search", parent_session_id=sid_a))
     assert {e["takeaway"] for e in res} == {"from A"}, (
         "explicit parent_session_id must read across worktrees, not be auto-scoped out"
+    )
+
+
+# ---------------------------------------------------------------------------
+# (c) THE `ids` CARVE-OUT — a named ULID is the third explicit selector
+# ---------------------------------------------------------------------------
+
+
+async def test_episode_search_explicit_ids_cross_worktrees(
+    memory_dir: Path,
+    monkeypatch: Any,
+) -> None:
+    """A caller-supplied ULID is an explicit selection, so it joins
+    `swarm_id` / `parent_session_id` in the carve-out: the bare-walk
+    worktree filter must not drop an episode the caller named outright.
+
+    This is the load-bearing half of the scan-then-fetch pattern under
+    agent fan-out. The scan that produced the id is very often a swarm
+    fan-in or a named parent session — both already cross-worktree — so a
+    worktree-filtered `ids` would hand back ids that the very next call
+    cannot resolve. `episode_promote` already resolves a caller-supplied
+    id across every session directory for exactly this reason
+    (docs/api.md names this carve-out as its precedent), and it DELETES on
+    commit; a read that refuses what the write accepts would be the
+    stranger asymmetry."""
+    import bettermemory._handlers as handlers_module
+    import bettermemory.server as server_module
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    # The worktree dirs must EXIST: a recorded worktree that is gone from
+    # disk takes the deliberate dead-worktree degrade in `worktrees_match`,
+    # and the bare-walk control assertion below would pass for that reason
+    # instead of the one under test.
+    origin_a, origin_b = _sibling_worktrees(memory_dir)
+
+    monkeypatch.setattr(handlers_module, "capture_origin", _make_capture(origin_a))
+    monkeypatch.setattr(server_module, "capture_origin", _make_capture(origin_a))
+    server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    written = await _call(server_a, "episode_write", body="A body", takeaway="from A")
+
+    monkeypatch.setattr(handlers_module, "capture_origin", _make_capture(origin_b))
+    monkeypatch.setattr(server_module, "capture_origin", _make_capture(origin_b))
+    server_b = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+
+    # The bare walk from B still hides A's episode — the carve-out is
+    # scoped to the named id, it does not disable the filter wholesale.
+    assert _unwrap(await _call(server_b, "episode_search")) == []
+
+    res = _unwrap(await _call(server_b, "episode_search", ids=[written["id"]]))
+    assert {e["takeaway"] for e in res} == {"from A"}, (
+        "an explicitly named episode id must read across worktrees, the same "
+        "way swarm_id / parent_session_id already do"
+    )
+
+
+async def test_episode_search_empty_ids_does_not_disable_the_worktree_filter(
+    memory_dir: Path,
+    monkeypatch: Any,
+) -> None:
+    """`ids=[]` is UNSET, not "an explicit selection of nothing" — the
+    same reading the handler gives `scopes=[]`. The distinction matters
+    here and only here: if the empty list were treated as an explicit
+    selector it would take the carve-out and quietly turn every
+    `ids=[]`-defaulting client into a cross-worktree sweep, which is the
+    isolation gap this module was written for arriving through a new
+    door."""
+    import bettermemory._handlers as handlers_module
+    import bettermemory.server as server_module
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    origin_a, origin_b = _sibling_worktrees(memory_dir)
+
+    monkeypatch.setattr(handlers_module, "capture_origin", _make_capture(origin_a))
+    monkeypatch.setattr(server_module, "capture_origin", _make_capture(origin_a))
+    server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(server_a, "episode_write", body="A body", takeaway="from A")
+
+    monkeypatch.setattr(handlers_module, "capture_origin", _make_capture(origin_b))
+    monkeypatch.setattr(server_module, "capture_origin", _make_capture(origin_b))
+    server_b = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(server_b, "episode_write", body="B body", takeaway="from B")
+
+    res = _unwrap(await _call(server_b, "episode_search", ids=[]))
+    assert {e["takeaway"] for e in res} == {"from B"}, (
+        "ids=[] must behave exactly like an omitted ids — worktree-filtered "
+        "bare walk, not the explicit-selector carve-out"
     )

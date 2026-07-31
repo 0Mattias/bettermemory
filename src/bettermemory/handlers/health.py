@@ -82,7 +82,22 @@ DESC_MEMORY_HEALTH = (
     "telemetry, so 'never applied' says nothing about the memory — NOT "
     "because the store is clean. `memory_scope_overview`'s "
     "`curation_pending.dead` reads zero under the same gate. Report the "
-    "`reason` verbatim rather than 'no dead weight found'."
+    "`reason` verbatim rather than 'no dead weight found'.\n\n"
+    # Also documented AFTER `CLI equivalent:`, and for the same reason as
+    # `telemetry_coverage`: the sliced region above is set-compared
+    # against `HealthReport.to_dict()` by
+    # `test_desc_memory_health_enumerates_report_bucket_keys`, and this is
+    # not a curation bucket of memory rows — it is the sibling tier's size
+    # gauge. Listing it up there would invite the model to treat episodes
+    # as another pile of rows to curate, which is exactly the tier
+    # confusion the rest of the surface works to avoid.
+    "`episode_volume` is the sibling episode tier's size gauge: "
+    "`{sessions, episodes, bytes, prunable_sessions, ttl_days}`. Episode "
+    "CONTENT is still absent from every bucket above — this is the "
+    "aggregate only. `prunable_sessions` is the actionable one: episode "
+    "GC runs on `episode_write` and `bettermemory episodes prune` and "
+    "nowhere else, so a read-only loop never collects. Non-zero means "
+    "that many session directories are already collectable."
 )
 
 

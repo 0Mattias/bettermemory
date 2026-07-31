@@ -45,6 +45,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from .durability import canonical_marker
+from .episodes import EpisodeStore, EpisodeVolume
 from .events import _event_id_list, iter_all_events
 from .models import Category, Memory, first_summary_line
 from .origin import (
@@ -1117,6 +1118,26 @@ class HealthReport:
     # that reports "no dead weight" without reading this field is
     # reporting a missing Stop hook as a clean store.
     telemetry_coverage: TelemetryCoverage | None = None
+    # Episode-tier volume gauge — `{sessions, episodes, bytes,
+    # prunable_sessions, ttl_days}` for `<root>/episodes/`. NOT a
+    # curation bucket of memory rows and not a hole in the tier
+    # separation: episode CONTENT still never reaches `memory_search`,
+    # `memory_list` or any bucket above. This is the aggregate only.
+    #
+    # It is here because episode GC is write-triggered.
+    # `EpisodeStore.prune_old_sessions` runs on `episode_write` and on
+    # `bettermemory episodes prune`, nowhere else — so a read-only loop
+    # (one that calls `episode_handoff` / `episode_search` and never
+    # writes) never collects anything and the journal grows unbounded
+    # with no surface reporting it. `prunable_sessions` is that missing
+    # report; the rest is the denominator that makes it legible.
+    #
+    # Null when the report was built by `compute_health` directly — that
+    # function takes memories + events and never sees `root`, so unit
+    # fixtures and offline callers that hand in a list keep getting None.
+    # Populated on every production path, all of which go through
+    # `report_for_directory`.
+    episode_volume: EpisodeVolume | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -1147,6 +1168,11 @@ class HealthReport:
             "telemetry_coverage": (
                 self.telemetry_coverage.to_dict()
                 if self.telemetry_coverage is not None
+                else None
+            ),
+            "episode_volume": (
+                self.episode_volume.to_dict()
+                if self.episode_volume is not None
                 else None
             ),
         }
@@ -2339,6 +2365,24 @@ def render_text(report: HealthReport) -> str:
     lines.append(f"Active memories: {report.total_active_memories}")
     lines.append(f"Events seen:     {report.total_events}")
     lines.append(f"Sessions:        {report.distinct_sessions}")
+    if report.episode_volume is not None:
+        vol = report.episode_volume
+        prunable = ""
+        if vol.prunable_sessions:
+            # Only surfaced when it is actionable. A read-only loop is the
+            # case this line exists for: episode GC runs on `episode_write`
+            # and `bettermemory episodes prune` only, so these directories
+            # sit collectable until something writes.
+            prunable = (
+                f" — {vol.prunable_sessions} session"
+                f"{'' if vol.prunable_sessions == 1 else 's'} past the "
+                f"{vol.ttl_days}-day TTL, run `bettermemory episodes prune`"
+            )
+        lines.append(
+            f"Episodes:        {vol.episodes} in {vol.sessions} session"
+            f"{'' if vol.sessions == 1 else 's'}, "
+            f"{vol.bytes:,} bytes{prunable}"
+        )
 
     lines.append("")
     lines.append(
@@ -3270,7 +3314,7 @@ def report_for_directory(
 
     store = Store(root)
     tombstoned_ids = {t.id for t in store.load_tombstones()}
-    return compute_health(
+    report = compute_health(
         store.load_all(),
         iter_all_events(root),
         window_days=window_days,
@@ -3289,6 +3333,22 @@ def report_for_directory(
         # `compute_health` is about to do anyway — see its docstring.
         hook_telemetry_events=0,
     )
+    # Post-assigned rather than threaded through `compute_health`, for
+    # the same reason the honesty gate is armed here: `compute_health`
+    # takes a memory list and an event iterable and NEVER sees `root`, so
+    # there is no way for it to reach the episode subtree. Wiring the
+    # gauge at the one entry point that has a root — the one both
+    # production surfaces use — is what keeps `episode_volume` from
+    # shipping as a permanent null while every hand-built unit fixture
+    # passes.
+    #
+    # Stat-only (`EpisodeStore.volume` parses no frontmatter) and
+    # deliberately confined to this function: `memory_health` and
+    # `bettermemory health` are curation-pass surfaces, not per-turn
+    # ones. `memory_scope_overview` — the session-start hot path — does
+    # not call this function and must not grow an episode walk.
+    report.episode_volume = EpisodeStore(root).volume()
+    return report
 
 
 __all__ = [

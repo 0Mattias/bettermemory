@@ -5972,11 +5972,28 @@ _DESC_BUDGET_PRESSURE = _DESC_BUDGET_CEILING - 100
 # description edits land before then.
 _DESC_BASELINE = {
     "episode_handoff": 1560,
-    "episode_promote": 1597,
+    # Re-measured 2026-07-31: 1597 -> 1700 (+103) for the state-channel
+    # convention (Phase 7 / G2) — the routing rule (loop/working state
+    # goes to episodes) and the minting moment (session close). Only
+    # those two are resident; the rationale sits in docs/api.md and the
+    # skill body, which cost nothing per turn. Deliberately NOT mirrored
+    # into episode_write's DESC, so the policy is paid for once.
+    "episode_promote": 1700,
     # Re-measured 2026-07-30: 3071 -> 2064 after the proportionality trim
     # (18 recorded calls across 544 sessions against ~3.2 KB billed every
     # turn). Rationale moved to docs/api.md; every pinned cue kept.
-    "episode_search": 2064,
+    # Re-measured 2026-07-31: 2064 -> 2311 (+247) for the takeaway-only
+    # read. 239 of it is the two new parameter bullets; the other 8 add
+    # `ids` to the WORKTREE SCOPING paragraph's enumeration of explicit
+    # selectors, which is not optional prose — leaving that sentence
+    # naming two of three would tell a model the exact opposite of what
+    # the `ids` bullet says, in the paragraph a caller reads for the
+    # isolation contract. Bought back on the read side: measured on a
+    # 138-episode store, a 10-row page drops 50.2 KB -> 4.8 KB (the
+    # fixture that asserts it is in tests/test_episode_search_scan_and_fetch.py).
+    # NOT the plan's pre-measurement "~28 KB -> ~1 KB" estimate, which
+    # this comment carried until the fixture existed to contradict it.
+    "episode_search": 2311,
     "episode_write": 2350,
     "memory_audit_turn": 1365,
     "memory_list": 454,

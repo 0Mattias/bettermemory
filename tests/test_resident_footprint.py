@@ -121,10 +121,29 @@ class Footprint(NamedTuple):
 # could not see it go. It reported the reserve intact while a landed phase
 # had already spent 93 of it. Keep verdicts on live measurements; this table
 # is for the reader.
+#
+# Re-measured 2026-07-31 for Phase 7's takeaway-only episode reads.
+# `input_schemas` 7,170 -> 7,352 is the reserve below being spent to the
+# character: `include_bodies` (76) + `ids` (106) on `episode_search`.
+# `descriptions` 26,860 -> 27,295 is +247 of that edit (the two new
+# parameter bullets plus `ids` joining the worktree carve-out's
+# enumeration) on top of +188 that had gone unrecorded since the trust
+# recut moved `memory_search` — the drift this table exists to make
+# attributable, caught by re-measuring rather than by re-typing.
+#
+# The same commit's state-channel convention (Phase 7 / G2) then moved
+# `descriptions` a second time, 27,295 -> 27,398, all of it the +103 on
+# `episode_promote`. It is recorded here rather than left for the next
+# reader precisely because two DESC edits landing together is the shape
+# that produced the unrecorded +188 above: whoever measures second sees a
+# number that already includes the other lane's edit and has no way to
+# split it after the fact. Note which leg did NOT move — `input_schemas`
+# is untouched by G2, because a convention is prose and prose is free of
+# the remainder this file governs. Only G1 spent the reserve.
 _FOOTPRINT_BASELINE = Footprint(
     instructions=1_608,
-    descriptions=26_860,
-    input_schemas=7_170,
+    descriptions=27_398,
+    input_schemas=7_352,
     output_schemas=1_770,
     skill_frontmatter=759,
     tool_count=18,
@@ -133,34 +152,56 @@ _FOOTPRINT_BASELINE = Footprint(
 # --- the ceiling, and the arithmetic behind it ------------------------------
 #
 # The remainder measured 9,606 chars when this ceiling was set (7,077 +
-# 1,770 + 759). It is 9,699 now: the write-path phase landed
-# `acknowledge_user_claim` and spent exactly the 93 chars budgeted for it
-# below, which is the reserve working as intended rather than drift.
-#
-# The headroom is measured, not guessed. `_scheduled_param_costs` registers
-# the three tool parameters this upgrade plan schedules against a real
-# FastMCP server and reads their cost straight out of the emitted schema:
+# 1,770 + 759). It is 9,881 now, and the whole difference is the reserve
+# below being spent on exactly what it was reserved for:
 #
 #     memory_write    acknowledge_user_claim  bool, default False    93
 #     episode_search  include_bodies          bool, default True     76
 #     episode_search  ids                     list[str] | None      106
 #                                                            total  275
 #
+# The write-path phase landed the first; Phase 7's takeaway-only episode
+# reads landed the other two. The costs are not historical trivia — they
+# are re-measured off the served schemas every run by
+# `test_the_landed_parameters_cost_what_the_reserve_promised`, so "the
+# reserve was spent as budgeted" stays a checked claim rather than a note.
+#
 # Rounded up to a 300-char reserve: 9,606 + 300 = 9,906, and the ceiling is
-# the next round thousand. That leaves 394 chars of headroom — the reserve
+# the next round thousand. That left 394 chars of headroom — the reserve
 # plus roughly one more parameter of the widest shape measured above, which
 # is the margin for a parameter whose name runs longer than planned (cost
 # grows with the name: pydantic repeats it in the generated `title`).
 #
+# WHAT IS LEFT, now that the reserve is gone: 119 chars, which is ONE more
+# parameter of the widest shape and no more — the negative test below
+# re-derives that number rather than trusting this comment. The plan's
+# footprint phase is what restores headroom (stripping the pydantic `title`
+# keys from the served schemas is expected to cut ~2k chars off this
+# remainder); until it lands, the next optional flag added to any tool is
+# the one that fails.
+#
 # Anything past that is a deliberate recalibration, same ceremony as the
 # description ceiling: re-measure `_FOOTPRINT_BASELINE` in the same commit
 # and move this literal to a new round number. That includes the ratchet
-# DOWN — stripping the pydantic `title` keys from the served schemas is
-# expected to cut ~2k chars off this remainder.
+# DOWN.
 _REMAINDER_CEILING = 10_000
-# Reserve for the two scheduled additions above, live-checked by
-# `test_the_scheduled_parameters_still_fit_the_reserve`.
-_SCHEDULED_PARAM_RESERVE = 300
+# Reserve for parameters this plan schedules but has NOT landed. Zero:
+# all three are on the wire (see `_LANDED_PARAMS`), so there is nothing
+# left to hold room for. A future phase that schedules a parameter
+# re-populates `_SCHEDULED_PARAMS` and resizes this together with the
+# ceiling — pricing it against the probe BEFORE writing the signature is
+# the point of keeping the machinery.
+_SCHEDULED_PARAM_RESERVE = 0
+# What the reserve was spent on, and where each one has to be visible for
+# the spend to be real: a parameter that never reached the `_handlers.py`
+# facade costs nothing here precisely because it is not on the wire, so
+# this table doubles as a facade check.
+_LANDED_PARAMS: tuple[tuple[str, str], ...] = (
+    ("memory_write", "acknowledge_user_claim"),
+    ("episode_search", "include_bodies"),
+    ("episode_search", "ids"),
+)
+_LANDED_PARAM_BUDGET = 275
 # Soft line: crossing it warns instead of failing, so the pressure is
 # visible to whoever caused it. Set one `ids`-shaped parameter (the widest
 # measured) below the ceiling — crossing it means the next parameter does
@@ -258,11 +299,18 @@ def _bench_style_chars(tools: list[Any]) -> int:
     return len(_blob(wire))
 
 
-# The three parameters the upgrade plan schedules, as a real signature, so
+# Parameters the plan schedules but has not landed, as a real signature, so
 # their cost is read out of the SDK's own emitted schema instead of guessed
 # from the shape of a neighbour. Names and types mirror the plan exactly —
 # a longer name costs more, so a rename here is a re-measurement.
-_SCHEDULED_PARAMS = ("acknowledge_user_claim", "include_bodies", "ids")
+#
+# EMPTY, because all three the plan scheduled are now on the wire and are
+# measured against the real served surface instead (`_LANDED_PARAMS`). The
+# probe stays because it is the only way to price a parameter that does not
+# exist yet, which is the question a phase asks BEFORE it writes the
+# signature: add the name here and to `_scheduled_param_signature`, and the
+# test below prices it against whatever reserve the ceiling then carries.
+_SCHEDULED_PARAMS: tuple[str, ...] = ()
 
 
 def _scheduled_param_signature(
@@ -443,40 +491,77 @@ async def test_uncapped_remainder_stays_under_its_ceiling(tmp_path: Path) -> Non
         )
 
 
-async def test_the_scheduled_parameters_still_fit_the_reserve(
+async def test_the_landed_parameters_cost_what_the_reserve_promised(
     tmp_path: Path,
 ) -> None:
-    """The ceiling above carries a measured reserve for the parameters this
-    upgrade plan schedules — a ceiling that the next phase immediately
-    recalibrates would be noise, not a guard.
+    """The ceiling above was raised to hold a measured reserve for three
+    parameters. All three have now landed, so the question this guard
+    answers has changed from "does the reserve still cover them?" to "did
+    the reserve go where it was promised?" — and the second question is
+    the one that can still be answered wrongly.
 
-    Re-measures those parameters against the real SDK every run, because
-    the reserve is only meaningful if it still covers them: a renamed flag
-    costs more (the name is repeated in the generated `title`), and an SDK
-    that emits richer schemas raises the price of all three at once."""
-    costs = await _scheduled_param_costs()
-    assert set(costs) == set(_SCHEDULED_PARAMS)
+    Both halves are re-measured off the REAL served surface every run,
+    which makes this a facade check as much as a budget one. A parameter
+    added to a handler but not to the `_handlers.py` signature is absent
+    from `properties` and costs zero, so it would show up here as a
+    reserve that was never spent — while the flag it was reserved for
+    quietly does nothing on the wire. That defect has shipped twice.
+
+    The reserve is also only meaningful if the SDK still prices these the
+    way it did: a renamed flag costs more (the name is repeated in the
+    generated `title`), and an SDK that emits richer schemas raises the
+    price of all of them at once."""
+    tools = {t.name: t for t in await _lean_server(tmp_path).list_tools()}
+
+    costs: dict[str, int] = {}
+    for tool_name, param in _LANDED_PARAMS:
+        schema = tools[tool_name].inputSchema
+        assert param in schema["properties"], (
+            f"{tool_name} does not serve `{param}`, which the ceiling above "
+            f"reserved room for. Either it never reached the `_handlers.py` "
+            f"facade (the schema is built from THAT signature, so a "
+            f"handler-only parameter is silently dropped at call time), or it "
+            f"was removed and the reserve should be retired with it. Served: "
+            f"{sorted(schema['properties'])}"
+        )
+        costs[f"{tool_name}.{param}"] = _param_cost(schema, param)
+
     for name, cost in costs.items():
-        assert cost > 0, f"{name} measured as free, so the probe is not working"
+        assert cost > 0, f"{name} measured as free, so the measurement is broken"
     total = sum(costs.values())
-    assert total <= _SCHEDULED_PARAM_RESERVE, (
-        f"the scheduled parameters now cost {total} chars of serialized "
-        f"schema ({costs}), more than the {_SCHEDULED_PARAM_RESERVE}-char "
-        f"reserve folded into `_REMAINDER_CEILING`. Resize the reserve and "
-        f"the ceiling together, before landing them."
+    assert total <= _LANDED_PARAM_BUDGET, (
+        f"the parameters the reserve was spent on now cost {total} chars of "
+        f"serialized schema ({costs}), more than the {_LANDED_PARAM_BUDGET} "
+        f"budgeted for them. Nobody typed anything: the SDK got more "
+        f"expensive, and every other tool's schema did too. Re-measure "
+        f"`_FOOTPRINT_BASELINE` and re-derive the ceiling."
     )
-    # The reserve must also still be spendable: ceiling minus the remainder
+
+    # Anything the plan schedules but has NOT landed is priced against the
+    # probe, and has to fit whatever reserve the ceiling still carries.
+    # Currently empty — the loop is what a future phase re-populates rather
+    # than re-invents.
+    scheduled = await _scheduled_param_costs()
+    assert set(scheduled) == set(_SCHEDULED_PARAMS)
+    scheduled_total = sum(scheduled.values())
+    assert scheduled_total <= _SCHEDULED_PARAM_RESERVE, (
+        f"the scheduled parameters cost {scheduled_total} chars ({scheduled}), "
+        f"more than the {_SCHEDULED_PARAM_RESERVE}-char reserve folded into "
+        f"`_REMAINDER_CEILING`. Resize the reserve and the ceiling together, "
+        f"before landing them."
+    )
+    # And the reserve must still be spendable: ceiling minus the remainder
     # has to cover it, or the "no immediate recalibration" promise is already
     # broken at HEAD. Measured LIVE, not read from `_FOOTPRINT_BASELINE` — the
     # recorded literal is hand-maintained, so reading it here would mean this
     # guard could only fire after someone had already noticed by hand. It
     # would report headroom that a landed phase has quietly spent.
     remainder = (await _measure(_lean_server(tmp_path))).uncapped_remainder
-    assert _REMAINDER_CEILING - remainder >= total, (
+    assert _REMAINDER_CEILING - remainder >= scheduled_total, (
         f"the live remainder ({remainder}) leaves "
         f"{_REMAINDER_CEILING - remainder} chars under the ceiling, less than "
-        f"the {total} chars the scheduled parameters measure. The ceiling was "
-        f"set with headroom that no longer exists."
+        f"the {scheduled_total} chars the scheduled parameters measure. The "
+        f"ceiling was set with headroom that no longer exists."
     )
 
 
@@ -527,10 +612,18 @@ async def test_an_unbudgeted_parameter_trips_the_remainder_ceiling(
             f"ceiling. The guard has stopped guarding.\n{_breakdown(grown)}"
         )
 
-    scheduled = len(_SCHEDULED_PARAMS)
-    assert absorbed >= scheduled, (
+    # At least whatever the plan still schedules, and never fewer than one:
+    # `_SCHEDULED_PARAMS` is empty now that the reserve is spent, and
+    # `absorbed >= 0` would be vacuously true of a ceiling already breached.
+    # One is also the honest reading of the headroom at HEAD — 119 chars is
+    # room for a single parameter of the widest shape measured — so this
+    # number going UP is the signal that the footprint phase's ratchet-down
+    # landed, and going to zero is the signal that the ceiling now fails on
+    # the next flag anyone adds.
+    required = max(1, len(_SCHEDULED_PARAMS))
+    assert absorbed >= required, (
         f"the headroom absorbs only {absorbed} added parameters, fewer than "
-        f"the {scheduled} this plan schedules — the ceiling would fail on "
+        f"the {required} this plan schedules — the ceiling would fail on "
         f"planned work. Re-derive it from the arithmetic above the literal."
     )
 

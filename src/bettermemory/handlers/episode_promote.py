@@ -213,6 +213,15 @@ DESC_EPISODE_PROMOTE = (
     "apply.\n\n"
     "Use this when an iteration's takeaway turns out to be a fact "
     "worth keeping across sessions, not just a run-state note.\n\n"
+    # Phase 7 / G2 — the state-channel convention, resident in exactly
+    # ONE lean description. The routing rule and the timing are here;
+    # the rationale (a promoted claim has survived its session, and you
+    # see the whole session's takeaways at once, so one consolidated
+    # write lands instead of three in-flight near-duplicates) lives in
+    # docs/api.md and the plugin skill body, both free of the budget.
+    # Pinned by `test_desc_episode_promote_nudges_close_of_session_minting`.
+    "Loop/working state belongs in episodes; session close is when "
+    "to promote the takeaways that hardened.\n\n"
     "On successful commit the source episode is deleted (its content "
     "has been distilled). On `pending` (user-inference category), the "
     "source episode is held for memory_write_confirm to delete — "

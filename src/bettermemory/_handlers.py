@@ -497,6 +497,8 @@ class ToolHandlers:
         since: str | None = None,
         max_results: int | None = None,
         auto_scope: bool = True,
+        include_bodies: bool = True,
+        ids: list[str] | None = None,
         ctx: Context | None = None,
     ) -> list[dict[str, Any]]:
         return await _handlers_pkg.episode_search(
@@ -507,6 +509,8 @@ class ToolHandlers:
             since=since,
             max_results=max_results,
             auto_scope=auto_scope,
+            include_bodies=include_bodies,
+            ids=ids,
             ctx=ctx,
         )
 

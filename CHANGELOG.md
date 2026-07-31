@@ -9,6 +9,55 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+### Added — read a journal without paying for every body
+
+`episode_search` returns full bodies, which is right for reading one session and
+wrong for the thing the tool is mostly used for: scanning takeaways across many.
+Two additive parameters make the cheap read possible. `include_bodies=False`
+drops the `body` key from each row; `ids=[...]` fetches specific episodes back,
+and — because naming episodes is deliberate cross-worktree intent, the same rule
+`swarm_id` and `parent_session_id` already follow — bypasses worktree scoping.
+
+They compose into scan-then-fetch: page takeaways cheaply, then pull back the one
+or two bodies worth reading in full. Measured on a 138-episode store, a 10-row
+page drops from 50.2 KB to 4.8 KB and a 20-row page from 84.1 KB to 8.9 KB, with
+a single body fetch adding back ~3 KB. That is roughly a 90% cut, but the honest
+framing is 4-10x rather than 50x: the saving is bounded by takeaway length, and
+takeaways are not short in practice — `max_takeaway_bytes` is 4 KB and writers
+use it. Both defaults preserve existing behaviour exactly.
+
+### Added — episodes are the state channel, and the docs now say so
+
+The live store's single most-used memory is an audit-loop state blob, retrieved
+135 times. That is not an accident of one loop: the no-state write policy told
+callers not to put run-state in the fact layer without giving them anywhere else
+to put it, so state was rephrased until it cleared the durability gate and landed
+there anyway. Episodes have been the right home since they shipped; nothing said
+so at the moment of the decision.
+
+`DESC_EPISODE_PROMOTE` now states the convention in one line — loop and working
+state belong in episodes; session close is when to promote the takeaways that
+hardened — with the worked three-call flow in `docs/api.md` and the loop steps in
+the plugin skill rewritten to match. Guidance only: no schema change, and the
+existing state memory is left where it is, because the loop depends on it.
+
+### Added — journal growth is visible before it becomes a problem
+
+Episode GC (`prune_old_sessions`, 30-day TTL) fires only on `episode_write` and
+the CLI, so a read-only loop never collects anything and the journal grows with
+nothing reporting it. `memory_health` now carries `episode_volume`
+(`sessions`, `episodes`, `bytes`, `prunable_sessions`, `ttl_days`), surfaced in
+the CLI text and JSON output and in the web health page, with a warn tile when
+sessions are collectable.
+
+It stays off the hot path deliberately: the gauge is computed in
+`report_for_directory`, not `compute_health`, so no per-turn tool walks the
+episode subtree — a test asserts `volume()` has no call site outside `health.py`
+and fails if one appears. Measured on the live 164-episode store at 1.6 ms, 0.6%
+of a health report. The prune predicate is stated once and shared with
+`episodes prune --dry-run`; the gauge evaluates the same rule inline to keep the
+scan single-pass, and a parity test holds the two copies together.
+
 ### Added — a retrieval that nothing settled is now recorded, not discarded
 
 A use-token that reached its 30-minute wall-clock eviction with nothing having

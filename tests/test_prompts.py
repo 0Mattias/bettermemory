@@ -298,6 +298,63 @@ def test_handler_descs_enumerate_episode_tier_fields() -> None:
     )
 
 
+def test_desc_episode_promote_nudges_close_of_session_minting() -> None:
+    """`DESC_EPISODE_PROMOTE` carries the state-channel convention.
+
+    Phase 7 / G2. The store this project runs on is the evidence: its
+    single most-used memory is an audit-loop state blob, filed as a
+    `fact`. The durability gate's no-state rule did not stop state being
+    written down — it only stopped it being written down in the tier
+    built for it, so state landed in the fact layer wearing a fact's
+    clothes, and then got re-retrieved every iteration because a loop
+    re-reads its own position constantly.
+
+    The convention that fixes it is a routing rule plus a moment:
+    loop/working state goes to `episode_write` while the run is in
+    flight, and session close is when the takeaways that hardened get
+    minted into durable memories through this tool. That path is
+    strictly better than an in-flight `memory_write` — the claim has
+    survived the session that produced it, and the promoter can see the
+    whole session's takeaways at once, so one consolidated write lands
+    where three in-flight fragments would have arrived as separate
+    near-duplicates.
+
+    This lives in exactly ONE lean description. It is deliberately NOT
+    mirrored into `DESC_EPISODE_WRITE`: duplicated policy across
+    descriptions is the regression
+    `test_policy_lives_once_not_triplicated_in_descriptions` exists to
+    stop, and the budget cannot afford it twice.
+
+    Hence the pin. This is resident prose with no other survival floor,
+    entering a phase whose description pass is an explicit byte-count
+    scalpel, and an unpinned paragraph is the cheapest thing such a pass
+    can delete. The convention may be re-worded — both asserts are
+    substring presence, not an exact string — but it may not be deleted
+    by someone who never decided to delete it.
+
+    The rationale and the worked scan-then-promote example live in
+    docs/api.md and the plugin skill body, both free of the description
+    budget. Only the routing rule and the timing are resident here.
+    """
+    from bettermemory.handlers.episode_promote import DESC_EPISODE_PROMOTE
+
+    assert "belongs in episodes" in DESC_EPISODE_PROMOTE, (
+        "DESC_EPISODE_PROMOTE no longer states the routing half of the "
+        "state-channel convention (Phase 7 / G2): loop and working "
+        "state belongs in episodes, not in a durable memory. Without "
+        "it the model is back to the status quo this codified against "
+        "— run-state written into the fact layer, because the fact "
+        "layer is the tier it was told about."
+    )
+    assert "session close" in DESC_EPISODE_PROMOTE, (
+        "DESC_EPISODE_PROMOTE no longer names session close as the "
+        "moment to promote (Phase 7 / G2). The routing rule on its own "
+        "sends state to episodes and leaves it there; the timing cue "
+        "is what turns the journal into a source of durable facts "
+        "instead of a write-only log that ages out on the TTL."
+    )
+
+
 def test_episode_worktree_descs_match_the_filter_each_handler_calls() -> None:
     """The two episode read surfaces filter by worktree with DIFFERENT
     functions, and each DESC has to describe its own.
@@ -640,14 +697,16 @@ async def test_addendum_tool_names_exist_on_server(tmp_path: Path) -> None:
     registered = {tool.name for tool in await mcp.list_tools()}
 
     referenced = set(_TOOL_REF_RE.findall(SYSTEM_PROMPT_ADDENDUM))
-    # Strip kwarg-shaped names the regex over-includes (`memory_ids`
-    # is a parameter on `memory_record_use`, not a tool). Same
+    # Strip tool-SHAPED identifiers the regex over-includes: `memory_ids`
+    # and `episode_id` are parameters on `memory_record_use` /
+    # `episode_promote`, and `episode_volume` is a key on
+    # `memory_health`'s return shape. None of them is a tool. Same
     # allowlist as the SKILL.md test below — keep them in sync.
-    KNOWN_KWARGS = {"memory_ids", "episode_id"}
+    KNOWN_NON_TOOL_IDENTIFIERS = {"memory_ids", "episode_id", "episode_volume"}
     referenced = {
         name
         for name in referenced
-        if not name.endswith("_") and name not in KNOWN_KWARGS
+        if not name.endswith("_") and name not in KNOWN_NON_TOOL_IDENTIFIERS
     }
 
     missing = referenced - registered
@@ -684,18 +743,19 @@ async def test_skill_tool_names_exist_on_server(tmp_path: Path) -> None:
     registered = {tool.name for tool in await mcp.list_tools()}
 
     referenced = set(_TOOL_REF_RE.findall(skill_text))
-    # Strip kwarg-shaped names that the regex over-includes — `memory_ids`
-    # is a parameter on `memory_record_use`, not a tool. Anything that
-    # isn't actually registered AND isn't a real `memory_*` tool can
-    # only be a kwarg name or doc artifact; the parameter-form regex on
-    # `_TOOL_REF_RE` already drops `name=`, but a bare `memory_ids` in
-    # prose still matches. Explicit allowlist of known kwargs keeps the
-    # assertion's signal sharp.
-    KNOWN_KWARGS = {"memory_ids", "episode_id"}
+    # Strip tool-SHAPED identifiers that the regex over-includes —
+    # `memory_ids` is a parameter on `memory_record_use` and
+    # `episode_volume` is a key on `memory_health`'s return shape;
+    # neither is a tool. Anything that isn't actually registered AND
+    # isn't a real `memory_*` tool can only be a kwarg name, a return
+    # key or a doc artifact; the parameter-form regex on `_TOOL_REF_RE`
+    # already drops `name=`, but a bare `memory_ids` in prose still
+    # matches. An explicit allowlist keeps the assertion's signal sharp.
+    KNOWN_NON_TOOL_IDENTIFIERS = {"memory_ids", "episode_id", "episode_volume"}
     referenced = {
         name
         for name in referenced
-        if not name.endswith("_") and name not in KNOWN_KWARGS
+        if not name.endswith("_") and name not in KNOWN_NON_TOOL_IDENTIFIERS
     }
 
     missing = referenced - registered

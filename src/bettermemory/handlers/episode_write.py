@@ -8,8 +8,10 @@ durable facts. Stored at `<root>/episodes/<session_id>/<ulid>.md`,
 TTL-pruned (default 30 days) on each write so the directory stays
 bounded without a separate cleanup pass.
 
-Excluded from `memory_search`, `memory_health`, `memory_list` — the
-write here lands in a sibling subtree the memory iterators never see.
+Episode content is excluded from `memory_search`, `memory_health`,
+`memory_list` — the write here lands in a sibling subtree the memory
+iterators never see. `memory_health` reports the subtree's aggregate
+volume (`episode_volume`) and nothing else about it.
 """
 
 from __future__ import annotations

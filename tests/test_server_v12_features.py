@@ -1797,9 +1797,19 @@ def test_desc_memory_health_enumerates_report_bucket_keys() -> None:
     #   `event_id` for `memory_acknowledge_miss`). The DESC sends the
     #   model to `memory_audit_turn` for that workflow and documents the
     #   payload in `docs/api.md`; it has never been enumerated here.
+    # - `episode_volume` is documented after the `CLI equivalent:` line
+    #   too, for a reason of the same shape: it is not a curation bucket
+    #   of memory rows, it is the SIBLING tier's size gauge
+    #   (`{sessions, episodes, bytes, prunable_sessions, ttl_days}` for
+    #   `<root>/episodes/`). Episode content never enters any bucket
+    #   above; only the aggregate crosses. Enumerating it up there would
+    #   invite the model to read episodes as another pile of rows to
+    #   curate, which is the tier confusion the rest of the surface
+    #   spends prose avoiding.
     DOCUMENTED_OUTSIDE_THE_BUCKET_REGION = {
         "telemetry_coverage",
         "recent_silent_misses",
+        "episode_volume",
     }
     expected = wire_keys - METADATA - DOCUMENTED_OUTSIDE_THE_BUCKET_REGION
     assert extracted == expected, (
@@ -1816,12 +1826,17 @@ def test_desc_memory_health_enumerates_report_bucket_keys() -> None:
 
     # ...and "documented elsewhere in this DESC" has to be true, or the
     # exclusion set is just a second blind spot with better comments.
-    assert "`telemetry_coverage`" in DESC_MEMORY_HEALTH[end:], (
-        "DESC_MEMORY_HEALTH excludes `telemetry_coverage` from the bucket "
-        "region on the grounds that it is documented after the "
-        "`CLI equivalent:` line — and it no longer is. Either restore "
-        "that sentence or move the key into the bucket enumeration."
-    )
+    # `recent_silent_misses` is exempt from this loop on the documented
+    # grounds above (its workflow lives in `memory_audit_turn` and
+    # `docs/api.md`); every other exclusion has to earn its place with a
+    # sentence in this same DESC.
+    for excluded_key in ("telemetry_coverage", "episode_volume"):
+        assert f"`{excluded_key}`" in DESC_MEMORY_HEALTH[end:], (
+            f"DESC_MEMORY_HEALTH excludes `{excluded_key}` from the bucket "
+            "region on the grounds that it is documented after the "
+            "`CLI equivalent:` line — and it no longer is. Either restore "
+            "that sentence or move the key into the bucket enumeration."
+        )
 
 
 def test_desc_strings_use_cold_endorsement_memories_not_endorsement_debt() -> None:

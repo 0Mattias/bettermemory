@@ -1030,6 +1030,50 @@ otherwise.
 
 ### Phase 7 — Episodes as the primary continuity layer (M)
 
+**PHASE STATUS: DONE 2026-07-31.** G1, G2, G3 all shipped; all three passed
+adversarial verification with only minor findings, all closed. Suite 4,203 passed
+/ 16 skipped default leg, 4,128 / 3 / 8 embeddings; ruff, mypy (211 files),
+pyright clean. Deltas and measurements:
+
+- **Budgets landed almost exactly on the plan's reserve.** Lean DESC 27,048 →
+  **27,398 / 27,500** (G1 +247, G2 +103 = 350 of the 452 slack; **102 left**).
+  Footprint remainder 9,699 → **9,881 / 10,000**, and `input_schemas` moved
+  7,170 → 7,352 = **exactly the 182 chars reserved for G1** (`include_bodies` 76
+  + `ids` 106), with G2 and G3 spending zero against it. `memory_health` is
+  outside the lean 18-tool surface, so G3's +442 DESC chars cost nothing.
+  **Note for Phase 6: `_DESC_BUDGET_PRESSURE` is 27,400 and the total is 27,398
+  — two chars of margin.** E1's cuts move well clear of it; a pre-ratchet edit
+  of ≥3 chars would trip a UserWarning naming whoever moved last.
+- **G1's inert-ship risk was reproduced, not reasoned about.** A scratch copy
+  with the parameters on the handler but NOT the `_handlers.py` facade shows the
+  worst possible shape: `call_tool` succeeds, returns 200, and silently ignores
+  the flag — FastMCP's pydantic arg model drops unknown keys. The wire test is
+  therefore two assertions (schema membership, then a behavioural `call_tool`),
+  and the behavioural one is what fails on the handler-only variant.
+- **`ids` deliberately does NOT take the by-filename fast path.** The ULID is the
+  filename, so `session_dir / f"{id}.md"` is tempting and would turn an O(all
+  episodes, frontmatter-parsed) walk into O(sessions × len(ids)) stats — but a
+  caller-supplied id used as a path component is a traversal surface and episode
+  ids have no charset guard today (`episode_promote` only builds that path after
+  resolving the id from a walk). Filed as a follow-up behind an id validator.
+- **The plan's own estimate for G1's saving was wrong and is retired.** "~28 KB
+  → ~1 KB" was pre-measurement; the fixture-backed pair is 50.2 KB → 4.8 KB for
+  a 10-row page. Caught by verification as two contradictory figures live in the
+  tree at once. The published framing is 4-10x, not ~50x — the saving is bounded
+  by takeaway length and `max_takeaway_bytes` is 4 KB.
+- **G3 kept itself off the hot path structurally**, and proved it by mutation:
+  making `memory_scope_overview` call `volume()` fails a test asserting the
+  method has no call site outside `health.py`. Measured 1.6 ms / 0.6% of a
+  health report on the live 164-episode store.
+- One G3 comment claimed `volume()` calls the shared prune predicate; it
+  evaluates the rule inline to keep the scan single-pass. Comment corrected —
+  the rule is written twice on purpose and a parity test, not a call graph, is
+  what holds the copies together.
+- Left open deliberately (free-surface gaps, not defects in what shipped): the
+  write-path `transient_warning` reject hint still never names `episode_write`,
+  and `SYSTEM_PROMPT_ADDENDUM` / `docs/system_prompt.md` still carry the pre-G2
+  loop wording that SKILL.md was rewritten to replace.
+
 **G1. Takeaway-only episode reads.** Add `include_bodies` (default True —
 compat) and an optional `ids` filter to `episode_search` (no new tool: a
 fetch-by-id tool would trip the seven-surface tool-count atomicity and
