@@ -47,7 +47,6 @@ from typing import Any
 import pytest
 from jsonschema import ValidationError
 from jsonschema import validate as jsonschema_validate
-from mcp.server.fastmcp import FastMCP
 
 from bettermemory.builder import _strip_titles, build_server
 from bettermemory.config import (
@@ -58,6 +57,11 @@ from bettermemory.config import (
 )
 from bettermemory.session import SessionState
 from bettermemory.store import Store
+from ._mcp import (
+    input_schema as _input_schema,
+    probe_server,
+    output_schema as _output_schema,
+)
 
 
 def _server(tmp_path: Path, *, full_surface: bool = True) -> Any:
@@ -132,7 +136,7 @@ async def test_no_title_survives_on_the_served_surface(tmp_path: Path) -> None:
     offenders = {
         f"{t.name}.{leg}": _title_count(schema)
         for t in tools
-        for leg, schema in (("input", t.inputSchema), ("output", t.outputSchema))
+        for leg, schema in (("input", _input_schema(t)), ("output", _output_schema(t)))
         if schema is not None and _title_count(schema)
     }
     assert not offenders, (
@@ -157,22 +161,22 @@ async def test_served_schemas_are_the_pydantic_schemas_minus_titles(
     registry = mcp._tool_manager._tools
 
     for name, tool in registry.items():
-        pristine = FastMCP("title-scrub-oracle")
+        pristine = probe_server("title-scrub-oracle")
         pristine.tool(name=name, description=tool.description)(tool.fn)
         (reference,) = await pristine.list_tools()
 
-        assert _blob(_without_titles(reference.inputSchema)) == _blob(
-            served[name].inputSchema
+        assert _blob(_without_titles(_input_schema(reference))) == _blob(
+            _input_schema(served[name])
         ), (
             f"{name}: the served inputSchema is not the pydantic schema minus "
             f"its titles. The scrub changed something else."
         )
-        assert (reference.outputSchema is None) == (
-            served[name].outputSchema is None
+        assert (_output_schema(reference) is None) == (
+            _output_schema(served[name]) is None
         ), f"{name}: the scrub changed whether an outputSchema is served at all"
-        if reference.outputSchema is not None:
-            assert _blob(_without_titles(reference.outputSchema)) == _blob(
-                served[name].outputSchema
+        if _output_schema(reference) is not None:
+            assert _blob(_without_titles(_output_schema(reference))) == _blob(
+                _output_schema(served[name])
             ), f"{name}: the served outputSchema is not the reference minus titles"
 
 
@@ -186,19 +190,19 @@ async def test_properties_and_required_survive_the_scrub(tmp_path: Path) -> None
     served = {t.name: t for t in await mcp.list_tools()}
 
     for name, tool in mcp._tool_manager._tools.items():
-        pristine = FastMCP("title-scrub-oracle")
+        pristine = probe_server("title-scrub-oracle")
         pristine.tool(name=name, description=tool.description)(tool.fn)
         (reference,) = await pristine.list_tools()
-        schema = served[name].inputSchema
+        schema = _input_schema(served[name])
         assert set(schema.get("properties", {})) == set(
-            reference.inputSchema.get("properties", {})
+            _input_schema(reference).get("properties", {})
         ), f"{name}: `properties` membership moved"
-        assert schema.get("required") == reference.inputSchema.get("required"), (
+        assert schema.get("required") == _input_schema(reference).get("required"), (
             f"{name}: `required` moved"
         )
-        assert schema.get("type") == reference.inputSchema.get("type")
+        assert schema.get("type") == _input_schema(reference).get("type")
         # And each property's body is intact apart from its own title.
-        for param, body in reference.inputSchema.get("properties", {}).items():
+        for param, body in _input_schema(reference).get("properties", {}).items():
             assert _blob(_without_titles(body)) == _blob(schema["properties"][param]), (
                 f"{name}.{param}: the property body changed, not just its title"
             )
@@ -225,14 +229,14 @@ async def test_the_scrub_is_not_a_silent_no_op(tmp_path: Path) -> None:
       the registry — check `_strip_schema_titles`'s feature detection
       against the installed SDK.
     """
-    probe = FastMCP("title-scrub-noop-probe")
+    probe = probe_server("title-scrub-noop-probe")
 
     def _shaped_like_a_tool(content: str, force: bool = False) -> dict[str, Any]:
         return {}
 
     probe.tool(name="probe", description="d")(_shaped_like_a_tool)
     (unscrubbed,) = await probe.list_tools()
-    assert _title_count(unscrubbed.inputSchema) > 0, (
+    assert _title_count(_input_schema(unscrubbed)) > 0, (
         "pydantic no longer emits `title` annotations, so there is nothing "
         "for `builder._strip_schema_titles` to strip. It is now dead code: "
         "retire it and the ceiling that assumes it, rather than leaving a "
@@ -241,18 +245,18 @@ async def test_the_scrub_is_not_a_silent_no_op(tmp_path: Path) -> None:
 
     tools = await _server(tmp_path).list_tools()
     scrubbed = sum(
-        len(_blob(t.inputSchema))
-        + (len(_blob(t.outputSchema)) if t.outputSchema is not None else 0)
+        len(_blob(_input_schema(t)))
+        + (len(_blob(_output_schema(t))) if _output_schema(t) is not None else 0)
         for t in tools
     )
     unstripped = 0
     for tool in _server(tmp_path)._tool_manager._tools.values():
-        pristine = FastMCP("title-scrub-oracle")
+        pristine = probe_server("title-scrub-oracle")
         pristine.tool(name=tool.name, description=tool.description)(tool.fn)
         (reference,) = await pristine.list_tools()
-        unstripped += len(_blob(reference.inputSchema))
-        if reference.outputSchema is not None:
-            unstripped += len(_blob(reference.outputSchema))
+        unstripped += len(_blob(_input_schema(reference)))
+        if _output_schema(reference) is not None:
+            unstripped += len(_blob(_output_schema(reference)))
 
     saving = unstripped - scrubbed
     assert saving > 2_000, (
@@ -273,7 +277,7 @@ def test_the_scrub_reaches_the_attributes_it_feature_detects() -> None:
     `tests/test_resident_footprint.py::_served_schemas` asserts the first
     of these for its own reasons; this states both, as the scrub's
     contract with the SDK."""
-    mcp = FastMCP("title-scrub-attribute-probe")
+    mcp = probe_server("title-scrub-attribute-probe")
 
     def _probe(content: str) -> dict[str, Any]:
         return {}
@@ -323,8 +327,8 @@ async def test_assigning_a_new_output_schema_would_be_silently_ignored() -> None
     def _probe(content: str) -> dict[str, Any]:
         return {}
 
-    def _fresh() -> tuple[FastMCP, Any]:
-        mcp = FastMCP("cached-property-probe")
+    def _fresh() -> tuple[Any, Any]:
+        mcp = probe_server("cached-property-probe")
         mcp.tool(name="probe", description="d")(_probe)
         return mcp, mcp._tool_manager._tools["probe"]
 
@@ -341,7 +345,7 @@ async def test_assigning_a_new_output_schema_would_be_silently_ignored() -> None
         k: v for k, v in tool.fn_metadata.output_schema.items() if k != "title"
     }
     (served,) = await mcp.list_tools()
-    assert "title" in _blob(served.outputSchema), (
+    assert "title" in _blob(_output_schema(served)), (
         "assigning a new `output_schema` on a warm cache now reaches the "
         "wire. The in-place mutation in `_strip_schema_titles` is still "
         "correct, but this test no longer explains why it is written that way."
@@ -351,7 +355,7 @@ async def test_assigning_a_new_output_schema_would_be_silently_ignored() -> None
     _ = tool.output_schema  # warm the cache the same way
     tool.fn_metadata.output_schema.pop("title", None)  # IN PLACE
     (served,) = await mcp.list_tools()
-    assert "title" not in _blob(served.outputSchema), (
+    assert "title" not in _blob(_output_schema(served)), (
         "in-place mutation no longer reaches the wire through a warm "
         "`cached_property` — `_strip_schema_titles` needs re-designing."
     )
@@ -470,7 +474,7 @@ async def test_structured_output_survives_the_scrub(tmp_path: Path) -> None:
     mcp = _server(tmp_path)
     tools = await mcp.list_tools()
 
-    missing = [t.name for t in tools if t.outputSchema is None]
+    missing = [t.name for t in tools if _output_schema(t) is None]
     assert not missing, (
         f"{missing} no longer serve an outputSchema. Scrubbing titles must "
         f"not disable structured output — that is a wire-shape change, not a "
@@ -500,9 +504,9 @@ async def test_client_side_validation_is_unaffected(tmp_path: Path) -> None:
     result = await mcp.call_tool(
         "memory_write", {"content": "ruff runs in pre-commit", "scopes": ["tools"]}
     )
-    jsonschema_validate(result[1], tools["memory_write"].outputSchema)
+    jsonschema_validate(result[1], _output_schema(tools["memory_write"]))
 
-    search = tools["memory_search"].outputSchema
+    search = _output_schema(tools["memory_search"])
     jsonschema_validate({"result": []}, search)
     with pytest.raises(ValidationError):
         jsonschema_validate({"result": "not-a-list"}, search)
@@ -586,19 +590,19 @@ async def test_the_scrub_does_not_leak_between_servers(tmp_path: Path) -> None:
     first = await _server(tmp_path).list_tools()
     second = await _server(tmp_path).list_tools()
 
-    assert {t.name: t.inputSchema for t in first} == {
-        t.name: t.inputSchema for t in second
+    assert {t.name: _input_schema(t) for t in first} == {
+        t.name: _input_schema(t) for t in second
     }
-    assert not any(_title_count(t.inputSchema) for t in second)
+    assert not any(_title_count(_input_schema(t)) for t in second)
 
-    unrelated = FastMCP("unrelated-after-the-scrub")
+    unrelated = probe_server("unrelated-after-the-scrub")
 
     def _probe(content: str, flag: bool = False) -> dict[str, Any]:
         return {}
 
     unrelated.tool(name="probe", description="d")(_probe)
     (tool,) = await unrelated.list_tools()
-    assert _title_count(tool.inputSchema) > 0, (
+    assert _title_count(_input_schema(tool)) > 0, (
         "an unrelated FastMCP built after a bettermemory server has no titles "
         "either — the scrub is reaching shared state, not this server's own "
         "registry."

@@ -5,6 +5,7 @@ spinning up the full stdio transport.
 """
 
 from __future__ import annotations
+from ._mcp import call_tool as _mcp_call
 
 import json
 import warnings
@@ -17,6 +18,7 @@ from bettermemory.config import Config, StorageConfig
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
 from bettermemory.store import Store
+from ._mcp import input_schema as _input_schema
 
 
 @pytest.fixture
@@ -43,18 +45,12 @@ def confirming_server(memory_dir: Path) -> tuple[Any, SessionState]:
 
 
 async def _call(server: Any, name: str, **kwargs: Any) -> Any:
-    """Invoke a tool and return the parsed JSON payload.
+    """Invoke a tool and return its structured payload.
 
-    FastMCP returns a list[ContentBlock]; for our tools the structured
-    result is what we care about, available via `call_tool`'s second value.
+    Delegates to `tests/_mcp.py`, which owns the SDK's return shape so
+    the mcp 2.x port edits one function rather than forty-four.
     """
-    content, structured = await server.call_tool(name, kwargs)
-    if structured is not None:
-        return structured
-    # Fallback: parse text content.
-    if content and hasattr(content[0], "text"):
-        return json.loads(content[0].text)
-    return None
+    return await _mcp_call(server, name, kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -83,7 +79,7 @@ async def test_each_tool_has_description_and_input_schema(server: Any) -> None:
     tools = await server.list_tools()
     for tool in tools:
         assert tool.description, f"{tool.name} missing description"
-        assert tool.inputSchema, f"{tool.name} missing inputSchema"
+        assert _input_schema(tool), f"{tool.name} missing inputSchema"
 
 
 # ---------------------------------------------------------------------------
@@ -6662,7 +6658,7 @@ async def test_memory_proposals_schema_includes_acknowledge_credential(
     tools = await server.list_tools()
     by_name = {t.name: t for t in tools}
     for tool_name in ("memory_proposals", "memory_write", "memory_update"):
-        props = by_name[tool_name].inputSchema["properties"]
+        props = _input_schema(by_name[tool_name])["properties"]
         assert "acknowledge_credential" in props, (
             f"{tool_name} input schema lost the acknowledge_credential escape hatch"
         )

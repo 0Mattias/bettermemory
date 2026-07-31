@@ -481,3 +481,72 @@ def test_session_registry_concurrent_distinct_inserts_preserve_size_invariant() 
         f"the dict size disagree, which means an insert or pop was lost "
         f"to a race"
     )
+
+
+# ---------------------------------------------------------------------------
+# The silent-injection guard the mcp 2.x port needs
+# ---------------------------------------------------------------------------
+
+
+def test_the_handler_context_alias_is_the_sdk_class_injection_matches() -> None:
+    """Every test above forges its own `ctx`, so none of them can see the
+    one way this whole layer fails silently.
+
+    The SDK decides whether to inject a `Context` by comparing a handler's
+    resolved type hints against its own `Context` CLASS. If the alias in
+    `handlers/_shared.py` ever resolves to a different class than the
+    installed SDK injects — a partially-applied mcp 2.x port, a shim branch
+    that picks wrong, two SDK copies on `sys.path` — injection stops firing,
+    `ctx` arrives as `None` on every call, and `SessionRegistry._key_for_ctx`
+    buckets every client into `_DEFAULT_CLIENT_KEY`. By design: that method
+    swallows exactly this shape rather than crashing a tool call.
+
+    So there is no exception, no failing assertion anywhere else in this
+    file, and multi-client isolation is simply gone — the failure the
+    registry exists to prevent, arriving with a green suite.
+
+    This asserts the identity positively: the annotation a registered
+    handler actually carries must resolve to the class the SDK injects.
+    """
+    import typing
+
+    from mcp.server.fastmcp import Context as SDKContext
+
+    from bettermemory.handlers import _shared
+
+    # The project's alias fills the SDK generic with `Any`. `Context` is a
+    # pydantic model, so subscripting it builds a real concrete SUBCLASS
+    # rather than a typing alias object — `get_origin` returns None for it
+    # and `is` would never hold. Subclass identity is also the relation the
+    # SDK's own injection uses, so it is the right thing to assert: 1.x
+    # resolves a handler's `Context`-typed parameter with a lenient
+    # issubclass check, and 2.0.0 matches the class out of
+    # `typing.get_type_hints`.
+    alias = typing.get_origin(_shared.Context) or _shared.Context
+    assert isinstance(alias, type) and issubclass(alias, SDKContext), (
+        f"handlers._shared.Context resolves to {alias!r}, which is not the "
+        f"{SDKContext!r} the installed SDK injects. Context injection will "
+        f"not fire and every client will collapse into the default session."
+    )
+
+
+def test_a_registered_handler_still_declares_a_context_parameter(
+    two_client_server: tuple[Any, SessionRegistry, dict[str, str]],
+) -> None:
+    """Companion to the identity check: the alias being right is worth
+    nothing if the parameter carrying it is dropped from a handler.
+
+    Reads the unwrapped function out of the tool registry — the same
+    surface `_call` above uses — and asserts the `ctx` parameter survives
+    with an annotation that resolves, rather than a stale string left
+    behind by `from __future__ import annotations`.
+    """
+    import typing
+
+    server, _registry, _clients = two_client_server
+    fn = server._tool_manager.get_tool("memory_write").fn
+    hints = typing.get_type_hints(fn)
+    assert "ctx" in hints, (
+        "memory_write no longer declares a `ctx` parameter; session routing "
+        "has nothing to key on and every caller shares one SessionState"
+    )

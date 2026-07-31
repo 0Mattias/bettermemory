@@ -8,7 +8,6 @@ contract.
 
 from __future__ import annotations
 
-import json
 import stat
 import sys
 import time
@@ -20,6 +19,7 @@ import pytest
 
 from bettermemory.episodes import EpisodeStore
 from bettermemory.origin import Origin
+from ._mcp import call_tool as _mcp_call
 
 
 @pytest.fixture
@@ -308,13 +308,10 @@ def test_scalar_takeaway_episode_coerced_not_dropped(
 
 
 async def _call_episode_tool(server: Any, name: str, **kwargs: Any) -> Any:
-    """Minimal mirror of test_server.py's `_call` + `_unwrap` for the
-    two handler-surface pins below — kept local so this module doesn't
-    import the whole handler test suite."""
-    content, structured = await server.call_tool(name, kwargs)
-    res = structured
-    if res is None and content and hasattr(content[0], "text"):
-        res = json.loads(content[0].text)
+    """`_mcp.call_tool` plus the `result` unwrap, for the two
+    handler-surface pins below — kept local so this module doesn't import
+    the whole handler test suite."""
+    res = await _mcp_call(server, name, kwargs)
     return res.get("result", res) if isinstance(res, dict) and "result" in res else res
 
 

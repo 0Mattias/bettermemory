@@ -34,6 +34,7 @@ the parameter fails rather than passes.
 """
 
 from __future__ import annotations
+from ._mcp import call_tool as _mcp_call
 
 import json
 from datetime import datetime, timedelta, timezone
@@ -45,18 +46,16 @@ from bettermemory.episodes import EpisodeStore
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
 from bettermemory.store import Store
+from ._mcp import input_schema as _input_schema
 
 
 async def _call(server: Any, name: str, **kwargs: Any) -> Any:
-    """Invoke a registered tool and return the parsed payload — the same
-    helper `tests/test_episode_search_isolation.py` uses, so these tests
-    exercise the served surface rather than the handler function."""
-    content, structured = await server.call_tool(name, kwargs)
-    if structured is not None:
-        return structured
-    if content and hasattr(content[0], "text"):
-        return json.loads(content[0].text)
-    return None
+    """Invoke a tool and return its structured payload.
+
+    Delegates to `tests/_mcp.py`, which owns the SDK's return shape so
+    the mcp 2.x port edits one function rather than forty-four.
+    """
+    return await _mcp_call(server, name, kwargs)
 
 
 def _unwrap(res: Any) -> Any:
@@ -83,7 +82,7 @@ async def test_the_new_parameters_are_on_the_served_input_schema(
     `inspect.signature(ToolHandlers.episode_search)`. If this fails while
     the behavioural test below also fails, the facade is where to look."""
     tools = {t.name: t for t in await _server(memory_dir).list_tools()}
-    props = tools["episode_search"].inputSchema["properties"]
+    props = _input_schema(tools["episode_search"])["properties"]
 
     assert {"include_bodies", "ids"} <= set(props), (
         f"episode_search serves {sorted(props)} — the new parameters reached "

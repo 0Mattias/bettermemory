@@ -40,9 +40,17 @@ classifiers = [
 # `install from declared constraints` job in ci.yml is the guard that
 # closes that blind spot — it resolves WITHOUT the lockfile. Lift the cap
 # only together with the port; see docs/incidents/2026-07-31-mcp-2-unbounded-constraint.md.
+# The `<3` cap on pydantic is the same lesson applied before it bites.
+# Today we are protected from a pydantic 3.0 release only TRANSITIVELY, by
+# mcp 1.x's own `pydantic<3.0.0` bound — so the moment the mcp cap above is
+# lifted for the port, our only pydantic ceiling disappears with it, and
+# pydantic 3.0 lands in `install from declared constraints` exactly the way
+# mcp 2.0 did. Declaring it here means the port cannot re-arm that gun as a
+# side effect. (mcp 2.0.0 declares `pydantic>=2.12.0` with no upper bound
+# of its own, so this bound outlives the port.)
 dependencies = [
     "mcp>=1.0.0,<2.0.0",
-    "pydantic>=2.0",
+    "pydantic>=2.0,<3.0.0",
     "pyyaml>=6.0",
     "platformdirs>=4.0",
 ]

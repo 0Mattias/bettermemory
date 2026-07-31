@@ -30,6 +30,7 @@ would hand that back), and the TTL has to be re-applied on load or the
 """
 
 from __future__ import annotations
+from ._mcp import call_tool as _mcp_call
 
 import json
 import sys
@@ -79,12 +80,12 @@ def _fake_ctx(client_id: str) -> Any:
 
 
 async def _call(server: Any, name: str, **kwargs: Any) -> Any:
-    content, structured = await server.call_tool(name, kwargs)
-    if structured is not None:
-        return structured
-    if content and hasattr(content[0], "text"):
-        return json.loads(content[0].text)
-    return None
+    """Invoke a tool and return its structured payload.
+
+    Delegates to `tests/_mcp.py`, which owns the SDK's return shape so
+    the mcp 2.x port edits one function rather than forty-four.
+    """
+    return await _mcp_call(server, name, kwargs)
 
 
 async def _call_as(server: Any, name: str, client_id: str, **kwargs: Any) -> Any:

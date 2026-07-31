@@ -27,8 +27,8 @@ What these tests pin, beyond "the gate fires":
 """
 
 from __future__ import annotations
+from ._mcp import call_tool as _mcp_call
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +46,7 @@ from bettermemory.handlers.write import (
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
 from bettermemory.store import Store
+from ._mcp import input_schema as _input_schema
 
 
 @pytest.fixture
@@ -63,12 +64,12 @@ def server_with_events(memory_dir: Path) -> tuple[Any, Path]:
 
 
 async def _call(server: Any, name: str, **kwargs: Any) -> Any:
-    content, structured = await server.call_tool(name, kwargs)
-    if structured is not None:
-        return structured
-    if content and hasattr(content[0], "text"):
-        return json.loads(content[0].text)
-    return None
+    """Invoke a tool and return its structured payload.
+
+    Delegates to `tests/_mcp.py`, which owns the SDK's return shape so
+    the mcp 2.x port edits one function rather than forty-four.
+    """
+    return await _mcp_call(server, name, kwargs)
 
 
 def _write_events(memory_dir: Path) -> list[dict[str, Any]]:
@@ -507,7 +508,7 @@ async def test_acknowledge_user_claim_is_exposed_on_the_mcp_schema(
     with no way to override."""
     server, _ = server_with_events
     tools = {t.name: t for t in await server.list_tools()}
-    props = tools["memory_write"].inputSchema["properties"]
+    props = _input_schema(tools["memory_write"])["properties"]
     assert "acknowledge_user_claim" in props
     assert props["acknowledge_user_claim"].get("default") is False
 

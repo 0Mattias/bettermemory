@@ -9,6 +9,56 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+### Changed — the mcp 2.x port is now a handful of edits instead of eighty-three
+
+mcp 2.0.0 deletes `mcp.server.fastmcp` outright, changes what `call_tool`
+returns, and renames `Tool.inputSchema` / `outputSchema` to snake_case. Against
+this tree that was 44 unpack sites across 44 test files, 43 schema reads across
+6, and 2 files that would not even collect — all of it mechanical, all of it
+spread thin enough that "83 edits" was an estimate nobody could de-risk.
+
+Every one of those now routes through `tests/_mcp.py`, which accepts both SDK
+shapes: `call_tool` discriminates the return by shape rather than by version,
+`input_schema` / `output_schema` try both attribute names, and `probe_server`
+builds the bare SDK object the two title-scrub oracles need. Nothing here is a
+compatibility shim for the package — `src/` still imports `mcp.server.fastmcp`
+directly and still breaks under 2.0.0, which is the port's job. This is scoped
+to what the suite reads, and it costs nothing today: the helpers are correct
+under 1.x and under 2.x, with no flag day between.
+
+`pydantic` is now capped at `<3.0.0`. Until this, protection from a pydantic 3.0
+release came only transitively from mcp 1.x's own bound — so lifting the mcp cap
+for the port would have removed the only ceiling and re-armed exactly the gun
+that fired on 3.31.0, where an unbounded dependency resolved to a new major and
+every published wheel died at import.
+
+`tests/test_session_registry.py` gains the assertion the port's worst failure
+mode needs. 2.0.0 decides whether to inject a `Context` by matching a handler's
+resolved type hints against its own `Context` class; if the alias in
+`handlers/_shared.py` ever points at a different class, injection silently stops
+firing, `ctx` arrives as `None` on every call, and every client collapses into
+one shared session — with no exception and no failing test, because
+`SessionRegistry._key_for_ctx` swallows that shape by design. The new tests
+assert the identity positively, and that a registered handler still declares a
+resolvable `ctx` hint.
+
+### Removed — the internal audit plans, which belong in a memory store rather than a public repo
+
+`docs/audit/` carried about 3,400 lines of session-internal material: a drained
+phase plan whose every phase had shipped, three superseded entry briefs, and six
+"fact packs" of line-number anchors that their own sweep measured as 32% still
+exact. The prose in them was sound and the coordinates had rotted — which is
+what a snapshot does, and why the directory sat deliberately outside the
+doc-claims checker's corpus, where nothing could ever fail on it.
+
+The mcp 2.x port analysis moved to `docs/ROADMAP.md` and the durable store; the
+deferred backlog it carried is now a "Small and anchored" section of the
+roadmap, in house voice. Kept: `docs/audit/extractor-hunt-2026-06-09.{md,json}`,
+a measurement artifact three changelog entries cite by path.
+
+Also corrected in passing: the roadmap described `apply_write_gates` and
+`memory_verify`'s attestation refusal as unreleased. Both shipped in 3.31.0.
+
 ### Fixed — six ways a committed record could disappear, and the chokepoint that closes the class
 
 An adversarial sweep over the persistence, parse, gate and index surfaces
@@ -101,15 +151,20 @@ the densest realistic record still serialises.
 
 ### Fixed — two round trips that rewrote what they stored
 
-`_frontmatter.loads` stripped the CRs that precede a newline anywhere in the
-file, including in the body, while `dumps` wrote them back verbatim: a body
-written `alpha\r\nbeta` came back `alpha\nbeta`, the file and every reader
-disagreed, and the first lifecycle re-dump made the reader's version
-permanent. `alpha\r\r\nbeta` lost both CRs, so it was never only the one
-belonging to a CRLF pair. The delimiter scan still needs the CR-stripped
-view; the body is now rebuilt from the original lines. Fixed on the read
-side rather than by normalising on write, so the store keeps storing what
-it was given.
+`_frontmatter.loads` strips the CR off every line so a Windows-authored file,
+or one checked out with `core.autocrlf`, reads the same on every platform.
+That normalisation is right and stays; what was missing was its other half.
+`dumps` wrote the body verbatim, so a CRLF body reached disk with its CRs
+while every reader returned it without them — `alpha\r\nbeta` on disk,
+`alpha\nbeta` from `memory_show` — until the first tombstone, restore,
+rename or update re-dump silently made the readers' version permanent.
+
+`dumps` now applies the same per-line strip, so the two agree from the first
+write. Mirroring the operation rather than approximating it with a
+`replace("\r\n", "\n")` is load-bearing: under a plain replace,
+`alpha\r\r\nbeta` lands `alpha\r\nbeta` on disk and still reads back
+`alpha\nbeta` — the identical bug, one carriage return deeper. A test asserts
+the general property, that `dumps` output is a fixed point of `loads`.
 
 Separately, U+0085 (NEL) is a YAML 1.1 line break, and pyyaml emitted it raw
 inside single-quoted scalars, so the loader folded it back to a space. Every

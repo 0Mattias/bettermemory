@@ -25,6 +25,8 @@ from bettermemory.store import (
     count_unparseable_memory_files,
 )
 
+from ._mcp import call_tool as _mcp_call
+
 
 def test_write_and_read_back(store: Store) -> None:
     memory = store.write(
@@ -1166,7 +1168,7 @@ async def _search_ids(memory_dir: Path, query: str) -> list[str]:
         store=Store(memory_dir),
         state=SessionState(),
     )
-    _content, structured = await server.call_tool("memory_search", {"query": query})
+    structured = await _mcp_call(server, "memory_search", {"query": query})
     hits = (
         structured.get("result", structured)
         if isinstance(structured, dict)

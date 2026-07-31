@@ -66,7 +66,6 @@ import warnings
 from pathlib import Path
 from typing import Any, NamedTuple
 
-from mcp.server.fastmcp import FastMCP
 
 from bettermemory.builder import _strip_titles, build_server
 from bettermemory.config import (
@@ -77,6 +76,11 @@ from bettermemory.config import (
 )
 from bettermemory.session import SessionState
 from bettermemory.store import Store
+from ._mcp import (
+    input_schema as _input_schema,
+    probe_server,
+    output_schema as _output_schema,
+)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SKILL_PATH = REPO_ROOT / "plugin" / "skills" / "bettermemory" / "SKILL.md"
@@ -326,9 +330,11 @@ async def _measure(mcp: Any) -> Footprint:
     return Footprint(
         instructions=len(mcp.instructions or ""),
         descriptions=sum(len(t.description or "") for t in tools),
-        input_schemas=sum(len(_blob(t.inputSchema)) for t in tools),
+        input_schemas=sum(len(_blob(_input_schema(t))) for t in tools),
         output_schemas=sum(
-            len(_blob(t.outputSchema)) for t in tools if t.outputSchema is not None
+            len(_blob(_output_schema(t)))
+            for t in tools
+            if _output_schema(t) is not None
         ),
         skill_frontmatter=len(frontmatter),
         tool_count=len(tools),
@@ -378,8 +384,12 @@ def _bench_style_chars(tools: list[Any]) -> int:
         {
             "name": t.name,
             "description": t.description or "",
-            "inputSchema": t.inputSchema,
-            **({"outputSchema": t.outputSchema} if t.outputSchema is not None else {}),
+            "inputSchema": _input_schema(t),
+            **(
+                {"outputSchema": _output_schema(t)}
+                if _output_schema(t) is not None
+                else {}
+            ),
         }
         for t in tools
     ]
@@ -439,12 +449,12 @@ async def _scheduled_param_costs() -> dict[str, int]:
     is written. So the probe is scrubbed with the same function the server
     uses, and is priced on the surface the parameter would actually land
     on."""
-    mcp = FastMCP("resident-footprint-probe")
+    mcp = probe_server("resident-footprint-probe")
     mcp.tool(name="probe", description="parameter-cost probe")(
         _scheduled_param_signature
     )
     (tool,) = await mcp.list_tools()
-    schema = copy.deepcopy(tool.inputSchema)
+    schema = copy.deepcopy(_input_schema(tool))
     _strip_titles(schema)
     return {name: _param_cost(schema, name) for name in _SCHEDULED_PARAMS}
 
@@ -625,7 +635,7 @@ async def test_the_landed_parameters_cost_what_the_reserve_promised(
 
     costs: dict[str, int] = {}
     for tool_name, param in _LANDED_PARAMS:
-        schema = tools[tool_name].inputSchema
+        schema = _input_schema(tools[tool_name])
         assert param in schema["properties"], (
             f"{tool_name} does not serve `{param}`, which the ceiling above "
             f"reserved room for. Either it never reached the `_handlers.py` "

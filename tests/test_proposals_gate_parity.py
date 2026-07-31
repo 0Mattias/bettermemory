@@ -64,6 +64,7 @@ from bettermemory.handlers.write import (
 )
 from bettermemory.proposals import Proposal, ProposalQueue
 from bettermemory.store import Store
+from ._mcp import input_schema as _input_schema
 
 _CREATED = "2026-01-01T12:00:00+00:00"
 
@@ -486,7 +487,7 @@ async def _served_schemas(root: Path) -> dict[str, set[str]]:
         state=SessionState(),
     )
     return {
-        t.name: set(t.inputSchema.get("properties", {}))
+        t.name: set(_input_schema(t).get("properties", {}))
         for t in await server.list_tools()
     }
 

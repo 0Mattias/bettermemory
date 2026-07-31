@@ -1,6 +1,6 @@
 # 2026-07-30 — `ingest --force` refused by the gate it was passed to bypass
 
-**Reported by:** self-found, hours after the commit that caused it, by the fresh-eyes write-path audit of 2026-07-30 (`docs/audit/upgrade-plan-facts/writepath.md`, item 1) — and confirmed by running it rather than by reading it.
+**Reported by:** self-found, hours after the commit that caused it, by the fresh-eyes write-path audit of 2026-07-30 — and confirmed by running it rather than by reading it.
 **bettermemory version at time of report:** 3.30.0 plus unreleased `main`. The defect existed only on `main`: it was introduced by `0073c70` (2026-07-30) and never reached a tag, so no released version ever carried it. `--force` behaved correctly in every version from v2.7.1 through v3.30.0.
 **Fixed in:** unreleased — `main`, this commit.
 **Status:** fixed
@@ -82,6 +82,6 @@ Each was checked against the unfixed code: reverting the CLI threading fails the
 
 - Introduced: `0073c70`, "feat(write): shared write-gate chain; ingest now runs the content gates" (2026-07-30, unreleased).
 - `--force` and its plan-only guard test: `f031f93` (2026-05-24), first released in v2.7.1.
-- Audit that found it: `docs/audit/upgrade-plan-facts/writepath.md` item 1 and hazard 1; item F1 of `docs/audit/upgrade-plan-2026-07-30.md`.
+- Found by: the write-path lane of the 2026-07-30 audit, filed as item F1 of that round's plan. The plan and its fact packs were retired once drained; the fix and this postmortem are the record.
 - Related code: `_content_gates` and `apply_ingest_plan` in `src/bettermemory/ingest.py`; `DedupActiveGate`, `DedupTombstoneGate` and `CONTENT_GATES` in `src/bettermemory/handlers/write.py`; the flag's threading in `src/bettermemory/cli/ingest.py`.
 - Related incidents: [`2026-07-26-staleness-verdict-constant-function.md`](2026-07-26-staleness-verdict-constant-function.md) and [`2026-07-25-doctor-false-green-on-importable-extra.md`](2026-07-25-doctor-false-green-on-importable-extra.md) — both false greens; this one is the same class inverted.

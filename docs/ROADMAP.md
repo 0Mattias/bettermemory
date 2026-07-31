@@ -5,6 +5,19 @@ Planned work, in rough priority order. Plans change; the
 
 ## Planned
 
+- **The mcp 2.x port.** `mcp.server.fastmcp` does not exist in mcp 2.0.0
+  and there is no overlap version, so `pyproject.toml` caps the SDK at
+  `<2.0.0` — upstream's own recommended posture until a consumer
+  migrates. Three lines in `src/` change: the server-class import in
+  `builder.py`, the `Context` generic arity in `handlers/_shared.py` and
+  `session.py`, and one accessor in `session.py` where the client id moves
+  from an attribute to a mapping read. Nothing the schema-title scrub reaches
+  through moves, and the wire is byte-identical, so this is a minor.
+  The test-side cost is already paid: the SDK's tool-invocation return
+  shape and its schema attribute names are routed through
+  `tests/_mcp.py`, which accepts both majors. Ship it as a floor bump,
+  not a compatibility shim — dual support means a permanently branched
+  type surface past two type-checkers, for users who can pin instead.
 - **Truncation as a write-time gate, deferred on budget.** `doctor`'s
   `memory_body_completeness` check reports bodies that end mid-sentence,
   which is detection after the fact. The gate that would prevent the loss
@@ -27,12 +40,16 @@ Planned work, in rough priority order. Plans change; the
   edits, the single most common update shape on the dogfood store.
 - **Write-path hardening, remaining items.** `apply_write_gates` is the
   shared gate chain and `memory_verify` refuses unverifiable path
-  attestations (both Unreleased). Remaining:
-  1. Reconcile the private gate copies —
-     `consolidate._apply_llm_proposal` and
-     `handlers/proposals.accept_proposal` — against the shared chain.
-     Both deviate from `memory_write` deliberately, so this is policy
-     review, not a mechanical reroute.
+  attestations (both shipped in 3.31.0). Remaining:
+  1. Reconcile the private gate copies against the shared chain.
+     `handlers/proposals.accept_proposal` now calls `apply_write_gates`;
+     `consolidate._apply_llm_proposal` still hand-rolls size, transient
+     and similarity, each with a deliberate rationale (it gates the LLM
+     claim, not the stamped body), so that half is policy review rather
+     than a mechanical reroute. `ingest.apply_ingest_plan` is the third:
+     it bypasses `_validate_write_payload` entirely, and the residue
+     worth closing is that it can plant scopes outside a configured
+     `[scopes] allowed` whitelist.
   2. Provenance on the read surface, after a design change: a tier
      derived from local write events would label an injection-driven
      write `locally-written` — its cleanest tier — so it cannot see the
@@ -98,6 +115,51 @@ Planned work, in rough priority order. Plans change; the
   Once it exists it replays over history already on disk, so no new
   observation window is needed.
 
+### Small and anchored
+
+Each of these is scoped and has a known landing site; none is large
+enough to earn its own entry above.
+
+- **The transient-reject hint never names `episode_write`.** The hint in
+  `handlers/write.py` offers two remedies — rephrase to the durable form,
+  or `acknowledge_transient=True` — and does not mention the tier that
+  exists to hold exactly that content. The reverse direction is already
+  covered in `handlers/episode_write.py`, so the gap is one-way. No test
+  pins the string and reject hints are runtime payloads, so this costs
+  nothing against the resident budget.
+- **`SYSTEM_PROMPT_ADDENDUM` predates the episodes-as-state-channel
+  rewrite.** The block in `prompts.py` is mirrored byte-for-byte in
+  `docs/system_prompt.md` and pinned equal by `tests/test_prompts.py`. It
+  still describes episodes as a place you *may* use, and its loop-iteration
+  pattern predates both the cheap-scan parameters and the minting moment
+  that `plugin/skills/bettermemory/SKILL.md` now leads with. Target
+  net-neutral, not net-add: `docs/system_prompt.md` warns that Claude Code
+  truncates the paste at ~1.8 KB.
+- **`cold_endorsement_memories` is not gated by the telemetry-coverage
+  predicate, and that is a decision, not an implementation.** Only
+  `dead_weight` is gated in `health.py`. On a hookless store the
+  cold-endorsement leg over-fires exactly where the gate exists to stop
+  over-firing, and it reaches the model through the curation hint's
+  pressure sum — the one curation surface delivered without asking. Two
+  viable shapes: widen the coverage gate to cover the leg, or drop the leg
+  from the pressure sum when coverage is absent. Hard constraint: the
+  `curation_pending` key set is pinned by set-equality, dict-equality and a
+  DESC-prose regex, so the fix must not add a key.
+- **`doctor`'s `turn_audited` count does not check `triggered_from`.** An
+  in-process `memory_audit_turn` stamps `triggered_from="mcp_tool"`, so an
+  MCP-only store reads as "hook is wired" — the conflation fixed everywhere
+  else. Three verdict branches and a published info key read the counter,
+  so tightening it changes what `doctor` says on stores that are genuinely
+  fine but MCP-driven.
+- **`episode_search(ids=…)` has no by-filename fast path, and the win is
+  unmeasured.** The refusal is written into `handlers/episode_search.py`
+  with its reasoning, and the validator to mirror already exists in
+  `episodes.py`. Two things to know first: on a bare `ids`-only call the
+  candidate loop still walks every session, so the saving is proportional
+  to session count rather than to 1; and three behaviours ride the
+  post-load loop (the floor skip, the `since`/scope filters, the datetime
+  sort) that any short-circuit must preserve. Bench before building.
+
 ## Not planned
 
 - **Managed cloud SKU.** Local-first is the design, not a missing
@@ -135,8 +197,8 @@ Planned work, in rough priority order. Plans change; the
   schemas on demand — the same win, two orders of magnitude larger, for
   free — which is why the server's instructions block names the four
   tools to load first instead. Rationale next to the knob in
-  `config.py`; the full table is in the Phase 6 section of
-  `docs/audit/upgrade-plan-2026-07-30.md`.
+  `config.py`; the per-tool figures come from
+  `tests/test_resident_footprint.py`, which measures them on every run.
 - **Merging the micro-tool pairs in 3.x** — `memory_write_confirm` /
   `memory_write_cancel` and `memory_scope_enable` /
   `memory_scope_disable` into one call each. The compatibility contract

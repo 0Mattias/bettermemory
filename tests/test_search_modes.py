@@ -9,7 +9,6 @@ returns deterministic vectors based on token overlap.
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -22,6 +21,7 @@ from bettermemory.search import search, tokenize
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
 from bettermemory.store import Store
+from ._mcp import call_tool as _mcp_call
 
 
 def _memory(
@@ -321,12 +321,7 @@ async def test_config_semantic_mode_without_dedup_serves_search(
     # broad union that the JSON round-trip below erases anyway.
     server: Any = build_server(config=cfg, store=store, state=SessionState())
 
-    content, structured = await server.call_tool(
-        "memory_search", {"query": "python list"}
-    )
-    result = structured
-    if result is None and content and hasattr(content[0], "text"):
-        result = json.loads(content[0].text)
+    result = await _mcp_call(server, "memory_search", {"query": "python list"})
     hits = result.get("result", result) if isinstance(result, dict) else result
 
     assert hits, "semantic search mode without semantic_dedup must serve hits"

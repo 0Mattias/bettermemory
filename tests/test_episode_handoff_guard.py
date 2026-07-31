@@ -20,8 +20,8 @@ loud failure.
 """
 
 from __future__ import annotations
+from ._mcp import call_tool as _mcp_call
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -35,18 +35,12 @@ from bettermemory.store import Store
 
 
 async def _call(server: Any, name: str, **kwargs: Any) -> Any:
-    """Invoke a tool through FastMCP and return the parsed payload.
+    """Invoke a tool and return its structured payload.
 
-    Mirrors the helper in `tests/test_server.py` so this guard exercises
-    the exact dispatch path where the raw ValueError used to surface as
-    a tool error.
+    Delegates to `tests/_mcp.py`, which owns the SDK's return shape so
+    the mcp 2.x port edits one function rather than forty-four.
     """
-    content, structured = await server.call_tool(name, kwargs)
-    if structured is not None:
-        return structured
-    if content and hasattr(content[0], "text"):
-        return json.loads(content[0].text)
-    return None
+    return await _mcp_call(server, name, kwargs)
 
 
 # Each value fails `_session_dir`'s `[A-Za-z0-9_-]` validator: a slash

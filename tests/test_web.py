@@ -23,6 +23,7 @@ import pytest
 from bettermemory.config import Config, StorageConfig
 from bettermemory.store import Store
 
+from ._mcp import call_tool as _mcp_call
 from .conftest import shielded_child_env
 
 # Reuse the commit-drift fixture helpers rather than re-implementing a
@@ -1016,10 +1017,8 @@ async def test_lexical_only_note_fires_exactly_when_a_semantic_leg_ranks(
         )
         server = build_server(config=cfg, store=store, state=SessionState())
         legs.clear()
-        content, _structured = await server.call_tool(
-            "memory_search", {"query": "theta runbook"}
-        )
-        assert content is not None
+        payload = await _mcp_call(server, "memory_search", {"query": "theta runbook"})
+        assert payload is not None
         ran = set(legs)
         assert ("_score_semantic" in ran) is semantic_expected, label
 

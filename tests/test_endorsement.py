@@ -22,6 +22,7 @@ from bettermemory.search import _endorsement_factor, search
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
 from bettermemory.store import Store
+from ._mcp import call_tool as _mcp_call
 
 _T = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
@@ -178,8 +179,8 @@ def test_config_endorsement_boost_defaults_off_and_loads() -> None:
 
 
 async def _search_ids(server: Any) -> list[str]:
-    _content, structured = await server.call_tool(
-        "memory_search", {"query": "alpha beta gamma", "auto_scope": False}
+    structured = await _mcp_call(
+        server, "memory_search", {"query": "alpha beta gamma", "auto_scope": False}
     )
     # FastMCP wraps a list return under "result".
     hits = (
