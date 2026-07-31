@@ -514,6 +514,435 @@ def test_snippet_does_not_cut_mid_word() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Query-biased snippets — `search._query_biased_snippet`
+#
+# A search hit's snippet used to be a blind head-of-body truncation, so a
+# memory whose match sat at character 4,000 showed the caller 200 characters
+# of an unrelated opening paragraph: the snippet answered "what does this
+# memory start with" rather than "why did this memory come back". These pin
+# the window that replaced it, and — just as load-bearing — the four cases
+# that still delegate to plain `snippet_for`.
+# ---------------------------------------------------------------------------
+
+
+def _long_body(prefix: str, sentence: str, *, tail_filler: int = 30) -> str:
+    """A body with `sentence` buried past the head window.
+
+    The filler is a repeated word so the only anchor for a query drawn
+    from `sentence` is the sentence itself — an accidental second match
+    would make a windowing failure look like a success.
+    """
+    return prefix + "filler " * 40 + sentence + " " + ("filler " * tail_filler).strip()
+
+
+def test_snippet_windows_on_the_matched_term_mid_body() -> None:
+    """The acceptance criterion: a match far past the head window is what
+    the caller is shown, not the body's opening."""
+    sentence = "The staging database password rotates every 90 days."
+    body = "Kickoff notes. " + "filler " * 560 + sentence + " " + "filler " * 30
+    assert body.index(sentence) > 3900  # the match really is deep in the body
+
+    hits = search([_memory(body)], "staging database")
+
+    snippet = hits[0].snippet
+    assert snippet.startswith("...")  # the window opened mid-body
+    assert sentence in snippet
+    assert len(snippet) <= 203
+
+
+def test_snippet_head_window_is_byte_identical_to_snippet_for() -> None:
+    """A hit whose match is already inside the head window must come back
+    byte-for-byte as before — the fallback DELEGATES to `snippet_for`
+    rather than re-deriving its truncation, so the two cannot drift."""
+    from bettermemory.models import snippet_for
+
+    body = ("python " * 200).strip()
+
+    hits = search([_memory(body)], "python")
+
+    assert hits[0].snippet == snippet_for(body)
+    assert not hits[0].snippet.startswith("...")
+
+
+def test_snippet_short_body_returned_whole() -> None:
+    """Bodies inside the budget are returned whole, and the anchor scan is
+    never paid for them — the early return that makes that true is also
+    what keeps `test_search_tokenizes_each_candidate_once` green."""
+    body = "The staging database password rotates every 90 days."
+    assert len(body) <= 200
+
+    hits = search([_memory(body)], "database")
+
+    assert hits[0].snippet == body
+
+
+def test_snippet_falls_back_to_head_when_match_is_scope_only() -> None:
+    """A scope-only match populates `match_terms` while the body contains
+    no occurrence at all. There is nothing to window on, so the hit keeps
+    head-of-body rather than anchoring on some unrelated token."""
+    from bettermemory.models import snippet_for
+
+    body = "Kickoff notes " + "filler " * 60
+    a = _memory(body, scopes=["projects:zephyr"])
+    assert "zephyr" not in body
+
+    hits = search([a], "zephyr")
+
+    assert hits[0].match_terms == ["zephyr"]
+    assert hits[0].snippet == snippet_for(body)
+
+
+def test_snippet_falls_back_to_head_in_browse_mode() -> None:
+    """Browse mode builds hits with `matched=[]` — there is no query to
+    bias toward, so the snippet must stay head-of-body."""
+    from bettermemory.models import snippet_for
+
+    body = _long_body("Kickoff notes. ", "The staging database rotates.")
+
+    hits = search([_memory(body)], "", allow_empty_query=True)
+
+    assert hits[0].snippet == snippet_for(body)
+    assert not hits[0].snippet.startswith("...")
+
+
+def test_snippet_total_length_bounded_with_leading_ellipsis() -> None:
+    """The <=203 budget survives a window carrying BOTH ellipses, because
+    the leading one is charged AGAINST the 200-char content budget rather
+    than added on top: 3 + 197 + 3 == 203, the same bound a head-anchored
+    snippet has always had."""
+    body = (
+        "One python mention. "
+        + "filler " * 60
+        + "python python python in the runner config "
+        + "filler " * 40
+    )
+
+    snippet = search([_memory(body)], "python")[0].snippet
+
+    assert snippet.startswith("...")
+    # Two return shapes: a window that ran out of body carries no trailing
+    # ellipsis, so stripping a fixed six characters would eat real content.
+    core = snippet[3:-3] if snippet.endswith("...") else snippet[3:]
+    assert len(core) <= 197
+    assert len(snippet) <= 203
+
+
+def test_snippet_window_opens_on_a_token_boundary() -> None:
+    """`_truncate_at_word` only ever guarded the TRAILING edge. A mid-body
+    window has a leading edge too, and opening it mid-word produces exactly
+    the plausible-but-wrong fragment the trailing guard exists to prevent —
+    `...ller PostgreSQL` reads as a real word.
+
+    Asserted on the character BEFORE the window in the body rather than on
+    the window's first "word". An unsnapped start lands on whitespace about
+    as often as it lands inside a word, and `snippet[3:].split(" ")[0]`
+    reads whitespace as `""` — which `body.startswith` accepts
+    unconditionally. That shape stayed green with the snap deleted while
+    90% of windows opened inside a word.
+    """
+    # Numbered filler so the window's text occurs exactly once: with
+    # repeated filler a mid-word window can re-match at some other,
+    # innocently-preceded offset and the check passes on the wrong slice.
+    filler = " ".join(f"word{i:03d}" for i in range(60))
+    body = f"Alpha beta gamma. {filler} PostgreSQL replication lag spiked."
+
+    snippet = search([_memory(body)], "replication")[0].snippet
+
+    assert snippet.startswith("...")
+    core = snippet[3:-3] if snippet.endswith("...") else snippet[3:]
+    assert body.count(core) == 1
+    opened_at = body.index(core)
+    assert opened_at > 0
+    assert body[opened_at].isalnum(), f"window opens on filler: {core[:20]!r}"
+    assert not (body[opened_at - 1].isalnum() or body[opened_at - 1] == "_"), (
+        f"window opened mid-word: ...{body[opened_at - 6 : opened_at + 14]!r}"
+    )
+
+
+def test_snippet_head_window_survives_a_non_word_body_opening() -> None:
+    """The head shortcut is what a markdown-shaped body depends on. Its
+    first `_TOKEN_RE` token does NOT start at offset 0 — `## `, `- `, a
+    parenthesised date — so without the shortcut the snap opens the window
+    a few characters in and renders `...Deploy runbook` where the body says
+    `## Deploy runbook`: content silently dropped, plus a leading ellipsis
+    promising elided text that never existed.
+
+    The byte-identity test above cannot see this. Its `"python " * 200`
+    fixture has a token at offset 0, so snapping is a no-op there and the
+    shortcut can be deleted with the whole suite still green.
+    """
+    from bettermemory.models import snippet_for
+
+    for opening in ("## Deploy runbook\n\n", "- ", "(2026-07) ", "* "):
+        body = opening + "The vaultwarden secret rotates monthly. " + "filler " * 60
+        assert not body[0].isalnum()
+
+        snippet = search([_memory(body)], "vaultwarden")[0].snippet
+
+        assert snippet == snippet_for(body), opening
+        assert not snippet.startswith("...")
+
+
+def test_snippet_window_offsets_are_against_the_stripped_body() -> None:
+    """Every offset the scan produces is measured against `body.strip()`,
+    and the window is cut from that same string. Scanning the raw body
+    instead shifts the window right by exactly the leading whitespace — a
+    silent off-by-N that surfaces only on bodies opening with a blank line,
+    which is what a pasted transcript or a fenced block looks like."""
+    filler = " ".join(f"word{i:03d}" for i in range(40))
+    body = f"\n\n   Kickoff notes. {filler} vaultwarden rotates monthly."
+
+    snippet = search([_memory(body)], "vaultwarden")[0].snippet
+
+    assert snippet.startswith("...")
+    core = snippet[3:]
+    text = body.strip()
+    assert text.count(core) == 1
+    opened_at = text.index(core)
+    assert not text[opened_at - 1].isalnum(), (
+        f"window shifted by the stripped prefix: {core[:20]!r}"
+    )
+
+
+def test_snippet_scan_stops_at_the_cap() -> None:
+    """`_SNIPPET_SCAN_CHARS` bounds the walk, so a pathological body
+    degrades to head-of-body rather than to a stall. Pinned as a BOUNDARY —
+    the near-miss body below still windows — because "very long bodies give
+    up" would also pass with no cap at all, just slowly."""
+    import bettermemory.search as search_module
+
+    from bettermemory.models import snippet_for
+
+    lead_in = "Kickoff notes. " + "filler " * 1500
+    assert len(lead_in) > search_module._SNIPPET_SCAN_CHARS
+    past_cap = lead_in + "vaultwarden rotates monthly."
+
+    snippet = search([_memory(past_cap)], "vaultwarden")[0].snippet
+
+    assert snippet == snippet_for(past_cap)
+    assert not snippet.startswith("...")
+
+    near = "Kickoff notes. " + "filler " * 1100 + "vaultwarden rotates monthly."
+    assert len(near) < search_module._SNIPPET_SCAN_CHARS
+    assert search([_memory(near)], "vaultwarden")[0].snippet.startswith("...")
+
+
+def test_snippet_anchors_on_kebab_components() -> None:
+    """Query -> index kebab direction. The scorers' conjunctive fallback
+    marks `claude-code` matched when the body spells it `Claude Code`, and
+    no raw body token there normalises to the compound — only its parts
+    do, which is what the second anchor tier is for."""
+    body = _long_body("Intro. ", "We standardised on Claude Code for the agent loop.")
+
+    snippet = search([_memory(body)], "claude-code")[0].snippet
+
+    assert "Claude Code" in snippet
+
+
+def test_a_literal_compound_is_never_dragged_off_to_its_parts() -> None:
+    """Tier 2 is consulted ONLY when tier 1 found nothing. Collapsing the
+    two — `sorted(primary + secondary)` — lets a dense cluster of bare parts
+    outvote the single place the body actually spells the compound, undoing
+    the precision guard `_expand_kebab`'s one-directional widening exists to
+    protect: `python-frontmatter` would anchor on any bare `python`.
+
+    The kebab test above cannot see this. Its body has no literal compound,
+    so there is no tier-1 anchor for a merged ranking to lose.
+    """
+    body = (
+        "Intro paragraph. "
+        + "filler " * 20
+        + "We standardised on claude-code as the runner. "
+        + "filler " * 40
+        + "code code code code code review code owners code freeze code "
+        + "filler " * 20
+    )
+
+    snippet = search([_memory(body)], "claude-code")[0].snippet
+
+    assert "claude-code as the runner" in snippet
+    assert "code owners" not in snippet
+
+
+def test_snippet_anchors_on_symbol_aliased_term() -> None:
+    """`C++` aliases to `cpp` on the TEXT, before `_TOKEN_RE` runs, so the
+    raw body token at that offset is a bare `C` that no per-token
+    normalisation can turn back into `cpp`. Without the reverse pass over
+    `_ALIAS_ANCHOR_PATTERNS` this hit silently reverts to head-of-body."""
+    body = _long_body("Intro. ", "The hot path is still C++ under the hood.")
+
+    hit = search([_memory(body)], "C++")[0]
+
+    assert hit.match_terms == ["cpp"]
+    assert "C++ under the hood" in hit.snippet
+
+
+def test_snippet_anchors_on_stemmed_plural() -> None:
+    """Raw body tokens are re-run through the whole tokenizer, not compared
+    by surface form: `policies` and `policy` only meet as `polici`."""
+    body = _long_body("Intro. ", "Retention policy is 30 days for build logs.")
+
+    snippet = search([_memory(body)], "policies")[0].snippet
+
+    assert "Retention policy" in snippet
+
+
+def test_snippet_anchors_on_snake_case_spelling() -> None:
+    """`_` -> `-` canonicalisation is token-internal, so per-token
+    normalisation reproduces it and a kebab query anchors on a snake_case
+    body. Asserted on the BODY substring — the shared token is the stem
+    `docker-compos`, which appears in neither spelling."""
+    body = _long_body("Intro. ", "Edited docker_compose.yml on helios.")
+
+    snippet = search([_memory(body)], "docker-compose")[0].snippet
+
+    assert "docker_compose.yml" in snippet
+
+
+def test_snippet_prefers_the_densest_cluster() -> None:
+    """Window selection is by coverage, not by first occurrence: a lone
+    early mention loses to the cluster that explains the hit. The lone
+    mention here sits at offset 4, INSIDE the head window, so this also
+    pins that density outranks the head shortcut."""
+    body = (
+        "One python mention. "
+        + "filler " * 60
+        + "python python python in the runner config "
+        + "filler " * 40
+    )
+
+    snippet = search([_memory(body)], "python")[0].snippet
+
+    assert "python python python in the runner config" in snippet
+    assert "One python mention" not in snippet
+
+
+def test_snippet_density_counts_only_anchors_the_window_reaches() -> None:
+    """The window opens `_SNIPPET_LEAD_CHARS` BEFORE its anchor, so it
+    reaches `budget - lead` past it, not `budget`. Counting against the
+    wrong span makes the ranking promise occurrences the rendered window
+    never gets to — and on a tie the over-counted early cluster wins,
+    which is the worst case: the caller is shown the pair that does NOT
+    fit while the pair that does is discarded.
+
+    Anchors sit at 300, 470, 700 and 800. Against the true reach (157)
+    only the 700/800 pair is co-visible. Against the budget (197) the
+    300/470 pair scores the same 2 and, being earlier, wins the tie —
+    yet a window opened at 300 ends around 457 and never reaches 470.
+    """
+
+    def pad(n: int) -> str:
+        """`n` characters of filler that can never anchor, with clean
+        token boundaries at both ends so the offsets below are exact."""
+        whole, rest = divmod(n, len("filler "))
+        return " " * rest + "filler " * whole
+
+    body = (
+        "Kickoff notes."
+        + pad(286)
+        + "beacon alpha"
+        + pad(158)
+        + "beacon bravo"
+        + pad(218)
+        + "beacon charlie"
+        + pad(86)
+        + "beacon delta"
+        + pad(120)
+    ).strip()
+    assert [i for i in range(len(body)) if body.startswith("beacon", i)] == [
+        300,
+        470,
+        700,
+        800,
+    ]
+
+    snippet = search([_memory(body)], "beacon")[0].snippet
+
+    assert "charlie" in snippet and "delta" in snippet
+    assert "alpha" not in snippet and "bravo" not in snippet
+
+
+def test_snippet_anchors_on_cjk_run() -> None:
+    """Non-ASCII bodies go down `_tokenize_impl`'s slow path, where a raw
+    token is bigram-segmented; `_expand_kebab` re-emits each bigram's two
+    characters, so a single-char query still anchors. Sentence punctuation
+    is what makes this addressable — an unbroken run is ONE raw token, so
+    the only offset available for it is the whole run's start."""
+    body = "序文。" + "詰め物の段落です。" * 30 + "東京オフィスは移転する。"
+    assert body.index("東京") > 200
+
+    snippet = search([_memory(body)], "東京")[0].snippet
+
+    assert snippet.startswith("...")
+    assert "東京オフィスは移転する" in snippet
+
+
+def test_snippet_scan_tokenize_cost_is_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The scan's price, measured rather than assumed. `tokenize` is
+    uncached, so windowing costs one `_tokenize_impl` call per RAW body
+    token — bounded because it is paid per emitted hit (at most
+    `max_results`, after the trim), never per candidate. Pinning the
+    number is what stops that cost drifting silently:
+    `test_search_tokenizes_each_candidate_once` cannot see it, because its
+    fixture bodies are 46 characters and exit at the short-body return
+    before the scan."""
+    import bettermemory.search as search_module
+
+    now = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    body = (
+        "Kickoff notes. "
+        + "filler " * 100
+        + "The staging database password rotates every 90 days. "
+        + "filler " * 20
+    )
+    assert len(body) > 200  # must actually reach the scan
+    raw_tokens = search_module._TOKEN_RE.findall(body.strip())
+    assert len(raw_tokens) == 130
+
+    calls = {"n": 0}
+    real_impl = search_module._tokenize_impl
+
+    def counting(text: str, *, stem: bool) -> list[str]:
+        calls["n"] += 1
+        return real_impl(text, stem=stem)
+
+    monkeypatch.setattr(search_module, "_tokenize_impl", counting)
+    hits = search([_memory(body, created=now)], "staging database", now=now)
+
+    assert hits[0].snippet.startswith("...")  # the scan really ran
+    # 1 query + 1 body + 1 scope for the ranking (the property
+    # `test_search_tokenizes_each_candidate_once` pins), then exactly one
+    # call per raw token of the single emitted hit's body.
+    assert calls["n"] == 3 + len(raw_tokens)
+
+    # The `not matched` half of the early return is a COST guard, not a
+    # correctness one: without it a browse hit still falls through to
+    # head-of-body (no matched terms means no anchors), it just pays the
+    # whole scan to get there. Measured, because output-only assertions
+    # cannot see the difference.
+    calls["n"] = 0
+    browse = search([_memory(body, created=now)], "", allow_empty_query=True, now=now)
+    assert not browse[0].snippet.startswith("...")
+    assert calls["n"] == 1
+
+
+def test_similar_hit_snippet_stays_head_of_body() -> None:
+    """Write-time dedup has no query — its "query" is a whole body — so
+    `SimilarHit` must keep plain head-of-body truncation. The constraint
+    that only ONE call site changed, enforced."""
+    from bettermemory.models import snippet_for
+
+    body = _long_body("Kickoff notes. ", "The staging database password rotates.")
+
+    hits = find_similar(body, [_memory(body)])
+
+    assert hits
+    assert hits[0].snippet == snippet_for(body)
+
+
+# ---------------------------------------------------------------------------
 # Stopwords
 # ---------------------------------------------------------------------------
 

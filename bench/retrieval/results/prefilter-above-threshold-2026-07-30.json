@@ -1,0 +1,118 @@
+{
+  "above_threshold": true,
+  "bettermemory_version": "3.30.0",
+  "corpus": "corpus.jsonl",
+  "corpus_note": "near-duplicate distractors: 8 per gold topic, same subsystem different decision; padded to 600 with off-domain filler",
+  "corpus_sha256": "c40acee95ce1bb70ac6ea788e0fb4a9a1c6eff1fc55fe4569b651b5b156ea2ea",
+  "corpus_size": 600,
+  "date": "2026-07-30",
+  "index_threshold": 500,
+  "index_threshold_forced": null,
+  "machine": {
+    "cores": 12,
+    "cpu": "arm",
+    "machine": "arm64",
+    "os": "Darwin 25.5.0",
+    "python": "3.13.13"
+  },
+  "notes": [
+    "semantic arm SKIPPED \u2014 no embeddings extra importable. Install `bettermemory[embeddings]` to run it.",
+    "prefilter=on drives the production handler path (handlers.search.resolve_search_pool): the FTS5 candidate slice capped at 50, ranked with the corpus-IDF provider. Every question was checked for engagement; the run exits non-zero if any pool came back un-prefiltered.",
+    "scope, repo, worktree and excluded-scope filters are all unset, so the cap-starvation guard cannot reload the full corpus and silently turn the on-arm into the off-arm.",
+    "the prefilter=off half re-measures v2-padded600-2026-07-26.json on the same corpus digest, so its rows double as a regression check on the harness itself."
+  ],
+  "padded": true,
+  "prefilter_cap": 50,
+  "prefilter_delta": [
+    {
+      "arm": "lexical",
+      "gold_nomination_rate": 0.95,
+      "probe": "asked",
+      "recall_loss_at_1": -0.05,
+      "recall_loss_at_5": 0.0
+    },
+    {
+      "arm": "lexical",
+      "gold_nomination_rate": 1.0,
+      "probe": "requery",
+      "recall_loss_at_1": -0.05,
+      "recall_loss_at_5": 0.0
+    },
+    {
+      "arm": "lexical",
+      "gold_nomination_rate": 0.9,
+      "probe": "control",
+      "recall_loss_at_1": -0.05,
+      "recall_loss_at_5": 0.0
+    }
+  ],
+  "prefilter_mode": "both",
+  "results": [
+    {
+      "arm": "lexical",
+      "engaged": 0,
+      "gold_nominated": 1.0,
+      "mean_pool_size": 600.0,
+      "n": 20,
+      "prefilter": false,
+      "probe": "asked",
+      "recall_at_1": 0.25,
+      "recall_at_5": 0.6
+    },
+    {
+      "arm": "lexical",
+      "engaged": 20,
+      "gold_nominated": 0.95,
+      "mean_pool_size": 50.0,
+      "n": 20,
+      "prefilter": true,
+      "probe": "asked",
+      "recall_at_1": 0.3,
+      "recall_at_5": 0.6
+    },
+    {
+      "arm": "lexical",
+      "engaged": 0,
+      "gold_nominated": 1.0,
+      "mean_pool_size": 600.0,
+      "n": 20,
+      "prefilter": false,
+      "probe": "requery",
+      "recall_at_1": 0.7,
+      "recall_at_5": 1.0
+    },
+    {
+      "arm": "lexical",
+      "engaged": 20,
+      "gold_nominated": 1.0,
+      "mean_pool_size": 48.55,
+      "n": 20,
+      "prefilter": true,
+      "probe": "requery",
+      "recall_at_1": 0.75,
+      "recall_at_5": 1.0
+    },
+    {
+      "arm": "lexical",
+      "engaged": 0,
+      "gold_nominated": 1.0,
+      "mean_pool_size": 600.0,
+      "n": 20,
+      "prefilter": false,
+      "probe": "control",
+      "recall_at_1": 0.25,
+      "recall_at_5": 0.6
+    },
+    {
+      "arm": "lexical",
+      "engaged": 20,
+      "gold_nominated": 0.9,
+      "mean_pool_size": 50.0,
+      "n": 20,
+      "prefilter": true,
+      "probe": "control",
+      "recall_at_1": 0.3,
+      "recall_at_5": 0.6
+    }
+  ]
+}

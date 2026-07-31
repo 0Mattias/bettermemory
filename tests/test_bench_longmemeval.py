@@ -43,6 +43,7 @@ def _load(name: str, path: Path) -> ModuleType:
 
 bm = _load("bench_lme_run", _HERE / "run.py")
 cm = _load("bench_lme_cm_run", _HERE / "cm_run.py")
+probe = _load("bench_lme_coverage_probe", _HERE / "coverage_probe.py")
 
 
 # ---------------------------------------------------------------------------
@@ -276,6 +277,153 @@ def test_per_question_sidecar_carries_the_disqualifying_notes(
     assert any("UNPINNED CORPUS" in n for n in payload["notes"])
     assert payload["retrieval_depth"] == bm.RETRIEVAL_DEPTH
     assert [r["qid"] for r in payload["arms"]["lexical"]] == ["qa"]
+
+
+# ---------------------------------------------------------------------------
+# The coverage probe
+#
+# It exists to answer one question — does the evidence a search DROPS
+# carry query terms the survivors do not? — and its answer is now quoted
+# in the README as the reason read-side diversification was closed. So
+# the population it selects and the quantity it counts are pinned: a
+# probe that quietly scored the wrong questions would retire a real
+# feature on a false reading.
+# ---------------------------------------------------------------------------
+
+
+def test_coverage_probe_marks_only_partial_questions() -> None:
+    """Complete hits have nothing to rescue toward and total misses have
+    nothing to rescue FROM; neither belongs in the novelty statistics."""
+    complete = probe.question_coverage(
+        [("sA", ["x"]), ("sB", ["y"])], ["sA", "sB"], k=5
+    )
+    assert complete["partial"] is False and complete["recall_at_k"] == 1.0
+
+    miss = probe.question_coverage([("sX", ["x"]), ("sY", ["y"])], ["sA"], k=1)
+    assert miss["partial"] is False and miss["recall_at_k"] == 0.0
+
+    partial = probe.question_coverage(
+        [("sA", ["x"]), ("sX", ["x"]), ("sB", ["y"])], ["sA", "sB"], k=2
+    )
+    assert partial["partial"] is True
+    assert partial["recall_at_k"] == 0.5
+    assert len(partial["dropped"]) == 1
+
+
+def test_coverage_probe_reports_both_reference_sets() -> None:
+    """The headline is definition-dependent, so both definitions ship.
+
+    `novel_broad` counts against every hit of every top-k session — the
+    most generous reference, and the one that makes the strongest-sounding
+    claim. `novel_strict` counts against one representative hit per top-k
+    session, which is the fairer analogue of the list head a re-ranker
+    actually holds.
+    """
+    ranked = [
+        ("sA", ["alpha"]),
+        ("sC", ["beta"]),
+        ("sA", ["gamma"]),  # a SECOND hit of a top-k session, ranked below
+        ("sB", ["alpha", "gamma"]),  # the dropped evidence
+    ]
+    got = probe.question_coverage(ranked, ["sA", "sB"], k=2)
+    d = got["dropped"][0]
+    # Broad folds in sA's second hit, so 'gamma' is already covered.
+    assert d["novel_broad"] == 0
+    # Strict uses only each top-k session's BEST hit, so 'gamma' is new.
+    assert d["novel_strict"] == 1
+    assert d["matched_terms"] == 2
+    assert d["distinct_rank"] == 2
+
+
+def test_coverage_probe_counts_dropped_sessions_it_cannot_rank() -> None:
+    """A dropped session that scored in no leg appears in no ranking. It
+    still happened, and quietly leaving it out of the denominator would
+    flatter the zero-novelty fraction."""
+    got = probe.question_coverage([("sA", ["x"]), ("sZ", ["x"])], ["sA", "sGHOST"], k=1)
+    assert got["partial"] is True
+    assert got["dropped"] == []
+    assert got["unrankable"] == 1
+
+    s = probe.summarise([got])
+    assert s["dropped_sessions"] == 1
+    assert s["dropped_sessions_ranked"] == 0
+    assert s["dropped_sessions_unrankable"] == 1
+
+
+def test_coverage_probe_counts_the_distractors_a_rescue_would_also_promote() -> None:
+    """Novelty is only a usable signal if evidence carries it and
+    non-evidence does not. The false-positive count is what decides that."""
+    ranked = [
+        ("sA", ["alpha"]),
+        ("sX", ["novel1"]),  # distractor below k, carries a novel term
+        ("sY", ["alpha"]),  # distractor below k, carries nothing new
+        ("sB", ["novel2"]),  # the dropped evidence
+    ]
+    got = probe.question_coverage(ranked, ["sA", "sB"], k=1)
+    assert got["distractors_below_k"] == 2
+    assert got["distractors_below_k_novel"] == 1
+
+
+def test_coverage_probe_oracle_bounds_a_perfect_rescue() -> None:
+    """The oracle promotes exactly the novel-carrying dropped evidence,
+    with zero false promotions. Nothing real can beat it, so it is the
+    number that turns 'we found no design' into 'there is none'."""
+    partial = probe.question_coverage(
+        [("sA", ["alpha"]), ("sX", ["alpha"]), ("sB", ["novel"])],
+        ["sA", "sB"],
+        k=1,
+    )
+    complete = probe.question_coverage([("sC", ["z"])], ["sC"], k=1)
+    s = probe.summarise([partial, complete])
+    assert s["macro_recall_at_k"] == pytest.approx(0.75)  # (0.5 + 1.0) / 2
+    assert s["oracle"]["promoted"] == 1
+    assert s["oracle"]["macro_recall_at_k"] == pytest.approx(1.0)
+    # One question goes 0.5 -> 1.0; pooled over two questions that is
+    # +0.25 macro, i.e. 25 points.
+    assert s["oracle"]["delta_points"] == pytest.approx(25.0)
+    assert s["oracle"]["precision"] == pytest.approx(1.0)
+
+
+def test_coverage_probe_prices_a_loose_novelty_reference_against_no_filter() -> None:
+    """Loosening the novelty test raises the ceiling — the table has to
+    show that it does so by converging on promoting everything, which
+    needs no signal at all. Precision relative to `blind` is what
+    separates a real filter from a permissive one.
+    """
+    rec = probe.question_coverage(
+        [
+            ("sA", ["alpha"]),
+            ("sC", ["beta"]),  # a top-k session carrying 'beta'
+            ("sX", ["beta"]),  # distractor: novel vs top1, not vs strict
+            ("sB", ["beta"]),  # dropped evidence, same shape as sX
+        ],
+        ["sA", "sB"],
+        k=2,
+    )
+    s = probe.summarise([rec])
+    blind = s["oracle_by_reference"]["blind"]
+    strict = s["oracle_by_reference"]["strict"]
+    top1 = s["oracle_by_reference"]["top1"]
+
+    # `blind` promotes the dropped session without asking anything.
+    assert blind["promoted"] == 1 and blind["distractors_promoted"] == 1
+    assert blind["precision_lift_over_blind"] == pytest.approx(1.0)
+    # `strict` sees 'beta' already in the top-k head, so it promotes
+    # nothing and its ceiling is zero.
+    assert strict["promoted"] == 0 and strict["delta_points"] == pytest.approx(0.0)
+    # `top1` only knows sA, so 'beta' reads novel — it recovers blind's
+    # ceiling and blind's precision, i.e. it has stopped filtering.
+    assert top1["promoted"] == 1
+    assert top1["delta_points"] == pytest.approx(blind["delta_points"])
+    assert top1["precision_lift_over_blind"] == pytest.approx(1.0)
+
+
+def test_coverage_probe_summary_survives_an_empty_population() -> None:
+    """A `--limit` smoke over single-session questions finds no partials;
+    that must report cleanly, not divide by zero."""
+    assert probe.summarise([])["dropped_sessions"] == 0
+    only_complete = probe.question_coverage([("sA", ["x"])], ["sA"], k=1)
+    assert probe.summarise([only_complete])["dropped_sessions"] == 0
 
 
 # ---------------------------------------------------------------------------

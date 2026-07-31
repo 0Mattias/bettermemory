@@ -8,7 +8,8 @@ Run it:
 ```sh
 venv/bin/python bench/retrieval/run.py
 venv/bin/python bench/retrieval/run.py --json
-venv/bin/python bench/retrieval/run.py --pad-to 600   # above-threshold regime
+venv/bin/python bench/retrieval/run.py --pad-to 600   # above-threshold corpus
+venv/bin/python bench/retrieval/run.py --pad-to 600 --prefilter both
 ```
 
 ## Why this exists
@@ -100,16 +101,33 @@ that top-50 — meaning a semantic leg cannot surface a document bm25 never
 nominated.
 
 The 3.29.0 default flip was justified entirely by a below-threshold
-measurement. That is the sharpest fair criticism of it, and it is why
-`--pad-to` exists: it appends filler until the corpus crosses the
-threshold so the other regime can be measured too. Padding changes the
-corpus, so a padded run is reported as its own row and never merged with
-an unpadded one.
+measurement. That is the sharpest fair criticism of it, and reaching the
+other regime turns out to take **two** knobs rather than one:
 
-The runner still ranks the full corpus even when padded, so a padded
-result is an **upper bound** on the semantic arm, not a simulation of
-production. Closing that gap means driving the real handler path, and is
-the obvious next increment.
+- `--pad-to N` grows the **corpus** past the threshold. Padding changes
+  the corpus, so a padded run is reported as its own row and never merged
+  with an unpadded one.
+- `--prefilter on|both` picks the **code path**. Default `off` ranks the
+  full corpus in-process. `on` drives production's own
+  `handlers.search.resolve_search_pool`, so bm25 nominates the pool and
+  corpus-IDF prices the terms.
+
+The two padded artifacts published before 2026-07-30 turned only the
+first knob, which measures *dilution*, not prefiltering: the pool was
+still the whole corpus. They are honest upper bounds and nothing more.
+The prefilter's own cost is measured below, and only in the paired form —
+same queries, same store, same process, prefilter on versus off.
+
+**The measurement refuses to run blind.** Seven separate paths return the
+full corpus quietly — six inside the loader, plus the cap-starvation
+reload one layer up in `resolve_search_pool` — and a run that hit any of
+them would print full-corpus numbers under a `prefilter: true` heading.
+The seventh is why the runner passes no scope, repo or worktree filter:
+that reload is gated on one of them being set. So the
+runner reads `resolve_search_pool`'s corpus-statistics provider — which
+is attached if and only if the FTS path served the pool — for every
+single query, and exits non-zero with an index census if any of them fell
+back.
 
 ## Pre-registered predictions
 
@@ -197,6 +215,82 @@ now measured on two corpora of different difficulty:
 venv/bin/python bench/retrieval/run.py --corpus corpus-v1.jsonl
 ```
 
+## Results — what the prefilter actually costs, 2026-07-30
+
+bettermemory 3.30.0, 12-core arm64 / Darwin 25.5.0. Two paired runs, raw
+JSON in `results/`:
+
+- `prefilter-above-threshold-2026-07-30.json` — the canonical corpus
+  padded to 600, crossing production's real 500 threshold with no
+  override.
+- `prefilter-forced-180-2026-07-30.json` — the same 180 documents with
+  `--index-threshold 100`, which reaches the same code path without
+  adding a single filler document. Padding is the confound here: 420 of
+  the padded corpus's 600 documents are deliberately off-domain, and bm25
+  will never nominate them, so the cap has an easier job than it would on
+  a store where all 600 contend.
+
+**Lexical arm only.** The machine that produced these has no embeddings
+extra installed; both artifacts record that in `notes`. Everything below
+describes a default install. Production ranking is unchanged in 3.30.0,
+so these numbers reflect shipped ranking.
+
+Padded to 600 (production's own threshold, `prefilter_cap` 50):
+
+| probe | recall@1 off → on | recall@5 off → on | gold reached the pool | mean pool |
+| --- | --- | --- | --- | --- |
+| asked | 25% → 30% | 60% → 60% | 95% | 50.0 |
+| requery | 70% → 75% | 100% → 100% | 100% | 48.55 |
+| control | 25% → 30% | 60% → 60% | 90% | 50.0 |
+
+The 180-document corpus, threshold forced to 100, no filler:
+
+| probe | recall@1 off → on | recall@5 off → on | gold reached the pool | mean pool |
+| --- | --- | --- | --- | --- |
+| asked | 35% → 35% | 60% → 60% | 90% | 50.0 |
+| requery | 80% → 80% | 100% → 100% | 100% | 48.55 |
+| control | 35% → 35% | 60% → 60% | 95% | 50.0 |
+
+**The prefilter cost zero recall@5 in all six cells, and the corpus
+property that makes that true is not "bm25 nominates everything".** It
+does not: on the casual probes bm25 leaves the gold document out of its
+top-50 on 5–10% of questions. Those questions are simply ones the
+full-corpus ranker also failed to answer at k=5. The nomination ceiling
+is real — 90% on `control` at 600 documents — and it sits *above* the 60%
+either arm reaches, so it never becomes the binding constraint.
+
+That is a much narrower finding than "prefiltering is free". It says
+nomination is not the bottleneck **at this recall level**. On a corpus
+where the full-corpus ranker reached 90%, a 90% nomination ceiling would
+start cutting into it directly.
+
+Two more things worth stating precisely rather than rounding off:
+
+- **The +5 points at recall@1 in the padded run is one question out of
+  twenty** — the smallest step this question set can resolve. Read it as
+  "no measurable change", not as the prefilter improving retrieval. The
+  forced-180 run, which has no filler to remove, shows no change at all.
+- **The cap binds on every casual question and not always on `requery`.**
+  `asked` and `control` come back with a full 50-document pool every
+  time; `requery` averages 48.55 and nominates the gold document 20/20 in
+  both runs. When the caller supplies content words the document actually
+  contains, bm25 runs out of plausible candidates before it runs out of
+  slots. The cap only presses on casual phrasing — which is exactly where
+  the ranker was already the weak link, not the nominator.
+
+### What this still does not measure
+
+- **The semantic arm.** Unmeasured, and it is the arm the threshold
+  caveat was always aimed at: an embedding model cannot rescue a document
+  bm25 never nominated. Running `--pad-to 600 --prefilter both` on a
+  machine with `bettermemory[embeddings]` installed closes this and is
+  the one remaining increment.
+- **Realistic competition at 600 documents.** The padded corpus reaches
+  the threshold with filler that cannot compete; the forced-180 run has
+  genuine competition but only 180 documents against a 50-slot cap. A
+  corpus of 600 genuinely contending documents is neither.
+- **Anything at finer than 5-point resolution.** Twenty questions.
+
 ## Results — v1 corpus (superseded), 2026-07-26
 
 bettermemory 3.29.0, corpus of 188 (20 gold + 168 distractors), 12-core
@@ -222,7 +316,7 @@ semantic/asked 60%, lexical/requery 85%, semantic/requery 100%.
 | 2 | semantic beats lexical on `asked` by ≥10 points | held, +25 |
 | 3 | `control` tracks `asked`, not `requery` | held, decisively |
 | 4 | `requery` wins in both arms, gap narrower with semantics | held, +55 → +35 |
-| 5 | padding compresses the semantic advantage | not properly tested |
+| 5 | padding compresses the semantic advantage | mechanism FALSIFIED on the lexical arm; semantic half still unscored |
 
 **Prediction 1 was wrong, and the direction matters.** The original
 measurement put `lexical / asked` at 10%; this corpus yields 40%. The
@@ -261,15 +355,26 @@ comparisons rather than absolute levels:
   is the load-bearing argument for query-wording guidance *and* for
   shipping an embedding model to people who will not reword.
 
-**Prediction 5 is untested, and what padding did measure went the other
-way.** The runner still ranks the full corpus when padded, so it measured
-*dilution*, not *prefiltering* — the mechanism the prediction named was
-never exercised. On the dilution it did measure, the semantic advantage
-at recall@1 held at +25 (60% vs 35%) rather than compressing: adding 412
-off-domain documents hurt the lexical arm (40% → 35%) by shifting corpus
-IDF statistics, and left the semantic arm flat. A real test of the
-prediction drives the production handler path so SQLite bm25 actually
-nominates the candidate pool.
+**Prediction 5's mechanism has now been tested, and it did not happen.**
+The prediction was that bm25's nomination becomes the binding constraint
+above the threshold. On 2026-07-30 the runner gained a `--prefilter` arm
+that drives the production handler path, and on the lexical arm
+nomination never binds: 90–100% of gold documents reach the top-50 pool,
+against a recall the ranker only takes to 60%. Zero recall@5 lost in six
+of six cells. See the 2026-07-30 section above for the tables and the
+caveats.
+
+**The semantic half of prediction 5 remains unscored** — the machine that
+ran the prefilter arm has no embeddings extra, so the arm the prediction
+is actually about has still never been through the real handler path.
+
+What the pre-2026-07-30 padded runs measured was *dilution*, not
+*prefiltering*: the runner ranked the full corpus even when padded, so
+the mechanism the prediction named was never exercised. On the dilution
+it did measure, the semantic advantage at recall@1 held at +25 (60% vs
+35%) rather than compressing: adding 412 off-domain documents hurt the
+lexical arm (40% → 35%) by shifting corpus IDF statistics, and left the
+semantic arm flat.
 
 Note that the padded figures moved once during authoring, for a reason
 worth recording. The first filler vocabulary was plausible ops

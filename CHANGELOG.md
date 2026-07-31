@@ -9,6 +9,158 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+### Added — search snippets show why the hit came back, not what the memory opens with
+
+A hit's `snippet` was a blind head-of-body truncation. On a long memory the terms
+that actually matched routinely sit past character 200, so the caller was handed
+the opening of an unrelated paragraph and had no way to see why the hit ranked at
+all. The snippet is now windowed on the matched terms.
+
+The window is found Python-side, over the RAW body. SQLite's `snippet()` is a
+dead end here: the FTS table indexes the preprocessed token stream, so it returns
+stemmed soup rather than prose. Nor can the normalised text be used to locate
+anything — NFKC, lowercasing and diacritic folding are all length-changing, so
+offsets taken there do not map back. `_query_biased_snippet` walks the body with
+the tokenizer's own regex and normalises each raw token individually, which makes
+membership in the hit's `match_terms` the same predicate that put it there.
+Symbol-aliased terms (`C++`, `.NET`) are invisible to a token scan because their
+source characters are not word characters, so those anchors are found by
+re-running the alias patterns over the raw text.
+
+Scoped to one call site. `snippet_for` keeps its head-of-body contract for every
+other consumer — write-time dedup, consolidate summaries — none of which have a
+query to bias toward. Every fallback delegates to it rather than re-deriving it:
+a body inside the budget, a hit with no literal match terms (browse mode, and
+semantic hits that matched by paraphrase alone), a match that landed on a scope
+rather than the body, or an anchor already inside the head window. That last one
+is what keeps head-anchored hits byte-identical to what they were.
+
+Total length stays inside the bound a head truncation had, by charging the
+leading `...` against the content budget instead of adding it on top. The scan
+costs one tokenizer call per raw token, bounded to the first 8,000 characters and
+paid only for bodies longer than the budget — and only on RETURNED hits, at most
+`max_results` of them, never over the candidate pool. Both facts are pinned by
+tests rather than asserted, including a call-count test, because the existing
+per-search tokenizer budget test happens to use 46-character fixtures and would
+not have noticed.
+
+Two visible consequences, both intended. The silent-miss audit trace retains the
+hit's snippet, so a retained trace now carries the query-biased window — replay
+parity holds, since the probe re-runs the same search over the same message. And
+the web UI derives a result card's title from the snippet, so a mid-body window
+puts a leading `...` there; that is the only place the snippet surfaces in the
+UI, so the ellipsis is doing real work — it marks the line as an excerpt rather
+than the memory's opening.
+
+### Added — what the FTS prefilter costs above its threshold, finally measured
+
+Every retrieval number this project has published was measured below the
+500-memory index threshold, where the prefilter never engages and the full corpus
+is ranked. `bench/retrieval/README.md` said so about itself and named driving the
+real handler path as the missing increment. `--pad-to` did not close it: padding
+grows the corpus, but `run_arm` calls `search.search` on a memory list, so the
+pool was still everything. Every artifact dated before now measures *dilution*,
+not prefiltering — honest upper bounds and nothing more.
+
+`--prefilter {off,on,both}` now picks the code path, separately from `--pad-to`
+picking the corpus. `on` drives production's own `resolve_search_pool`, so bm25
+nominates the pool and the corpus-IDF provider prices the terms — the part a
+hand-rolled harness would omit, and omitting it scores a capped pool with
+collapsed pool-derived IDF.
+
+**The measurement refuses to run blind**, which is the part that makes it worth
+anything. Seven paths quietly return the full corpus — six inside the loader,
+plus the cap-starvation reload one layer up in `resolve_search_pool`, which is
+why the arm passes no scope, repo or worktree filter — and a run that hit any of
+them would print full-corpus numbers under a `prefilter: true`
+heading — indistinguishable from "the prefilter costs nothing". So engagement is
+checked per query against the corpus-statistics provider, which is attached if
+and only if the FTS path served the pool, and the runner exits non-zero with an
+index census if a single query fell back.
+
+Measured on the canonical corpus padded to 600 (production's real threshold, no
+override) and again on the unpadded 180 with the threshold forced down, which
+reaches the same code path without filler — padding is a confound, since 420 of
+the padded corpus's documents are deliberately off-domain and bm25 will never
+nominate them. **Recall@5 loss is exactly zero in all six cells**
+(`bench/retrieval/results/prefilter-above-threshold-2026-07-30.json`,
+`bench/retrieval/results/prefilter-forced-180-2026-07-30.json`).
+
+The reason is narrower than "prefiltering is free", and the README says so: bm25
+does drop the gold document on 5–10% of casually-phrased questions, but those are
+questions the full-corpus ranker also failed at k=5. The nomination ceiling is
+real and sits above the recall either arm reaches, so it never binds. On a corpus
+where the ranker reached 90%, a 90% nomination ceiling would cut in directly.
+Lexical arm only — the measuring machine has no embeddings extra, both artifacts
+record that, and the semantic half of the relevant prediction stays unscored.
+
+### Changed — read-side diversification was measured, and the evidence it exists to rescue is invisible to it
+
+`bench/longmemeval/README.md` explained this project's largest remaining
+retrieval error as a coverage problem. Temporal-reasoning and multi-session
+questions lose recall the same way — some of a question's evidence lands in the
+top 5 and some does not — and the stated cause was that such a question carries
+vocabulary for two events living in two sessions, so `score_memory`'s
+`0.5 + 0.5 * coverage` multiplier cannot be satisfied by either one alone. The
+prescribed repair was a read-side re-ranker rescuing the dropped co-evidence,
+estimated at **+3.2 pooled recall@5** — larger than the entire
+semantic-vs-lexical lift, and with no embedding model.
+
+That estimate came from a throwaway re-run, because the runner persisted
+`by_type` aggregates only. So the first thing built was per-question records,
+and a both-arms baseline against unmodified ranking, committed before any
+ranking edit existed (`bench/longmemeval/results/baseline-both-arms-2026-07-30.json`).
+It reproduces every published figure exactly — pooled 89.35 / 91.85,
+temporal-reasoning 83.72, multi-session 84.87 — and the README's
+partial/complete table to the tenth of a point.
+
+Those records then refute the diagnosis. `coverage_probe.py` takes each dropped
+evidence session's best-ranked hit and counts the matched query terms it carries
+that the surviving top 5 does not carry between them. Of 87 dropped sessions,
+**81 carry none at all** against the generous reference set and **74 against the
+strict one** — the headline moves nine points between two defensible
+definitions, so both ship
+(`bench/longmemeval/results/coverage-probe-2026-07-30.json`). The dropped
+evidence is not answering a different half of the question: like for like it
+matches *fewer* terms than the survivors that beat it (median 2 against 3), a
+strict subset of what the head already carries, and it loses on scoring at a
+median item rank of 13.5. In 337 of 500 questions the top 5 already carries every
+term anything in the corpus matched, which is the structural reason there is so
+little novelty to find.
+
+What closes the item is not the sweep but the ceiling. The probe bounds an
+**omniscient** rescue — one promoting exactly the novel-carrying dropped
+evidence, with zero false promotions, which nothing real can beat — and reports
+it against every novelty reference, including a `blind` one that promotes all 82
+ranked dropped sessions and asks nothing. Loosening the test raises the ceiling
+(+0.33 → +0.79 → +2.59) only by converging on blind promotion's +5.21, and the
+one reference whose ceiling clears the gate has **precision below blind
+promotion's** — it has stopped filtering, not started finding. The best novelty
+signal available is a 1.22x lift on a 4.5% base rate, where clearing +2.00 needs
+something nearer 25–30%. The mechanism is impossible here, not merely untuned,
+and that conclusion does not depend on which reference you prefer.
+
+Measured rather than argued from there. The rescue was built the shippable way —
+a bounded marginal-coverage bonus applied to hits carrying terms the head of the
+ranking misses, then a re-sort on the existing `(score, created, id)` key, so the
+list stays monotone and `top_hit_leads_runner_up` keeps working — and its
+parameters were chosen on a held-out half of the corpus. Twenty-nine
+configurations were scored offline against the captured pre-trim rankings; the
+dev-selected one was then run for real, and reproduced the offline prediction to
+four decimals on the pooled figure and all six per-class figures. Pooled
+recall@5 **0.8935 → 0.8941: +0.06 points against a pre-stated gate of +2.00**
+(`bench/longmemeval/results/co-evidence-rescue-2026-07-30.json`). The effect is
+four questions out of five hundred, one up and three down; evidence-weighted
+micro recall moved backwards, 0.8671 → 0.8650. The ranking change is reverted.
+The baseline, the probe, and the negative result stay.
+
+**The headroom is real and stays open**, which is why this is a closed item and
+not a closed question. Perfect rescue of evidence already inside the first 10
+distinct sessions would be worth +5.0 pooled, and every class ceiling at k=5 is
+~100%. What this measurement establishes is only that term coverage is the wrong
+lever — the ranking already has the evidence in hand and orders it wrongly for
+reasons the matched-term set does not express.
+
 ### Added — relative citations finally get path protection, anchored to their own worktree
 
 `detect_path_drift` excluded relative paths by design: without a root, checking

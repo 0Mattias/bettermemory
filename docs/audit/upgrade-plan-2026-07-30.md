@@ -750,6 +750,63 @@ provably cannot tombstone any of them.
 
 Entry brief for this phase: `docs/audit/phase4-entry-2026-07-30.md` (verified at `bbc7672`).
 
+**PHASE STATUS: DONE 2026-07-30.** C2-prereq shipped; **C2 CLOSED-negative and
+reverted**; C3 shipped; C5 shipped as measurement. Deltas from the plan as
+written, each verified against a committed artifact:
+
+- **The C2 estimate was wrong about its own mechanism, and the prerequisite is
+  what proved it.** The plan inherited `bench/longmemeval/README.md`'s diagnosis
+  — two-event questions split their vocabulary across two sessions, so
+  `score_memory`'s coverage multiplier cannot be satisfied by either — and
+  budgeted a re-ranker against it. Per-question records refute it: of 87 dropped
+  evidence sessions, 81 (broad reference) / 74 (strict) carry NO query term the
+  surviving top 5 lacks, and like-for-like the dropped evidence matches *fewer*
+  terms than the survivors that beat it (median 2 vs 3). In 337 of 500 questions
+  the top 5 already carries every term anything matched.
+- **The item was closed by a ceiling, not by a sweep**, which is the reusable
+  lesson. 29 bonus configurations found nothing; the dev-selected one was run for
+  real at **0.8935 → 0.8941, +0.06 against a +2.00 gate**. But a sweep can only
+  ever say "we did not find one". `coverage_probe.py` bounds an omniscient rescue
+  across four novelty references and prices each against `blind` promotion:
+  loosening the test raises the ceiling (+0.33 → +0.79 → +2.59) only by
+  converging on blind's +5.21, and the reference whose ceiling clears the gate has
+  precision BELOW blind (0.94x lift). Best available signal: 1.22x on a 4.5% base
+  rate, against a ~25–30% requirement. That is definition-independent and it is
+  what makes this a closed item rather than an untuned one.
+- **Ordering the prerequisite first was load-bearing and nearly was not enough.**
+  The baseline had to exist in git before the re-ranker did; it does (`4457134`).
+  What the plan did not anticipate is that the same records also had to be able
+  to refute the plan's own premise.
+- **The negative was adversarially audited before publication, and three
+  published numbers were wrong.** Two auditors plus an adjudicator found: the
+  dropped-session count was 82, not 87 (five never scored in any leg and were
+  silently skipped); the headline zero-novelty fraction moves nine points between
+  two defensible reference sets, so both now ship; and a matched-term comparison
+  put a per-session median against a per-hit mean, which reversed its sign. All
+  three are corrected in the artifact and the README. **The conclusion survived
+  every attack and got stronger** — the precision table came out of the audit.
+- **C3 shipped as specified**, scoped to `_build_hit`'s call site. One recon
+  design error was caught by its implementer (the density window was off by the
+  lead-context offset, and no test written for the feature caught it until a
+  discriminating fixture was built for exactly that). One recon claim about a CJK
+  fixture was wrong and is documented rather than quietly fixed.
+- **C5 shipped, and found the `--pad-to` artifacts had been measuring the wrong
+  thing.** Padding grows the corpus; it does not engage the prefilter, because
+  `run_arm` calls `search.search` on a memory list. Every retrieval artifact
+  dated before now measures dilution. `--prefilter` now picks the code path
+  separately, drives production's own `resolve_search_pool`, and **refuses to run
+  blind**: engagement is asserted per query against the corpus-IDF provider (the
+  exact IFF), and the runner exits non-zero rather than print full-corpus numbers
+  under a `prefilter: true` heading. Recall@5 loss is exactly zero in six of six
+  cells — but the README states the narrow reason (nomination is not the
+  bottleneck *at this recall level*) rather than "prefiltering is free".
+- **Budgets: zero spent, as predicted.** No new wire params, no DESC edits. All
+  four items are internal or bench-only.
+- **Environment: iCloud corrupted `.venv` twice more** (fourth and fifth
+  occurrences), both the `.pth`-present-but-unprocessed variant whose only symptom
+  is the three CLI-on-PATH tests flipping pass→skip. The brief's rule — treat any
+  unexpected skip count as a corrupted venv and rebuild, never debug — caught both.
+
 **C2. Read-side diversification. BENCH-GATED, with a prerequisite.**
 Prerequisite first: the longmemeval runner emits `by_type` aggregates
 only — the +3.2 rescue table is not reproducible from `results/`. Add

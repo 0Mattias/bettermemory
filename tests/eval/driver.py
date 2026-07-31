@@ -130,12 +130,14 @@ def run_driver(
         #      nothing to helped — a cross-layer contradiction.
         #   3. the excerpt must be a real substring of the cited memory's
         #      BODY, never merely of the truncated snippet the agent was
-        #      shown. `snippet_for` truncates bodies >200 chars and appends a
-        #      synthetic "..."; a model echoing that ellipsis would otherwise
-        #      inflate the helped-rate numerator with a phrase the memory
-        #      never contained (and a genuine phrase past the snippet
-        #      boundary would be wrongly dropped). Validate against the body
-        #      here, where the driver holds it.
+        #      shown. Snippets of bodies >200 chars carry synthetic "..."
+        #      markers — a trailing one from `snippet_for`, and a LEADING
+        #      one too when a search hit windows on the matched terms
+        #      rather than the body head; a model echoing either would
+        #      otherwise inflate the helped-rate numerator with a phrase the
+        #      memory never contained (and a genuine phrase outside the
+        #      snippet window would be wrongly dropped). Validate against
+        #      the body here, where the driver holds it.
         # Then dedup by memory_id, FIRST surviving citation per memory —
         # mirroring compute_eval's within-event `seen_ids` semantics. The
         # real record_use path carries a whole turn's ids in ONE event, which

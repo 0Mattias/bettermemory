@@ -900,6 +900,46 @@ def snippet_for(body: str, max_chars: int = 200) -> str:
     return _truncate_at_word(text, max_chars)
 
 
+def snippet_window(body: str, start: int = 0, max_chars: int = 200) -> str:
+    """`snippet_for`'s shape applied to a window that may begin mid-body.
+
+    `start` is a character offset into `body.strip()`. The caller
+    (`search._query_biased_snippet`) decides WHERE the window sits; this
+    decides how much of it survives and how it terminates — so the
+    ellipsis, the word-boundary back-off and the length arithmetic stay
+    in one place, next to `snippet_for` and the tests that pin them,
+    rather than being re-derived on the search side where they would
+    drift.
+
+    Total length stays within `max_chars + 3` — the same bound
+    `snippet_for` honours, and the one `test_snippet_truncated_to_200_chars`
+    asserts on the search hit — by charging the LEADING "..." against
+    the content budget instead of adding it on top: a mid-body window
+    carries at most `max_chars - 3` characters of body, and
+    3 + (max_chars - 3) + 3 == max_chars + 3 either way. At the default
+    that is 197 characters of body between two ellipses.
+
+    `start <= 0` delegates to `snippet_for` verbatim, so the
+    head-of-body case IS the old function rather than a copy of it.
+
+    Two return shapes, and callers asserting on them must branch: a tail
+    that fits the budget comes back as `"..." + tail` with NO trailing
+    ellipsis; a longer one picks up `_truncate_at_word`'s trailing one.
+
+    `start` is expected to land on a token start — the caller snaps it to
+    one. This does not re-snap, so an arbitrary offset yields a leading
+    partial word.
+    """
+    text = body.strip()
+    if start <= 0:
+        return snippet_for(text, max_chars)
+    tail = text[start:]
+    budget = max_chars - 3  # the leading ellipsis is paid for here
+    if len(tail) <= budget:
+        return "..." + tail
+    return "..." + _truncate_at_word(tail, budget)
+
+
 def _truncate_at_word(text: str, max_chars: int) -> str:
     """Trim to <=max_chars, backing off to the last whitespace boundary.
 
@@ -938,4 +978,5 @@ __all__ = [
     "build_filename",
     "first_summary_line",
     "snippet_for",
+    "snippet_window",
 ]

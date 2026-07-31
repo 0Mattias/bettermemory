@@ -12,14 +12,16 @@ three more "words" and the filename ended up with two prefixes.
 The snippet section pins `_truncate_at_word`'s whitespace back-off (via
 `snippet_for`): newlines count as word boundaries, so a markdown-list
 body of paths/URLs is never hard-cut mid-token into a plausible-but-
-wrong path.
+wrong path. `snippet_window` — the mid-body form search hits use — is
+pinned alongside it, because both spell the same ellipsis budget and a
+shape test that lived next to only one of them would let them drift.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from bettermemory.models import make_slug, snippet_for
+from bettermemory.models import make_slug, snippet_for, snippet_window
 
 
 # ---------------------------------------------------------------------------
@@ -151,3 +153,57 @@ def test_snippet_backs_off_to_newline_boundary() -> None:
         f"snippet hard-cut mid-path instead of backing off to the newline "
         f"boundary: {snippet!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Mid-body windows — `models.snippet_window`
+#
+# Search hits window their snippet on the matched terms; this is the shape
+# half of that, kept here beside `snippet_for` so the ellipsis arithmetic
+# and the word-boundary back-off stay pinned in one place. Where the window
+# SITS is the search side's decision and is pinned in `tests/test_search.py`.
+# ---------------------------------------------------------------------------
+
+
+def test_snippet_window_start_zero_is_snippet_for() -> None:
+    """The head case delegates rather than re-deriving, so a future change
+    to `snippet_for`'s back-off cannot leave the two spelling different
+    truncations of the same body."""
+    body = "abcdefgh " * 100
+
+    assert snippet_window(body, 0) == snippet_for(body)
+    assert snippet_window(body, -5) == snippet_for(body)
+    assert snippet_window(body) == snippet_for(body)
+
+
+def test_snippet_window_charges_the_leading_ellipsis_against_the_budget() -> None:
+    """A mid-body window carries two ellipses and still fits the same
+    budget a head snippet does — 3 + 197 + 3 == 200 + 3 — because the
+    leading "..." is paid for out of the content allowance instead of
+    being added on top."""
+    body = (
+        "lorem ipsum dolor sit amet consectetur adipiscing elit sed do " * 30
+    ).strip()
+
+    snippet = snippet_window(body, 500)
+
+    assert snippet.startswith("...")
+    assert snippet.endswith("...")
+    assert len(snippet[3:-3]) <= 197
+    assert len(snippet) <= 203
+    # The bound holds wherever the window opens, including starts whose
+    # tail has no whitespace near the edge to back off to.
+    assert max(len(snippet_window(body, s)) for s in range(1, len(body))) <= 203
+
+
+def test_snippet_window_short_tail_needs_no_trailing_ellipsis() -> None:
+    """Second return shape: a window that reaches the end of the body has
+    nothing left to elide, so it carries the leading ellipsis only. Callers
+    that strip a fixed six characters would eat real content here."""
+    body = ("abcdefgh " * 100).strip()
+
+    snippet = snippet_window(body, len(body) - 50)
+
+    assert snippet.startswith("...")
+    assert not snippet.endswith("...")
+    assert snippet[3:] == body[-50:]

@@ -1,0 +1,82 @@
+{
+  "corpus": "longmemeval_s_cleaned.json",
+  "corpus_sha256": "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442",
+  "instances": 500,
+  "scored": 500,
+  "arm": "lexical",
+  "k": 5,
+  "seconds": 381.9,
+  "notes": [],
+  "summary": {
+    "questions": 500,
+    "partial_questions": 65,
+    "macro_recall_at_k": 0.8935,
+    "dropped_sessions": 87,
+    "dropped_sessions_ranked": 82,
+    "dropped_sessions_unrankable": 5,
+    "reference_broad": {
+      "zero_novel": 81,
+      "zero_novel_fraction": 0.931,
+      "novel_term_histogram": {
+        "0": 81,
+        "1": 6
+      }
+    },
+    "reference_strict": {
+      "zero_novel": 74,
+      "zero_novel_fraction": 0.8506,
+      "novel_term_histogram": {
+        "0": 74,
+        "1": 12,
+        "2": 1
+      }
+    },
+    "dropped_matched_terms_median": 2.0,
+    "dropped_item_rank_median": 13.5,
+    "dropped_item_rank_p90": 31,
+    "dropped_distinct_rank_median": 8.0,
+    "survivor_matched_terms_median": 3,
+    "oracle_by_reference": {
+      "blind": {
+        "promoted": 82,
+        "delta_points": 5.21,
+        "distractors_promoted": 1749,
+        "precision": 0.0448,
+        "precision_lift_over_blind": 1.0,
+        "macro_recall_at_k": 0.9456
+      },
+      "broad": {
+        "promoted": 6,
+        "delta_points": 0.33,
+        "distractors_promoted": 104,
+        "precision": 0.0545,
+        "precision_lift_over_blind": 1.217,
+        "macro_recall_at_k": 0.8968
+      },
+      "strict": {
+        "promoted": 13,
+        "delta_points": 0.79,
+        "distractors_promoted": 233,
+        "precision": 0.0528,
+        "precision_lift_over_blind": 1.179,
+        "macro_recall_at_k": 0.9014
+      },
+      "top1": {
+        "promoted": 40,
+        "delta_points": 2.59,
+        "distractors_promoted": 906,
+        "precision": 0.0423,
+        "precision_lift_over_blind": 0.944,
+        "macro_recall_at_k": 0.9194
+      }
+    },
+    "oracle": {
+      "promoted": 13,
+      "delta_points": 0.79,
+      "distractors_promoted": 233,
+      "precision": 0.0528,
+      "precision_lift_over_blind": 1.179,
+      "macro_recall_at_k": 0.9014
+    }
+  }
+}

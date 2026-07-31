@@ -38,11 +38,19 @@ import logging
 import math
 import re
 import unicodedata
+from bisect import bisect_left
 from datetime import datetime, timezone
 from functools import lru_cache
 from typing import Any, Callable, Literal, NamedTuple
 
-from .models import Memory, MemoryHit, SimilarHit, TombstonedMemory, snippet_for
+from .models import (
+    Memory,
+    MemoryHit,
+    SimilarHit,
+    TombstonedMemory,
+    snippet_for,
+    snippet_window,
+)
 from .origin import Origin, should_include_for_caller
 from .verify import detect_path_drift
 
@@ -116,6 +124,22 @@ _SYMBOL_ALIASES: tuple[tuple[re.Pattern[str], str, str], ...] = (
     (re.compile(r"(?<!\w)c#(?!\w)"), "csharp", "c#"),
     (re.compile(r"(?<!\w)f#(?!\w)"), "fsharp", "f#"),
     (re.compile(r"(?<!\w)\.net(?!\w)"), "dotnet", ".net"),
+)
+
+# Reverse of `_SYMBOL_ALIASES`, for locating an aliased term back in a RAW
+# body — `_query_biased_snippet`'s anchor scan. The alias fires on the TEXT
+# before `_TOKEN_RE` runs, and its source characters ('+', '#', a leading
+# '.') are not `\w`, so a scan over raw body tokens only ever sees the bare
+# 'C' / 'NET' that no per-token normalisation can turn back into
+# 'cpp' / 'dotnet'. The only way to find those anchors is to re-run the
+# alias patterns over the raw text and take their spans directly.
+# Case-insensitive because the forward patterns are written against
+# already-lowercased text, and lowercasing a raw body is not
+# length-preserving (U+0130 -> 'i' + U+0307), which would break the offsets
+# the whole scan rests on.
+_ALIAS_ANCHOR_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = tuple(
+    (re.compile(pattern.pattern, re.IGNORECASE), replacement.strip())
+    for pattern, replacement, _ in _SYMBOL_ALIASES
 )
 
 
@@ -1927,6 +1951,137 @@ def candidate_admitted(
     return True
 
 
+# How much left context a mid-body snippet window keeps in front of its
+# anchor, and — the same number, deliberately — the offset at or under
+# which we serve the plain head instead. A match that close to the top is
+# already inside the head window, so a leading "..." over the first few
+# words would be pure noise.
+_SNIPPET_LEAD_CHARS = 40
+
+# Hard bound on how far into a body the anchor scan walks. The scan is one
+# `_TOKEN_RE` pass plus one uncached `tokenize` per raw token — cheap per
+# token, but linear in body length and paid once per RETURNED hit, so a
+# pathological body degrades to head-of-body past this point rather than
+# to a stall.
+_SNIPPET_SCAN_CHARS = 8000
+
+
+def _query_biased_snippet(body: str, matched: list[str], max_chars: int = 200) -> str:
+    """`snippet_for`, but windowed on where the query actually hit.
+
+    Head-of-body truncation answers "what does this memory start with",
+    not "why did this memory come back": on a long body the matched terms
+    routinely sit past character 200 and the caller is shown an unrelated
+    opening paragraph. This walks the RAW body with `_TOKEN_RE` and
+    normalises each raw token INDIVIDUALLY — `_expand_kebab(tokenize(tok))`,
+    exactly the per-token slice of the `_MemoryTokens.body` stream the
+    scorers count against, so membership in it is the same predicate that
+    put the term in `matched`. Per-token and not whole-body because the
+    normalised stream's offsets do not map back: NFKC, `.lower()` and
+    `_fold_diacritics` are all length-changing, which is why the folded
+    text cannot be used to locate anything in the raw one.
+
+    Only `_build_hit` calls this. `snippet_for` keeps its head-of-body
+    contract for every other consumer — write-time dedup's `SimilarHit`,
+    consolidate's summaries — none of which have a query to bias toward.
+
+    Falls back to `snippet_for` by DELEGATING to it, never by re-deriving
+    it, whenever biasing is impossible or pointless: short body, no
+    matched terms, no anchor found in the body, or an anchor already
+    inside the head window.
+    """
+    text = body.strip()
+    # This must stay the FIRST statement. `tokenize` is uncached, so the
+    # scan below costs one `_tokenize_impl` call per raw body token, and
+    # `test_search_tokenizes_each_candidate_once` pins the per-search
+    # call count. Its fixtures are 46-char bodies, so they exit here and
+    # the count is unchanged; hoisting the scan above this line breaks
+    # that test — and, more to the point, would spend the calls on every
+    # hit whose body already fits whole.
+    #
+    # The `not matched` half covers the two populations that legitimately
+    # carry no literal terms: browse mode (`_build_hit(..., matched=[])`)
+    # and paraphrase-only semantic hits, whose `literal_matched` is empty
+    # by design.
+    if len(text) <= max_chars or not matched:
+        return snippet_for(text, max_chars)
+
+    # Tier 1 is the matched term itself. Tier 2 is its kebab components:
+    # the scorers' conjunctive fallback marks 'claude-code' matched when
+    # the body spells it 'Claude Code', and no raw token there normalises
+    # to the compound. Tier 2 is consulted only when tier 1 found nothing,
+    # so a compound that DID hit literally is never dragged off to a bare
+    # 'python' mention elsewhere — the precision `_expand_kebab`'s
+    # one-directional widening exists to protect.
+    primary_terms = set(matched)
+    part_terms = {p for tok in matched for p in _kebab_parts(tok)} - primary_terms
+
+    scan = text[:_SNIPPET_SCAN_CHARS]
+    starts: list[int] = []
+    primary: list[int] = []
+    secondary: list[int] = []
+    for m in _TOKEN_RE.finditer(scan):
+        starts.append(m.start())
+        surfaces = set(_expand_kebab(tokenize(m.group())))
+        if surfaces & primary_terms:
+            primary.append(m.start())
+        elif surfaces & part_terms:
+            secondary.append(m.start())
+
+    # Symbol-aliased terms are invisible to the token scan above and can
+    # only be found by re-running their own patterns — see
+    # `_ALIAS_ANCHOR_PATTERNS`.
+    for pattern, alias in _ALIAS_ANCHOR_PATTERNS:
+        if alias in primary_terms:
+            bucket = primary
+        elif alias in part_terms:
+            bucket = secondary
+        else:
+            continue
+        for m in pattern.finditer(scan):
+            bucket.append(m.start())
+            starts.append(m.start())
+
+    anchors = sorted(primary) or sorted(secondary)
+    if not anchors:
+        # Every matched term hit a SCOPE rather than the body (the
+        # scorers' `scope_hit` term), or the body carries decomposed
+        # combining marks that split a raw token where the folded stream
+        # does not, or every occurrence lies past `_SNIPPET_SCAN_CHARS`.
+        return snippet_for(text, max_chars)
+
+    # Densest window wins. The rendered window opens `_SNIPPET_LEAD_CHARS`
+    # BEFORE its anchor, so counting against `a + budget` would promise
+    # anchors the window never reaches — count against
+    # `a + budget - lead`, the span actually shown. `>` (not `>=`) keeps
+    # the EARLIEST window on a tie, so a body of uniform density reads
+    # exactly as it did before this existed.
+    budget = max_chars - 3
+    reach = budget - _SNIPPET_LEAD_CHARS
+    starts = sorted(set(starts))
+    best_at, best_cover = anchors[0], -1
+    for i, anchor in enumerate(anchors):
+        cover = bisect_left(anchors, anchor + reach) - i
+        if cover > best_cover:
+            best_cover, best_at = cover, anchor
+
+    if best_at <= _SNIPPET_LEAD_CHARS:
+        # Already inside the head window — serve it unchanged, with no
+        # leading ellipsis. This is what keeps every head-anchored hit
+        # byte-identical to what it was before.
+        return snippet_for(text, max_chars)
+
+    # Snap the window start to a token start so it never opens mid-word;
+    # `_truncate_at_word` only ever guarded the trailing edge. The lookup
+    # always lands, so there is no "nothing to snap to" case to guard:
+    # `best_at` is itself in `starts` — the token loop and the alias loop
+    # both feed every anchor position into it — and `lead <= best_at`, so
+    # the first start at or after `lead` is at or before `best_at`.
+    lead = best_at - _SNIPPET_LEAD_CHARS
+    start = starts[bisect_left(starts, lead)]
+    return snippet_window(text, start, max_chars)
+
+
 def _build_hit(
     memory: Memory,
     score: float,
@@ -1941,6 +2096,12 @@ def _build_hit(
     body's already in memory at this point (load_all already ran), so
     the marginal cost is bounded by the cap inside `detect_path_drift`
     rather than corpus size.
+
+    `_query_biased_snippet` adds a second regex pass over the body plus
+    one uncached `tokenize` per raw token — but only for bodies longer
+    than the snippet budget, and bounded by `_SNIPPET_SCAN_CHARS`. Both
+    passes are per-HIT, not per-candidate: `_build_hit` runs at most
+    `max_results` times (default 5), after the ranking has been trimmed.
     """
     drift = detect_path_drift(
         memory.body,
@@ -1953,7 +2114,7 @@ def _build_hit(
         scopes=memory.scopes,
         confidence=memory.confidence,
         category=memory.category,
-        snippet=snippet_for(memory.body),
+        snippet=_query_biased_snippet(memory.body, matched),
         score=round(score, 4),
         relevance=_relevance_label(len(matched), query_unique),
         match_terms=matched,

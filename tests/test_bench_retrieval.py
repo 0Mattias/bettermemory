@@ -12,18 +12,21 @@ So the invariants the published figures depend on are pinned here.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
 import re
 import sys
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
 _HERE = _ROOT / "bench" / "retrieval"
 _RUNNER = _HERE / "run.py"
+_RESULTS = _HERE / "results"
 
 
 def _load() -> ModuleType:
@@ -210,3 +213,361 @@ def test_filler_shares_no_vocabulary_with_gold_documents() -> None:
         filler = set(re.findall(r"[a-z]{5,}", runner._filler_body(seed).lower()))
         overlap = filler & gold_terms
         assert len(overlap) <= 6, f"filler seed {seed} overlaps gold: {sorted(overlap)}"
+
+
+# ---------------------------------------------------------------------------
+# The prefiltered arm
+#
+# Every one of the loader's fallbacks returns the full corpus quietly, so a
+# prefilter arm that fell back scores like an ordinary full-corpus run and
+# prints under a `prefilter: true` heading. Nothing about the numbers looks
+# wrong. These tests pin the machinery that tells the difference.
+# ---------------------------------------------------------------------------
+
+
+def _fake_pool(memories: list[Any], *, prefiltered: bool) -> Any:
+    """A `SearchPool` shaped like the two outcomes that matter.
+
+    `corpus_stats_provider is not None` is `resolve_search_pool`'s exact
+    IFF for "the FTS path served this pool", so a stand-in only has to get
+    that one field right.
+    """
+    from bettermemory.handlers.search import SearchPool
+
+    return SearchPool(
+        memories=memories,
+        corpus_stats_provider=(lambda terms: None) if prefiltered else None,
+    )
+
+
+def _two_questions() -> tuple[list[dict], dict[str, str]]:
+    picked = QUESTIONS[:2]
+    return picked, {q["slug"]: f"id-{i}" for i, q in enumerate(picked)}
+
+
+def test_index_threshold_env_name_is_the_one_production_reads() -> None:
+    """`INDEX_THRESHOLD_ENV` is a second copy of a string that only means
+    anything if it matches. Pinned by behaviour rather than by equality so
+    a rename on either side has to move both."""
+    import os
+
+    from bettermemory import _handlers
+
+    original = os.environ.get(runner.INDEX_THRESHOLD_ENV)
+    os.environ[runner.INDEX_THRESHOLD_ENV] = "7"
+    try:
+        assert _handlers.resolve_index_threshold() == 7
+    finally:
+        if original is None:
+            del os.environ[runner.INDEX_THRESHOLD_ENV]
+        else:
+            os.environ[runner.INDEX_THRESHOLD_ENV] = original
+
+
+def test_the_runner_never_touches_the_environment_at_import_time() -> None:
+    """This module exec's run.py at pytest COLLECTION time, so anything
+    run.py does at module scope happens once inside the pytest process and
+    stays done. A module-level `os.environ[...] = ...` would put every
+    later test's store into the prefilter regime, which is a whole-suite
+    behaviour change with no failing test anywhere near the cause."""
+    tree = ast.parse(_RUNNER.read_text(encoding="utf-8"))
+    module_scope = [
+        node
+        for node in tree.body
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+    ]
+    offenders = []
+    for node in module_scope:
+        for sub in ast.walk(node):
+            if isinstance(sub, ast.Attribute) and sub.attr in {"environ", "putenv"}:
+                offenders.append(ast.unparse(sub))
+    assert not offenders, f"run.py touches the environment at import: {offenders}"
+
+
+def test_the_prefiltered_arm_never_passes_a_post_cap_filter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`resolve_search_pool` reloads the whole corpus and clears the
+    prefiltered flag when a post-cap filter starves a saturated slice. That
+    guard is gated on `repo_filter` / `worktree_filter` / `excluded_scopes`,
+    so passing any of them here would let the arm quietly measure
+    `load_all` on exactly the queries where the cap binds hardest."""
+    from bettermemory.store import Store
+
+    seen: list[dict[str, Any]] = []
+
+    def recorder(store: Any, query: str, **kwargs: Any) -> Any:
+        seen.append(kwargs)
+        return _fake_pool([], prefiltered=True)
+
+    monkeypatch.setattr(runner, "resolve_search_pool", recorder)
+    questions, slug_to_id = _two_questions()
+    runner.run_arm_prefiltered(
+        Store(tmp_path),
+        questions,
+        slug_to_id,
+        arm="lexical",
+        probe="asked",
+        semantic_model=None,
+    )
+    assert len(seen) == 2
+    for kwargs in seen:
+        assert kwargs["scopes"] is None
+        assert kwargs["excluded_scopes"] is None
+        assert kwargs["repo_filter"] is None
+        assert kwargs["worktree_filter"] is None
+
+
+def test_the_prefiltered_arm_records_every_query_whose_pool_fell_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bettermemory.store import Store
+
+    monkeypatch.setattr(
+        runner,
+        "resolve_search_pool",
+        lambda store, query, **kw: _fake_pool([], prefiltered=False),
+    )
+    questions, slug_to_id = _two_questions()
+    result = runner.run_arm_prefiltered(
+        Store(tmp_path),
+        questions,
+        slug_to_id,
+        arm="lexical",
+        probe="asked",
+        semantic_model=None,
+    )
+    assert result.engaged == 0
+    assert result.unengaged == [q["question"] for q in questions]
+
+
+def test_engagement_failure_stays_quiet_when_every_pool_engaged(
+    tmp_path: Path,
+) -> None:
+    row = runner.ArmResult(arm="lexical", probe="asked", n=20, prefilter=True)
+    row.engaged = 20
+    assert runner.engagement_failure(tmp_path, [row]) is None
+
+
+def test_engagement_failure_names_the_regime_and_the_query(tmp_path: Path) -> None:
+    """A run that fell back has to say WHICH way it fell back, or the next
+    person re-runs it blind. The index census separates "corpus below the
+    threshold" from "the FTS match set was empty"."""
+    row = runner.ArmResult(arm="lexical", probe="control", n=20, prefilter=True)
+    row.engaged = 19
+    row.unengaged = ["pooling app"]
+    report = runner.engagement_failure(tmp_path, [row])
+    assert report is not None
+    assert "indexed_count" in report
+    assert "lexical/control: 1/20" in report
+    assert "'pooling app'" in report
+
+
+def test_an_arm_that_asked_nothing_fails_instead_of_passing_vacuously(
+    tmp_path: Path,
+) -> None:
+    """Zero questions is the one way to hold `unengaged` empty without ever
+    engaging. `recall()` is 0.0 over zero questions, so the paired delta
+    comes out 0.0 — byte-identical to the report a prefilter that cost
+    nothing produces. A `--corpus` whose slugs miss `questions.jsonl` is all
+    it takes, so the guard has to judge the absence of evidence too."""
+    row = runner.ArmResult(arm="lexical", probe="asked", n=0, prefilter=True)
+    assert row.unengaged == []
+    report = runner.engagement_failure(tmp_path, [row])
+    assert report is not None
+    assert "no question matched the corpus" in report
+
+
+def test_a_full_corpus_arm_is_never_mistaken_for_an_engaged_one(
+    tmp_path: Path,
+) -> None:
+    """`run_arm` leaves `engaged` at zero, and the guard only judges rows
+    that claim to be prefiltered — otherwise every default run would fail
+    the integrity check it is not making a claim about."""
+    row = runner.ArmResult(arm="lexical", probe="asked", n=20, prefilter=False)
+    assert row.engaged == 0
+    assert runner.engagement_failure(tmp_path, [row]) is None
+
+
+def test_main_refuses_to_emit_when_the_prefilter_did_not_engage(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The whole integrity of the artifact rests on this exit code. A run
+    that fell back must be impossible to mistake for a result, so it fails
+    loudly instead of printing numbers nobody can tell apart."""
+    monkeypatch.setattr(
+        runner,
+        "resolve_search_pool",
+        lambda store, query, **kw: _fake_pool(
+            list(store.load_all()), prefiltered=False
+        ),
+    )
+    monkeypatch.setattr(
+        sys, "argv", ["run.py", "--arms", "lexical", "--prefilter", "on", "--json"]
+    )
+    assert runner.main() == 1
+    captured = capsys.readouterr()
+    assert "PREFILTER NEVER ENGAGED" in captured.err
+    assert not captured.out
+
+
+def test_a_zero_index_threshold_is_rejected_rather_than_silently_defaulted(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`resolve_index_threshold` treats `<= 0` as unset and returns 500, so
+    accepting it would run the below-threshold regime under an
+    above-threshold label — the one failure this whole arm exists to make
+    impossible."""
+    monkeypatch.setattr(
+        sys, "argv", ["run.py", "--index-threshold", "0", "--prefilter", "on"]
+    )
+    assert runner.main() == 1
+    assert "must be > 0" in capsys.readouterr().err
+
+
+def test_the_default_report_shape_is_unchanged_by_the_new_columns() -> None:
+    """The four committed artifacts and every earlier text run have to stay
+    reproducible, so the pool columns appear only once a prefiltered arm is
+    in the report."""
+    off = runner.ArmResult(arm="lexical", probe="asked", n=20, prefilter=False)
+    text = runner._format_text([off], 180, [], "corpus.jsonl")
+    assert "| arm      | probe   | recall@1 | recall@5 | n  |" in text
+    assert "prefilter" not in text
+
+    on = runner.ArmResult(arm="lexical", probe="asked", n=20, prefilter=True)
+    assert "prefilter" in runner._format_text([off, on], 600, [], "corpus.jsonl")
+
+
+def test_paired_deltas_only_subtract_cells_that_ran_side_by_side() -> None:
+    """The oracle for a prefiltered arm is the SAME queries on the SAME
+    store in the SAME process. Pairing against a committed artifact from a
+    different corpus size would confound the prefilter with dilution, which
+    is the error the padded runs already made once."""
+    off = runner.ArmResult(
+        arm="lexical", probe="asked", n=20, hits_at={1: 5, 5: 12}, prefilter=False
+    )
+    on = runner.ArmResult(
+        arm="lexical", probe="asked", n=20, hits_at={1: 6, 5: 12}, prefilter=True
+    )
+    on.nominated = 19
+    unpaired = runner.ArmResult(arm="semantic", probe="asked", n=20, prefilter=True)
+
+    deltas = runner.paired_deltas([off, on, unpaired])
+    assert [(d.arm, d.probe) for d in deltas] == [("lexical", "asked")]
+    # Negative: the prefilter ranked BETTER than the full corpus here.
+    assert deltas[0].recall_loss_at[1] == pytest.approx(-0.05)
+    assert deltas[0].recall_loss_at[5] == pytest.approx(0.0)
+    assert deltas[0].gold_nomination_rate == pytest.approx(0.95)
+
+
+def test_the_prefilter_really_engages_on_every_committed_question(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The one test that drives the real loader end to end.
+
+    Everything above pins the machinery with stand-ins; this pins that the
+    machinery has something to report — a live 600-memory store, the
+    production pool resolver, and 60 queries that all have to come back
+    prefiltered. It also re-derives the committed artifact's prefiltered
+    rows, so those numbers stay a measurement rather than a memory.
+    """
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run.py",
+            "--pad-to",
+            "600",
+            "--prefilter",
+            "on",
+            "--arms",
+            "lexical",
+            "--json",
+        ],
+    )
+    assert runner.main() == 0
+    live = json.loads(capsys.readouterr().out)
+
+    committed = json.loads(
+        (_RESULTS / "prefilter-above-threshold-2026-07-30.json").read_text()
+    )
+    published = {
+        (r["arm"], r["probe"]): r for r in committed["results"] if r["prefilter"]
+    }
+    assert live["results"], "no rows produced"
+    for row in live["results"]:
+        assert row["prefilter"] is True
+        assert row["engaged"] == row["n"] == 20, row
+        assert row["mean_pool_size"] <= committed["prefilter_cap"], row
+        # A pool cannot return what it never contained.
+        assert row["recall_at_5"] <= row["gold_nominated"], row
+        assert row == published[(row["arm"], row["probe"])], (
+            "live run diverged from the committed artifact — re-run "
+            "bench/retrieval/run.py and update results/ if ranking changed"
+        )
+
+
+# ---------------------------------------------------------------------------
+# The published prefilter artifacts
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "prefilter-above-threshold-2026-07-30.json",
+        "prefilter-forced-180-2026-07-30.json",
+    ],
+)
+def test_prefilter_artifacts_are_internally_consistent(name: str) -> None:
+    """These files are the evidence, so they are checked for the properties
+    a reader would otherwise have to take on trust: that the prefiltered
+    rows really engaged, that the deltas are the subtraction they claim to
+    be, and that both halves ran against the corpus on disk."""
+    art = json.loads((_RESULTS / name).read_text(encoding="utf-8"))
+    assert art["corpus_sha256"] == runner.corpus_fingerprint(_HERE / art["corpus"])
+    assert art["index_threshold"] == runner.INDEX_THRESHOLD
+    assert art["prefilter_cap"] == runner.PREFILTER_CAP
+    assert art["prefilter_mode"] == "both"
+
+    rows = {(r["arm"], r["probe"], r["prefilter"]): r for r in art["results"]}
+    for (_, _, prefilter), row in rows.items():
+        if prefilter:
+            assert row["engaged"] == row["n"], row
+            assert row["mean_pool_size"] <= art["prefilter_cap"], row
+        else:
+            # The full corpus contains the gold document by construction.
+            assert row["gold_nominated"] == 1.0, row
+            assert row["mean_pool_size"] == art["corpus_size"], row
+        assert row["recall_at_5"] <= row["gold_nominated"], row
+
+    assert art["prefilter_delta"], "a `both` run must publish its deltas"
+    for delta in art["prefilter_delta"]:
+        on = rows[(delta["arm"], delta["probe"], True)]
+        off = rows[(delta["arm"], delta["probe"], False)]
+        for k in (1, 5):
+            expected = off[f"recall_at_{k}"] - on[f"recall_at_{k}"]
+            assert delta[f"recall_loss_at_{k}"] == pytest.approx(expected)
+        assert delta["gold_nomination_rate"] == on["gold_nominated"]
+
+
+def test_the_padded_prefilter_artifact_reproduces_its_predecessor() -> None:
+    """The off half of the paired run re-measures what
+    `v2-padded600-2026-07-26.json` recorded three days earlier, on the same
+    corpus digest. That is what makes the on half credible: the harness is
+    shown to reproduce a published number before it is used to produce a
+    new one."""
+    new = json.loads(
+        (_RESULTS / "prefilter-above-threshold-2026-07-30.json").read_text()
+    )
+    old = json.loads((_RESULTS / "v2-padded600-2026-07-26.json").read_text())
+    assert new["corpus_sha256"] == old["corpus_sha256"]
+    assert new["corpus_size"] == old["corpus_size"]
+
+    published = {(r["arm"], r["probe"]): r for r in old["results"]}
+    reproduced = [r for r in new["results"] if not r["prefilter"]]
+    assert reproduced, "no full-corpus rows to compare"
+    for row in reproduced:
+        before = published[(row["arm"], row["probe"])]
+        assert row["recall_at_1"] == before["recall_at_1"], row
+        assert row["recall_at_5"] == before["recall_at_5"], row

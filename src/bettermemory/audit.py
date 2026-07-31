@@ -268,9 +268,12 @@ class MissHit:
 
     Bodies are deliberately not retained — the id + snippet is enough to
     triage offline, and full bodies in the event log would balloon disk
-    usage on a busy store. Snippet uses the same `snippet_for` shape the
-    search response builds, so a replay can look identical to a real
-    search hit.
+    usage on a busy store. Snippet is a straight copy of the search hit's,
+    so it carries the same query-biased window a live hit does — the body
+    text around the terms that matched, not the body's head. Replay
+    parity is what makes that safe, and it holds: `probe_for_miss`
+    re-runs the same `search()` over the same `user_message`, so the
+    retained window is the one a replay of that probe would produce.
 
     `matched_unique` / `query_unique` are the raw coverage pair the
     relevance label was computed from, and `relevance_v2` is the shadow

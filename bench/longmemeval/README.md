@@ -257,9 +257,14 @@ would be misreading its own benchmark.
   This is store + retrieval.
 - **The above-threshold regime.** Per-question stores hold ~249 items
   against a 500-item index threshold, so SQLite bm25 prefiltering never
-  engages and the full store is ranked — the same gap
-  `bench/retrieval/` declares about its own unpadded runs. **Neither
-  directory has yet measured what a large real store would hit.**
+  engages and the full store is ranked. `bench/retrieval/` closed this
+  gap for itself on 2026-07-30 — it now drives the production pool
+  resolver and measures zero recall@5 lost to the prefilter on its
+  lexical arm (`bench/retrieval/results/prefilter-above-threshold-2026-07-30.json`).
+  **This directory has not.** Nothing here has been run above the
+  threshold, and the retrieval result does not transfer: it was measured
+  on a 180-document synthetic corpus with an off-domain-padded variant,
+  not on LongMemEval's haystack.
 - **Answer correctness.** No judged arm, by design: it requires a GPT-4o
   judge and an API key, which collides with the autonomy criterion.
 - **Staleness accuracy.** See P4. `bench/rot/` owns that axis.
@@ -353,16 +358,149 @@ favour.** Three for three here. The invalid artifact is retained as
    tenth of a point, this time derivable from a committed file instead
    of a throwaway re-run. Per-type ceilings are ~100% at k=5 for every
    class (temporal-reasoning 99.6%), so the headroom is real rather than
-   arithmetic.
+   arithmetic. Closing the prerequisite also **refuted the diagnosis in
+   this item** — see "Read-side diversification, measured" below.
 
 1. **An above-threshold arm.** Per-question stores hold ~249 items
    against a 500-item index threshold, so bm25 prefiltering never
-   engages. Neither retrieval directory has measured the regime a large
-   real store would hit, and it is the most likely place for the tie to
-   break in either direction.
+   engages. `bench/retrieval/` measured this regime on 2026-07-30 and
+   found the prefilter cost it no recall@5 on the lexical arm, because
+   bm25 nominated the gold document more often than the ranker could
+   place it. That is a result about a 180-document synthetic corpus, not
+   about this haystack, and this directory has still never run above the
+   threshold — it remains the most likely place for the tie to break in
+   either direction.
 2. **Enrichment parity.** claude-mem's `observations_fts` spans six
    columns its own pipeline fills by LLM extraction; this harness fills
    one. Their 91.6% is therefore a floor, not a ceiling — see
    PREREGISTRATION.md addendum 2.
 3. Not a judged QA arm. It needs a GPT-4o judge and an API key, which
    collides with the autonomy criterion this project publishes against.
+
+## Read-side diversification, measured
+
+Item 0 of "Next" above diagnosed this project's largest remaining
+retrieval error as a coverage problem and prescribed a read-side
+re-ranker worth +3.2 pooled recall@5. The diagnosis is wrong. This
+section is the measurement that killed it, kept beside the claim it
+refutes rather than replacing it — the item is shipped history and the
+correction reads better next to it.
+
+Measured 2026-07-30, lexical arm, full 500 questions. Artifacts:
+`results/baseline-both-arms-2026-07-30.json`,
+`results/coverage-probe-2026-07-30.json`,
+`results/co-evidence-rescue-2026-07-30.json`.
+
+### The prediction, and what it actually measures
+
+If a two-event question loses recall because no single session covers all
+of its vocabulary, then the evidence session DROPPED out of the top 5
+should carry query terms the survivors do not. `coverage_probe.py`
+measures exactly that, against two reference sets — because the answer
+moves by nine points between them, and publishing only the flattering one
+would be a choice rather than a measurement.
+
+65 partial questions; 87 dropped evidence sessions, of which 5 scored in
+no ranker at all and 82 were ranked.
+
+| terms the dropped session carries that the top 5 lacks | broad reference | strict reference |
+| --- | --- | --- |
+| none | 81 (93.1%) | 74 (85.1%) |
+| exactly one | 6 | 12 |
+| two | 0 | 1 |
+| three or more | 0 | 0 |
+
+*Broad* counts against every hit belonging to a top-5 session; *strict*
+against one representative hit per top-5 session, which is the fairer
+analogue of the list head a re-ranker between the fuse and the trim
+actually holds — `search()` has no notion of sessions at all. Under
+either, the dropped evidence is not answering a different half of the
+question. Like for like — one best hit per session on both sides — it
+matches *fewer* terms than the survivors it lost to, median 2 against 3.
+It is a strict subset of what the head already carries, and it loses on
+scoring, at a median item rank of 13.5. Any score keyed on coverage ranks
+it below the survivors, not above.
+
+The structural reason: in 337 of 500 questions the top 5 already carries
+*every* term anything in the corpus matched. Matched terms are a subset
+of a short query's vocabulary — median 7 unique terms per question, 1 per
+hit — so there is very little room for novelty to exist at all.
+
+### The ceiling, which is what closes the item
+
+A tuning failure and an impossible mechanism look identical from the
+outside, so the probe also bounds an **omniscient** rescue: one that
+promotes exactly the dropped evidence carrying a novel term, into the top
+5, with zero false promotions. Nothing real can beat it.
+
+One ceiling alone would invite the obvious rebuttal — loosen the novelty
+test and the ceiling rises — so the probe reports the ceiling **and** the
+precision, across every reference including `blind`, which promotes all
+82 ranked dropped sessions and asks nothing at all:
+
+| novelty test | promotes | distractors it also promotes | precision | lift vs blind | oracle gain |
+| --- | --- | --- | --- | --- | --- |
+| blind (no filter) | 82 | 1,749 | 4.48% | 1.00× | +5.21 |
+| broad reference | 6 | 104 | 5.45% | **1.22×** | +0.33 |
+| strict reference | 13 | 233 | 5.28% | 1.18× | +0.79 |
+| top-1 reference (loosest) | 40 | 906 | 4.23% | **0.94×** | +2.59 |
+
+**Read the lift column, not the gain column.** A looser test raises the
+ceiling only by converging on promoting everything — and the one
+reference whose ceiling clears the gate has precision *below* blind
+promotion, meaning it has stopped filtering rather than started finding.
+The best novelty signal available is a 1.22× lift on a 4.5% base rate.
+Clearing +2.00 needs something on the order of 25–30% precision at high
+recall. That is the finding, and it does not depend on which reference
+you prefer.
+
+### Measured anyway, because a plausible mechanism is not a result
+
+The rescue was built the shippable way: a bounded marginal-coverage bonus
+for hits carrying terms the head misses, then a re-sort on the existing
+`(score, created, id)` key — scoring rather than reordering, because a
+list that is not descending by score silently disables
+`top_hit_leads_runner_up` and with it half of `expand_top`'s coverage.
+Parameters were chosen on a deterministic held-out half: 29
+configurations were scored offline against the captured pre-trim
+rankings, and the one the protocol selected was then run for real. The
+offline prediction matched that real run to four decimals on the pooled
+figure and on all six per-class figures. The sweep is method, not
+evidence — the numbers below come from the committed artifacts, and the
+ceiling above is what actually closes the item.
+
+| measure | baseline | with rescue | gate |
+| --- | --- | --- | --- |
+| pooled macro recall@5 | 0.8935 | 0.8941 | **≥ 0.9135 — MISSED** |
+| pooled **micro** recall@5 | 0.8671 | **0.8650** | not gated; moved backwards |
+| temporal-reasoning @5 | 0.8372 | 0.8360 | no regression > 1pt — held |
+| multi-session @5 | 0.8487 | 0.8450 | no regression > 1pt — held |
+| lexical arm runtime | 321.2 s | 303.7 s | ≤ ~394 s — held |
+
+**+0.06 points against a pre-stated +2.00**, and the effect is four
+questions out of five hundred — one up, three down. The single gain is a
+`single-session-preference` question, a class with n=30, which is the
+whole of that column's +3.3. Evidence-weighted recall moved the other
+way. Nothing in the sweep approached the gate. The ranking change is
+reverted. The artifacts, the probe, and this section stay.
+
+One thing deliberately *not* claimed: any single number out of the
+held-out half. That split is unstratified and has no power at this effect
+size — the two halves' own baseline recalls differ by more than every
+effect in the sweep put together — so it is a selection protocol here and
+not a significance test. The +0.06 is likewise reported as "no measurable
+change" rather than a small win: four questions moved, three of them
+downward, and evidence-weighted recall fell.
+
+### The headroom is real; this closes an item, not a question
+
+Perfect rescue of evidence already inside the first 10 distinct sessions
+is worth **+5.0 pooled** (89.35% → 94.36%), inside the first 7 is worth
++3.0, and every per-class ceiling at k=5 is ~100%. The `--per-question`
+records put the dropped sessions at a median distinct-session rank of 8:
+the evidence is retrieved and then ordered wrongly. What is now excluded
+is that the matched-term set expresses *why*. A future attempt needs a
+signal the fused ranking does not already contain, and it should start by
+pointing `coverage_probe.py` at whatever it proposes to key on — the
+oracle ceiling is cheap to compute and would have closed this item in an
+afternoon instead of a phase.
