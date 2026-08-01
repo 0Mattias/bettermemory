@@ -7,6 +7,33 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## Unreleased
+
+### Fixed — the MCP registry publish could never fire on a release
+
+`publish-mcp.yml` shipped in 3.35.0 triggered on `release: published`, with a
+header arguing carefully for that choice over the tag push the upstream guide
+suggests. The argument was sound and the trigger was dead: GitHub does not start
+a workflow run from an event raised by a job authenticating with the default
+`GITHUB_TOKEN` — a recursion guard — and `release.yml`'s `github-release` job
+uses exactly that token.
+
+So the automatic path had never fired once. It looked like it worked because the
+3.34.0 listing was published by hand through the `workflow_dispatch` backfill,
+and a fallback that succeeds is the most effective way to hide a primary path
+that cannot run. Observed on the 3.35.0 release: PyPI got 3.35.0, the GitHub
+release was created, and no registry run was queued at all.
+
+The workflow now also triggers on `workflow_run` against the Release workflow,
+which observes that run finishing rather than the event it emits, and is not
+suppressed. It is gated on a succeeded run whose `head_branch` starts with `v`,
+so a failed release or the TestPyPI dispatch does not publish a listing, and it
+checks out the TAG rather than the default branch — under `workflow_run` the
+default checkout is wherever `main` points now, which would list a `server.json`
+describing a version other than the one just published. `release: published` is
+kept alongside it, because a release cut by hand or with a PAT does raise a real
+event.
+
 ## 3.35.0 - 2026-08-01
 
 This release has one subject: **an optional dependency has three states —

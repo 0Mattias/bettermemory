@@ -21,9 +21,25 @@ name: Publish to MCP Registry
 # this workflow (3.34.0 is the first), or a registry-side failure worth
 # retrying without cutting a version.
 
+# WHY `workflow_run` AND NOT `release: published` ALONE, which the block above
+# argued for and which shipped in 3.35.0: a `release: published` event raised by
+# a job authenticating with the default `GITHUB_TOKEN` does not start a workflow
+# run. GitHub suppresses it to stop workflows recursively triggering each other,
+# and `release.yml`'s `github-release` job uses exactly that token. So this
+# trigger could never fire, and nothing said so — the 3.34.0 listing came from
+# the `workflow_dispatch` backfill path, which made a trigger that has never
+# once fired look like it worked. `workflow_run` observes the Release workflow
+# finishing instead of the event it emits, and is not suppressed.
+#
+# `release: published` is KEPT rather than replaced: a release published by hand
+# or by a PAT does raise a real event, and that is a legitimate way to cut one.
+# Both paths converge on the same job.
 on:
   release:
     types: [published]
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -37,15 +53,39 @@ jobs:
   publish:
     name: Publish server.json to the MCP registry
     runs-on: ubuntu-latest
+    # A `workflow_run` fires for every Release run, including failed ones and
+    # the TestPyPI dispatch. Only a SUCCEEDED tag run is a release worth
+    # listing: on a tag push `head_branch` carries the tag name, so the `v`
+    # prefix is what distinguishes it from a manual TestPyPI run.
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       startsWith(github.event.workflow_run.head_branch, 'v'))
 
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Check out the TAG, not the default branch. Under `workflow_run` the
+          # default checkout is whatever `main` points at now, which is not
+          # necessarily the release being listed — a later commit would publish
+          # a server.json describing a version that is not the one that just
+          # went to PyPI. Empty (dispatch) falls back to the default branch,
+          # which is the backfill contract.
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || '' }}
 
       # Every precondition the registry checks, checked here first, because a
       # rejection from the registry arrives as "Package validation failed"
       # with no indication of WHICH validation. Each check below names the
       # thing it verified, so a failure is actionable from the log alone.
       - name: Check the preconditions the registry will check
+        env:
+          # Empty on a dispatch (the backfill case, where server.json is the
+          # authority). `github.ref_name` is the tag on a `release` event;
+          # `head_branch` carries it on a `workflow_run` from a tag push.
+          EXPECTED_TAG: >-
+            ${{ github.event_name == 'release' && github.ref_name
+             || github.event_name == 'workflow_run' && github.event.workflow_run.head_branch
+             || '' }}
         run: |
           set -euo pipefail
 
@@ -64,15 +104,16 @@ jobs:
             exit 1
           fi
 
-          # When a release triggered this, the tag is the authority on which
+          # When a tag triggered this — directly (`release`) or by way of the
+          # Release run (`workflow_run`) — the tag is the authority on which
           # version is being listed. A dispatch has no tag and publishes
           # whatever server.json currently says, which is the backfill case.
-          if [ "${GITHUB_EVENT_NAME}" = "release" ]; then
-            TAG="${GITHUB_REF#refs/tags/}"
-            if [ "v$VERSION" != "$TAG" ]; then
-              echo "::error::tag $TAG does not match server.json version $VERSION"
+          if [ -n "${EXPECTED_TAG:-}" ]; then
+            if [ "v$VERSION" != "$EXPECTED_TAG" ]; then
+              echo "::error::tag $EXPECTED_TAG does not match server.json version $VERSION"
               exit 1
             fi
+            echo "tag $EXPECTED_TAG agrees with server.json"
           fi
 
           # The version must be ON PyPI. Ordering makes this true already; the
