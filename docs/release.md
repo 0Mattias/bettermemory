@@ -133,6 +133,36 @@ The check needs the tag to exist: during step 5 it evaluates the previous, alrea
 
 Trusted publishing does not change the yank flow. From PyPI's project page, go to "Manage", then "Releases", then "Options" on the bad version, then "Yank". Yanked releases are still installable when pinned exactly but stop being chosen by `pip install bettermemory` resolvers, which is the right behavior for "this version was published by accident."
 
+## Listing in the MCP registry
+
+`.github/workflows/publish-mcp.yml` submits `server.json` to the MCP registry.
+It fires on `release: published`, not on the tag, because the registry refuses
+a listing whose version is not yet on PyPI — and `release.yml`'s
+`github-release` job declares `needs: publish-pypi`, so a published release is
+the first moment that precondition is known to hold. It is a separate workflow
+rather than another job in `release.yml` so that a registry outage cannot turn
+a good PyPI release red.
+
+No secret is involved. Authentication is GitHub OIDC (`id-token: write`), and
+the token's repository-owner claim is what authorises the
+`io.github.0Mattias/*` namespace.
+
+Two things the registry checks that are easy to break silently, both asserted
+by the workflow before it calls the publisher so the log names which one
+failed:
+
+- **The `mcp-name:` marker in `README.md`.** The registry verifies PyPI
+  ownership by finding `mcp-name: io.github.0Mattias/bettermemory` in the
+  package description, which is built from the README. Nothing else reads that
+  line, so deleting it as stray HTML would break listing and nothing else.
+- **`server.json`'s two version fields.** The top-level `.version` and the
+  nested package version must agree with each other and with the tag.
+
+To list a release that predates this workflow, or to retry after a
+registry-side failure, run it by hand: Actions → "Publish to MCP Registry" →
+"Run workflow". A dispatch has no tag, so it publishes whatever `server.json`
+currently says.
+
 ## Troubleshooting
 
 ### `invalid-publisher: valid token, but no corresponding publisher`

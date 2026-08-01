@@ -7,6 +7,31 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## Unreleased
+
+### Added — the release lists itself in the MCP registry
+
+`.github/workflows/publish-mcp.yml` submits `server.json` after a release is
+published. `server.json` has been complete and correct for some time and was
+never being submitted, so the registry had no entry for this project.
+
+It fires on `release: published` rather than on the `v*` tag the upstream guide
+suggests, because the registry refuses a listing whose version is not yet on
+PyPI, and a tag-triggered job races `release.yml`'s own publish. `release.yml`'s
+`github-release` job declares `needs: publish-pypi`, so a published release is
+the earliest moment that precondition is known to hold — enforced by the job
+graph rather than by a sleep. It is a separate workflow so that a registry
+outage cannot turn a good PyPI release red.
+
+Authentication is GitHub OIDC, so no secret exists to leak or rotate. The
+workflow asserts each of the registry's preconditions itself before calling the
+publisher — the two `server.json` version fields agreeing with each other and
+with the tag, the version being live on PyPI, and the `mcp-name:` marker being
+present in the published description — because the registry reports all of them
+as one opaque "Package validation failed". That marker lives in `README.md` and
+is read by nothing else, which makes it exactly the kind of line a tidy-up
+deletes.
+
 ## 3.34.0 - 2026-08-01
 
 This release has one subject: **a checker that enumerates its own input

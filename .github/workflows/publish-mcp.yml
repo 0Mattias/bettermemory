@@ -1,0 +1,110 @@
+name: Publish to MCP Registry
+
+# Listing this server in the MCP registry, from `server.json`.
+#
+# WHY `release: published` AND NOT `push: tags: v*`, which the upstream guide
+# suggests: the registry validates that the version in `server.json` already
+# exists on PyPI before it will accept the listing. A tag-triggered job races
+# `release.yml`'s own publish and would fail that validation roughly as often
+# as it passed. `release.yml`'s `github-release` job declares
+# `needs: publish-pypi`, so a PUBLISHED GitHub release is the earliest moment
+# the precondition is known to hold. The ordering is enforced by that job
+# graph, not by a sleep.
+#
+# WHY A SEPARATE WORKFLOW rather than another job in `release.yml`: this is a
+# first-party integration with a third-party service in preview, and it must
+# not be able to affect the PyPI publish path. Kept apart, the worst failure
+# here is an unlisted release, which is recoverable by re-running; folded into
+# the release graph, a registry outage becomes a red release.
+#
+# `workflow_dispatch` is the backfill and retry path — a release that predates
+# this workflow (3.34.0 is the first), or a registry-side failure worth
+# retrying without cutting a version.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # OIDC is what authorises the `io.github.0Mattias/*` namespace: the registry
+  # trusts the token's repository-owner claim, so no secret exists to leak or
+  # rotate. This is the only permission the publish needs.
+  id-token: write
+
+jobs:
+  publish:
+    name: Publish server.json to the MCP registry
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # Every precondition the registry checks, checked here first, because a
+      # rejection from the registry arrives as "Package validation failed"
+      # with no indication of WHICH validation. Each check below names the
+      # thing it verified, so a failure is actionable from the log alone.
+      - name: Check the preconditions the registry will check
+        run: |
+          set -euo pipefail
+
+          NAME=$(jq -r '.name' server.json)
+          VERSION=$(jq -r '.version' server.json)
+          PKG=$(jq -r '.packages[0].identifier' server.json)
+          PKG_VERSION=$(jq -r '.packages[0].version' server.json)
+
+          echo "server.json: name=$NAME version=$VERSION package=$PKG@$PKG_VERSION"
+
+          # server.json carries the version twice and docs/release.md calls
+          # that the easiest thing to half-bump. A mismatch would publish a
+          # listing pointing at a package version that is not this release.
+          if [ "$VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::server.json .version ($VERSION) != .packages[0].version ($PKG_VERSION)"
+            exit 1
+          fi
+
+          # When a release triggered this, the tag is the authority on which
+          # version is being listed. A dispatch has no tag and publishes
+          # whatever server.json currently says, which is the backfill case.
+          if [ "${GITHUB_EVENT_NAME}" = "release" ]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+            if [ "v$VERSION" != "$TAG" ]; then
+              echo "::error::tag $TAG does not match server.json version $VERSION"
+              exit 1
+            fi
+          fi
+
+          # The version must be ON PyPI. Ordering makes this true already; the
+          # check turns "true by construction" into "observed", which is the
+          # distinction this project keeps having to relearn.
+          META=$(curl -sSf "https://pypi.org/pypi/${PKG}/${VERSION}/json")
+          echo "pypi: ${PKG} ${VERSION} is published"
+
+          # Ownership verification. The registry looks for `mcp-name: $NAME`
+          # in the PyPI description, which is built from README.md. If the
+          # marker is dropped from the README, the listing is refused — and
+          # that is a silent thing to break, because nothing else reads it.
+          if ! printf '%s' "$META" | jq -r '.info.description' | grep -qF "mcp-name: $NAME"; then
+            echo "::error::the PyPI description for $PKG $VERSION does not contain 'mcp-name: $NAME'."
+            echo "::error::That marker lives in README.md and is how the registry verifies ownership."
+            exit 1
+          fi
+          echo "pypi description carries the mcp-name marker"
+
+      - name: Install mcp-publisher
+        # Unpinned, following the upstream guide, and the tradeoff is
+        # deliberate: the registry is in preview and its API moves with the
+        # tool, so a pin here buys reproducibility at the cost of breaking
+        # against the live service. It is tolerable ONLY because this
+        # workflow cannot affect the PyPI release path — see the header.
+        run: |
+          set -euo pipefail
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+          ./mcp-publisher --version || true
+
+      - name: Authenticate to the registry (GitHub OIDC)
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish
+        run: ./mcp-publisher publish
