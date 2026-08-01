@@ -73,9 +73,9 @@ _PENDING_TTL_SECONDS = 60 * 60  # 1 hour
 PENDING_WRITES_FILENAME = ".pending_writes.jsonl"
 
 # Key under which clients that don't expose a stable identifier (e.g.
-# stdio transport, where `ctx.client_id` may be None) share a single
-# SessionState. Anything else opts into per-client isolation by passing
-# a real client_id through. Declared up here (rather than beside
+# stdio transport, which sends no client id in the request's _meta) share
+# a single SessionState. Anything else opts into per-client isolation by
+# passing a real client id through. Declared up here (rather than beside
 # `SessionRegistry`, where it used to live) because `SessionState` now
 # carries it as a field default.
 _DEFAULT_CLIENT_KEY = "__default__"

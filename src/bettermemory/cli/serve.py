@@ -51,7 +51,7 @@ def run_serve() -> None:
     )
 
     # No explicit `state=` — `build_server` defaults to the process-wide
-    # `SessionRegistry`, which routes per `Context.client_id` so a single
+    # `SessionRegistry`, which routes per request client id so a single
     # long-running server process can safely serve multiple MCP clients.
     # For stdio (one client per process) this collapses to a single state
     # under the default key — same observable behavior as before.

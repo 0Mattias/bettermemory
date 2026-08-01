@@ -45,7 +45,7 @@ flagging it. Offline, throwaway store.
 - Nothing is auto-injected; retrieval is a deliberate tool call. The 18
   default tools still charge schema every turn: a serialized
   `tools/list` of 33,960 bytes, 27,092 of it names and descriptions,
-  measured 2026-07-31 at 3.31.1 ([bench/toolcost][toolcost]). CI caps
+  measured 2026-07-31 at 3.32.0 ([bench/toolcost][toolcost]). CI caps
   the descriptions. The claude-mem head-to-head in that directory is a
   2026-07-26 run whose bettermemory arm predates these cuts, so its
   ratio is dated rather than current.

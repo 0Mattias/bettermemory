@@ -233,7 +233,15 @@ class ServerMemoryLiveAdapter:
                     init = await asyncio.wait_for(
                         session.initialize(), timeout=self._STARTUP_TIMEOUT_S
                     )
-                    server_info = getattr(init, "serverInfo", None)
+                    # `server_info`, not `serverInfo`: mcp 2.0.0 renamed the
+                    # Python attribute (the wire key is unchanged, since the
+                    # transport serialises by alias). Read through `getattr`
+                    # because a third-party server may legitimately send no
+                    # `serverInfo` at all — but the NAME has to be right, or
+                    # the default swallows the rename and every run records a
+                    # null `system_version` instead of failing. Nothing in CI
+                    # covers this line: the only caller is `@_live_only`.
+                    server_info = getattr(init, "server_info", None)
                     version = getattr(server_info, "version", None)
 
                     # Hermeticity guard: if the env-var fallback ever leaves

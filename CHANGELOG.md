@@ -31,6 +31,18 @@ and the `cached_property` on `Tool.output_schema` were each checked against a
 real 2.0.0 install and are identical, so the scrub is still needed and still
 mutates in place.
 
+**One wire field does change, and it was wrong before.** `serverInfo.version`,
+which a client reads on `initialize`, is now this project's own version. mcp
+1.x's lowlevel server defaulted an unset version to the *mcp package's* version,
+so every release up to and including 3.32.0 introduced itself to clients as
+`1.27.0` or whatever SDK it resolved — the server reporting its dependency's
+version as its own. 2.x replaced that fallback with `version: str = ""`, which
+would have turned the same never-passed argument into an empty string on the
+wire. `build_server` now passes `__version__` explicitly, read from the package
+rather than re-derived, so the field cannot drift from
+`bettermemory.__version__`. A client that keys off `serverInfo.version` sees a
+changed value here; a client that keys off tool names and schemas sees nothing.
+
 **Three changes in `src/`.** The server-class import and its annotations in
 `builder.py`; the `Context` generic arity, which went from three parameters to
 two when 2.x dropped the session type, in `handlers/_shared.py` and

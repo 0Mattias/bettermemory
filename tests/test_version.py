@@ -255,3 +255,38 @@ def test_uv_lock_self_version_matches_pyproject() -> None:
         f"uv.lock bettermemory version {lock_v!r} != pyproject.toml "
         f"{pyproject_v!r} — run `uv lock` and commit the result at release."
     )
+
+
+def test_served_server_info_version_is_this_package_s_version() -> None:
+    """The version a CLIENT sees on `initialize`, not just the one we import.
+
+    Every other assertion in this file compares two things the repository
+    controls. This one is the only check on the number that leaves the
+    process: `serverInfo.version` in the initialize result, which is what a
+    client displays, logs, and keys compatibility off.
+
+    It had no guard, and the mcp 2.x port is what showed why it needed one.
+    The argument is optional in both SDK majors and this project never passed
+    it, so the value was always whatever the SDK defaulted to. Under 1.x that
+    default was the *mcp package's* own version, which is wrong in a way that
+    looks fine — the server introduced itself as `1.27.0`. Under 2.x the
+    default is `""`, which is wrong in a way that looks like nothing at all:
+    no exception, no failing test, an empty string on the wire. A guard that
+    only ever compared `__version__` to `pyproject.toml` could not see either.
+
+    Reaching through `_lowlevel_server` is deliberate. `create_initialization_options()`
+    builds the exact object the stdio transport sends, so this asserts the
+    served value rather than re-reading the constructor argument back.
+    """
+    from bettermemory.builder import build_server
+
+    options = build_server()._lowlevel_server.create_initialization_options()
+
+    assert options.server_version == bettermemory.__version__, (
+        f"the server advertises serverInfo.version="
+        f"{options.server_version!r} but the package is "
+        f"{bettermemory.__version__!r}. Clients read this on initialize; an "
+        f"empty or mismatched value is invisible from inside the process. "
+        f"`build_server` must pass `version=__version__` to `MCPServer`."
+    )
+    assert options.server_name == "bettermemory"

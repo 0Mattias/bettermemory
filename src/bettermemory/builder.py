@@ -150,8 +150,26 @@ def build_server(
     # never touch the file.
     _configure_persistent_embeddings(config, store)
 
+    # Imported lazily, for the same reason `_handlers` is above: `__init__`
+    # imports this module before it binds `__version__`, so a module-level
+    # `from . import __version__` is a circular import. By call time the
+    # package is fully initialised. Reading it from one place rather than
+    # re-deriving it here keeps `serverInfo.version` and
+    # `bettermemory.__version__` from being able to disagree.
+    from . import __version__
+
     mcp = MCPServer(
         "bettermemory",
+        # `version` is what a client receives as `serverInfo.version` on
+        # `initialize`, and it must be passed explicitly. mcp 1.x's
+        # lowlevel server defaulted an unset version to the *mcp package's*
+        # own version, so this server spent its whole 1.x life reporting
+        # the SDK's version as its own — wrong, but non-empty and easy to
+        # miss. 2.x replaced that fallback with `version: str = ""`, which
+        # turns the same omission into an empty string on the wire. Neither
+        # is the right answer; this project's own version is, and passing
+        # it makes the field mean what its name says.
+        version=__version__,
         # The server-level instructions block is the canonical "what is
         # this server" message every MCP client surfaces at the
         # system-prompt level. Empirically validated on Claude Code

@@ -40,7 +40,7 @@ classifiers = [
 # import from the 2.x path and will not run on 1.x. A floor is a real
 # install-compat break, so it moved once, deliberately, announced in the
 # changelog — never as a side effect. Users who need 1.x pin
-# `bettermemory<3.32.0`, which is a workaround that genuinely exists; the
+# `bettermemory<3.33.0`, which is a workaround that genuinely exists; the
 # defect in docs/incidents/2026-07-31-mcp-2-unbounded-constraint.md left no
 # working pin at all, which is the whole asymmetry.
 #
