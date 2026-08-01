@@ -23,6 +23,17 @@ Failure modes guarded here:
   on the server. The reverse direction is intentionally NOT enforced
   (the skill is policy, not inventory; not every server tool needs to
   appear there).
+
+- **Surface drift** on the same two: the parity tests run against BOTH
+  values of `[behavior] full_tool_surface`, because the two defaults
+  disagree. `BehaviorConfig` defaults it True; `load_config()` — the only
+  path the `bettermemory` entry point takes — coerces an unset key to
+  False. The lean surface is therefore what ships, and what a plugin
+  install gets (`plugin/.mcp.json` runs `uvx bettermemory` with an empty
+  env). On the lean leg a referenced tool must either resolve on the
+  server or be declared full-surface in the prose, following the marker
+  convention SKILL.md already uses ("Two full-surface tools drain what no
+  single conversation can see:").
 """
 
 from __future__ import annotations
@@ -30,7 +41,9 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from bettermemory.config import Config, StorageConfig
+import pytest
+
+from bettermemory.config import BehaviorConfig, Config, StorageConfig
 from bettermemory.prompts import SYSTEM_PROMPT_ADDENDUM
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
@@ -50,6 +63,163 @@ _DOC_FENCE_RE = re.compile(r"```\n(.*?)```", re.DOTALL)
 # story shipped — keep the regex covering both so a future rename of
 # either family catches the same parity check.
 _TOOL_REF_RE = re.compile(r"\b((?:memory|episode)_[a-z_]+)\b(?!\s*=)")
+
+# Tool-SHAPED identifiers `_TOOL_REF_RE` over-includes: `memory_ids` and
+# `episode_id` are parameters on `memory_record_use` / `episode_promote`,
+# and `episode_volume` is a key on `memory_health`'s return shape. None
+# of them is a tool. Shared by both parity guards below so the two can't
+# drift apart.
+KNOWN_NON_TOOL_IDENTIFIERS = {"memory_ids", "episode_id", "episode_volume"}
+
+# Prose marker declaring a tool available only under `[behavior]
+# full_tool_surface`. SKILL.md's "Two full-surface tools drain what no
+# single conversation can see:" is the original instance; the addendum's
+# `Tools:` headline follows the same convention with "Full-surface only:".
+_FULL_SURFACE_MARKER_RE = re.compile(r"full[-_ ]surface|full_tool_surface", re.I)
+
+# Split a block into sentences. Coarse, but the policy surfaces don't use
+# abbreviations mid-sentence, and a false split can only ever make the
+# marker cover LESS text — it cannot smuggle an unmarked name in.
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+
+_BULLET_RE = re.compile(r"^\s*[-*]\s+")
+
+
+def _tool_refs(text: str) -> set[str]:
+    """Tool names referenced in `text`, minus the known non-tools."""
+    return {
+        name
+        for name in _TOOL_REF_RE.findall(text)
+        if not name.endswith("_") and name not in KNOWN_NON_TOOL_IDENTIFIERS
+    }
+
+
+def _full_surface_marked_names(text: str) -> set[str]:
+    """Tool names the document declares as `full_tool_surface`-only.
+
+    Two shapes count, both drawn from prose that already exists rather
+    than invented here:
+
+    - A sentence carrying the marker declares every tool name in that
+      sentence. The addendum's "Full-surface only: memory_health, …"
+      clause is this shape.
+    - A marker-carrying lead-in that ends in a colon declares the SUBJECT
+      of each bullet in the block that follows — the first tool name on
+      the bullet line. SKILL.md's "Two full-surface tools drain what no
+      single conversation can see:" is this shape, and taking only the
+      subject matters: those bullets also mention `memory_verify`,
+      `memory_update` and `memory_write` as the follow-up actions, and
+      those are lean tools that must not be swept into the declaration.
+
+    Declaration is per-document, not per-mention. Once a doc has told the
+    reader a tool needs `full_tool_surface = true`, later prose may use
+    the bare name — these files are read start to finish, and demanding
+    the caveat at every mention would bloat a paste-in whose only real
+    constraint is length. The failure this closes is a doc that names a
+    lean-absent tool with no such signal anywhere, which is what both
+    surfaces did before: a plugin install runs `uvx bettermemory` with an
+    empty env, `load_config()` defaults `full_tool_surface` to false, and
+    the shipped prose named nine tools that install never registers.
+    """
+    marked: set[str] = set()
+    carry = False
+    for block in re.split(r"\n\s*\n", text):
+        has_marker = bool(_FULL_SURFACE_MARKER_RE.search(block))
+        if carry:
+            for line in block.splitlines():
+                if not _BULLET_RE.match(line):
+                    continue
+                subjects = _tool_refs(line)
+                first = _TOOL_REF_RE.search(line)
+                if first is not None and first.group(1) in subjects:
+                    marked.add(first.group(1))
+        if has_marker:
+            for sentence in _SENTENCE_SPLIT_RE.split(block):
+                if _FULL_SURFACE_MARKER_RE.search(sentence):
+                    marked.update(_tool_refs(sentence))
+        carry = has_marker and block.rstrip().endswith(":")
+    return marked
+
+
+async def _registered_tool_names(
+    tmp_path: Path, *, full_tool_surface: bool
+) -> set[str]:
+    """Tool names a server registers under the given surface setting.
+
+    Hermetic build: tmp_path-backed store and a fresh SessionState so the
+    module-level singleton from `get_state()` isn't shared with other
+    tests. The list_tools call doesn't write anything to disk.
+    """
+    cfg = Config(
+        storage=StorageConfig(directory=str(tmp_path)),
+        behavior=BehaviorConfig(full_tool_surface=full_tool_surface),
+    )
+    mcp = build_server(config=cfg, store=Store(tmp_path), state=SessionState())
+    return {tool.name for tool in await mcp.list_tools()}
+
+
+def _assert_surface_parity(
+    *,
+    surface_name: str,
+    text: str,
+    registered: set[str],
+    full_tool_surface: bool,
+) -> None:
+    """Shared body of the two parity guards.
+
+    On the full leg every referenced tool must be registered outright. On
+    the lean leg a referenced tool may instead be declared full-surface
+    in the prose. Both legs assert the check RAN rather than merely that
+    it passed: the lean leg pins that the surface actually shrank, that
+    the document actually references a lean-absent tool (so the marker
+    path is exercised), and that the marker admitted at least one of
+    them. Without those, a marker regex that matched nothing — or a lean
+    server that quietly registered everything — would sail through green.
+    """
+    referenced = _tool_refs(text)
+    assert referenced, f"{surface_name} references no tools at all; regex broke."
+
+    if full_tool_surface:
+        missing = referenced - registered
+        assert not missing, (
+            f"{surface_name} references tools that aren't registered on the "
+            f"server: {sorted(missing)}. Either rename the tool back, "
+            f"register the new tool, or update {surface_name} to match."
+        )
+        return
+
+    assert "memory_health" not in registered, (
+        "the lean leg registered memory_health, so `full_tool_surface="
+        "False` did not reach the builder and this leg is testing nothing."
+    )
+
+    marked = _full_surface_marked_names(text)
+    assert not marked & registered, (
+        f"{surface_name} marks tools as full-surface that the LEAN server "
+        f"registers anyway: {sorted(marked & registered)}. Either the "
+        f"marker is spilling past its sentence or the caveat is wrong."
+    )
+
+    lean_absent = referenced - registered
+    assert lean_absent, (
+        f"{surface_name} names no lean-absent tool, so the marker path is "
+        "never exercised. If that is genuinely true now, delete this leg "
+        "rather than leaving a guard that asserts nothing."
+    )
+    assert lean_absent & marked, (
+        f"{surface_name} names lean-absent tools {sorted(lean_absent)} but "
+        "the full-surface marker admitted none of them — the marker "
+        "convention is not being detected."
+    )
+
+    missing = lean_absent - marked
+    assert not missing, (
+        f"{surface_name} references tools the LEAN server (what "
+        f"`load_config()` builds by default, and what a plugin install "
+        f"gets) does not register: {sorted(missing)}. Either register "
+        f"them, or mark them full-surface the way SKILL.md's "
+        f'"Two full-surface tools…" lead-in does.'
+    )
 
 
 def test_addendum_matches_docs() -> None:
@@ -675,59 +845,61 @@ def test_docs_state_semantic_is_enabled_by_the_extra_alone() -> None:
     )
 
 
-async def test_addendum_tool_names_exist_on_server(tmp_path: Path) -> None:
-    """Every `memory_*` tool referenced in the addendum is registered on the server.
+@pytest.mark.parametrize("full_tool_surface", [True, False])
+async def test_addendum_tool_names_exist_on_server(
+    tmp_path: Path, full_tool_surface: bool
+) -> None:
+    """Every `memory_*` tool referenced in the addendum resolves on the
+    server — under BOTH tool surfaces.
 
-    The previous version of this test only enforced parity between the
+    The earlier version of this test only enforced parity between the
     addendum and the doc copy — renaming a tool on the server (or dropping
     one) would not fail the suite, and the addendum would silently start
-    referencing a tool the server doesn't expose. This closes that gap.
+    referencing a tool the server doesn't expose. That gap closed; this
+    one closes the next.
 
-    Direction is intentionally one-way: every name the addendum mentions
-    must exist on the server. The reverse — every server tool must appear
-    in the addendum — would be too strict (it's reasonable to ship a new
-    tool one release without yet documenting it in the advanced-tightening
-    surface), and the README/api.md cover the full inventory.
+    The check used to build `Config(storage=…)` with no `BehaviorConfig`,
+    which takes the dataclass default `full_tool_surface = True`.
+    `load_config()` — the only path the `bettermemory` entry point runs —
+    coerces the same key to False when it is unset, so the guard was
+    certifying the addendum against a surface production never builds.
+    Parametrizing both legs is what makes the LEAN leg, the shipped one,
+    actually get checked.
+
+    Direction stays one-way: every name the addendum mentions must exist.
+    The reverse — every server tool must appear in the addendum — would be
+    too strict (it's reasonable to ship a new tool one release without yet
+    documenting it in the advanced-tightening surface), and the
+    README/api.md cover the full inventory.
     """
-    # Hermetic server build: tmp_path-backed store and a fresh SessionState
-    # so the module-level singleton from `get_state()` isn't shared with
-    # other tests. The list_tools call doesn't write anything to disk.
-    cfg = Config(storage=StorageConfig(directory=str(tmp_path)))
-    mcp = build_server(config=cfg, store=Store(tmp_path), state=SessionState())
-    registered = {tool.name for tool in await mcp.list_tools()}
-
-    referenced = set(_TOOL_REF_RE.findall(SYSTEM_PROMPT_ADDENDUM))
-    # Strip tool-SHAPED identifiers the regex over-includes: `memory_ids`
-    # and `episode_id` are parameters on `memory_record_use` /
-    # `episode_promote`, and `episode_volume` is a key on
-    # `memory_health`'s return shape. None of them is a tool. Same
-    # allowlist as the SKILL.md test below — keep them in sync.
-    KNOWN_NON_TOOL_IDENTIFIERS = {"memory_ids", "episode_id", "episode_volume"}
-    referenced = {
-        name
-        for name in referenced
-        if not name.endswith("_") and name not in KNOWN_NON_TOOL_IDENTIFIERS
-    }
-
-    missing = referenced - registered
-    assert not missing, (
-        f"SYSTEM_PROMPT_ADDENDUM references tools that aren't registered "
-        f"on the server: {sorted(missing)}. Either rename the tool back, "
-        f"register the new tool, or update the addendum to match."
+    _assert_surface_parity(
+        surface_name="SYSTEM_PROMPT_ADDENDUM",
+        text=SYSTEM_PROMPT_ADDENDUM,
+        registered=await _registered_tool_names(
+            tmp_path, full_tool_surface=full_tool_surface
+        ),
+        full_tool_surface=full_tool_surface,
     )
 
 
-async def test_skill_tool_names_exist_on_server(tmp_path: Path) -> None:
-    """Every `memory_*` tool referenced in the plugin's SKILL.md is
-    registered on the server.
+@pytest.mark.parametrize("full_tool_surface", [True, False])
+async def test_skill_tool_names_exist_on_server(
+    tmp_path: Path, full_tool_surface: bool
+) -> None:
+    """Every `memory_*` tool referenced in the plugin's SKILL.md resolves
+    on the server — under BOTH tool surfaces.
 
     Symmetric to the addendum check above, with the same one-way
     direction. SKILL.md is the policy companion for plugin users and
     deliberately doesn't enumerate every tool — it covers retrieval,
     writing, verification, record-use, and curation by name and lets
     the per-tool descriptions carry the rest. Tools the skill DOES
-    name must still resolve on the server, or a rename would leave
-    the plugin telling the model to call a nonexistent name.
+    name must still resolve, or a rename would leave the plugin telling
+    the model to call a nonexistent name.
+
+    The lean leg is the one that matters most here: `plugin/.mcp.json`
+    launches `uvx bettermemory` with an empty env, so a plugin install IS
+    the lean surface, and this file is the prose that install ships.
     """
     skill_path = (
         Path(__file__).resolve().parents[1]
@@ -736,31 +908,11 @@ async def test_skill_tool_names_exist_on_server(tmp_path: Path) -> None:
         / "bettermemory"
         / "SKILL.md"
     )
-    skill_text = skill_path.read_text(encoding="utf-8")
-
-    cfg = Config(storage=StorageConfig(directory=str(tmp_path)))
-    mcp = build_server(config=cfg, store=Store(tmp_path), state=SessionState())
-    registered = {tool.name for tool in await mcp.list_tools()}
-
-    referenced = set(_TOOL_REF_RE.findall(skill_text))
-    # Strip tool-SHAPED identifiers that the regex over-includes —
-    # `memory_ids` is a parameter on `memory_record_use` and
-    # `episode_volume` is a key on `memory_health`'s return shape;
-    # neither is a tool. Anything that isn't actually registered AND
-    # isn't a real `memory_*` tool can only be a kwarg name, a return
-    # key or a doc artifact; the parameter-form regex on `_TOOL_REF_RE`
-    # already drops `name=`, but a bare `memory_ids` in prose still
-    # matches. An explicit allowlist keeps the assertion's signal sharp.
-    KNOWN_NON_TOOL_IDENTIFIERS = {"memory_ids", "episode_id", "episode_volume"}
-    referenced = {
-        name
-        for name in referenced
-        if not name.endswith("_") and name not in KNOWN_NON_TOOL_IDENTIFIERS
-    }
-
-    missing = referenced - registered
-    assert not missing, (
-        f"SKILL.md references tools that aren't registered on the "
-        f"server: {sorted(missing)}. Either rename the tool back, "
-        f"register the new tool, or update SKILL.md to match."
+    _assert_surface_parity(
+        surface_name="SKILL.md",
+        text=skill_path.read_text(encoding="utf-8"),
+        registered=await _registered_tool_names(
+            tmp_path, full_tool_surface=full_tool_surface
+        ),
+        full_tool_surface=full_tool_surface,
     )

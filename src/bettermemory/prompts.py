@@ -16,6 +16,15 @@ The opening anchor — persistent memory lives in this server's MCP tools,
 not in ad-hoc files alongside — is load-bearing. It keeps the model from
 drifting back to ambient memory directories (Claude Code 2.x ships its
 own filesystem-backed memory) mid-conversation.
+
+The `Tools:` headline is split into two runs because `load_config()`
+defaults `[behavior] full_tool_surface` to false, so the surface a stock
+install actually registers is the lean one. An unsplit list told a stock
+reader that nine tools it cannot call are available. The split names them
+under a "Full-surface only" marker instead; the paste-in stays terse and
+`docs/system_prompt.md` carries the config key in its surrounding prose,
+which is outside the byte-pinned fence. `tests/test_prompts.py` enforces
+the marker on the lean leg of its parametrized tool-name guard.
 """
 
 SYSTEM_PROMPT_ADDENDUM = """\
@@ -36,12 +45,12 @@ only see what these tools surface.
 
 Tools: memory_search, memory_show, memory_list, memory_scope_overview,
 memory_write (+ memory_write_confirm / memory_write_cancel), memory_update,
-memory_remove, memory_restore, memory_list_tombstones, memory_verify,
-memory_record_use, memory_health, memory_curate, memory_audit_turn,
-memory_acknowledge_miss,
-memory_proposals, memory_rename_scope, memory_scope_disable,
-memory_scope_enable, memory_conflicts, episode_write, episode_handoff,
-episode_search, episode_promote, episode_patterns.
+memory_remove, memory_verify, memory_record_use, memory_audit_turn,
+memory_scope_disable, memory_scope_enable, episode_write, episode_handoff,
+episode_search, episode_promote. Full-surface only: memory_health,
+memory_curate, memory_restore, memory_conflicts, memory_list_tombstones,
+memory_acknowledge_miss, memory_proposals, memory_rename_scope,
+episode_patterns.
 
 ## When to retrieve
 

@@ -11,6 +11,8 @@ Paste the fenced block below into your client's system prompt. The same text is 
 
 The opening anchor — *"persistent memory lives in this server's MCP tools, don't fragment it across ad-hoc files alongside"* — is load-bearing. Keep it at the top, not buried.
 
+The `Tools:` headline ends in a run marked **Full-surface only**. `load_config()` defaults `[behavior] full_tool_surface` to false, so a stock install does not register those nine; set `full_tool_surface = true` in `config.toml` if you want them. The marker is kept short because the block below is a paste-in and Claude Code truncates long system-prompt text — the config key lives here rather than inside the fence.
+
 ---
 
 ```
@@ -31,12 +33,12 @@ only see what these tools surface.
 
 Tools: memory_search, memory_show, memory_list, memory_scope_overview,
 memory_write (+ memory_write_confirm / memory_write_cancel), memory_update,
-memory_remove, memory_restore, memory_list_tombstones, memory_verify,
-memory_record_use, memory_health, memory_curate, memory_audit_turn,
-memory_acknowledge_miss,
-memory_proposals, memory_rename_scope, memory_scope_disable,
-memory_scope_enable, memory_conflicts, episode_write, episode_handoff,
-episode_search, episode_promote, episode_patterns.
+memory_remove, memory_verify, memory_record_use, memory_audit_turn,
+memory_scope_disable, memory_scope_enable, episode_write, episode_handoff,
+episode_search, episode_promote. Full-surface only: memory_health,
+memory_curate, memory_restore, memory_conflicts, memory_list_tombstones,
+memory_acknowledge_miss, memory_proposals, memory_rename_scope,
+episode_patterns.
 
 ## When to retrieve
 

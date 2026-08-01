@@ -22,6 +22,8 @@ This skill is the long-form companion to the MCP server's `instructions` block: 
 
 Detail on each tool lives in the tool's own description — this skill is the policy.
 
+The plugin's `.mcp.json` launches the server with no config overrides, and `load_config()` defaults `[behavior] full_tool_surface` to false. So a plugin install registers the **lean** surface: the curation and power-user tools are absent until the user sets `full_tool_surface = true` in `config.toml`. Tools this skill names that only exist under that flag are called out as **full-surface** where they appear; where a lean install still needs the capability, the `bettermemory` CLI is the route that is always there.
+
 ## When to retrieve
 
 Memory is **OPT-IN retrieval**. Stored memories are NOT in your context unless you call `memory_search`. **Default to not retrieving.** False positives (irrelevant context cascading through a conversation) are much worse than false negatives (one followup turn).
@@ -35,7 +37,7 @@ Skip it for generic factual questions, self-contained technical questions, and f
 
 ### Session-start hint
 
-One call to `memory_scope_overview` returns per-scope counts plus a `curation_pending` rollup (`{stale, never_verified, drifted, cold, dead, silent_misses, unique_silent_miss_memories, cold_endorsement_memories, conflicts}`: integer counts only). If `total=0`, skip `memory_search` for the rest of the session unless asked. Non-zero `dead`, `drifted`, or `conflicts` is the cue to suggest a curation pass when the conversation has time (`conflicts` = memory-vs-memory contradiction pairs awaiting a `memory_conflicts` verdict). Use this once per conversation; it's a yes/no signal, not something to poll.
+One call to `memory_scope_overview` returns per-scope counts plus a `curation_pending` rollup (`{stale, never_verified, drifted, cold, dead, silent_misses, unique_silent_miss_memories, cold_endorsement_memories, conflicts}`: integer counts only). If `total=0`, skip `memory_search` for the rest of the session unless asked. Non-zero `dead`, `drifted`, or `conflicts` is the cue to suggest a curation pass when the conversation has time (`conflicts` = memory-vs-memory contradiction pairs awaiting a `memory_conflicts` verdict — a full-surface tool, so on a lean install the pass runs through `bettermemory health` and the CLI instead). Use this once per conversation; it's a yes/no signal, not something to poll.
 
 ### Auto-scoping
 
@@ -119,7 +121,7 @@ Use episodes when `memory_write` would reject (or should reject) your content as
 - *"currently blocked on Y; next step is Z"* → `episode_write`
 - *"this branch's release plan"* (state that changes weekly) → `episode_write`
 
-Storage layout: `<root>/episodes/<session_id>/<ulid>.md`. Default 30-day TTL, pruned on each write. Episode *content* is **invisible to `memory_search` / `memory_health` / `memory_list`** — they live in a sibling subtree the memory iterators never see. The one thing that crosses over is aggregate size: `memory_health` returns `episode_volume` (`{sessions, episodes, bytes, prunable_sessions, ttl_days}`), a stat-only gauge. Check `prunable_sessions` if a long read-only loop has been running — pruning happens on `episode_write` and `bettermemory episodes prune`, so a loop that only reads never collects.
+Storage layout: `<root>/episodes/<session_id>/<ulid>.md`. Default 30-day TTL, pruned on each write. Episode *content* is **invisible to `memory_search` / `memory_health` / `memory_list`** — they live in a sibling subtree the memory iterators never see. The one thing that crosses over is aggregate size: `memory_health` (full-surface only; `bettermemory health` otherwise) returns `episode_volume` (`{sessions, episodes, bytes, prunable_sessions, ttl_days}`), a stat-only gauge. Check `prunable_sessions` if a long read-only loop has been running — pruning happens on `episode_write` and `bettermemory episodes prune`, so a loop that only reads never collects.
 
 ### The state channel: write state here, mint facts at close
 
@@ -177,4 +179,4 @@ Common scopes: `tools`, `learning-style`, `projects:<name>`, `infrastructure`, `
 
 If the user says *"this is unrelated to project X"*, call `memory_scope_disable("projects:X")` for the rest of the session.
 
-`memory_health.rare_scopes` surfaces typo singletons. Fix via `memory_rename_scope(old, new)`.
+`memory_health.rare_scopes` surfaces typo singletons; fix via `memory_rename_scope(old, new)` — both are full-surface tools, so a lean install reads the bucket from `bettermemory health` and renames with `bettermemory rename-scope`.

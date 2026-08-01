@@ -761,6 +761,27 @@ def _maybe_attach_curation_hint(
     if pressure < threshold:
         return
 
+    # Every route named below has to exist on the surface the hint can
+    # actually reach. This fires on `memory_write`, which is registered
+    # under BOTH surfaces, and `load_config()` defaults
+    # `full_tool_surface` to false — so the stock install reading this
+    # message has no `memory_health` to call. The full-bucket route is
+    # therefore the `bettermemory health` CLI, which every install ships.
+    # `tests/test_server.py` ratchets this twice over: the message may
+    # not name a tool the lean server doesn't register, and every
+    # backticked `bettermemory <subcommand>` it names is resolved against
+    # the argparse subparsers the CLI actually registers — a renamed
+    # route fails the build here rather than misdirecting the model.
+    #
+    # The remedies are also per-axis rather than a shared "or". Cold
+    # endorsements are defined by `explicit_applied_count == 0`
+    # (health._is_weakly_endorsed), and `memory_verify` writes a
+    # verification, not a use event — it cannot decrement that counter,
+    # so naming it here aimed the drift remedy at a bucket it cannot
+    # move. The thing that does move it is `consolidate
+    # --acknowledge-debt`, which writes one explicit `use(applied)` per
+    # cold row; it is what `memory_health`'s own
+    # `cleanup_cold_endorsements` recommendation names.
     response["curation_hint"] = {
         "pressure": pressure,
         "threshold": threshold,
@@ -773,9 +794,11 @@ def _maybe_attach_curation_hint(
             f"Curation pressure {pressure} >= threshold {threshold}: "
             f"{counts['dead']} dead_weight + {counts['drifted']} drifted + "
             f"{counts['cold_endorsement_memories']} "
-            "cold_endorsement_memories. Call memory_health for full "
-            "buckets; memory_remove or memory_verify to resolve. "
-            "One-shot per session."
+            "cold_endorsement_memories. Run `bettermemory health` for the "
+            "full buckets. Drifted: memory_update the rotted claims, then "
+            "memory_verify. Dead weight: memory_remove. Cold endorsements: "
+            "`bettermemory consolidate --acknowledge-debt` (memory_verify "
+            "does not touch that axis). One-shot per session."
         ),
     }
 

@@ -7,7 +7,9 @@ spinning up the full stdio transport.
 from __future__ import annotations
 from ._mcp import call_tool as _mcp_call
 
+import argparse
 import json
+import re
 import warnings
 from pathlib import Path
 from typing import Any
@@ -1632,6 +1634,266 @@ async def test_write_curation_hint_disabled_by_config_flag(
     server_x = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
     res = await _call(server_x, "memory_write", content="x", scopes=["tools"])
     assert "curation_hint" not in res
+
+
+# Same shape as `tests/test_prompts.py`'s tool-reference regex: a
+# `memory_*` / `episode_*` identifier not immediately followed by `=`
+# (which would make it a keyword-argument name rather than a tool).
+_HINT_TOOL_REF_RE = re.compile(r"\b((?:memory|episode)_[a-z_]+)\b(?!\s*=)")
+
+# The other half of the same surface. Routing the lean install to the
+# CLI only moves the exposure: `bettermemory health` and `bettermemory
+# consolidate --acknowledge-debt` are as renameable as the tool names
+# were, and a stale one misdirects exactly the same model. Backticked
+# spans are the convention the message already uses for a command line,
+# so that is what gets pulled out.
+_HINT_CLI_REF_RE = re.compile(r"`bettermemory ([^`]+)`")
+
+
+def _cli_root_parser() -> argparse.ArgumentParser:
+    """The parser `bettermemory --help` is rendered from."""
+    from bettermemory.cli import _build_parser
+
+    parser, _registry = _build_parser()
+    return parser
+
+
+def _subcommand_choices(
+    parser: argparse.ArgumentParser,
+) -> dict[str, argparse.ArgumentParser] | None:
+    """The subcommands `parser` accepts, or None if it takes none.
+
+    Read off the `_SubParsersAction` argparse itself consults at parse
+    time, not off the registry dict `_build_parser` returns: that dict's
+    keys are literals written beside each `add_subparser` call, so a
+    route renamed inside its own module would leave them stale while the
+    real CLI moved. `choices` is the mapping that actually decides
+    whether `bettermemory <name>` runs.
+    """
+    actions = [
+        action
+        for action in parser._actions
+        if isinstance(action, argparse._SubParsersAction)
+    ]
+    assert len(actions) <= 1, (
+        f"{parser.prog} registered {len(actions)} subparser actions; the "
+        f"resolution below would silently read only the first."
+    )
+    return dict(actions[0].choices) if actions else None
+
+
+def _options(parser: argparse.ArgumentParser) -> dict[str, argparse.Action]:
+    """Every flag string `parser` accepts, mapped to its action."""
+    return {
+        option: action for action in parser._actions for option in action.option_strings
+    }
+
+
+def _resolve_cli_span(span: str) -> list[str]:
+    """Walk one `bettermemory …` span through the real parser tree.
+
+    Returns the tokens that were checked, so a caller can assert the walk
+    was not a no-op. Bare words descend into the subparser registered
+    under that name; `--flags` are looked up on whichever parser is
+    current, and a flag that takes a value consumes the token after it so
+    the value is never mistaken for a subcommand.
+    """
+    parser = _cli_root_parser()
+    trail = ["bettermemory"]
+    checked: list[str] = []
+    tokens = span.split()
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        index += 1
+        if token.startswith("-"):
+            flag, _, inline_value = token.partition("=")
+            accepted = _options(parser)
+            action = accepted.get(flag)
+            assert action is not None, (
+                f"curation_hint says `bettermemory {span}`, but "
+                f"`{' '.join(trail)}` does not accept {flag}. Accepted "
+                f"here: {sorted(accepted)}."
+            )
+            if action.nargs != 0 and not inline_value:
+                index += 1  # the flag's value, not a subcommand
+            checked.append(flag)
+            continue
+        choices = _subcommand_choices(parser)
+        assert choices is not None, (
+            f"curation_hint says `bettermemory {span}`, but "
+            f"`{' '.join(trail)}` takes no subcommands, so {token!r} "
+            f"cannot be one."
+        )
+        assert token in choices, (
+            f"curation_hint routes users to `bettermemory {span}`, but "
+            f"`{' '.join(trail)}` has no {token!r} subcommand — it "
+            f"registers {sorted(choices)}. The hint reaches every "
+            f"install; a route it names has to be a route that runs."
+        )
+        parser = choices[token]
+        trail.append(token)
+        checked.append(token)
+    return checked
+
+
+async def _lean_hint(
+    memory_dir: Path, config_dir: Path, monkeypatch: Any
+) -> tuple[dict[str, Any], set[str]]:
+    """Fire the curation hint on a LEAN server; return the hint and its tools.
+
+    The lean surface is derived from `load_config()` against a config
+    file that doesn't exist yet — the exact path `bettermemory` takes on
+    a fresh install — rather than by restating `full_tool_surface=False`
+    here. If the loader default ever flips, this moves with it instead of
+    silently continuing to test the old policy.
+    """
+    from bettermemory import health as _health
+    from bettermemory.config import load_config
+
+    loaded = load_config(config_dir / "config.toml")
+    assert loaded.behavior.full_tool_surface is False, (
+        "load_config() no longer defaults full_tool_surface to False, so "
+        "this test is no longer building the surface a stock install gets."
+    )
+
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=loaded.behavior,
+    )
+    lean = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    registered = {tool.name for tool in await lean.list_tools()}
+    assert "memory_health" not in registered, (
+        "the lean server registered memory_health — the surface under test "
+        "is not the lean one and the assertion below would be vacuous."
+    )
+
+    # Pressure high enough to cross the default threshold on every axis,
+    # so the message has to speak to all three.
+    def fake_counts(*_args: Any, **_kwargs: Any) -> dict[str, int]:
+        return {
+            "stale": 0,
+            "never_verified": 0,
+            "drifted": 3,
+            "cold": 0,
+            "dead": 3,
+            "silent_misses": 0,
+            "unique_silent_miss_memories": 0,
+            "cold_endorsement_memories": 11,
+        }
+
+    monkeypatch.setattr(_health, "curation_counts", fake_counts)
+    res = await _call(lean, "memory_write", content="first", scopes=["tools"])
+
+    assert res["status"] == "committed"
+    assert "curation_hint" in res, (
+        "the curation hint did not fire, so there is no message to check."
+    )
+    return res["curation_hint"], registered
+
+
+async def test_curation_hint_message_names_no_lean_absent_tool(
+    memory_dir: Path, tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The `curation_hint` message may not name a tool the lean server lacks.
+
+    This is the coverage ratchet applied to a runtime payload rather than
+    a doc. The hint fires from `memory_write`, which is registered under
+    both surfaces, but the message used to say "Call memory_health for
+    full buckets" — and `memory_health` is gated behind `[behavior]
+    full_tool_surface`, which `load_config()` defaults to False. A stock
+    install was being told to call a tool it had not been given.
+
+    The assertion is deliberately mechanical: extract every tool-shaped
+    identifier from the message and require it to be registered. Prose
+    review cannot catch a name that becomes lean-absent later; this can.
+    """
+    hint, registered = await _lean_hint(memory_dir, tmp_path, monkeypatch)
+
+    named = set(_HINT_TOOL_REF_RE.findall(hint["message"]))
+    assert named, (
+        "the hint message names no tools at all. Either the message was "
+        "rewritten to be tool-free (then delete this test) or the regex "
+        "stopped matching and the check below is vacuous."
+    )
+    assert not named - registered, (
+        f"curation_hint names tools absent from the lean surface: "
+        f"{sorted(named - registered)}. The hint reaches every install, "
+        f"so every route it names has to exist on every install — use the "
+        f"`bettermemory` CLI for anything gated behind full_tool_surface."
+    )
+
+
+async def test_curation_hint_names_only_cli_routes_that_exist(
+    memory_dir: Path, tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Every `bettermemory …` the hint names has to be a command that runs.
+
+    The sibling test above pushed the lean install off `memory_health`
+    and onto `bettermemory health` — which fixes the surface mismatch and
+    then leaves the replacement unguarded, since `_HINT_TOOL_REF_RE` only
+    matches `memory_*` / `episode_*` identifiers. Renaming or dropping a
+    CLI subcommand would leave the hint pointing at nothing with nothing
+    failing, which is the same defect one rename later.
+
+    Resolution goes through `_build_parser()` — the parser `bettermemory
+    --help` is built from — rather than a list of subcommand names
+    restated here, because a restated list is that defect one level up:
+    it would keep passing after the CLI moved.
+    """
+    hint, _registered = await _lean_hint(memory_dir, tmp_path, monkeypatch)
+
+    spans = _HINT_CLI_REF_RE.findall(hint["message"])
+    assert spans, (
+        "the hint message names no `bettermemory …` command at all. Either "
+        "the remedies moved back onto MCP tools (then delete this test and "
+        "check they survive the lean surface) or the message stopped "
+        "backticking its command lines and this check went vacuous."
+    )
+    for span in spans:
+        checked = _resolve_cli_span(span)
+        assert checked, (
+            f"`bettermemory {span}` resolved to no tokens at all, so "
+            f"nothing about it was actually checked."
+        )
+
+
+async def test_curation_hint_routes_cold_endorsements_to_acknowledge_debt(
+    memory_dir: Path, tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The cold-endorsement remedy names the pass that actually clears it.
+
+    `cold_endorsement_memories` is defined by `explicit_applied_count ==
+    0` (`health._is_weakly_endorsed`). `memory_verify` writes a
+    verification, not a use event, so it cannot decrement that counter —
+    the message used to offer it anyway, aiming the drift remedy at a
+    bucket it cannot move. The pass that does move it is `consolidate
+    --acknowledge-debt`, which writes one explicit `use(applied)` row per
+    cold row, and it is what `memory_health`'s own
+    `cleanup_cold_endorsements` recommendation names.
+
+    The flag itself is pinned by `_resolve_cli_span` in the CLI-route
+    test above, which looks `--acknowledge-debt` up in the `consolidate`
+    subparser's own option strings; this test only pins that the message
+    still names it.
+    """
+    hint, _registered = await _lean_hint(memory_dir, tmp_path, monkeypatch)
+
+    assert hint["counts"]["cold_endorsement_memories"] == 11, (
+        "the seeded cold-endorsement count did not reach the hint, so the "
+        "message under test was not produced by that axis firing."
+    )
+    message = hint["message"]
+    assert "--acknowledge-debt" in message, (
+        "curation_hint no longer names `consolidate --acknowledge-debt`; "
+        "with cold endorsements in the pressure sum it is the only route "
+        "that clears them."
+    )
+    assert "memory_verify does not touch that axis" in message, (
+        "curation_hint dropped the note that memory_verify cannot clear "
+        "cold endorsements. The tool is still named for the drift axis, so "
+        "without the disclaimer the old wrong-axis reading returns."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -6024,7 +6286,13 @@ _DESC_BASELINE = {
     # this comment carried until the fixture existed to contradict it.
     "episode_search": 2311,
     "episode_write": 2350,
-    "memory_audit_turn": 822,
+    # Re-measured 2026-07-31: 822 -> 798 (-24), the clause " through the MCP
+    # channel" removed as false. The shipped Stop hook dispatches the CLI
+    # (`plugin/hooks/hooks.json` runs `uvx bettermemory audit-turn --quiet`),
+    # so the description was naming a transport the hook does not use. The
+    # tool's registration is unchanged and deliberately so: no MCP dispatch
+    # in one maintainer's event log is n=1, not evidence about other clients.
+    "memory_audit_turn": 798,
     "memory_list": 454,
     "memory_record_use": 1556,
     "memory_remove": 463,
