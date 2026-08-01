@@ -260,11 +260,22 @@ def test_strict_help_states_the_two_cases_that_surprise_an_operator(
 
     with pytest.raises(SystemExit):
         export_parser.parse_args(["--help"])
-    help_text = " ".join(capsys.readouterr().out.split())
+    # Whitespace is stripped ENTIRELY rather than collapsed to single
+    # spaces, because argparse's wrapping is not stable across the
+    # supported Pythons: 3.11 and 3.12 break on the hyphen inside a long
+    # option, so this help renders "Under --no-\ntombstones", which
+    # collapses to "--no- tombstones" and misses a phrase match. 3.13
+    # stopped splitting them. The claim under test is that the sentence
+    # REACHES the operator, not how argparse chose to fold it, so the
+    # comparison is made where that difference does not exist.
+    rendered = "".join(capsys.readouterr().out.split())
 
-    assert "--no-tombstones the tombstone half is never read" in help_text
-    assert "README" in help_text
-    assert "bettermemory doctor" in help_text
+    def says(phrase: str) -> bool:
+        return "".join(phrase.split()) in rendered
+
+    assert says("--no-tombstones the tombstone half is never read")
+    assert says("README")
+    assert says("bettermemory doctor")
 
 
 # ---------------------------------------------------------------------------
