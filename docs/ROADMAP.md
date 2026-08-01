@@ -46,6 +46,31 @@ Planned work, in rough priority order. Plans change; the
   3. `sync pull` trust boundary. `sync.py` pulls and re-indexes with no
      content validation, and `SECURITY.md` does not name sync as
      attacker-reachable. The one genuinely remote path.
+- **Claims-at-write.** Promoted above "Standing tier" and "Event-time"
+  on 2026-07-31: it is the only measured route to a drift signal cheaper
+  than the one shipped, and the shipped one is expensive. A real-prose
+  claim extractor is an open problem only because extraction is post-hoc;
+  the author of a memory knows what it is claiming at write time.
+  Structured claims on the write/verify surface (the shape
+  `verified_paths` already has) would give `build_binding_index` real
+  input — which the claim-level `weak` drift tier needs before it can
+  ship. On the 30-repository corpus
+  (`bench/rot/results/multirepo-anchored-2026-07-30.json`, 37,635 claims)
+  `weak` costs **1.1 alerts per catch at 94% precision** against the
+  shipped verdict's **3.4**. Quote those corpus figures, not the
+  superseded single-repo pilot's 25.1 → 2.0.
+  What makes it the priority is the incumbent's own measurement on that
+  corpus: J = 0.2875, 77.8% of claims flagged, 29.5% precision, 3.4
+  alerts per catch, against `always_flag`'s J = 0.000, 22.9% precision
+  and 4.4 — a real signal, and a weak one. On this repository the leg is
+  saturated: measured 2026-07-31 against the dogfood store from this
+  checkout, **68 of the 74 memories whose commit leg can speak carry
+  commits since their last verify (92%)** — 29 of the 31 verified in the
+  2026-07-24 clear are firing again a week later, and 19 of the 20
+  verified that same day were already firing. The answer to that cost is
+  a replacement measured first, not a subtraction; see
+  `_COMMIT_DRIFT_ESCALATES` under "Not planned". Backfill is one curation
+  pass over the ~143 checkable live bodies.
 - **Standing tier.** Opt-in retrieval cannot serve knowledge whose
   trigger condition is not knowing you need it. The `ambient` category
   is still retrieval-gated and `memory_scope_overview` returns counts
@@ -54,14 +79,6 @@ Planned work, in rough priority order. Plans change; the
   `episode_handoff` already uses — under the same verification
   discipline as the rest of the store. Prior art: Letta's core-memory
   blocks; the differentiator is the budget and the verification.
-- **Claims-at-write.** A real-prose claim extractor is an open problem
-  only because extraction is post-hoc; the author of a memory knows
-  what it is claiming at write time. Structured claims on the
-  write/verify surface (the shape `verified_paths` already has) would
-  give `build_binding_index` real input — which the measured `weak`
-  drift tier (2.0 vs 25.1 alerts per catch, corpus-only today) needs
-  before it can ship. Backfill is one curation pass over the ~143
-  checkable live bodies.
 - **Event-time on the memory record.** Every timestamp on `Memory`
   (`created`, `updated`, `last_verified_at`, `last_corroborated`) is
   storage time; nothing represents when a fact is *about*, or when it
@@ -88,19 +105,38 @@ Planned work, in rough priority order. Plans change; the
   [2026-07-22](eval/widening-labeling-2026-07-22.md) ·
   [2026-07-29](eval/widening-labeling-2026-07-29.md).
 
-  The successor worth one labeling pass is w2 **minus flags whose top
-  hit the same session had just written or updated** — content already
-  in context, so an impossible retrieval win. Those are 32% of the
-  latest cohort, and excluding them lifts the charitable read to ~71%
-  (strict ~38%), which is why it earns a pass and not a flip. It
-  cannot be added as a registry entry: `ThresholdRule.check` is a pure
-  per-turn predicate, so this needs a per-memory mutation index (from
-  the `write`/`update` stream) plumbed through both widening lanes.
-  Note for whoever builds it — the exclusion is **not** a session-id
-  join: mutation events carry the MCP server session, `turn_audited`
-  carries the client session UUID, and the namespaces do not map.
-  Once it exists it replays over history already on disk, so no new
-  observation window is needed.
+  The successor is now measured, and the program is closed rather than
+  continued — on a criterion that was added after the numbers were in,
+  which is recorded plainly here because the alternative is claiming a
+  gate did the work it did not do. That successor is w2 **minus flags
+  whose top hit the same session had just written or updated** —
+  content already in context, so an impossible retrieval win. Excluding
+  them lifts the charitable read to 15/21 = **0.714**, and the
+  pre-registered gate was ≥~70%: **the point estimate met the gate as
+  written.** Declining the build rests on a second criterion the
+  registration never named — the interval rather than the point. On
+  n = 21 the 95% Wilson interval is **[0.500, 0.862]**, a floor at
+  coin-flip, from one labeler, one store and one window; the pass says
+  as much in its own words — "that single exclusion is doing all the
+  work" — and strict precision on the same 21 reads 0.381. Adding the
+  floor is defensible on exactly those grounds; it is a new criterion
+  all the same, and pass #3 did not gate the build on an interval
+  either — it recorded the rule-signature change as "the blocking next
+  step". What pass #3 did close is further labeling **on w2**, so no
+  fourth read arrives on its own; the live decision is therefore the
+  build, and it is **not planned** (below).
+  One argument that looks available and is not: the refined 15/21 and
+  the dropped w2's 15/31 share a numerator, so their intervals overlap
+  by construction and comparing them says nothing. The after-the-fact
+  floor carries this decision alone.
+  If it is ever revisited, pre-register the sample size **and the
+  interval criterion** before labeling: at this point estimate the
+  Wilson floor clears 0.60 only at n ≈ 71, so n ≥ ~80 promotions.
+  Note for whoever builds it — the
+  exclusion is **not** a session-id join: mutation events carry the MCP
+  server session, `turn_audited` carries the client session UUID, and
+  the namespaces do not map. Once it exists it replays over history
+  already on disk, so no new observation window is needed.
 
 ### Small and anchored
 
@@ -138,6 +174,25 @@ enough to earn its own entry above.
   else. Three verdict branches and a published info key read the counter,
   so tightening it changes what `doctor` says on stores that are genuinely
   fine but MCP-driven.
+- **`bench/retrieval/README.md`'s "What this does not measure" is short
+  two structural caveats.** Both are properties of the corpus, so they
+  bound every published cell rather than any single one, and both were
+  derived while auditing something else — recorded here so they are not
+  re-derived. (i) **The recency knob is out of scope by construction.**
+  The corpus is written in a single pass, so `_recency_factor` in
+  `src/bettermemory/search.py` (`src/bettermemory/search.py:1255-1261`)
+  — the one ranking knob live by default, applied in three scorers and
+  configured by `recency_boost_half_life_days` in
+  `src/bettermemory/config.py` (`src/bettermemory/config.py:352`) —
+  sees ages that differ by microseconds across the whole store. Every
+  published number therefore describes ranking with that factor held
+  flat. (ii) **The corpus cannot exercise `auto_scope`.** `build_store`
+  (`bench/retrieval/run.py:213-221`) writes every memory with no
+  `Origin`, and `should_include_for_caller`
+  (`src/bettermemory/origin.py:449-472`) treats a null memory origin as
+  global, so every published recall figure describes a store where
+  scope filtering structurally cannot bite. Landing site is that
+  README's existing list.
 - **`episode_search(ids=…)` has no by-filename fast path, and the win is
   unmeasured.** The refusal is written into `handlers/episode_search.py`
   with its reasoning, and the validator to mirror already exists in
@@ -149,6 +204,65 @@ enough to earn its own entry above.
 
 ## Not planned
 
+- **Flipping `_COMMIT_DRIFT_ESCALATES` to `False`.** The switch's own
+  pre-registered condition — recorded in a source comment in
+  `verify.py`, citing an "upgrade plan item B2b" that exists nowhere in
+  this repository — fired on 2026-07-31, and the reading is a
+  retraction rather than a flip. The trigger is
+  `pooled.file_level_incumbent.ALL.alerts_per_catch` = 3.4 ≥ 1.5 on the
+  30-repository corpus; that is the column the gate meant, because it is
+  scored on `_MODES[0]` rows where the calendar leg is stood down and
+  path drift fires zero times, so every one of its flags *is* the
+  escalating commit term. The same artifact's
+  `path_drift_anchored_relative_arm.ALL.alerts_per_catch` = 1.0 reads
+  "stays True" and is not the same term — it grades the path leg.
+  A dry run with the switch monkeypatched off, over the pinned 60-day
+  window, measures the consequence: every drift arm goes 96.74% → 0.00%
+  flagged and J 0.0339 → 0.000, which is exactly `never_flag` — the
+  mirror image of the `always_flag` constant function 3.30.0 fixed and
+  postmortemed — while `shipped_default` stays bit-identical, because
+  the demotion branch reads `commit_drift_count` directly and bypasses
+  the switch. The gate's premise is falsified with it: the anchored path
+  leg it assumed would substitute reads `flag_rate` 0.0073 at
+  `unflagged_stale_rate` 0.968. Rejected alternative, since it is the
+  obvious one: flip anyway and let the path leg carry escalation — that
+  is the constant function `bench/rot` exists to catch, with the sign
+  reversed. Reopening needs a replacement measured first, which is
+  "Claims-at-write" above. Write-up in
+  [bench/rot/README.md](../bench/rot/README.md); artifact
+  `bench/rot/results/escalation-off-60d-2026-07-31.json`.
+- **A per-memory mutation index for the relevance-label widening
+  program.** The `write`/`update` event stream plumbed through both
+  widening lanes, which is the only implementable form of the surviving
+  candidate — `ThresholdRule.check` is a pure per-turn predicate with no
+  access to event history, so the exclusion cannot be a registry entry
+  the way `w2` was. The candidate does not earn the build — and it
+  cleared the registered gate to get here, which the refusal has to own:
+  15/21 = 0.714 meets ≥~70% on the point estimate, and what declines it
+  is a 95% Wilson floor of 0.500 on n = 21, from one labeler, one store
+  and one window, added after the labeling rather than registered before
+  it. Rejected alternatives: shipping the flip on the charitable cut
+  (the strict cut reads 0.381 on those same 21); scheduling a fourth
+  labeling pass (pass #3 closed further passes on w2, and a pass on a
+  rule that does not exist yet measures nothing); and arguing from
+  interval overlap against the
+  dropped w2, which is meaningless when the two rates share a
+  numerator. Reopening means pre-registering n ≥ ~80 promotions first.
+- **Branch coverage as the answer to the "a guard that cannot fail"
+  class.** Rejected as the remedy, not as a tool. Branch coverage
+  records arc traversal, not semantic correctness: a branch that is
+  fully exercised and wrong is invisible to it by construction, because
+  the arc was taken. That is the shape of both instances the class is
+  named for — the
+  [2026-07-26 constant-function verdict](incidents/2026-07-26-staleness-verdict-constant-function.md),
+  where the flagging branch ran on every input and could therefore
+  neither be wrong nor right, and the
+  [2026-07-25 doctor false green](incidents/2026-07-25-doctor-false-green-on-importable-extra.md).
+  Turn it on for its own reasons — dead paths, untested error legs — or
+  not at all; what it cannot do is close this class, and adopting it as
+  the answer would retire the class while leaving it open. No coverage
+  figure is quoted here on purpose: line coverage on that defect was
+  never measured, and the argument does not need it.
 - **Managed cloud SKU.** Local-first is the design, not a missing
   feature.
 - **Team-shared multi-user store / RBAC.** `sync` handles one user on

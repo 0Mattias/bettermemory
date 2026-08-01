@@ -3775,15 +3775,23 @@ def test_report_to_dict_carries_a_populated_claim_anchored_missing() -> None:
 
 
 # ---------------------------------------------------------------------------
-# B2(b) preparation — the commit leg's ESCALATING term, isolated
+# The commit leg's ESCALATING term, isolated — gate fired, gate retracted
 # ---------------------------------------------------------------------------
 #
-# The upgrade plan's item B2(b) is a MEASUREMENT decision, not a taste
-# one: after the provenance split and the anchored-relative citation arm,
-# `bench/rot`'s new arms get re-run, and only if pooled alerts-per-catch
-# is still >= 1.5 does the commit leg come out of the escalation
-# disjunction. These tests pin CURRENT behaviour (the leg escalates) and,
-# separately, pin that flipping the switch does exactly one thing.
+# The condition governing this term was a pre-registration, not a taste
+# call: after the provenance split and the anchored-relative citation
+# arm, `bench/rot`'s new arms get re-run, and only if pooled
+# alerts-per-catch is still >= 1.5 does the commit leg come out of the
+# escalation disjunction. Both preconditions shipped, so the condition
+# went live and had to be graded. The re-run happened on 2026-07-31 and
+# pooled alerts-per-catch read 3.4, over the line — and the leg still
+# did NOT come out, because the dry run recorded in
+# `bench/rot/results/escalation-off-60d-2026-07-31.json` scores the
+# subtraction itself as `never_flag`. The gate was retracted rather than
+# honoured; the write-up is in `bench/rot/README.md` and the standing
+# decision in `docs/ROADMAP.md`. So these tests pin SHIPPED behaviour
+# (the leg escalates) and, separately, pin that flipping the switch does
+# exactly one thing.
 #
 # The second half is the one with teeth. `stale` + a measured `0` reading
 # `fresh` is the 58a4fa4 fix; removing `commit_drift_count` from the
@@ -3793,9 +3801,24 @@ def test_report_to_dict_carries_a_populated_claim_anchored_missing() -> None:
 
 
 def test_commit_leg_escalates_today() -> None:
-    """Current behaviour, pinned before the measurement moves it. If this
-    starts failing without `_COMMIT_DRIFT_ESCALATES` having been flipped
-    deliberately, the disjunction lost a term by accident."""
+    """Shipped behaviour, and the measurement that could have moved it
+    has now run and did not.
+
+    The B2(b) condition fired on 2026-07-31 — pooled alerts-per-catch for
+    the escalating tier is 3.4, over the 1.5 line — and the gate was
+    RETRACTED rather than honoured, because the flip turns out to score
+    `never_flag` on `bench/rot`'s pinned window: every drift arm goes
+    96.74% flagged to 0.00%, J 0.0339 to 0.000. That dry run is the
+    bench artifact `bench/rot/results/escalation-off-60d-2026-07-31.json`,
+    not the test below, which pins the switch's single in-process effect.
+    So this assertion is no longer provisional. If it starts failing without
+    `_COMMIT_DRIFT_ESCALATES` having been flipped deliberately, the
+    disjunction lost a term by accident; if it fails *because* someone
+    flipped it, the number that justifies the flip has to be a measured
+    replacement signal, not the 3.4 — see the retraction in
+    `bench/rot/README.md` and the `Not planned` entry in
+    `docs/ROADMAP.md`.
+    """
     from bettermemory.verify import _COMMIT_DRIFT_ESCALATES
 
     assert _COMMIT_DRIFT_ESCALATES is True
@@ -3808,8 +3831,10 @@ def test_commit_leg_escalates_today() -> None:
 def test_disabling_commit_escalation_leaves_the_demotion_intact(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The B2(b) dry run: flip the switch and check that exactly the
-    escalating term goes quiet.
+    """The in-process half of the B2(b) dry run: flip the switch and
+    check that exactly the escalating term goes quiet. (The measured
+    half — what that silence costs on real claims — is the bench
+    artifact `bench/rot/results/escalation-off-60d-2026-07-31.json`.)
 
     Every other cell of the ladder must be untouched — above all the
     stale-demotion arm, which reads `commit_drift_count` directly rather
@@ -3858,6 +3883,52 @@ def test_disabling_commit_escalation_leaves_the_demotion_intact(
         )
         == "spot_check_recommended"
     )
+
+
+def test_the_retraction_artifact_resolves_from_every_citation() -> None:
+    """The retraction's evidence is cited BY PATH from three files, and
+    nothing else makes those paths resolve.
+
+    The whole argument for keeping `_COMMIT_DRIFT_ESCALATES` at `True`
+    against its own fired pre-registration is one dry run, and the only
+    place its numbers live is that artifact. Three documents point at it
+    by filename; a citation that does not resolve turns the retraction
+    back into an assertion, which is the state it exists to leave. The
+    prose cannot notice a rename, a stray `git clean`, or a byte off in
+    the path — this can, so the check is here rather than in a sentence
+    telling readers to be careful.
+
+    Both halves are asserted: the exact string still appears in the file
+    that cites it, and the file it names is on disk. The first half is
+    why this cannot pass by accident after a rename — moving the
+    artifact means updating three citations and this list together.
+    """
+    root = Path(__file__).resolve().parents[1]
+    artifact = "escalation-off-60d-2026-07-31.json"
+    # (citing file, the path exactly as written there, what it resolves
+    # against — the README's citation is relative to its own directory,
+    # the other two are repo-root anchored).
+    citations = [
+        ("src/bettermemory/verify.py", f"bench/rot/results/{artifact}", root),
+        ("docs/ROADMAP.md", f"bench/rot/results/{artifact}", root),
+        ("bench/rot/README.md", f"results/{artifact}", root / "bench" / "rot"),
+    ]
+
+    checked = 0
+    for source, cited, base in citations:
+        text = (root / source).read_text(encoding="utf-8")
+        assert cited in text, (
+            f"{source} no longer cites {cited!r} verbatim — either the "
+            "citation was reworded and this guard went blind, or the "
+            "retraction lost its evidence pointer"
+        )
+        assert (base / cited).is_file(), (
+            f"{source} cites {cited!r}, which does not resolve. The "
+            "commit-escalation retraction rests entirely on that dry run."
+        )
+        checked += 1
+
+    assert checked == 3, f"expected three live citations, checked {checked}"
 
 
 def test_the_commit_escalation_switch_has_exactly_one_reader() -> None:

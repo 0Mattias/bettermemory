@@ -91,8 +91,16 @@ Reference classifiers on the same claims:
 Both `shipped_default` rows are real measurements of this same 675-claim
 window; the first is what the product scored before the constant-function
 defect was fixed and is kept so the fix is auditable rather than
-retroactive. The committed JSON under `results/` carries the 3.30.0
-numbers.
+retroactive. The committed `results/bettermemory-*d-*.json` artifacts —
+the published-run shape, one per window — carry the 3.30.0 numbers.
+Read the glob, not the directory: `results/` also holds
+`escalation-off-60d-2026-07-31.json`, a counterfactual over this same
+675-claim window whose *drift* arms were produced with
+`_COMMIT_DRIFT_ESCALATES` monkeypatched off and describe no build that
+ever shipped. Its `shipped_default` arm *does* carry the 3.30.0 numbers,
+bit-identically, because the demotion branch never reads that switch —
+the seam the retraction section below turns on. The artifact says as
+much in its own `counterfactual` prefix block.
 
 ## The claim-level detector reaches 1.000, and that is not a win
 
@@ -419,6 +427,74 @@ above the 72% it predicted to undercut. Only the density clause carries a
 That is a defect in how P6 was written, recorded here rather than quietly
 enjoyed, and the graded-hit stands because changing a threshold after
 seeing the number is the exact move this document exists to prevent.
+
+### The commit-escalation gate fired, 2026-07-31, and the reading is a retraction
+
+One more pre-registration lived outside `PREREGISTRATION.md`, in a source
+comment above `_COMMIT_DRIFT_ESCALATES` in `verify.py`: once the path-drift
+provenance split and the anchored-relative arm shipped, re-run these arms
+pooled, and **if alerts-per-catch for the escalating tier is still ≥ 1.5,
+the commit leg is carrying residual noise and the switch flips to False.**
+Both preconditions shipped; the condition is live and is graded here.
+
+**Which number it means, since this artifact carries two that read opposite
+ways.** The trigger is `pooled.file_level_incumbent.ALL.alerts_per_catch` =
+**3.4** in `results/multirepo-anchored-2026-07-30.json` — over the line.
+The other candidate, `path_drift_anchored_relative_arm.ALL.alerts_per_catch`
+= 1.0, is under the line and would read "stays True", but it grades the
+**path** leg, whose flags are not the commit term at all.
+`file_level_incumbent` is scored on `_MODES[0]` rows, where the calendar leg
+is stood down and `path_drift` fires exactly zero times, so **100% of its
+flags are the escalating commit term.** It is the only column here that
+measures what the flip would remove.
+
+So the condition fired. **The flip is refused anyway, and the gate is
+retracted** — on a measurement, not on reluctance. The switch was
+monkeypatched to `False` and this harness re-run over the pinned 60-day
+window of `results/bettermemory-60d-2026-07-26.json` (t0 `053ab9de`, t1
+`388b5be7`). The control run — same driver, switch untouched — reproduces
+that published artifact bit for bit on all three arms it carries, on
+`detectors` and on `baselines`, so the instrument is the published one.
+Artifact: `results/escalation-off-60d-2026-07-31.json`.
+
+| arm | flag rate | J | unflagged stale | alerts/catch |
+|---|---|---|---|---|
+| any drift arm, switch on | 96.74% | 0.034 | 0.0% | 25.1 |
+| any drift arm, switch off | **0.00%** | **0.000** | **100%** | — |
+| `shipped_default`, either way | 96.74% | 0.034 | 0.0% | 25.1 |
+
+Every decision column in the off row equals the `never_flag` baseline. That
+is the **mirror image of the `always_flag` constant function** 3.30.0 fixed
+and postmortemed — the same failure with the sign reversed, and the reason
+the flip is not a tuning step. `shipped_default` is bit-identical between
+the runs because the demotion branch reads `commit_drift_count` directly and
+bypasses the switch, which is exactly the separation `58a4fa4` built and
+also the reason the flip would look harmless from the shipped arm alone.
+
+**The gate's premise is falsified on disk.** It assumed the anchored path
+leg would substitute for what the commit leg does. That leg reaches
+`flag_rate` 0.0073 at `unflagged_stale_rate` 0.968 pooled — precise where it
+fires and silent nearly everywhere (the section above says so in its own
+words: "not a detector that finds most rot"). Subtracting the commit term
+does not trade noise for a cleaner signal; it removes the only escalating
+term the verdict has. J = 0.2875 at 3.4 alerts per catch, against
+`always_flag`'s J = 0.000 at 4.4, is a **weak** signal — and nothing is what
+the flip measures.
+
+What the gate got right is that 3.4 is too expensive to keep forever. The
+answer is a **replacement measured first**, not a subtraction: the
+claim-level `weak` tier costs 1.1 alerts per catch at 94% precision on the
+same corpus, and needs write-time claims before it can ship. That is the
+`docs/ROADMAP.md` ordering, not a benchmark result.
+
+Two things this retraction does not claim. It is one window of one
+repository, chosen because the switch is what it grades and that window is
+the pinned one; the pooled 30-repository numbers above are what carry the
+premise half. And the off-run artifact deliberately sits outside the
+`bettermemory-*d-*.json` glob that `tests/test_bench_rot.py` uses to assert
+arm convergence on every published run — it separates those arms by
+construction, and loosening a guard to admit a counterfactual would cost
+more than the artifact is worth.
 
 ## Caveats, including one that softens the headline
 

@@ -2441,19 +2441,65 @@ _VERDICT_RAISE_STATUSES: frozenset[str] = frozenset({"never", "stale"})
 # switch precisely so that a subtraction here cannot resurrect it. The
 # None-vs-0 distinction is untouched in both directions.
 #
-# THE MEASURED CONDITION FOR FLIPPING IT (upgrade plan item B2b, and it
-# is a measurement, not a judgement call): after the path-drift
-# provenance split and the anchored-relative citation arm, re-run
-# `bench/rot`'s new arms pooled. If alerts-per-catch for the escalating
-# tier is still >= 1.5, the commit leg is carrying the residual noise
-# and this flips to False. If it is < 1.5, the recut already paid and
-# this stays True. Either outcome is a result; commit the numbers.
+# THE MEASURED CONDITION FOR FLIPPING IT FIRED ON 2026-07-31, AND THE
+# GATE IS RETRACTED RATHER THAN HONOURED. The condition stood here as a
+# pre-registration — "after the path-drift provenance split and the
+# anchored-relative citation arm, re-run `bench/rot`'s new arms pooled;
+# if alerts-per-catch for the escalating tier is still >= 1.5, this
+# flips to False" — attributed to an "upgrade plan item B2b" that exists
+# nowhere in this repository. Both preconditions have since shipped, so
+# the condition was live and had to be graded.
 #
-# Flipping it is NOT complete on its own: `DESC_MEMORY_SEARCH` /
-# `DESC_MEMORY_SHOW` describe `staleness_verdict` as folding commit
-# drift in, and a verdict that no longer does must say so in the same
-# change. A model told to read a signal that cannot fire is worse than
-# no signal.
+# WHICH NUMBER IT MEANT, because the artifact carries two and they read
+# opposite ways. The trigger is
+# `pooled.file_level_incumbent.ALL.alerts_per_catch` = 3.4 in
+# `bench/rot/results/multirepo-anchored-2026-07-30.json`, over the 1.5
+# line. The other candidate,
+# `path_drift_anchored_relative_arm.ALL.alerts_per_catch` = 1.0, is
+# under the line and would mean "stays True" — but it grades the PATH
+# leg, whose flags are not this switch's term at all.
+# `file_level_incumbent` is scored on `_MODES[0]` rows, where the
+# calendar leg is stood down and path drift fires exactly zero times, so
+# 100% of its flags ARE the escalating commit term. It is the only
+# column in that artifact that measures what flipping this constant
+# would remove.
+#
+# WHAT THE FLIP WOULD DO was then measured rather than argued: this
+# constant was monkeypatched to False and `bench/rot/run.py` re-run over
+# the pinned 60-day window (t0 053ab9de, t1 388b5be7) that produced
+# `results/bettermemory-60d-2026-07-26.json`. The control run, switch
+# untouched, reproduces that published artifact bit for bit on all three
+# arms, its detectors and its baselines, so the instrument is the one
+# that was published. With the switch off, every drift arm goes from
+# 96.74% flagged / J = 0.0339 to 0.00% flagged / J = 0.000 at a 100%
+# unflagged-stale rate — decision columns identical to the `never_flag`
+# baseline, which is the mirror image of the `always_flag` constant
+# function 3.30.0 fixed and postmortemed. `shipped_default` is
+# bit-identical between the two runs, because the demotion below reads
+# `commit_drift_count` directly and never consults this switch.
+# Artifact: `bench/rot/results/escalation-off-60d-2026-07-31.json`.
+#
+# THE PREMISE IS FALSIFIED ON DISK. The gate assumed the anchored path
+# leg would substitute for what the commit leg was doing; on the
+# 30-repository corpus that leg reaches `flag_rate` 0.0073 at
+# `unflagged_stale_rate` 0.968 — precise where it fires and silent
+# nearly everywhere. Subtracting the commit term does not trade noise
+# for a cleaner signal, it removes the only escalating term the verdict
+# has and leaves a constant. 3.4 alerts per catch at J = 0.2875, against
+# `always_flag`'s J = 0.000 at 4.4, is a weak signal; it is not nothing,
+# and nothing is what the flip measures.
+#
+# So the switch stays True and the gate is closed. Reopening it needs a
+# REPLACEMENT measured first, not a subtraction — the claim-level `weak`
+# tier costs 1.1 alerts per catch at 94% precision on the same corpus,
+# which is why "Claims-at-write" sits where it does in
+# `docs/ROADMAP.md`. Write-up: `bench/rot/README.md`.
+#
+# One constraint survives for whoever reopens it: a flip is NOT complete
+# on its own. `DESC_MEMORY_SEARCH` / `DESC_MEMORY_SHOW` describe
+# `staleness_verdict` as folding commit drift in, and a verdict that no
+# longer does must say so in the same change. A model told to read a
+# signal that cannot fire is worse than no signal.
 _COMMIT_DRIFT_ESCALATES: bool = True
 
 
@@ -2461,10 +2507,16 @@ def _commit_leg_escalates(commit_drift_count: int | None) -> bool:
     """Does the commit leg get to RAISE the verdict on this input?
 
     Split out of the `drifty` disjunction so the commit term has one
-    named home instead of being half of a boolean expression: the B2b
-    decision is "subtract this leg from escalation", and a subtraction
-    that has to be surgically extracted from an `or` is how the demotion
-    branch would get taken out with it.
+    named home instead of being half of a boolean expression: the
+    decision the switch above records is "subtract this leg from
+    escalation", and a subtraction that has to be surgically extracted
+    from an `or` is how the demotion branch would get taken out with it.
+    That subtraction was measured and retracted on 2026-07-31 — it
+    scores `never_flag` — so it is the SWITCH, not this function, that
+    reads `True` in every shipped build: the early return below is dead
+    code there, and what this answers stays per-input. The branch is
+    kept because the retraction is a result about one measurement, not a
+    proof that no successor signal could ever want the seam.
 
     `None` never escalates and never has: it means the leg could not ask
     (no origin repo, caller elsewhere, git unreachable, no anchor landing
