@@ -1455,8 +1455,8 @@ def _session_start_hook_config_candidates(cwd: Path | None = None) -> list[Path]
     return found
 
 
-def _declares_session_start_hook(data: Any) -> bool:
-    """Does this parsed hook/settings JSON bind our SessionStart command?
+def _session_start_hook_command(data: Any) -> str | None:
+    """The bound SessionStart command string, or None when none is bound.
 
     One structural reader for both file families because the shape is
     identical — Claude Code's settings files and a plugin's `hooks.json`
@@ -1464,15 +1464,19 @@ def _declares_session_start_hook(data: Any) -> bool:
     "command": ...}]}]}}`. Everything is defensively type-checked: these
     are FOREIGN files, frequently hand-edited, and a check that raises on
     someone else's unexpected shape is worse than no check.
+
+    Returns the command rather than a bool because "a hook is bound" and
+    "that hook can run" are different questions, and only the string can
+    answer the second — see `_session_start_hook_broken_path`.
     """
     if not isinstance(data, dict):
-        return False
+        return None
     hooks = data.get("hooks")
     if not isinstance(hooks, dict):
-        return False
+        return None
     entries = hooks.get("SessionStart")
     if not isinstance(entries, list):
-        return False
+        return None
     for entry in entries:
         if not isinstance(entry, dict):
             continue
@@ -1484,8 +1488,68 @@ def _declares_session_start_hook(data: Any) -> bool:
                 continue
             command = hook.get("command")
             if isinstance(command, str) and _SESSION_START_HOOK_MARKER in command:
-                return True
-    return False
+                return command
+    return None
+
+
+def _declares_session_start_hook(data: Any) -> bool:
+    """Back-compat predicate over `_session_start_hook_command`."""
+    return _session_start_hook_command(data) is not None
+
+
+def _session_start_hook_broken_path(command: str) -> str | None:
+    """The explicit binary path this command names, when it cannot run.
+
+    ``None`` means "no complaint" — either the command names the binary by
+    an explicit path that exists and is executable, or the form is one this
+    cannot judge.
+
+    **Judges exactly one shape on purpose: an absolute or relative PATH.**
+    A hook whose command is `uvx bettermemory session-start` names a
+    launcher that fetches the tool on demand, so `bettermemory` not being
+    on `$PATH` proves nothing; `env VAR=1 …`, `sh -c "…"` and
+    `${CLAUDE_PLUGIN_ROOT}/…` are all likewise unjudgeable from a string.
+    Returning ``None`` for every one of those is the whole design: this
+    check's output is a green light on a hook that RECORDS NOTHING, so a
+    false alarm here is expensive and a missed alarm merely restores
+    today's behaviour.
+
+    The shape it does judge is the one that actually rots. An absolute
+    path is what `bettermemory init` writes and what a hand-edited config
+    carries, and it goes stale exactly the way the MCP client's binary
+    path does when an environment is rebuilt or moved — silently, because
+    the trailing `|| true` every documented form carries turns a missing
+    binary into a successful no-op.
+
+    Locates the executable as the token BEFORE `session-start` rather than
+    the first token of the string: `cd /x && …`, `env …` and `uvx …` all
+    put something else first, and reading that as the binary is how a
+    check invents failures that aren't there.
+    """
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        # Unbalanced quotes in a foreign, hand-edited file. Not our
+        # business to adjudicate.
+        return None
+    try:
+        index = tokens.index("session-start")
+    except ValueError:
+        return None
+    if index == 0:
+        return None
+    candidate = tokens[index - 1]
+    # Only an explicit path is judgeable. A bare name may be resolved by a
+    # launcher that precedes it, or fetched on demand.
+    if os.sep not in candidate and (os.altsep or os.sep) not in candidate:
+        return None
+    # An unexpanded placeholder or variable is a template, not a path.
+    if "$" in candidate or "%" in candidate:
+        return None
+    resolved = Path(candidate).expanduser()
+    if resolved.is_file() and os.access(resolved, os.X_OK):
+        return None
+    return candidate
 
 
 def _check_session_start_hook_wired(
@@ -1547,7 +1611,37 @@ def _check_session_start_hook_wired(
             unreadable.append(f"{path}: {exc}")
             continue
         readable += 1
-        if _declares_session_start_hook(data):
+        command = _session_start_hook_command(data)
+        if command is not None:
+            broken = _session_start_hook_broken_path(command)
+            if broken is not None:
+                return Diagnosis(
+                    name="session_start_hook",
+                    status="warn",
+                    message=(
+                        f"SessionStart hint hook is wired ({path}) but the "
+                        f"binary it names does not exist or is not "
+                        f"executable: {broken}. Every documented form of "
+                        f"this hook ends in `|| true`, so a missing binary "
+                        f"is a successful no-op — the hook is configured, "
+                        f"contributes nothing, and says nothing."
+                    ),
+                    fix_hint=(
+                        "Point the hook at a binary that exists — "
+                        "`bettermemory init --client claude-code` refreshes "
+                        "the MCP command path but NOT hook commands, so this "
+                        "one is edited by hand. `command -v bettermemory` "
+                        "gives a current path; `uvx bettermemory "
+                        "session-start || true` avoids pinning one at all."
+                    ),
+                    details={
+                        "wired_in": str(path),
+                        "command": command,
+                        "unrunnable_path": broken,
+                        "scanned": len(paths),
+                        "active_memories": active,
+                    },
+                )
             return Diagnosis(
                 name="session_start_hook",
                 status="ok",
@@ -1558,6 +1652,7 @@ def _check_session_start_hook_wired(
                 ),
                 details={
                     "wired_in": str(path),
+                    "command": command,
                     "scanned": len(paths),
                     "active_memories": active,
                 },

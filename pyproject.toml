@@ -241,10 +241,16 @@ ignore_missing_imports = true
 # safety win — the same reason the mypy config loosens `tests.*`.
 include = ["src/bettermemory"]
 extraPaths = ["src"]
-# Type-check against the uv-managed dev venv (.venv) that both `uv run
-# pyright` and CI's `uv sync --extra dev --extra ui` populate. (The repo
-# also keeps a separate `venv/` for the MCP server runtime — that is NOT
-# the type-check environment.)
+# Type-check against the uv-managed dev venv at `.venv`, which CI's
+# `uv sync --extra dev --extra ui` populates in-repo.
+#
+# On a checkout inside a cloud-synced folder the venv lives OUTSIDE the
+# repo (see `.envrc`), so there is no in-repo `.venv` for pyright to find
+# and every import resolves as missing. The fix there is a `.venv`
+# symlink pointing at it — `.gitignore` matches `.venv` without a
+# trailing slash precisely so the symlink form is ignored too and can
+# never be committed as a machine-specific path. A symlink also keeps the
+# synced folder holding 0 bytes rather than the environment itself.
 venvPath = "."
 venv = ".venv"
 pythonVersion = "3.11"

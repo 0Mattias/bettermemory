@@ -5947,3 +5947,147 @@ def test_session_start_hook_accepts_the_shipped_plugin_manifest(tmp_path: Path) 
 
     assert diag.status == "ok", diag.message
     assert diag.details["wired_in"] == str(manifest)
+
+
+# ---------------------------------------------------------------------------
+# session_start_hook — is the wired command one that can actually RUN?
+#
+# "Bound" and "runnable" are different claims, and this check used to make
+# the first while being read as the second. A hook command is an absolute
+# path in every form `init` writes or a user hand-edits, and it rots the
+# same way the MCP client's binary path does — an env rebuilt, moved, or
+# (as on 2026-08-01) deleted out from under it. The trailing `|| true`
+# that every documented form carries turns the resulting missing binary
+# into a SUCCESSFUL no-op, so nothing anywhere reports it: the hook is
+# configured, contributes nothing, and is silent about it. That is the
+# green-over-the-wrong-input shape docs/incidents/ exists for.
+#
+# The counterweight tests matter as much as the catching one. This check's
+# whole value is a green light on a hook that records nothing, so a false
+# alarm is expensive; every form whose runnability cannot be read off the
+# string must stay quiet.
+# ---------------------------------------------------------------------------
+
+
+def _hook_settings_with_command(path: Path, command: str) -> Path:
+    body = {
+        "hooks": {
+            "SessionStart": [
+                {"hooks": [{"type": "command", "command": command, "timeout": 20}]}
+            ]
+        }
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(body), encoding="utf-8")
+    return path
+
+
+def test_session_start_hook_warns_when_its_binary_path_is_stale(
+    tmp_path: Path,
+) -> None:
+    """The assertion whose absence made the check a wiring test.
+
+    Uses an absolute path that does not exist — the state a hook is left
+    in when the venv it names is rebuilt elsewhere or removed.
+    """
+    root = _store_with_one_memory(tmp_path)
+    gone = tmp_path / "deleted-venv" / "bin" / "bettermemory"
+    settings = _hook_settings_with_command(
+        tmp_path / "cfg" / "settings.json", f"{gone} session-start || true"
+    )
+
+    diag = _check_session_start_hook_wired(root, [settings])
+
+    assert diag.status == "warn", diag.message
+    assert diag.details["unrunnable_path"] == str(gone)
+    # The fix must say to repoint the hook, and must NOT send the user to
+    # `init`, which refreshes the MCP command and never touches hooks.
+    assert diag.fix_hint is not None
+    assert "NOT hook commands" in diag.fix_hint
+
+
+def test_session_start_hook_warns_when_the_path_is_not_executable(
+    tmp_path: Path,
+) -> None:
+    """Present-but-not-executable is as dead as absent.
+
+    A file left without the exec bit — a partial copy, a restored backup —
+    fails the same way and just as silently.
+    """
+    root = _store_with_one_memory(tmp_path)
+    binary = tmp_path / "bin" / "bettermemory"
+    binary.parent.mkdir(parents=True, exist_ok=True)
+    binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    binary.chmod(0o644)
+    settings = _hook_settings_with_command(
+        tmp_path / "cfg" / "settings.json", f"{binary} session-start || true"
+    )
+
+    diag = _check_session_start_hook_wired(root, [settings])
+
+    assert diag.status == "warn", diag.message
+    assert diag.details["unrunnable_path"] == str(binary)
+
+
+def test_session_start_hook_ok_when_its_binary_path_resolves(tmp_path: Path) -> None:
+    """Anti-regression: an executable path must stay green.
+
+    Without this, returning a constant "broken" would satisfy the two
+    tests above — the shape this project has published a postmortem about.
+    """
+    root = _store_with_one_memory(tmp_path)
+    binary = tmp_path / "bin" / "bettermemory"
+    binary.parent.mkdir(parents=True, exist_ok=True)
+    binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    binary.chmod(0o755)
+    settings = _hook_settings_with_command(
+        tmp_path / "cfg" / "settings.json", f"{binary} session-start || true"
+    )
+
+    diag = _check_session_start_hook_wired(root, [settings])
+
+    assert diag.status == "ok", diag.message
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "uvx bettermemory session-start || true",
+        "bettermemory session-start || true",
+        "cd /tmp && bettermemory session-start",
+        "env BM=1 bettermemory session-start",
+        "${CLAUDE_PLUGIN_ROOT}/bin/bettermemory session-start",
+        'sh -c "bettermemory session-start"',
+        '"unbalanced bettermemory session-start',
+    ],
+    ids=[
+        "uvx-launcher",
+        "bare-name",
+        "cd-prefix",
+        "env-prefix",
+        "unexpanded-placeholder",
+        "sh-c-wrapper",
+        "unbalanced-quotes",
+    ],
+)
+def test_session_start_hook_stays_quiet_on_unjudgeable_commands(
+    tmp_path: Path, command: str
+) -> None:
+    """None of these can be judged from the string, so none may warn.
+
+    `uvx` fetches the tool on demand, so `bettermemory` missing from
+    `$PATH` proves nothing. `cd`/`env`/`sh -c` put something other than
+    the binary first — reading THAT as the executable is how a check
+    invents failures. A `${...}` placeholder is a template. Unbalanced
+    quotes are a foreign file's problem, not this check's.
+
+    Note `bare-name` is here rather than under the resolving case: a bare
+    name may be on `$PATH` on the dev's machine and not on CI's, and a
+    check that flips with the runner is worse than one that abstains.
+    """
+    root = _store_with_one_memory(tmp_path)
+    settings = _hook_settings_with_command(tmp_path / "cfg" / "settings.json", command)
+
+    diag = _check_session_start_hook_wired(root, [settings])
+
+    assert diag.status == "ok", diag.message

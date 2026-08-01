@@ -9,6 +9,37 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+### Fixed — `session_start_hook` certified a hook that could not run
+
+The check reported `ok` on the strength of a `SessionStart` command string
+containing `bettermemory session-start`. It never asked whether that command
+could execute — so a hook naming a binary that no longer exists read as fully
+wired.
+
+That gap is not theoretical and it is not recoverable by the user noticing. Hook
+commands are absolute paths in every form `init` writes or a hand-edit produces,
+and they go stale exactly the way the MCP client's binary path does when an
+environment is rebuilt, moved, or deleted. The trailing `|| true` that every
+documented form carries then turns the missing binary into a *successful* no-op.
+And unlike the Stop hook, this one records nothing by design, so there is no
+telemetry to notice its absence: the hook is configured, contributes nothing,
+and says nothing. `doctor`'s green light was the only observable, and it was
+green for the wrong reason.
+
+The check now warns when the command names its binary by an explicit path that
+does not exist or is not executable, naming the path and pointing at the fix
+(`init` refreshes the MCP command and never touches hook commands, so this one
+is edited by hand).
+
+It judges that one shape deliberately. `uvx bettermemory session-start` names a
+launcher that fetches the tool on demand; `env …`, `cd … &&`, `sh -c "…"` and
+`${CLAUDE_PLUGIN_ROOT}/…` cannot be adjudicated from a string at all. All of
+them stay quiet, and the executable is located as the token before
+`session-start` rather than the first token of the command — reading `cd` or
+`env` as the binary is how a check invents failures that aren't there. On a
+check whose value is a green light, a false alarm is expensive and a missed
+alarm merely restores the previous behaviour.
+
 ### Changed — inside a cloud-synced folder, `.envrc` puts the venv outside it
 
 Renaming uv's `.venv` to `venv` addressed macOS hiding dot-directories in
