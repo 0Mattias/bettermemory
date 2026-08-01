@@ -54,10 +54,13 @@ fast each claim shape decays:
   allowlist entries to cover the entire release history is a price worth
   paying for full-history coverage.
 * ``test-count`` and ``line-ref`` claims are checked in **living
-  documents only** (README.md, docs/*.md). Test counts and line numbers
-  rot mechanically with every refactor — pinning them against frozen
-  release notes would generate permanent allowlist churn and teach
-  everyone to ignore this file.
+  documents only** — every tracked ``*.md`` except the ones named in
+  ``_MD_CORPUS_EXCLUSIONS``, which today means everything but the
+  changelog. Test counts and line numbers rot mechanically with every
+  refactor, so pinning them against frozen release notes would generate
+  permanent allowlist churn and teach everyone to ignore this file.
+  The corpus is derived from the tree rather than listed; a list is what
+  left thirty tracked documents unchecked, and it did so silently.
 * ``file-count`` claims are checked everywhere **except** the changelog,
   for the same reason: the count is a property of the tree as it stands
   now, so a frozen release note that was right when written would drift
@@ -142,7 +145,11 @@ What is deliberately NOT checked
   ``_NONRESOLVING_WINDOW`` characters, either side, both citation
   shapes — is quoted evidence, not an assertion. The window bound is
   what keeps this from becoming a paragraph-wide pass; the self-tests
-  pin both directions.
+  pin both directions. The same exemption covers a bare ``path`` token,
+  which is what a document reasoning about *another* repository needs:
+  ``src/`` names no particular tree, so a path that is stale by design
+  can only be told apart from a rotted citation by the verdict beside
+  it.
 * **Citations a paragraph resolves against a named commit.** The mirror
   image of the previous bullet, for the citations an erratum quotes as
   *landing*: those carry no non-resolving verdict — the verdict is that
@@ -217,9 +224,11 @@ nothing, so those tests are load-bearing, not decorative.
 from __future__ import annotations
 
 import ast
+import io
 import os
 import re
 import subprocess
+import tokenize
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -608,15 +617,45 @@ _ALLOWLIST: dict[tuple[str, str, str], str] = {
 # --------------------------------------------------------------------------
 # Corpus
 # --------------------------------------------------------------------------
+_MD_CORPUS_EXCLUSIONS = frozenset(
+    {
+        # Scanned by `_prose_sources` on its own tier, never as a living
+        # document: it is a frozen historical record, so test-count and
+        # line-ref claims that were true when written must not be
+        # re-judged against HEAD. See the rot-rate section above.
+        _CHANGELOG,
+    }
+)
+
+
+@lru_cache(maxsize=None)
+def _living_doc_paths() -> tuple[str, ...]:
+    """Every tracked ``*.md`` this repo expects to describe current state.
+
+    Derived from the tree rather than listed, because the listed version
+    was wrong in the direction nobody notices: it was ``README.md`` plus a
+    ``docs/*.md`` glob, which left every incident postmortem, the
+    model-facing plugin skill, SECURITY.md, CONTRIBUTING.md and every
+    bench README outside the corpus. A fabricated claim in any of them
+    passed CI. The same tracked-ness discipline as ``_all_py_files``
+    applies, and for the same reason: markdown vendored under a
+    dependency tree is prose nobody here wrote.
+
+    Anything deliberately left out belongs in ``_MD_CORPUS_EXCLUSIONS``
+    with its reason inline; the corpus ratchet at the bottom of this file
+    fails on a tracked document that is in neither set.
+    """
+    tracked = _git_tracked_files("*.md")
+    rels = _walk_files(".md") if tracked is None else tracked
+    return tuple(rel for rel in rels if rel not in _MD_CORPUS_EXCLUSIONS)
+
+
 def _living_docs() -> list[tuple[str, str]]:
-    """README + docs/*.md — documents expected to describe current state."""
-    out: list[tuple[str, str]] = [
-        ("README.md", (_REPO_ROOT / "README.md").read_text(encoding="utf-8"))
+    """Tracked markdown, minus the exclusions — see ``_living_doc_paths``."""
+    return [
+        (rel, (_REPO_ROOT / rel).read_text(encoding="utf-8"))
+        for rel in _living_doc_paths()
     ]
-    for path in sorted(_REPO_ROOT.glob("docs/*.md")):
-        rel = path.relative_to(_REPO_ROOT).as_posix()
-        out.append((rel, path.read_text(encoding="utf-8")))
-    return out
 
 
 def _prose_sources() -> list[tuple[str, str]]:
@@ -680,11 +719,18 @@ _SKIP_DIR_NAMES = frozenset(
 )
 
 
-def _git_tracked_py_files() -> tuple[str, ...] | None:
-    """Tracked ``*.py`` paths, or ``None`` when this is not a git checkout."""
+@lru_cache(maxsize=None)
+def _git_tracked_files(pattern: str) -> tuple[str, ...] | None:
+    """Tracked paths matching ``pattern``, or ``None`` outside a checkout.
+
+    One git shell-out serves both corpora. The Python corpus had this
+    discipline from the start while the markdown corpus was a glob, which
+    is precisely how thirty tracked documents ended up unscanned; a second
+    routine would have been a second chance to diverge again.
+    """
     try:
         proc = subprocess.run(
-            ["git", "-C", str(_REPO_ROOT), "ls-files", "-z", "--", "*.py"],
+            ["git", "-C", str(_REPO_ROOT), "ls-files", "-z", "--", pattern],
             capture_output=True,
             check=False,
             timeout=60,
@@ -697,7 +743,55 @@ def _git_tracked_py_files() -> tuple[str, ...] | None:
     return tuple(sorted(rel for rel in rels if (_REPO_ROOT / rel).is_file()))
 
 
-def _walk_py_files() -> tuple[str, ...]:
+def _git_tracked_py_files() -> tuple[str, ...] | None:
+    """Tracked ``*.py`` paths, or ``None`` when this is not a git checkout."""
+    return _git_tracked_files("*.py")
+
+
+@lru_cache(maxsize=None)
+def _tracked_among(rels: tuple[str, ...]) -> frozenset[str] | None:
+    """Which of ``rels`` git tracks — asked as an explicit path list.
+
+    Deliberately a different question from ``_git_tracked_files``, which
+    asks for every tracked path matching a glob and then filters the
+    answer. The corpus ratchets need the difference. A ratchet whose
+    population is the same glob listing its corpus is *derived from*
+    computes the empty set for every input: it can only fail on a
+    narrowing applied after that listing, never on the listing's own
+    pattern, never on its filters, and never on git and the filesystem
+    disagreeing about what markdown this repo holds. Handing git a path
+    list it did not choose is what makes the answer independent of the
+    derivation under test.
+
+    Paths carry ``:(literal)`` pathspec magic so a filename holding a glob
+    character is matched as itself rather than as a pattern.
+    """
+    if not rels:
+        return frozenset()
+    try:
+        proc = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(_REPO_ROOT),
+                "ls-files",
+                "-z",
+                "--",
+                *(f":(literal){rel}" for rel in rels),
+            ],
+            capture_output=True,
+            check=False,
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError):  # pragma: no cover - no git
+        return None
+    if proc.returncode != 0:  # pragma: no cover - not a checkout
+        return None
+    return frozenset(rel for rel in proc.stdout.decode("utf-8").split("\0") if rel)
+
+
+@lru_cache(maxsize=None)
+def _walk_files(suffix: str) -> tuple[str, ...]:
     """Corpus fallback for a tree with no git metadata.
 
     Prunes as it descends rather than filtering afterwards. A directory
@@ -717,9 +811,14 @@ def _walk_py_files() -> tuple[str, ...]:
         out.extend(
             (here / name).relative_to(_REPO_ROOT).as_posix()
             for name in filenames
-            if name.endswith(".py")
+            if name.endswith(suffix)
         )
     return tuple(sorted(out))
+
+
+def _walk_py_files() -> tuple[str, ...]:
+    """The no-git fallback for the Python corpus."""
+    return _walk_files(".py")
 
 
 @lru_cache(maxsize=None)
@@ -818,11 +917,28 @@ def _is_placeholder(token: str) -> bool:
 
 
 def check_paths(source: str, text: str, line_offset: int = 0) -> list[Failure]:
-    """Anchored repo-relative path tokens must exist on disk."""
+    """Anchored repo-relative path tokens must exist on disk.
+
+    A token the surrounding prose marks as non-resolving is exempt, on the
+    same window-bounded terms as the line-ref rule. The corpus widening
+    surfaced the shape this covers: ``bench/rot`` reasons about *other*
+    repositories' trees, and its preregistration says a memory citing a
+    module under one of their ``src/`` directories is stale — a sentence
+    that is right precisely because the file is not here. An anchored
+    prefix cannot tell whose tree it names, so the verdict in the prose is
+    the only available signal.
+    """
     out: list[Failure] = []
     if source in _PLAN_DOCS:
         return out
+    # Offsets are recovered by search rather than by summing lengths,
+    # because `splitlines` also splits on `\r` and the Unicode line
+    # separators — assuming one byte of terminator per line would drift
+    # the window against a document carrying any of them.
+    cursor = 0
     for index, line in enumerate(text.splitlines(), 1):
+        line_start = text.index(line, cursor) if line else cursor
+        cursor = line_start + len(line)
         for match in _BACKTICK.finditer(line):
             token = match.group(1)
             if not token.startswith(_PATH_PREFIXES):
@@ -834,6 +950,10 @@ def check_paths(source: str, text: str, line_offset: int = 0) -> list[Failure]:
             if _ILLUSTRATIVE_CUE.search(line[: match.start()]):
                 continue
             if (_REPO_ROOT / token).exists():
+                continue
+            if _quoted_as_nonresolving(
+                text, line_start + match.start(), line_start + match.end()
+            ):
                 continue
             claim = Claim(source, index + line_offset, "path", token)
             out.append(Failure(claim, "no such file in the repo"))
@@ -2024,3 +2144,186 @@ def test_walk_fallback_admits_nothing_the_git_listing_excludes() -> None:
         f"the walk admits untracked files the git listing excludes: "
         f"{sorted(set(walked) - set(tracked))[:10]}"
     )
+
+
+def test_a_path_token_marked_nonresolving_is_not_a_claim() -> None:
+    """Both directions of the exemption the widened corpus needed.
+
+    An exemption is a hole by construction, so the same token without the
+    verdict must still fail and the verdict must not reach past its
+    window. The middle assertion proves the far fixture really does carry
+    a verdict phrase, so a pattern change cannot rot this into vacuity.
+    """
+    absent = "`src/bettermemory/verdict_ladder.py`"
+    plain = f"The ladder lives in {absent}."
+    assert len(check_paths("docs/fake.md", plain)) == 1
+    marked = f"A memory citing {absent}, which does not resolve here, is stale."
+    assert check_paths("docs/fake.md", marked) == []
+    far = "That citation does not resolve.\n" + "filler " * 40 + plain
+    assert _NONRESOLVING_PROSE.search(far) is not None
+    assert len(check_paths("docs/fake.md", far)) == 1
+
+
+def test_every_markdown_on_disk_is_scanned_excluded_or_untracked() -> None:
+    """The corpus ratchet: two enumerations of this repo's markdown agree.
+
+    This is the guard the module went without. The corpus was ``README.md``
+    plus a ``docs/*.md`` glob while the repo tracked three times that many
+    markdown files, so a fabricated claim in any postmortem, bench README,
+    the plugin skill, SECURITY.md or CONTRIBUTING.md passed CI — verified
+    by appending one to a scratch tree and watching the suite stay green.
+    A file added under a new directory is the same defect arriving again.
+
+    The population is ``_walk_files``, a filesystem walk, and that is the
+    whole point of the test. Taking it from ``_git_tracked_files("*.md")``
+    instead — the listing ``_living_doc_paths`` is itself derived from —
+    makes the assertion compute the empty set for every possible input,
+    which is the defect this module exists to catch, reproduced in the
+    guard against it. Walking the tree asks a genuinely different
+    question, so the ratchet fails on a corpus narrowed by any means: a
+    hardcoded list, a tightened glob, a filter that drops a file, or git
+    and the filesystem simply disagreeing.
+
+    The price of a walk is that it sees what git does not: untracked and
+    gitignored markdown — a competitor package vendored under ``bench/``
+    for a benchmark, ``.pytest_cache/README.md``, a postmortem written
+    but not yet staged. Those are not unscanned documents, they are not
+    this repo's prose, and ``_all_py_files`` declines them for the same
+    reason. They are subtracted explicitly, via ``_tracked_among``, which
+    hands git the walk's own paths rather than re-reading the glob the
+    corpus came from — subtracting them out of that glob would restore
+    the tautology on the way to removing it.
+    """
+    walked = _walk_files(".md")
+    tracked = _tracked_among(walked)
+    if tracked is None:  # pragma: no cover - only outside a git checkout
+        pytest.skip("not a git checkout")
+    scanned = set(_living_doc_paths())
+    assert scanned, "the markdown corpus is empty — file discovery broke"
+    unscanned = (set(walked) & tracked) - scanned - _MD_CORPUS_EXCLUSIONS
+    assert unscanned == set(), (
+        f"{len(unscanned)} tracked markdown file(s) are checked by nothing: "
+        f"{sorted(unscanned)}\nEither they belong in the corpus (do nothing "
+        f"— they are already in it once this list is empty) or they are "
+        f"deliberately out, in which case add each to _MD_CORPUS_EXCLUSIONS "
+        f"with the reason inline."
+    )
+    # The other direction, which the walk-based population cannot see: a
+    # document in the corpus that the walk does not reach means the prune
+    # list has grown over tracked prose, and the subtraction above would
+    # then quietly stop covering it.
+    unwalked = scanned - set(walked)
+    assert unwalked == set(), (
+        f"{len(unwalked)} corpus document(s) are invisible to the filesystem "
+        f"walk: {sorted(unwalked)}\n_SKIP_DIR_NAMES now prunes a directory "
+        f"holding tracked prose, so this ratchet's population no longer "
+        f"covers the corpus it checks."
+    )
+    # Reach into the directories the glob could not see, asserted by prefix
+    # so an ordinary rename does not fail this while a whole directory
+    # dropping out of the corpus still does.
+    for prefix in ("bench/", "docs/incidents/", "plugin/", "examples/"):
+        assert any(rel.startswith(prefix) for rel in scanned), (
+            f"nothing under {prefix} is in the markdown corpus"
+        )
+
+
+def test_md_corpus_exclusions_are_tracked_and_each_carries_a_reason() -> None:
+    """An exclusion must name a real file and say why, in the source.
+
+    Both halves are the ratchet. A stale entry — a file renamed or deleted
+    — would silently keep excluding nothing while reading as though the
+    decision still stood; and an entry added without a comment is how an
+    exclusion list grows until the corpus is back where it started. The
+    comment requirement is enforced against this file's own tokens rather
+    than asked for in prose, because prose is not a guard.
+    """
+    tracked = _git_tracked_files("*.md")
+    if tracked is None:  # pragma: no cover - only outside a git checkout
+        pytest.skip("not a git checkout")
+    unknown = _MD_CORPUS_EXCLUSIONS - set(tracked)
+    assert unknown == set(), (
+        f"_MD_CORPUS_EXCLUSIONS names {sorted(unknown)}, which the repo does "
+        f"not track. A renamed or deleted document leaves an entry that "
+        f"excludes nothing; delete it, or point it at the new path."
+    )
+    unreasoned = _unreasoned_exclusion_entries()
+    assert unreasoned == [], (
+        f"_MD_CORPUS_EXCLUSIONS entr(y/ies) on line(s) {unreasoned} carry no "
+        f"comment. Every exclusion must say why it is out of the corpus, "
+        f"where the next person adding one will read it."
+    )
+
+
+def _unreasoned_exclusion_entries() -> list[int]:
+    """Line numbers of unreasoned entries in this module's own exclusion set."""
+    return _unreasoned_entries_in(
+        (_REPO_ROOT / "tests/test_doc_claims.py").read_text(encoding="utf-8")
+    )
+
+
+def _unreasoned_entries_in(src: str) -> list[int]:
+    """Lines of ``_MD_CORPUS_EXCLUSIONS`` entries in ``src`` with no comment.
+
+    An entry is reasoned when at least one comment line sits between it and
+    whatever precedes it inside the literal — the shape the live entry
+    uses. This works on source text rather than on the value because the
+    set is a frozenset of strings at runtime, where a comment cannot be
+    seen at all. Taking ``src`` as an argument is what lets the rule be
+    run against a literal that is deliberately missing its reason.
+    """
+    target: ast.expr | None = None
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == "_MD_CORPUS_EXCLUSIONS"
+            for t in node.targets
+        ):
+            target = node.value
+    assert target is not None, "_MD_CORPUS_EXCLUSIONS assignment not found"
+    comment_lines = {
+        token.start[0]
+        for token in tokenize.generate_tokens(io.StringIO(src).readline)
+        if token.type == tokenize.COMMENT
+    }
+    # The elements of the set literal only. Walking the whole expression
+    # would also yield the `frozenset` call's own name, which sits on the
+    # assignment line and can carry no reason of its own.
+    elements = sorted(
+        (
+            element
+            for node in ast.walk(target)
+            if isinstance(node, ast.Set)
+            for element in node.elts
+        ),
+        key=lambda element: element.lineno,
+    )
+    out: list[int] = []
+    previous = target.lineno
+    for element in elements:
+        if not any(previous <= line < element.lineno for line in comment_lines):
+            out.append(element.lineno)
+        previous = element.lineno
+    return out
+
+
+def test_the_exclusion_reason_check_fires_on_an_unreasoned_entry() -> None:
+    """The comment requirement must be provably able to fail.
+
+    ``_MD_CORPUS_EXCLUSIONS`` is fully reasoned at HEAD, which makes the
+    live assertion above vacuous on its own — the failure mode this repo
+    has already shipped once, a check that passes because it never ran.
+    So the same rule is run over a synthetic literal in both states. The
+    fixtures are code constants, not docstring examples: every rule in
+    this module applies to its own prose.
+    """
+    reasoned = (
+        "_MD_CORPUS_EXCLUSIONS = frozenset(\n"
+        "    {\n"
+        "        # The reason this one is out of the corpus.\n"
+        '        "a.md",\n'
+        "    }\n"
+        ")\n"
+    )
+    bare = reasoned.replace("        # The reason this one is out of the corpus.\n", "")
+    assert _unreasoned_entries_in(reasoned) == []
+    assert _unreasoned_entries_in(bare) == [3]

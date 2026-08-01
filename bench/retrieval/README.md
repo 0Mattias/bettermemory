@@ -389,9 +389,10 @@ published padded numbers are from after that fix.
 
 - Helpfulness. Recall is not usefulness; a retrieved memory can still be
   wrong or irrelevant.
-- Staleness-verdict accuracy. That is the headline differentiator and it
-  has **no** accuracy measurement anywhere yet — see `bench/claims.py`
-  for the bounds work that precedes it.
+- Staleness-verdict accuracy. Not measured here — `bench/rot` measures
+  it, against ground truth taken from git rather than from a judge, over
+  a pre-registered multi-repository corpus. `bench/claims.py` is the
+  census that bounds it: how much of a real store is checkable at all.
 - Any competitor. This is a self-measurement. Nothing here licenses a
   comparative claim.
 - Real memories. The corpus is synthetic by necessity: a real store is

@@ -29,10 +29,15 @@ Surfaces
    repo: resident in the model's context on every single turn.
 2. **The server `instructions` block**, built in
    `src/bettermemory/builder.py`. Same residency, system-prompt level.
-3. **README.md** — the marketing surface.
-4. **docs/internals.md** — where the cost numbers the README summarises are
-   stated in full.
-5. **`src/bettermemory/doctor.py`, whole-file prose** (docstrings,
+3. **Tracked markdown**, derived from ``git ls-files`` rather than listed —
+   README.md and docs/internals.md, where this project's own cost is
+   summarised and then stated in full, plus every other document that
+   scans clean today. A document that still carries an unrepaired backlog
+   is named in ``_DOC_SURFACE_EXCLUSIONS`` with its reason, and the two
+   guards beside that constant keep the split honest in both directions:
+   nothing may sit outside both sets, and an entry whose backlog is
+   repaired is forced back into the corpus.
+4. **`src/bettermemory/doctor.py`, whole-file prose** (docstrings,
    full-line comment blocks, string literals). Not arbitrary: doctor exists
    for one purpose, telling an operator the truth about their store, and it
    is the one module whose strings are printed verbatim to a human and
@@ -67,16 +72,15 @@ own claim names, not against one named elsewhere in the file.
    contradicted-outcome weighting, the groundedness threshold. None of them
    is a measurement. The cue separates the two populations cleanly.
 
-2. ``size`` — on README.md and docs/internals.md only, a byte-size or
-   ratio token must pin whether or not the chunk carries a cue. A
-   serialized-byte figure or an "N times bigger" ratio about this project's
-   own footprint is a measurement by construction; there is no reading of
-   it that is a contract constant. This rule exists because the cue rule
-   has a hole a real defect shipped through: the README's cost claim
-   carried no cue at all, so nothing anchored on the word "measured" would
-   have seen it. It is scoped to the two documents rather than to every
-   surface precisely because the descriptions are where the enforced byte
-   ceilings live.
+2. ``size`` — on the markdown surfaces only, a byte-size or ratio token
+   must pin whether or not the chunk carries a cue. A serialized-byte
+   figure or an "N times bigger" ratio about this project's own footprint
+   is a measurement by construction; there is no reading of it that is a
+   contract constant. This rule exists because the cue rule has a hole a
+   real defect shipped through: the README's cost claim carried no cue at
+   all, so nothing anchored on the word "measured" would have seen it. It
+   stops short of the descriptions and the instructions block precisely
+   because those are where the enforced byte ceilings live.
 
 Numbers are recognised by shape, not by any list: a percentage, a ratio
 with an ``x``, a value with a byte or character unit, a comma-grouped
@@ -169,6 +173,8 @@ from bettermemory.config import Config, StorageConfig
 from bettermemory.session import SessionState
 from bettermemory.store import Store
 
+from .test_doc_claims import _git_tracked_files, _tracked_among, _walk_files
+
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
 # Every filesystem read below resolves from `_REPO_ROOT`, never from the
@@ -177,9 +183,149 @@ _HANDLERS_MODULE = "src/bettermemory/_handlers.py"
 _BUILDER_MODULE = "src/bettermemory/builder.py"
 _DOCTOR_MODULE = "src/bettermemory/doctor.py"
 
-# The two documents the `size` rule adds to the `measured` rule. Both are
-# published prose about this project's own footprint.
-_DOC_SURFACES = ("README.md", "docs/internals.md")
+# Markdown surfaces are derived from the tree, never listed. At `3ea0dfd`
+# the list held two entries against forty-three tracked documents, and
+# nothing anywhere noticed the other forty-one: a fabricated rate in a
+# bench README or in the model-facing skill passed CI silently.
+#
+# Deriving them does not mean scanning them all today. Run over the whole
+# tree at that same commit, the rules report 126 findings across the
+# seventeen unrepaired documents below — overwhelmingly citation-shape,
+# prose that states a real figure without naming the artifact it came
+# from. That is a repair backlog, and a guard that lands with its whole
+# finding set exempted protects nothing. So each unscanned document is
+# named here with its reason, and the two guards below this constant hold
+# the line in both directions: the coverage ratchet fails on a document
+# that is in neither set, and the drain guard fails once an entry stops
+# registering a finding, forcing it back into the corpus. The list
+# drains; it cannot calcify.
+_DOC_SURFACE_EXCLUSIONS: dict[str, str] = {
+    "CHANGELOG.md": (
+        "Frozen release record. Every published figure landed here on the "
+        "day it was measured; a re-run moves the live number and would turn "
+        "the whole history red, and rewriting shipped release notes to "
+        "satisfy a linter is worse than the drift. tests/test_doc_claims.py "
+        "tiers it out of its living-document rules for the same reason."
+    ),
+    "bench/toolcost/README.md": (
+        "Deliberately an artifact-reference target rather than a scanned "
+        "surface: `_ARTIFACT_REF` resolves a claim naming this bench "
+        "against its committed results. Its own convention is the whole "
+        "tools array serialized to UTF-8 bytes, while the footprint prose "
+        "this module governs counts per-tool raw characters — "
+        "tests/test_resident_footprint.py records that neither figure is "
+        "derivable from the other, so scanning it would judge its numbers "
+        "against the wrong convention."
+    ),
+    "bench/dedup/README.md": (
+        "The dedup bench's own report. It publishes its run's thresholds "
+        "and rates rather than citing them from somewhere else, so no "
+        "chunk carries an artifact reference. The repair is a citation per "
+        "claim, or a directory-implicit rule letting a document inside "
+        "bench/X pin against bench/X's results — a rule change, not this."
+    ),
+    "bench/longmemeval/README.md": (
+        "The longmemeval bench's own report, same shape as the dedup "
+        "entry: its figures are that run's, published here rather than "
+        "cited here."
+    ),
+    "bench/longmemeval/PREREGISTRATION.md": (
+        "Pre-registration for that bench. It fixes corpus properties and a "
+        "cost estimate before the run, and the corpus count it states is "
+        "carried by no committed result file — a citation cannot be added "
+        "until the run that would hold it is committed."
+    ),
+    "bench/longmemeval/CLAUDE-MEM-ADAPTER.md": (
+        "The competitor-adapter note for that bench. Its figures describe "
+        "a third-party corpus and an arm that has not been run, so nothing "
+        "committed here can pin them; the repair is in the prose."
+    ),
+    "bench/retrieval/README.md": (
+        "The retrieval bench's own report, same shape as the other bench "
+        "reports: published rates stated without a per-chunk citation."
+    ),
+    "bench/rot/README.md": (
+        "The rot bench's own report — a scorecard of its own run, and the "
+        "largest block of uncited figures outside the changelog. Same "
+        "repair as the other bench reports."
+    ),
+    "bench/rot/PREREGISTRATION.md": (
+        "Pre-registration for the rot bench. Its percentages are stratum "
+        "properties of a corpus drawn before a single detector number "
+        "existed, which is exactly why no result file carries them."
+    ),
+    "docs/ROADMAP.md": (
+        "A plan. Its figures quote past runs and set targets for work not "
+        "yet done. tests/test_doc_claims.py exempts it from path claims on "
+        "the same grounds: a plan describes a tree that does not exist."
+    ),
+    "docs/swarm-convergence-plan.md": (
+        "A plan document, exempt from path claims in the doc-claims module "
+        "for the same reason. It quotes a survey's figures and proposes "
+        "work that was never all done."
+    ),
+    "docs/api.md": (
+        "States schema and payload sizes throughout the reference prose. "
+        "They are size-shaped, so the size rule reports them whether or "
+        "not the sentence carries a cue, and none is cited. Repairing them "
+        "means measuring or rewording — prose work this pass does not own."
+    ),
+    "docs/eval-results.md": (
+        "A results write-up whose figures come from eval runs that were "
+        "never committed as artifacts. Every number in it is uncitable by "
+        "construction until such a run is committed."
+    ),
+    "docs/eval.md": (
+        "Documents the eval harness and quotes its comparative run. One "
+        "figure is additionally not derivable from the committed "
+        "comparative JSON, so this entry covers a citation gap and a "
+        "derivation gap at once."
+    ),
+    "docs/eval/widening-labeling-2026-07-29.md": (
+        "A dated labeling analysis. Its rates were computed in the session "
+        "that wrote it and the run behind them is not a committed "
+        "artifact. Its two older siblings scan clean and are in the "
+        "corpus, so the exclusion is about this document, not the series."
+    ),
+    "docs/incidents/2026-07-26-staleness-verdict-constant-function.md": (
+        "A postmortem quoting the world before the fix. The figures it "
+        "reports are the broken behaviour's, which the current rot results "
+        "deliberately no longer contain — closer in kind to a changelog "
+        "entry than to a living document."
+    ),
+    "docs/installation.md": (
+        "Carries the plugin-skill size figure, uncited, in the same words "
+        "as the system prompt and the skill itself. One measurement "
+        "repairs all three; the sentence is not owned by this pass."
+    ),
+    "docs/system_prompt.md": (
+        "The same uncited plugin-skill size figure as docs/installation.md."
+    ),
+    "plugin/skills/bettermemory/SKILL.md": (
+        "The model-facing skill states its own size, uncited, in the same "
+        "words as docs/installation.md. It is the most load-bearing of the "
+        "three copies and the right one to repair first."
+    ),
+}
+
+# The two exclusions that are decisions about *conventions* rather than a
+# queue of unrepaired prose. Repairing a document cannot promote these, so
+# the drain guard leaves them alone.
+_CATEGORICAL_EXCLUSIONS = frozenset({"CHANGELOG.md", "bench/toolcost/README.md"})
+
+
+@lru_cache(maxsize=None)
+def _doc_surfaces() -> tuple[str, ...]:
+    """Tracked markdown this module scans, minus the named exclusions.
+
+    Shares tests/test_doc_claims.py's tracked-files helper rather than
+    shelling out to git a second time: the two corpora drifted apart once
+    already, and one routine is one place to keep honest.
+    """
+    tracked = _git_tracked_files("*.md")
+    rels = _walk_files(".md") if tracked is None else tracked
+    return tuple(rel for rel in rels if rel not in _DOC_SURFACE_EXCLUSIONS)
+
 
 # Source labels are stable strings so allowlist keys survive prose edits.
 _INSTRUCTIONS_SOURCE = "server.instructions"
@@ -769,7 +915,7 @@ def collect_failures() -> list[Failure]:
     for name, value in desc_constants():
         out.extend(check_text(f"{_DESC_SOURCE_PREFIX}{name}", value))
     out.extend(check_text(_INSTRUCTIONS_SOURCE, instructions_text()))
-    for rel in _DOC_SURFACES:
+    for rel in _doc_surfaces():
         text = (_REPO_ROOT / rel).read_text(encoding="utf-8")
         out.extend(check_text(rel, text, size_rule=True))
     for line, text in _python_prose(_DOCTOR_MODULE):
@@ -857,6 +1003,92 @@ def test_allowlist_entries_carry_a_reason() -> None:
         assert len(reason.strip()) >= 40, f"{key} needs a substantive reason"
 
 
+def test_every_markdown_on_disk_is_a_number_surface_excluded_or_untracked() -> None:
+    """The coverage ratchet: two enumerations of this repo's markdown agree.
+
+    This is the guard the module went without. The surface list was two
+    entries long, so a fabricated rate in any other document — a bench
+    report, the model-facing skill, an incident postmortem — was checked
+    by nothing and shipped green. A document added tomorrow under a new
+    directory is that same defect arriving again.
+
+    The population is a filesystem walk, not the ``git ls-files`` listing
+    ``_doc_surfaces`` is derived from, and the reasoning is the sibling
+    ratchet's in tests/test_doc_claims.py verbatim: subtracting a
+    derivation from its own input computes the empty set whatever the
+    derivation does, so the assertion would pass over a corpus narrowed
+    to one document. A walk asks a different question and therefore has
+    an answer that can be wrong. Untracked and gitignored markdown — the
+    vendored competitor package under ``bench/``, a postmortem not yet
+    staged — is what a walk sees and git does not; it is subtracted by
+    handing git the walk's own paths, never by re-reading the glob.
+    """
+    walked = _walk_files(".md")
+    tracked = _tracked_among(walked)
+    if tracked is None:  # pragma: no cover - only outside a git checkout
+        pytest.skip("not a git checkout")
+    surfaces = set(_doc_surfaces())
+    assert surfaces, "the markdown corpus is empty — file discovery broke"
+    undecided = (set(walked) & tracked) - surfaces - set(_DOC_SURFACE_EXCLUSIONS)
+    assert undecided == set(), (
+        f"{len(undecided)} tracked markdown file(s) are neither scanned for "
+        f"measurement claims nor excluded: {sorted(undecided)}\nA file is in "
+        f"the corpus by default; it only lands here if it is in "
+        f"_DOC_SURFACE_EXCLUSIONS, so this failing means the derivation "
+        f"broke rather than that a decision is missing."
+    )
+    unwalked = surfaces - set(walked)
+    assert unwalked == set(), (
+        f"{len(unwalked)} scanned document(s) are invisible to the filesystem "
+        f"walk: {sorted(unwalked)}\nThe walk's prune list now covers tracked "
+        f"prose, so this ratchet's population no longer covers the corpus."
+    )
+
+
+def test_excluded_surface_entries_are_tracked_and_carry_a_reason() -> None:
+    """An exclusion must name a real document and say why it is out."""
+    tracked = _git_tracked_files("*.md")
+    if tracked is None:  # pragma: no cover - only outside a git checkout
+        pytest.skip("not a git checkout")
+    unknown = set(_DOC_SURFACE_EXCLUSIONS) - set(tracked)
+    assert unknown == set(), (
+        f"_DOC_SURFACE_EXCLUSIONS names {sorted(unknown)}, which the repo "
+        f"does not track. A renamed or deleted document leaves an entry "
+        f"that excludes nothing while reading as a standing decision."
+    )
+    assert _CATEGORICAL_EXCLUSIONS <= set(_DOC_SURFACE_EXCLUSIONS)
+    for rel, reason in _DOC_SURFACE_EXCLUSIONS.items():
+        assert len(reason.strip()) >= 40, f"{rel} needs a substantive reason"
+
+
+def test_excluded_surfaces_still_have_findings_to_repair() -> None:
+    """The drain guard: an exclusion may not outlive the backlog it names.
+
+    Each entry outside ``_CATEGORICAL_EXCLUSIONS`` is a queue of prose
+    repairs, not a standing decision. When the last finding in a document
+    is repaired, the entry stops describing anything and the document
+    belongs back in the corpus — otherwise this list is a suppression that
+    happens to look like a plan, and the next unbacked number added to a
+    drained document would be invisible again.
+
+    The categorical two are exempt because repairing their prose cannot
+    make them scannable: one is frozen history, the other counts bytes by
+    a different convention.
+    """
+    drained = []
+    for rel in sorted(set(_DOC_SURFACE_EXCLUSIONS) - _CATEGORICAL_EXCLUSIONS):
+        text = (_REPO_ROOT / rel).read_text(encoding="utf-8")
+        if not check_text(rel, text, size_rule=True):
+            drained.append(rel)
+    assert drained == [], (
+        f"{len(drained)} excluded document(s) now register no finding: "
+        f"{drained}\nThe repair landed — delete each entry from "
+        f"_DOC_SURFACE_EXCLUSIONS so the document is scanned from now on. "
+        f"That promotion is the whole point of the list; leaving the entry "
+        f"in place turns a finished repair into a permanent blind spot."
+    )
+
+
 # --------------------------------------------------------------------------
 # Structural guards. A sweep that silently stops finding its own surface is
 # indistinguishable from a green build, so each surface is proved present.
@@ -889,9 +1121,21 @@ def test_instructions_surface_matches_the_served_block(memory_dir: Path) -> None
 
 
 def test_doc_surfaces_are_present_and_substantial() -> None:
-    for rel in _DOC_SURFACES:
-        text = (_REPO_ROOT / rel).read_text(encoding="utf-8")
-        assert len(text) > 2000, rel
+    """The corpus must be non-empty and must still hold both cost documents.
+
+    A derived corpus can empty itself — a bad pattern, a missing checkout —
+    and every rule below would then pass on nothing. The two documents
+    named here are the ones that state this project's footprint, so they
+    are asserted by name and by size: they are what the `size` rule was
+    built for, and a rename that dropped either would otherwise be silent.
+    """
+    surfaces = _doc_surfaces()
+    assert len(surfaces) > 10, f"markdown corpus collapsed to {surfaces}"
+    for rel in ("README.md", "docs/internals.md"):
+        assert rel in surfaces, f"{rel} left the number-claim corpus"
+        assert len((_REPO_ROOT / rel).read_text(encoding="utf-8")) > 2000, rel
+    for rel in surfaces:
+        assert (_REPO_ROOT / rel).is_file(), rel
 
 
 def test_doctor_prose_surface_is_populated() -> None:
@@ -920,7 +1164,7 @@ def surface_claim_counts() -> dict[str, int]:
     for name, value in desc_constants():
         add(f"{_DESC_SOURCE_PREFIX}{name}", value)
     add(_INSTRUCTIONS_SOURCE, instructions_text())
-    for rel in _DOC_SURFACES:
+    for rel in _doc_surfaces():
         add(rel, (_REPO_ROOT / rel).read_text(encoding="utf-8"), size_rule=True)
     for _line, text in _python_prose(_DOCTOR_MODULE):
         add(_DOCTOR_MODULE, text)

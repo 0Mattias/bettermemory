@@ -141,12 +141,13 @@ to the entire elected subdir — appears for `narwhals`, `dbt-core`,
 `fastmcp`, `modal-client`, `chardet`, and `httpx2`.
 
 The deletions are real in the only sense the oracle cares about: a memory
-citing `src/griffe/loader.py` after that move **is** stale, and
-`label_claim` is right to say so. But relocation and pruning are
-different phenomena, and conflating them would flatter every path-aware
-detector for a trivial reason — when 100% of a repository's claims go
-false at once, `path_drift` and `claim_level_strict` are perfect by
-construction, exactly the way `oracle_replica` is.
+citing `src/griffe/loader.py` — a path in that repository, which does not
+resolve in this one — after that move **is** stale, and `label_claim` is
+right to say so. But relocation and pruning are different phenomena, and
+conflating them would flatter every path-aware detector for a trivial
+reason — when 100% of a repository's claims go false at once, `path_drift`
+and `claim_level_strict` are perfect by construction, exactly the way
+`oracle_replica` is.
 
 The judges' review of the selection design flagged a "≥50% relocation
 cut" as a threshold with no sensitivity arm. It was **not implemented**,

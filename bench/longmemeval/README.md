@@ -253,8 +253,8 @@ would be misreading its own benchmark.
 - **Any competitor.** Not yet. The comparative claim is unearned until
   the claude-mem arms exist.
 - **End-to-end capture.** Ingest bypasses `memory_write`'s dedup,
-  transient screening and confirmation flow (`src/bettermemory/store.py:411`).
-  This is store + retrieval.
+  transient screening and confirmation flow: `run.py` calls `Store.write`
+  in `src/bettermemory/store.py` directly. This is store + retrieval.
 - **The above-threshold regime.** Per-question stores hold ~249 items
   against a 500-item index threshold, so SQLite bm25 prefiltering never
   engages and the full store is ranked. `bench/retrieval/` closed this
