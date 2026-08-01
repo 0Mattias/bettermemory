@@ -1902,14 +1902,23 @@ def test_pull_refuses_when_the_autostash_restore_conflicts(
 
 
 def _wedge_a_conflicted_rebase(
-    memory_dir: Path, bare_remote: Path, tmp_path: Path
+    memory_dir: Path,
+    bare_remote: Path,
+    tmp_path: Path,
+    *,
+    first_error: list[str] | None = None,
 ) -> Path:
     """Leave a SECOND clone parked mid-rebase after a conflicted pull.
 
     Divergent edits to the same memory on two clones, pushed from one and
     committed on the other, make `git pull --rebase` stop with `UU` in
     porcelain output and a live `.git/rebase-merge/`. Returns the wedged
-    clone."""
+    clone.
+
+    Pass `first_error` to collect the message from the pull that does the
+    wedging — the `returncode != 0` branch of `pull`, which is otherwise
+    unreachable from the callers below (a second pull hits the
+    `_rebase_in_progress` pre-check and reports something else)."""
     sync.init(memory_dir, remote=str(bare_remote))
     store = Store(memory_dir)
     memory = store.write(content="shared fact", scopes=["tools"])
@@ -1938,12 +1947,59 @@ def _wedge_a_conflicted_rebase(
     _git(other, "add", "-A")
     _git(other, "commit", "-m", "second host edit")
 
-    with pytest.raises(sync.SyncError):
+    with pytest.raises(sync.SyncError) as excinfo:
         sync.pull(other)
+    if first_error is not None:
+        first_error.append(str(excinfo.value))
     assert sync._rebase_in_progress(other), (
         "fixture did not actually wedge a rebase; the tests below would pass vacuously"
     )
     return other
+
+
+def test_failed_pull_names_reindex_like_every_other_error_exit(
+    memory_dir: Path, bare_remote: Path, tmp_path: Path
+) -> None:
+    """Every error exit from `pull` owes the user the same recovery.
+
+    The autostash exit tells them to run `bettermemory reindex` once the
+    markers are resolved. The `returncode != 0` branch used to stop at
+    `git rebase --continue` / `--abort`, so a user who resolved the
+    conflict was left with an index that still described the pre-pull
+    files and nothing on screen saying so.
+
+    Only the hint changed. Neither path rebuilds the index or flags it
+    rebuild-pending, and that is deliberate: mid-rebase the worktree
+    holds `<<<<<<<` markers, and rebuilding would ingest them as memory
+    body text and serve them in search results.
+    """
+    captured: list[str] = []
+    wedged = _wedge_a_conflicted_rebase(
+        memory_dir, bare_remote, tmp_path, first_error=captured
+    )
+
+    # The message's own claim, checked rather than assumed: the failed
+    # pull left no index behind for the conflict markers to land in.
+    assert not (wedged / INDEX_FILENAME).exists(), (
+        "the failed pull built an index over a mid-rebase worktree, which "
+        "is what the message promises it did not do"
+    )
+
+    assert captured, "the wedging pull did not raise; nothing to assert against"
+    message = captured[0]
+    # The wrong branch would also mention rebases, so pin which one this
+    # is before reading anything into the assertions below.
+    assert message.startswith("`git pull --rebase"), (
+        "captured a different error than the non-zero-exit branch; the "
+        f"assertions below would be about the wrong message: {message}"
+    )
+
+    assert "git rebase --continue" in message, message
+    assert "git rebase --abort" in message, message
+    assert "bettermemory reindex" in message, (
+        "the failed-pull exit does not carry the reindex hint the autostash "
+        f"exit does, so the two error paths disagree on recovery: {message}"
+    )
 
 
 def test_pull_gives_rebase_advice_when_a_rebase_is_unfinished(

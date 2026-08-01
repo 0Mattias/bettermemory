@@ -190,9 +190,17 @@ class Footprint(NamedTuple):
 # The rule this file states at the top is not optional — re-measure in
 # the same commit as anything that moves a leg, including the small
 # follow-up edits that feel too minor to bother.
+# RE-MEASURED again, 25,773 -> 25,749 (-24), when `DESC_MEMORY_AUDIT_TURN`
+# lost the clause " through the MCP channel". The clause was false: the
+# shipped Stop hook dispatches `uvx bettermemory audit-turn --quiet`, the
+# CLI, and `plugin/hooks/hooks.json` is where that is written down. So the
+# saving is a correction rather than a trim, which is the only kind of
+# description edit that is free. Recorded here in the same commit as the
+# edit, per the rule above — a -24 is exactly the size of drift this
+# diagnostic table has already been caught carrying.
 _FOOTPRINT_BASELINE = Footprint(
     instructions=1_608,
-    descriptions=25_773,
+    descriptions=25_749,
     input_schemas=5_233,
     output_schemas=1_077,
     skill_frontmatter=759,

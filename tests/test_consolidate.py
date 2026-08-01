@@ -1263,6 +1263,97 @@ def test_scope_typo_genuine_singleton_typo_still_flagged() -> None:
     assert "memory_rename_scope" in pairs[0].suggestion
 
 
+def test_cli_typo_distance_reaches_the_pass_and_changes_nothing(
+    memory_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`--typo-distance` is threaded end-to-end and then ignored, and
+    the help text says so. Pin all THREE claims, because any one alone
+    is misleading: the value really does travel argparse → `run` →
+    `_cli_consolidate` → `consolidate` → `find_scope_typo_pairs` (so
+    nothing upstream is quietly dropping it), the pass hands back the
+    same pairs regardless (so the number is not a cutoff), and the
+    help string the user actually reads admits it. That last one is
+    what makes the documentation repair a build-failing guard instead
+    of prose: nothing else in the tree mentions this flag, so without
+    it the old "raise to 3 to surface more pairs" claim could be
+    restored with the whole suite still green.
+
+    `0` is the probe on purpose. Under the pre-parity whole-string
+    Levenshtein gate a cutoff of 0 admitted nothing at all, so a
+    re-armed parameter cannot survive this test: it would take the
+    distance-2 typo below off the report.
+    """
+    from bettermemory import consolidate as consolidate_mod
+    from bettermemory.cli import _build_parser
+    from bettermemory.cli import consolidate as consolidate_cli
+
+    store = Store(memory_dir)
+    for i in range(3):
+        store.write(
+            content=f"an established fact number {i}",
+            scopes=["projects:bettermemory"],
+        )
+    store.write(
+        content="a fact filed under the typo",
+        scopes=["projects:bettermemoyr"],
+    )
+
+    seen: list[int] = []
+    real = consolidate_mod.find_scope_typo_pairs
+
+    def _spy(memories: list[Memory], *, max_distance: int) -> list[ScopeTypoPair]:
+        seen.append(max_distance)
+        return real(memories, max_distance=max_distance)
+
+    monkeypatch.setattr(consolidate_mod, "find_scope_typo_pairs", _spy)
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(memory_dir))
+
+    parser, subparsers = _build_parser()
+
+    # Resolve the flag's help off the shipped parser rather than
+    # restating it, so this reads whatever a user gets from
+    # `bettermemory consolidate --help`. `_actions` is argparse's
+    # private list, but it is the only route from a parser back to an
+    # action's own `help`; the length assertion below is what keeps a
+    # rename or a refactor of that internal from turning this guard
+    # into a silent no-op.
+    typo_actions = [
+        action
+        for action in subparsers["consolidate"]._actions
+        if "--typo-distance" in action.option_strings
+    ]
+    assert len(typo_actions) == 1, (
+        "no single `--typo-distance` action on the consolidate subparser, "
+        "so the help assertion below never inspected anything: "
+        f"{typo_actions}"
+    )
+    typo_help = " ".join((typo_actions[0].help or "").split())
+    assert "ignored" in typo_help, (
+        "the `--typo-distance` help no longer tells the user the flag is "
+        f"ignored, which is the one place that fact is discoverable: {typo_help!r}"
+    )
+    assert "surface more pairs" not in typo_help, (
+        "the `--typo-distance` help is back to promising that raising the "
+        f"value surfaces more pairs, which the pass does not honour: {typo_help!r}"
+    )
+
+    args = parser.parse_args(["consolidate", "--json", "--typo-distance", "0"])
+    assert args.typo_distance == 0, "argparse dropped the value before dispatch"
+    consolidate_cli.run(args)
+
+    assert seen == [0], (
+        "the CLI value never reached the scope-typo pass, so the inertness "
+        f"asserted below would be about the default instead: {seen}"
+    )
+    report = json.loads(capsys.readouterr().out)
+    typos = report["scope_typo_pairs"]
+    assert [pair["typo"] for pair in typos] == ["projects:bettermemoyr"], (
+        f"a cutoff of 0 changed which pairs are reported: {typos}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Orchestrator — end-to-end
 # ---------------------------------------------------------------------------

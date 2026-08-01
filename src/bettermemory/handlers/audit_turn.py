@@ -3,10 +3,12 @@
 Description-edit history:
 
 - H6 (Round 2): added a leading "Not for in-conversation use" stop
-  line. The tool is dispatched by the client's end-of-turn Stop hook
-  through the MCP channel; the model should never call it directly,
-  and pre-Round-2 the description didn't make that loud enough to
-  prevent occasional model calls.
+  line. The tool belongs to the client's end-of-turn Stop hook — the
+  shipped plugin binds that hook to the `bettermemory audit-turn`
+  CLI, and a client is free to wire it to this tool instead. Either
+  way the model should never call it directly, and pre-Round-2 the
+  description didn't make that loud enough to prevent occasional
+  model calls.
 """
 
 from __future__ import annotations
@@ -44,12 +46,27 @@ if TYPE_CHECKING:
 # live in full. What stays here is the never-call banner, every parameter,
 # every return-shape key, the side-effects, and the retrieval-event set
 # tests/test_prompts.py pins ("memory_list" — the predicate must stay
-# spelled out, not deferred). Gating the tool behind `full_tool_surface`
-# is not an option; the Stop hook reaches it over the MCP channel.
+# spelled out, not deferred).
+#
+# The Stop hook this project ships does not reach the tool over the MCP
+# channel: `plugin/hooks/hooks.json` dispatches `uvx bettermemory
+# audit-turn --quiet` — the CLI, which writes `turn_audited` /
+# `search_miss` to the event log itself and never opens an MCP session.
+# That dispatch is pinned by `test_stop_hook_calls_audit_turn` in
+# tests/test_plugin.py, and the maintainer's own event log agrees:
+# every audited turn in it arrives `triggered_from="stop_hook"`.
+#
+# That is not a licence to gate the tool behind `full_tool_surface`. The
+# evidence is n=1 — it shows THIS plugin path goes through the CLI, not
+# that no client wires its Stop hook to the MCP tool, which the handler
+# below still supports (`triggered_from="mcp_tool"`). Making registration
+# conditional would withdraw the tool from every default install, and the
+# compatibility contract does not allow removing a tool within a major
+# version.
 DESC_MEMORY_AUDIT_TURN = (
     "Not for in-conversation use. This tool is dispatched by the "
-    "client's end-of-turn Stop hook through the MCP channel; the "
-    "model should never call this directly.\n\n"
+    "client's end-of-turn Stop hook; the model should never call "
+    "this directly.\n\n"
     "Silent-miss telemetry (full reference in docs/api.md). Runs the "
     "search probe `memory_search` would have run for `user_message` "
     "(`assistant_response` optional), then checks whether a "

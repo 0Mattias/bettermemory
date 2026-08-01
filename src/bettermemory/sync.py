@@ -1861,7 +1861,11 @@ def pull(
                 "If the failure is a merge conflict, resolve it by hand and "
                 "run `git rebase --continue` from the memory directory. "
                 "On crash mid-rebase, `git rebase --abort` recovers the "
-                "pre-pull state."
+                "pre-pull state. The index was NOT rebuilt either way, so "
+                "it still describes the pre-pull files: after resolving "
+                "forward with `git rebase --continue`, run `bettermemory "
+                "reindex` to catch it up. After `--abort` there is nothing "
+                "to catch up."
             )
 
         # A SUCCESSFUL PULL CAN STILL LEAVE CONFLICT MARKERS. Autostash

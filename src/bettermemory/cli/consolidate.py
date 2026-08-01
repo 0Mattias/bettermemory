@@ -78,10 +78,14 @@ def add_subparser(
         type=int,
         default=2,
         help=(
-            "Levenshtein cutoff for the scope-typo detector. Default 2 "
-            "catches one-character typos and small transpositions; "
-            "raise to 3 to surface more pairs at the cost of false "
-            "positives."
+            "Accepted and ignored; kept so existing scripts keep "
+            "parsing. The scope-typo detector shares health.py's "
+            "neighbor rule, which owns its own length-scaled "
+            "thresholds because no single whole-string Levenshtein "
+            "cutoff works on real scope names: a shared 'projects:' "
+            "prefix contributes zero distance (so short distinct tails "
+            "collide) while namespace omission scores 9. Passing this "
+            "flag changes nothing about which pairs are reported."
         ),
     )
     parser.add_argument(
