@@ -62,11 +62,20 @@ from .models import Memory, looks_truncated
 from .semantic_setup import _semantic_rank_leg_active
 from .store import (
     Store,
-    _has_confirmed_index_gap,
     count_active_memory_files,
     count_unparseable_memory_files,
     scan_active_memory_ids,
 )
+
+# Redundant alias on purpose, and not a typo to tidy away. Under
+# `strict = true` mypy applies `no_implicit_reexport`, so a name merely
+# imported here is not readable as `doctor._has_confirmed_index_gap` from
+# outside — and the identity leg's regression test has to read it, because
+# it spies on the call to prove the reconciliation RAN rather than trusting
+# the verdict. The `X as X` form is mypy's documented way to say "this
+# module deliberately re-exports this". Collapsing it back to a plain
+# import fails the type-check leg, not the tests.
+from .store import _has_confirmed_index_gap as _has_confirmed_index_gap
 
 
 CheckStatus = Literal["ok", "warn", "fail"]
