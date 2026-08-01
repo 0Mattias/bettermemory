@@ -156,9 +156,13 @@ def _semantic_rank_leg_active(config: Config) -> bool:
        resolves a model FOR (``hybrid`` / ``semantic``). Under
        ``keyword`` / ``bm25`` the handler passes ``semantic_model=None``
        no matter what the dedup flag says.
-    3. an embeddings extra imports. Without one the factory returns
-       ``None``, ``hybrid`` degrades to keyword+bm25 and ``semantic``
-       raises — neither is a semantic leg.
+    3. the RESOLVED provider imports (``_resolved_provider_importable``).
+       Without it the factory returns ``None``, ``hybrid`` degrades to
+       keyword+bm25 and ``semantic`` raises — neither is a semantic leg.
+       Resolved, not "either extra imports": resolution commits to one
+       provider, so a healthy fastembed does not make a run that loads
+       torch non-lexical. See that helper for the config-typo case this
+       distinction is the whole of.
 
     Deliberately NOT normalised: the mode comparison mirrors the handler,
     which does no normalising, so a differently-cased ``"Hybrid"``
@@ -176,7 +180,40 @@ def _semantic_rank_leg_active(config: Config) -> bool:
         return False
     if (config.behavior.search_mode or "hybrid") not in ("semantic", "hybrid"):
         return False
-    return _embeddings_extra_importable()
+    return _resolved_provider_importable(config)
+
+
+def _resolved_provider_importable(config: Config) -> bool:
+    """Can the provider that WILL actually be loaded import?
+
+    The precise form of "an extra imports". ``_embeddings_extra_importable``
+    ORs across both providers, but resolution commits to exactly ONE
+    (``resolve_provider``), so the OR answers a question nobody asks: a
+    healthy fastembed says nothing about a run that is going to load
+    torch.
+
+    The gap that leaves is not exotic — it is a config typo, which is the
+    class of thing ``doctor`` exists to catch. ``semantic_provider =
+    "torch"`` with torch not installed and fastembed healthy makes the OR
+    true, ``resolve_provider`` honours the explicit preference and returns
+    ``"torch"``, ``_load_torch_model`` returns ``None``, and no semantic
+    leg ranks anything — while every predicate built on the OR reports
+    that one does. No damaged package is involved.
+
+    That is the same false green
+    ``docs/incidents/2026-07-25-doctor-false-green-on-importable-extra.md``
+    was written about, one condition further in: the fix then replaced
+    "an extra is installed" with three conditions, and the third stayed
+    coarser than the routing it was describing.
+    """
+    from .semantic import extra_importable
+
+    provider, _model = _resolve_semantic_provider_and_model(config)
+    if provider is None:
+        return False
+    return extra_importable(
+        "sentence_transformers" if provider == "torch" else "fastembed"
+    )
 
 
 def _embeddings_extra_importable() -> bool:

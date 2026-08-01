@@ -49,6 +49,11 @@ from bettermemory.server import build_server
 from bettermemory.session import SessionState
 from bettermemory.store import Store
 
+# The tracked-file corpus lives in one place on purpose: a second
+# `git ls-files` routine would be a second chance for the two to diverge,
+# which is the failure `test_doc_claims` already paid for once.
+from .test_doc_claims import _git_tracked_files
+
 
 # Match the first ```...``` fence in the doc — the addendum is the first one.
 _DOC_FENCE_RE = re.compile(r"```\n(.*?)```", re.DOTALL)
@@ -807,18 +812,45 @@ def test_docs_state_semantic_is_enabled_by_the_extra_alone() -> None:
     api_text = _flat("api.md")
     internals_text = _flat("internals.md")
 
-    # Direction 1: the opt-in-required claim must not come back.
-    for name, text in (
-        ("docs/api.md", api_text),
-        ("docs/internals.md", internals_text),
-    ):
-        assert "plus a config opt-in" not in text, (
-            f"{name} has drifted back to requiring a config opt-in for the "
-            "semantic leg; installing an embeddings extra is the whole opt-in."
-        )
-        assert "the extra alone is not enough" not in text, (
-            f"{name} has drifted back to the extra-is-not-enough claim."
-        )
+    # Direction 1 runs over EVERY tracked markdown file, not a hand-list.
+    #
+    # It used to name `api.md` and `internals.md`. `docs/installation.md` —
+    # the canonical install page, the one `doctor`'s own `fix_hint` sends
+    # people to — was never in the population, and carried the retired
+    # claim for three releases while five other surfaces were pinned
+    # against it. A guard whose population is a hand-list only ever covers
+    # the files someone remembered; the population has to come from
+    # somewhere that grows on its own. `git ls-files` is that somewhere,
+    # and it is the same correction 3.34.0 applied to the prose corpora.
+    #
+    # The forbidden literals widened too, and that half matters just as
+    # much: the drift wrote "the extra alone doesn't change ranking —
+    # semantic search also needs the config opt-in", which matches neither
+    # original literal. Adding the file without adding the wording would
+    # have left the guard green over the very text it exists to forbid.
+    forbidden = (
+        "plus a config opt-in",
+        "the extra alone is not enough",
+        "also needs the config opt-in",
+        "doesn't change ranking",
+        "does not change ranking",
+    )
+    tracked_md = _git_tracked_files("*.md")
+    assert tracked_md, "expected a git checkout with tracked markdown"
+    for rel in tracked_md:
+        # CHANGELOG.md is the project's record of what changed, so it
+        # QUOTES retired prose on purpose. Exempting it is not narrowing
+        # the population to dodge a failure — a changelog that could not
+        # name the wording it retired could not describe the fix.
+        if rel == "CHANGELOG.md":
+            continue
+        text = re.sub(r"\s+", " ", (root / rel).read_text(encoding="utf-8"))
+        for literal in forbidden:
+            assert literal not in text, (
+                f"{rel} states that an embeddings extra alone does not enable "
+                f"the semantic leg ({literal!r}); installing one is the whole "
+                "opt-in, and `semantic_dedup` is a WRITE-time flag."
+            )
 
     # Direction 2: both surfaces say installation is what enables it, and
     # that `semantic_dedup` is not the lever.

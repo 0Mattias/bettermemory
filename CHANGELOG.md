@@ -98,6 +98,53 @@ whether `semantic_dedup = true` had what it needs, so `[embeddings-fast]`-only
 users were told the extra was not installed while their cosine dedup worked
 fine. Either extra now satisfies it.
 
+### Fixed — a semantic leg was reported over a run that loads no model
+
+`_semantic_rank_leg_active` exists because
+`docs/incidents/2026-07-25-doctor-false-green-on-importable-extra.md` caught
+`doctor` reporting a semantic leg on the strength of an extra merely being
+importable. That fix replaced one condition with three. The third — "an
+embeddings extra imports" — stayed coarser than the routing it describes: it
+ORs across both providers, while `resolve_provider` commits to exactly one.
+
+So `semantic_provider = "torch"` with torch not installed and fastembed healthy
+made the OR true, resolution honoured the explicit preference and returned
+`torch`, the loader returned `None`, and nothing ranked semantically — while
+`doctor` reported `ok`, printed "a non-lexical signal scores every search", and
+**skipped its retrieval-quality probe**, and `/memories` told the reader
+`memory_search` fuses a leg it does not have. No damaged package is involved;
+it is a config typo, which is the class of thing `doctor` exists to catch.
+
+Condition 3 is now `_resolved_provider_importable` — the health of the provider
+that will actually be loaded.
+
+`web._lexical_only_note` is deliberately NOT changed, and the attempt to change
+it is worth recording. Its gate looks like the same defect, and the same
+narrowing applied there fails
+`test_lexical_only_note_fires_exactly_when_a_semantic_leg_ranks`: that test
+injects a working model and spies on which scorers actually run, because the
+note describes what the HANDLER does. Gating it on whether an extra imports in
+the ambient process couples a description of handler behaviour to a probe the
+handler need not have used — which is the substance of the "must not be merged"
+note the 2026-07-25 incident left on both predicates. Two gates that look alike
+answering different questions is the thing that report is about.
+
+### Fixed — the guard that should have caught the stale install doc could not
+
+`test_docs_state_semantic_is_enabled_by_the_extra_alone` pinned the install
+contract against a hand-written list of two files. `docs/installation.md` was
+never in it, so the retired claim sat on the canonical install page — the page
+`doctor`'s own `fix_hint` links to — for three releases while five other
+surfaces were pinned. The forbidden literals were too narrow as well: the drift
+wrote "the extra alone doesn't change ranking — semantic search also needs the
+config opt-in", which matched neither of them, so adding the file without
+widening the wording would still have passed.
+
+The population now comes from `git ls-files` over every tracked markdown file,
+the same correction 3.34.0 applied to the prose corpora, with `CHANGELOG.md`
+exempted because a changelog has to be able to quote the wording it retired.
+Verified by re-introducing the exact sentence and watching the guard fail.
+
 ### Fixed — `docs/installation.md` still described the pre-3.x install contract
 
 It said the embeddings extra "alone doesn't change ranking — semantic search

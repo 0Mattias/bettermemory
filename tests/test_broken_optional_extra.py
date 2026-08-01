@@ -170,6 +170,25 @@ def working_fake_extra() -> Iterator[Any]:
     semantic.reset_caches()
 
 
+def _break_every_provider(broken_extra: Any, exc: BaseException) -> None:
+    """Break BOTH providers.
+
+    Any assertion of the form "no semantic leg is available" has to say
+    this, because the three CI legs install different extras: the
+    `embeddings` leg has a real sentence-transformers, the
+    `embeddings-fast` leg a real fastembed, the default leg neither.
+    Breaking only sentence-transformers leaves the OR in
+    `_embeddings_extra_importable` satisfied by a healthy fastembed, and
+    the test then passes on two legs and fails on the third — for the
+    right reason, at the wrong time.
+
+    The exploding finder makes `find_spec` succeed for both names, so
+    "installed, and both broken" holds identically everywhere.
+    """
+    broken_extra(exc, "sentence_transformers")
+    broken_extra(exc, "fastembed")
+
+
 # ---------------------------------------------------------------------------
 # The probe itself
 # ---------------------------------------------------------------------------
@@ -192,7 +211,7 @@ def test_setup_predicate_survives_broken_extra(
     broken_extra: Any, exc: BaseException
 ) -> None:
     """The predicate the search handler actually calls stays a predicate."""
-    broken_extra(exc)
+    _break_every_provider(broken_extra, exc)
     cfg = Config(behavior=BehaviorConfig(search_mode="hybrid"))
     assert semantic_setup._embeddings_extra_importable() is False
     assert semantic_setup._semantic_model_or_none(cfg) is None
@@ -352,7 +371,7 @@ def test_doctor_reports_rather_than_raising_on_broken_extra(
         storage=StorageConfig(directory=str(memory_dir)),
         behavior=BehaviorConfig(search_mode="hybrid"),
     )
-    broken_extra(KeyError(frozenset()))
+    _break_every_provider(broken_extra, KeyError(frozenset()))
 
     diag = _check_retrieval_discrimination(memory_dir, cfg)
     assert diag.name == "retrieval_discrimination"
@@ -391,8 +410,10 @@ def test_auto_detect_still_names_a_provider_when_every_extra_is_broken(
     install hint — the wrong advice for someone who has it installed.
     Naming it routes to the loader whose WARNING says what actually
     failed.
+
+    Both providers are broken deliberately — see `_break_every_provider`.
     """
-    broken_extra(KeyError(frozenset()))
+    _break_every_provider(broken_extra, KeyError(frozenset()))
     assert semantic.resolve_provider("auto") == "torch"
 
 
@@ -431,6 +452,65 @@ def test_doctor_accepts_fastembed_alone_for_semantic_dedup(
     assert "fastembed" in diag.message
 
 
+def test_rank_leg_inactive_when_the_RESOLVED_provider_cannot_load(
+    working_fake_extra: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A healthy fastembed does not make a torch run non-lexical.
+
+    No damaged package anywhere — just `semantic_provider = "torch"` with
+    torch not installed. `_embeddings_extra_importable` ORs the two
+    providers while `resolve_provider` honours the explicit preference and
+    commits to one, so every predicate built on the OR claimed a semantic
+    leg was scoring searches over a run whose model is None. `doctor` then
+    reported `ok` AND skipped its retrieval probe.
+
+    This is the same false green as
+    `docs/incidents/2026-07-25-doctor-false-green-on-importable-extra.md`,
+    one condition further in.
+    """
+    working_fake_extra("fastembed")
+    cfg = Config(
+        behavior=BehaviorConfig(search_mode="hybrid", semantic_provider="torch")
+    )
+    # Torch absent, expressed in the two pieces of production state that
+    # say so: the presence probe and the import-probe cache. Seeding these
+    # rather than patching the predicate under test keeps the assertions
+    # below measuring real code — and this CI leg genuinely HAS
+    # sentence-transformers installed, so "absent" has to be simulated or
+    # the test would silently measure the healthy path (and download a
+    # model doing it).
+    monkeypatch.setattr(semantic, "_torch_extra_installed", lambda: False)
+    monkeypatch.setitem(semantic._EXTRA_PROBE, "sentence_transformers", False)
+    monkeypatch.setitem(
+        semantic._MODEL_CACHE, ("torch", cfg.behavior.semantic_model_name), None
+    )
+
+    # The premise: resolution honours the explicit preference and gets nothing.
+    assert semantic.resolve_provider("torch") == "torch"
+    assert semantic_setup._semantic_model_or_none(cfg) is None
+    # The old, coarser condition 3 still says yes — that is the bug.
+    assert semantic_setup._embeddings_extra_importable() is True
+    # The precise one, and the two surfaces built on it, must say no.
+    assert semantic_setup._resolved_provider_importable(cfg) is False
+    assert semantic_setup._semantic_rank_leg_active(cfg) is False
+
+
+def test_rank_leg_active_when_the_resolved_provider_does_load(
+    working_fake_extra: Any,
+) -> None:
+    """Anti-regression: the narrowing must not report no-leg everywhere.
+
+    Without this, returning a constant False would pass the test above —
+    the failure mode this project has published a postmortem about.
+    """
+    working_fake_extra("fastembed")
+    cfg = Config(
+        behavior=BehaviorConfig(search_mode="hybrid", semantic_provider="fastembed")
+    )
+    assert semantic_setup._resolved_provider_importable(cfg) is True
+    assert semantic_setup._semantic_rank_leg_active(cfg) is True
+
+
 @pytest.mark.parametrize("dedup", [True, False], ids=["dedup_on", "dedup_off"])
 def test_rank_leg_predicate_is_false_when_the_extra_is_broken(
     broken_extra: Any, dedup: bool
@@ -440,7 +520,7 @@ def test_rank_leg_predicate_is_false_when_the_extra_is_broken(
     the only thing keeping a BROKEN extra from being reported as a live
     semantic ranking leg. Both dedup settings pinned.
     """
-    broken_extra(KeyError(frozenset()))
+    _break_every_provider(broken_extra, KeyError(frozenset()))
     cfg = Config(behavior=BehaviorConfig(search_mode="hybrid", semantic_dedup=dedup))
     assert semantic_setup._semantic_rank_leg_active(cfg) is False
 
