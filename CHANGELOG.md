@@ -9,6 +9,21 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+### Changed — inside a cloud-synced folder, `.envrc` puts the venv outside it
+
+Renaming uv's `.venv` to `venv` addressed macOS hiding dot-directories in
+iCloud-synced folders. It did not address the syncing, which is the part that
+does the damage: duplicate `name 2.py` conflict copies, two dist-info
+directories for one package (making `importlib.metadata.version` return `None`),
+and — on 2026-08-01 — a `transformers` tree left holding 226 of its 2347 `.py`
+files, which raised `KeyError: frozenset()` on import and took `memory_search`
+down entirely.
+
+`.envrc` now routes a checkout under `~/Documents` or `~/Desktop` to
+`$HOME/.venvs/<checkout-dir-name>`, keyed by directory name so sibling worktrees
+keep separate environments. Anywhere else the in-repo `venv` default is
+unchanged, so this is a no-op for a checkout that was never in a synced folder.
+
 ### Fixed — the MCP registry publish could never fire on a release
 
 `publish-mcp.yml` shipped in 3.35.0 triggered on `release: published`, with a
