@@ -11,7 +11,7 @@ from typing import Any
 from ..models import utcnow, validate_scope
 from .._fsutil import atomic_write_bytes
 from .._response import isoformat
-from ..store import Store
+from ..store import Store, count_active_memory_files
 
 
 def add_subparser(
@@ -57,6 +57,24 @@ def add_subparser(
             "and tombstoned records."
         ),
     )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help=(
+            "Exit non-zero when the loader skipped any memory or tombstone "
+            "file on disk, leaving it out of the export. The document is "
+            "still written; only the exit status changes. Use this in a "
+            "backup cron so a short archive fails the job instead of "
+            "passing silently. Under --no-tombstones the tombstone half is "
+            "never read, so --strict cannot fire on it — the export records "
+            "null there rather than a zero nobody checked. Every `.md` in "
+            "the store root the loader skips counts, including one you put "
+            "there yourself (a README, say) — the store makes no exception "
+            "for those, so neither can this. `bettermemory doctor` names "
+            "the files, and reports them as a warning where --strict "
+            "escalates them to an exit code."
+        ),
+    )
     return parser
 
 
@@ -77,8 +95,32 @@ def run(
         output=args.output,
         include_tombstones=not args.no_tombstones,
         scopes=args.scope or None,
+        strict=args.strict,
         parser=sub_parser,
     )
+
+
+def _count_tombstone_files(store: Store) -> int:
+    """Count the tombstone ``.md`` files `load_tombstones` would try to read,
+    without parsing them.
+
+    The store's own iterator is counted directly, private though it is,
+    because the number is only meaningful as the twin of the walk it is
+    subtracted from: restating the filter here (regular file, not a symlink,
+    `.md` suffix) would reproduce today's rule and diverge from it silently
+    the day the store's rule changes. The active half avoids that with a
+    shared helper (`count_active_memory_files`); the tombstone half has no
+    such twin and this module does not own `store.py`, so counting
+    `_iter_tombstone_paths` is how "counted here" and "skipped there" stay
+    one definition. `_handlers.py` (`store._load_path`) and
+    `handlers/episode_promote.py` (`episode_store._session_dir`) reach across
+    the same boundary for the same reason.
+
+    Returns 0 when the directory is absent (a store that has never
+    tombstoned anything), matching the iterator's early return. An
+    unlistable directory propagates OSError, like the active counter.
+    """
+    return sum(1 for _ in store._iter_tombstone_paths())
 
 
 def _cli_export(
@@ -86,6 +128,7 @@ def _cli_export(
     output: str | None,
     include_tombstones: bool,
     scopes: list[str] | None,
+    strict: bool = False,
     parser: argparse.ArgumentParser | None = None,
 ) -> None:
     """`bettermemory export` — dump active (and optionally tombstoned)
@@ -98,7 +141,9 @@ def _cli_export(
           "exported_at": "2026-05-09T12:34:56Z",
           "source_directory": "/Users/me/.claude-memory",
           "active_memories":     [<full Memory dict>, ...],
-          "tombstoned_memories": [<full TombstonedMemory dict>, ...]
+          "tombstoned_memories": [<full TombstonedMemory dict>, ...],
+          "skipped_active_files": 0,
+          "skipped_tombstone_files": 0
         }
 
     `tombstoned_memories` is omitted entirely when --no-tombstones is
@@ -108,10 +153,45 @@ def _cli_export(
     source, body, origin, last_verified_at — and tombstones add
     removed / removed_reason / removed_session.
 
-    The shape is intended to be round-trippable: a future
+    The two `skipped_*_files` counts are ALWAYS present, including on a
+    clean store where both are 0. Each is a two-walk delta — files on
+    disk, minus the records the reader handed back — which is the same
+    quantity doctor's memory_parse_health reports as `details["skipped"]`,
+    and it is named after that walk rather than after a diagnosis for the
+    same reason doctor is: the delta says the loader skipped the file, not
+    why. Malformed frontmatter and a `schema_version` newer than this
+    install (a `sync pull` from a machine on a newer bettermemory) are
+    indistinguishable from a count, so neither these keys nor the warning
+    claim the file "did not parse". `store.count_unparseable_memory_files`
+    is where that stronger claim lives; it parses every file to earn it,
+    and an export deliberately does not pay for a second parse of a store
+    it has just read.
+
+    The store's readers (`load_all`, `load_tombstones`) swallow every
+    per-file failure, so without these counts a short export is
+    indistinguishable from a small store — the worst failure mode a
+    backup has: invisible at capture time, discovered when the source is
+    gone. A key that appears only on failure is a key no consumer
+    bothers to read, so both are unconditional and a consumer can assert
+    `== 0` rather than remember to probe for absence.
+    `skipped_tombstone_files` is `null`, not 0, when --no-tombstones was
+    passed: that half was never examined, and reporting 0 there would
+    assert an absence nobody checked.
+
+    Round-trippability is therefore CONDITIONAL, not absolute: a future
     `bettermemory import` can recreate active records and tombstones
-    from this document with no loss. Bump format_version on any
-    breaking change.
+    from this document with no loss **only when both skipped counts are
+    0**. When either is non-zero the document is a partial capture of
+    the store — the skipped files are not represented anywhere in it,
+    not even as placeholders, and `tombstoned_memories: []` under a
+    non-zero `skipped_tombstone_files` means "none survived the read",
+    not "none exist". Run `bettermemory doctor` to identify the
+    offending files. `--strict` turns any non-zero count into a
+    non-zero exit for scripted backups; the default stays exit 0 with a
+    stderr warning so existing cron callers do not start failing on an
+    unchanged store. Bump format_version on any breaking change —
+    including a rename of these keys, which `format_version: 1` freezes
+    as surely as it freezes the record fields.
     """
     import json as _json
     from pathlib import Path as _Path
@@ -141,6 +221,14 @@ def _cli_export(
     scope_set = set(scopes) if scopes else None
 
     active = store.load_all()
+    # Count the drop BEFORE the scope filter. A file the reader could not
+    # parse has no scopes to test, so it can only be measured against the
+    # unfiltered read — subtracting after the filter would blame the scope
+    # filter for every out-of-scope memory. `max(0, …)` because the count
+    # and the load are two separate walks: a concurrent `memory_write`
+    # between them makes the file count the larger number for reasons that
+    # are not a parse failure, and a backup must not cry wolf.
+    skipped_active_files = max(0, count_active_memory_files(directory) - len(active))
     if scope_set is not None:
         active = [m for m in active if scope_set.intersection(m.scopes)]
 
@@ -151,14 +239,47 @@ def _cli_export(
         "active_memories": [m.model_dump(mode="json") for m in active],
     }
     tombstoned_count = 0
+    # `None` (JSON null) rather than 0 when the tombstone half was never
+    # read — see the docstring: 0 would assert an absence nobody checked.
+    skipped_tombstone_files: int | None = None
     if include_tombstones:
         tombstoned = store.load_tombstones()
+        skipped_tombstone_files = max(
+            0, _count_tombstone_files(store) - len(tombstoned)
+        )
         if scope_set is not None:
             tombstoned = [t for t in tombstoned if scope_set.intersection(t.scopes)]
         payload["tombstoned_memories"] = [t.model_dump(mode="json") for t in tombstoned]
         tombstoned_count = len(tombstoned)
 
+    payload["skipped_active_files"] = skipped_active_files
+    payload["skipped_tombstone_files"] = skipped_tombstone_files
+
     text = _json.dumps(payload, indent=2)
+
+    # Warn before writing, not after: an export that then fails on a bad
+    # --output path has still already told the user their store is short.
+    # The document is written either way — a partial backup beats none —
+    # so this is a warning, and only --strict escalates it to an exit code.
+    dropped = skipped_active_files + (skipped_tombstone_files or 0)
+    if dropped:
+        parts = []
+        if skipped_active_files:
+            parts.append(f"{skipped_active_files} active memory file(s)")
+        if skipped_tombstone_files:
+            parts.append(f"{skipped_tombstone_files} tombstone file(s)")
+        # Doctor's claim for the same delta: the loader skipped these, and
+        # the two causes a count cannot tell apart are both named rather
+        # than collapsed into "could not be read". Telling a user their
+        # file is corrupt when it merely came from a newer install sends
+        # them editing frontmatter that is already correct.
+        sys.stderr.write(
+            f"WARNING: {' and '.join(parts)} in {directory} were skipped by "
+            f"the loader (malformed frontmatter, or a schema_version newer "
+            f"than this install) and are NOT in this export. The export is a "
+            f"partial capture of the store, not a complete backup. Run "
+            f"`bettermemory doctor` to identify the files.\n"
+        )
 
     if output:
         out_path = _Path(output)
@@ -222,6 +343,14 @@ def _cli_export(
         # the file path on stdout if they want; consistent with how
         # most CLI tools split status from data.
         sys.stderr.write(summary)
-        return
+    else:
+        sys.stdout.write(text + "\n")
 
-    sys.stdout.write(text + "\n")
+    # The strict arm runs AFTER the document is written, in both output
+    # modes: `--strict` is about the exit status a backup job checks, not
+    # about withholding the partial capture. Opt-in because `export -o` is
+    # advertised as the scripted-backup path — flipping the exit status
+    # unconditionally would turn a long-broken file into a suddenly-red
+    # cron job with no change on the user's part.
+    if strict and dropped:
+        raise SystemExit(1)
