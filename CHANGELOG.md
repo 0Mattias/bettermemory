@@ -7,6 +7,208 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.34.0 - 2026-08-01
+
+This release has one subject: **a checker that enumerates its own input
+population stops covering what it claims to cover, and says nothing when it
+does.** Every published incident in `docs/incidents/` is that shape — a
+`doctor` skip asking whether an extra was importable instead of whether a
+semantic leg would score a search; a calendar leg pre-empting the drift
+measurement it exists to back up; a guard asserting the ingest *plan* and never
+the commit; nine CI legs installing from `uv.lock` instead of the constraint
+users resolve against. A seven-lane audit went looking for the next one and
+found six, none of the lanes looking for the same thing. This ships the fixes
+and, where the class allows it, the ratchet that makes a recurrence fail the
+build.
+
+### Fixed — `doctor` certified a stale index, for the third time
+
+`index_health` answered a store holding one memory the index had never seen and
+one row for a memory that had been deleted with `Index healthy: 2 memories
+indexed (matches disk; PRAGMA quick_check passed)`. "Matches disk" was a claim
+about a row count; nothing had compared the index to disk in any other sense.
+Both reproductions run through the workflow this project advertises as its
+differentiator — one file per memory, grep-able and hand-editable — an
+out-of-band identity swap, and a hand-edit that leaves the id and the filename
+alone.
+
+The gate was `if indexed_count == disk_count: return ok`. Everything downstream
+of it — the parse-aware refinement, the unparseable-file arithmetic — lived on
+the *unequal*-count path, so the identity comparison was unreachable at exactly
+the counts a swap produces. `store._warn_on_index_divergence` carried the same
+early return and was silent on both stores for the same reason.
+
+It now reconciles before it certifies. `_reconcile_index_against_disk` runs an
+identity leg (routed through `store._has_confirmed_index_gap`, not a raw
+`indexed_ids` set difference — a raw diff reports holes that close a
+millisecond later under concurrent writes, which is the false positive that
+helper exists to kill) and a content leg (`SELECT id, scopes_json, body`
+compared against memories `doctor` already loads). Both record in `details`
+whether they RAN, because "reconciled and clean" and "could not reconcile" are
+different claims and this check's whole history is of the second being reported
+as the first. The `ok` message is now an inventory of the legs that ran rather
+than the word "healthy" over an unexamined index.
+
+Two docstrings that asserted the opposite of the code went with it:
+`_build_context_block`'s claim that the session-start count was **provably**
+what the other surfaces would report, and `_warn_on_index_divergence`'s claim
+that the raw count was "only the cheap TRIGGER, never the verdict". The
+session-start gate took the strictly stronger free upgrade instead — it
+compares the index's `filename` column against the directory listing it already
+performs, no parse, and declines to publish a scope table when they disagree.
+
+Blast radius, stated exactly rather than dramatically: below
+`_INDEX_THRESHOLD_DEFAULT` (500) `memory_search` loads from disk, so on the
+maintainer's 239-memory store a stale index poisoned the session-start scope
+table and the persisted FTS text but not candidate selection. Above 500 it is
+candidate selection too, which means this class of latent damage silently
+promotes itself from cosmetic to retrieval at a size boundary nobody watches.
+
+Postmortem: [`docs/incidents/2026-07-31-index-health-certified-a-stale-index.md`](docs/incidents/2026-07-31-index-health-certified-a-stale-index.md).
+Its second lesson is the one worth carrying: **fixing a false green by adding
+evidence beneath the gate leaves the gate.** Twice before, the repair was a new
+probe — a parse walk, then `quick_check` — wired in below an untouched
+`if a == b: return ok`. Both probes were real. Both times the shape that
+produced the incident was still reachable.
+
+### Fixed — the prose-honesty ratchets scanned 12 of 43 tracked documents
+
+`tests/test_doc_claims.py` built its corpus as `README.md` plus
+`glob("docs/*.md")`. The repository tracks 43 markdown files. So every incident
+postmortem, the model-facing plugin skill, `SECURITY.md`, `CONTRIBUTING.md` and
+every bench README were outside the honesty check — proven by negative control
+rather than argued: a fabricated claim citing a `verdict_ladder` module that
+does not resolve anywhere in this repository, appended to five of those
+documents on a `git archive HEAD` scratch tree, still gave `4274 passed`. The
+same line in `docs/api.md` fails the build with a named error.
+
+`tests/test_number_claims.py` had the same shape one level cruder: a two-element
+literal. Its surface set goes 2 → 24.
+
+Both corpora now derive from `git ls-files -- '*.md'` minus a named exclusion
+set, each entry carrying its reason inline, reusing the `_git_tracked_files`
+helper that had been sitting twenty lines below the glob that didn't. The
+predicted rot was already in the blind set and is repaired here:
+`bench/retrieval/README.md` asserted that staleness-verdict accuracy "has no
+accuracy measurement anywhere yet", which `bench/rot` has falsified across 30
+repositories.
+
+**The coverage ratchets were rebuilt to be falsifiable.** The first draft
+asserted `set(tracked) - scanned - exclusions == ∅` where `scanned` was *derived
+from* `tracked` — structurally empty for every input, a guard that cannot fail,
+inside the change that exists to close guards that cannot fail. The population
+is now an independent filesystem walk, so the two enumerations of "markdown in
+this repo" have to agree; the walk-versus-git difference (untracked and ignored
+files) is subtracted explicitly and named in the docstring rather than papered
+over. Narrowing the shared listing — the regression the first draft could not
+see — now reds both ratchets while the original assertion bodies stay green.
+
+### Fixed — two shipped-prose guards ran against a tool surface no install builds
+
+`BehaviorConfig.full_tool_surface` defaults to `True` as a dataclass field and
+`False` in `load_config()`, which is the only path `bettermemory` runs. The two
+guards that keep shipped guidance from naming unreachable tools built their
+server the first way. Re-pointed at the surface that actually ships, they fail
+on nine tools in the system-prompt addendum and four in the plugin skill — and
+`plugin/.mcp.json` runs `uvx bettermemory` with an empty env, so **a plugin
+install is the lean surface**, shipping a skill that names four tools its own
+MCP entry never registers.
+
+Both guards are now parametrized over both surfaces. The addendum and the skill
+mark the full-surface-only tools, following the convention the skill already
+used correctly in one place.
+
+Downstream of the same split, the curation-pressure hint — a runtime payload
+that reaches every install — read `Call memory_health for full buckets;
+memory_remove or memory_verify to resolve`. `memory_health` is registered only
+under `full_tool_surface`. The remedy was also on the wrong axis: the pressure
+was entirely cold-endorsement, whose predicate is `explicit_applied_count == 0`,
+and `memory_verify` writes a verification rather than a use event, so it cannot
+move that count at all. The hint now names routes that exist on every install,
+and a new ratchet asserts that — mechanically, against the real argparse
+subparsers and the real lean tool set, with a non-empty-extraction guard so it
+cannot go vacuous when the message is reworded.
+
+### Added — `export --strict`, and an export that says what it dropped
+
+`bettermemory export` ran `store.load_all()` and `store.load_tombstones()`,
+both of which swallow `PARSE_SKIP_EXCEPTIONS` — literally `(Exception,)` — and
+then reported the survivors as the backup. Three memory files in, "Exported 2
+active memories + 0 tombstones", exit 0. A backup that is silently short is the
+worst failure a backup can have: invisible at capture, discovered when the
+source is gone. Worse, `tombstoned_memories` was emitted as `[]`, which
+export's own contract documents as "no tombstones present" — a dropped
+tombstone was affirmatively reported as absent.
+
+The payload now carries `skipped_active_files` and `skipped_tombstone_files`
+unconditionally, and a warning goes to stderr pointing at `bettermemory
+doctor`. The keys deliberately do not say "unparseable": the value is a
+two-walk count delta that cannot distinguish malformed frontmatter from a file
+this install intentionally skipped, which is the same distinction `doctor`
+already refuses to collapse.
+
+`--strict` is new and opt-in: it exits non-zero when anything was dropped. The
+default stays exit 0, because `export -o` is advertised as the scripted-backup
+path and flipping its exit status would break cron callers silently — the
+failure mode this section is about, aimed at the fix for it.
+
+### Changed — the commit-drift escalation pre-registration is graded, and retracted
+
+`src/bettermemory/verify.py` carried a pre-registration in a source comment:
+if alerts-per-catch for the escalating tier still read `>= 1.5` once two
+conditions shipped, `_COMMIT_DRIFT_ESCALATES` flips to `False` — "either
+outcome is a result; commit the numbers." Both conditions shipped. The trigger
+read **3.4**. Nobody graded it, and `B2b` appears nowhere in the roadmap; the
+upgrade plan it cites does not exist in the repository.
+
+Graded here, and the gate is **retracted rather than honoured**, because
+honouring it was measured to be wrong. With the switch off, the drift arms go
+`flag 96.74% → 0.00%` and `J 0.0339 → 0.000` — exactly `never_flag`, the mirror
+image of the `always_flag` constant function v3.30.0 fixed and postmortemed —
+while `shipped_default` is bit-identical, because the demotion branch reads
+`commit_drift_count` directly and bypasses the switch entirely. The gate's
+premise was that the anchored path leg would substitute; that leg reaches
+`flag_rate 0.0073` with `unflagged_stale_rate 0.968`. The counterfactual run is
+committed as an artifact beside the control rather than described, and a new
+test fails the build if any of the three by-path citations to it dangle.
+
+Recorded with it, in `docs/ROADMAP.md` so it stops living in a source comment:
+the shipped verdict measures J = 0.2875 at 77.8% flag and 29.5% precision on
+the pre-registered 30-repository corpus against `always_flag`'s J = 0.000 and
+22.9% — a real signal, and a weak one. **Claims-at-write** is promoted above
+the standing-tier and event-time items on the strength of the claim-level
+detector's 1.1 alerts-per-catch at 94% precision against the shipped 3.4.
+
+### Fixed — three surfaces that described behaviour they did not have
+
+- `--typo-distance` is inert. `find_scope_typo_pairs` never reads the
+  parameter; the value is threaded faithfully to the last call and dropped. The
+  CLI help promised "raise to 3 to surface more pairs". The flag stays accepted
+  — removing it would break scripted callers — and its help now says it is
+  ignored, pinned by an assertion against the parser's own help string so the
+  correction is itself a build-failing guard rather than prose.
+- `memory_audit_turn`'s description and module docstring said the Stop hook
+  reaches the tool "through the MCP channel". The shipped hook dispatches
+  `uvx bettermemory audit-turn --quiet`, the CLI. Correcting it returns 24
+  characters to the metered description budget (25,773 → 25,749); both
+  footprint baselines are re-measured in this commit, per the rule that module
+  states about itself. The tool's registration is deliberately unchanged: zero
+  MCP dispatches in one maintainer's event log is n = 1, not evidence about
+  other clients.
+- `sync pull`'s rebase-failure exit told the user to run `git rebase
+  --continue/--abort` and never mentioned `bettermemory reindex`, which its
+  sibling autostash exit does. Both error paths now carry the same recovery.
+
+### Added — `_frontmatter.normalise_body`, one definition of a rule with two readers
+
+`dumps` strips CR-before-newline on the way to disk while the index is written
+from the in-memory record, so `doctor`'s new content leg compares across that
+normalisation and would have called an untouched CRLF body drift — a `warn`
+saying the index no longer describes a store that is in fact perfect. The rule
+is now a shared function rather than a second copy, which is the standing
+lesson from the 2026-07-26 postmortem: mirrored implementations guarded by
+comments are a defect with a countdown.
+
 ## 3.33.0 - 2026-07-31
 
 ### Changed — bettermemory runs on the mcp 2.x SDK. **The floor is now `mcp>=2.0.0`**
