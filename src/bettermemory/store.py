@@ -2223,11 +2223,33 @@ def count_active_memory_files(root: Path) -> int:
     disk-vs-`indexed_count` comparisons cannot drift apart. Propagates
     OSError from an unlistable directory; callers pick their own
     degraded answer."""
-    count = 0
-    for entry in root.iterdir():
-        if entry.is_file() and not entry.is_symlink() and entry.suffix == ".md":
-            count += 1
-    return count
+    return len(active_memory_filenames(root))
+
+
+def active_memory_filenames(root: Path) -> set[str]:
+    """The bare filenames of the active-memory ``.md`` files under
+    `root` — the same `_iter_active_paths()` filter as the count above,
+    without the parse.
+
+    The identity-level view a caller can afford on a hot path. A count
+    answers "how many files"; this answers "which files", and the two
+    are different claims: remove one memory and add another out of band
+    and the count is unchanged while the store is not the store the
+    index describes. `scan_active_memory_ids` answers the same question
+    more precisely (by memory id) but pays a full parse for it; a caller
+    that only needs to know whether the SET moved — the session-start
+    hint, which must not parse — compares these against the index's
+    `filename` column instead.
+
+    Filenames rather than paths because that is what the index stores
+    (`_upsert_memory` threads the caller's actual filename through), so
+    the two sides compare without either one re-deriving the other's
+    spelling. Propagates OSError from an unlistable directory."""
+    return {
+        entry.name
+        for entry in root.iterdir()
+        if entry.is_file() and not entry.is_symlink() and entry.suffix == ".md"
+    }
 
 
 def count_unparseable_memory_files(root: Path) -> int:
@@ -2414,15 +2436,30 @@ def _warn_on_index_divergence(root: Path) -> None:
       parseable on-disk memory with no index row, or an index row for
       an id no longer on disk.
 
-    The raw count comparison is only the cheap TRIGGER, never the
-    verdict. Counts alone cannot distinguish a desync from a
-    concurrent write caught mid-flight (see `_has_confirmed_index_gap`
-    for the two-step window every mutator has), and a store shared by a
-    fleet of agents is mid-flight most of the time — so a diverging
-    count is re-resolved against the writers' own file locks, and only
-    a gap that survives that warns. A gap that resolves is not a gap;
-    it also must not burn the one-shot per-root budget, or the first
-    false positive would silence the real desync that follows it.
+    The raw count comparison is the cheap TRIGGER for the refine path,
+    and it is ALSO the gate: equal counts return here without looking at
+    identities at all. That asymmetry is deliberate and it has a cost
+    worth stating plainly, because the docstring used to claim the
+    count was "never the verdict" and it is the verdict for exactly one
+    shape — an out-of-band swap that removes one memory and adds
+    another. Counts N and N, identities different, this check silent.
+    Reconciling every construction would put a full parse walk plus a
+    lock dance on the server's boot path and on every cheap `Store()`,
+    which is the cost this gate exists to avoid; the shape it misses is
+    `bettermemory doctor`'s to catch, and `_check_index_health`
+    reconciles ids and content on every certification precisely because
+    this one cannot afford to. See
+    `docs/incidents/2026-07-31-index-health-certified-a-stale-index.md`.
+
+    Past the gate the count is not the verdict. Counts alone cannot
+    distinguish a desync from a concurrent write caught mid-flight (see
+    `_has_confirmed_index_gap` for the two-step window every mutator
+    has), and a store shared by a fleet of agents is mid-flight most of
+    the time — so a diverging count is re-resolved against the writers'
+    own file locks, and only a gap that survives that warns. A gap that
+    resolves is not a gap; it also must not burn the one-shot per-root
+    budget, or the first false positive would silence the real desync
+    that follows it.
 
     The check is also parse-aware: `index.rebuild` consumes
     `iter_active()`, which skips unparseable files, so a memory a

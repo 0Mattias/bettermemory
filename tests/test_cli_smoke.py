@@ -1625,6 +1625,249 @@ def test_session_start_stays_silent_when_the_index_count_disagrees_with_disk(
     )
 
 
+# ---------------------------------------------------------------------------
+# The filename-SET gate. Equal counts are a weaker claim than the surface
+# needs: the store's one-file-per-memory design invites removing one memory
+# and adding another out of band, and both sides still read N while the
+# index describes a store that is gone. These four pin the gate that closes
+# that blind spot — the decline, the two DIFFERENT declines it can issue,
+# and the publish, because a gate that declined everything would satisfy
+# every negative assertion here on its own.
+# ---------------------------------------------------------------------------
+
+
+def _blank_one_indexed_filename(root: Path) -> str:
+    """Empty the `filename` column of one index row; return its id.
+
+    The shape a pre-v2 row has: the column arrived in schema v2, so rows
+    written before it carry `''` and `filenames_for_ids` drops them. A
+    real store reaches this state by upgrading without reindexing, which
+    no fixture can produce forward in time — writing the column back to
+    its pre-v2 value is the same row a v1 index would hand back.
+    """
+    import sqlite3
+
+    from bettermemory import index
+
+    conn = sqlite3.connect(index.index_path(root))
+    try:
+        row = conn.execute("SELECT id FROM memories LIMIT 1").fetchone()
+        assert row is not None, "fixture wrote no index rows to blank"
+        conn.execute("UPDATE memories SET filename = '' WHERE id = ?", (row[0],))
+        conn.commit()
+    finally:
+        conn.close()
+    return str(row[0])
+
+
+def test_session_start_declines_when_the_index_names_other_files_than_disk(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The equal-count identity swap — the case the count gate cannot see.
+
+    One memory removed and one added out of band (a `git mv`, a restore
+    from a backup, a hand-copied file) leaves both sides reading 2 while
+    the index's rows describe a file that is no longer there. Publishing
+    then means a scope table computed from the departed memory's scopes:
+    the model opens the session believing in a memory `memory_search`
+    will never return.
+
+    The swapped-in file is deliberately NOT indexed and the removed one
+    deliberately IS, because that is the only configuration where the
+    counts agree and the sets do not.
+    """
+    store = _seeded_store(tmp_path, monkeypatch)
+    store.write(content="alpha one", scopes=["tools"])
+    store.write(content="beta two", scopes=["tools"])
+    departed = sorted(store.root.glob("*.md"))[0]
+    departed.unlink()
+    (store.root / "arrived-out-of-band.md").write_text(
+        "---\nid: 01JARRIVEDOUTOFBANDXXXXXX\n---\nbody\n", encoding="utf-8"
+    )
+    load_all_calls = _load_all_spy(monkeypatch)
+
+    _run_session_start(monkeypatch, tmp_path)
+
+    captured = capsys.readouterr()
+    assert captured.out == "", (
+        f"a scope table built from a departed memory reached the model's "
+        f"opening context; got {captured.out!r}"
+    )
+    assert "name a different set of files" in captured.err, (
+        f"the counts agreed, so only the SET gate can have declined here; "
+        f"got {captured.err!r}"
+    )
+    assert load_all_calls == [], (
+        "the set-mismatch arm fell back to Store.load_all instead of "
+        "degrading to silence"
+    )
+
+
+def test_session_start_publishes_when_the_index_names_exactly_the_disk_files(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The positive control, without which every decline above is cheap.
+
+    A gate wired to `return None` unconditionally passes all of them. So
+    this asserts both halves: the block IS published on a store whose
+    index names exactly the files on disk, and the comparison RAN to let
+    it through — the spy proves the set was actually computed and equal
+    to the directory listing, rather than the gate being skipped by an
+    earlier `return` or short-circuited into never being reached.
+    """
+    from bettermemory.cli import session_start_cmd
+    from bettermemory.store import active_memory_filenames
+
+    store = _seeded_store(tmp_path, monkeypatch)
+    store.write(content="alpha one", scopes=["tools"])
+    store.write(content="beta two", scopes=["tools", "learning-style"])
+
+    real = session_start_cmd._indexed_filenames
+    answers: list[set[str] | None] = []
+
+    def _spy(directory: Path) -> set[str] | None:
+        answers.append(real(directory))
+        return answers[-1]
+
+    monkeypatch.setattr(session_start_cmd, "_indexed_filenames", _spy)
+
+    _run_session_start(monkeypatch, tmp_path)
+
+    captured = capsys.readouterr()
+    assert answers == [active_memory_filenames(store.root)], (
+        f"the filename comparison did not run against the real listing; "
+        f"the gate saw {answers!r}"
+    )
+    lines = captured.out.splitlines()
+    assert lines[0] == "bettermemory: 2 memories are in scope for this repository."
+    assert lines[1] == "Top scopes: tools (2), learning-style (1)."
+
+
+def test_session_start_declines_without_claiming_a_comparison_it_could_not_run(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An unresolvable row declines, and says only what it observed.
+
+    `_indexed_filenames` returns None when a row does not record which
+    file it came from, so NOTHING was compared — no set was built. The
+    decline is right; a message saying the index "names a different set
+    of files than the N on disk" would be this project's signature
+    defect pointed at its own user: an assertion whose evidence was
+    never gathered. The negative assertion is therefore the load-bearing
+    one here.
+    """
+    store = _seeded_store(tmp_path, monkeypatch)
+    store.write(content="alpha one", scopes=["tools"])
+    store.write(content="beta two", scopes=["tools"])
+    _blank_one_indexed_filename(store.root)
+    load_all_calls = _load_all_spy(monkeypatch)
+
+    _run_session_start(monkeypatch, tmp_path)
+
+    captured = capsys.readouterr()
+    assert captured.out == "", (
+        f"an uncheckable index published a scope table anyway; got {captured.out!r}"
+    )
+    assert "does not record which file it came from" in captured.err, (
+        f"expected the could-not-compare decline; got {captured.err!r}"
+    )
+    assert "name a different set of files" not in captured.err, (
+        "the unresolvable-row decline claimed a set comparison that never "
+        f"ran — no set was built to compare; got {captured.err!r}"
+    )
+    assert load_all_calls == []
+
+
+def test_session_start_reads_filenames_under_sqlites_variable_ceiling(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The gate must survive a store bigger than one SQL statement.
+
+    `index.filenames_for_ids` binds every id it is handed as a
+    parameter, and SQLite raises `OperationalError: too many SQL
+    variables` past SQLITE_LIMIT_VARIABLE_NUMBER. `run` swallows that
+    into a stderr note, so an unbatched read would not crash — it would
+    make the hint quietly stop appearing for the largest stores, which
+    is the failure mode hardest to notice and worst to have.
+
+    The ceiling is simulated at 2 rather than seeded for real: this
+    machine's build reports 32766 (older builds compile in 999), and
+    writing 32767 memories to prove one `IN` clause is not a unit test.
+    What is under test is that the read is CHUNKED to whatever
+    `_ID_BATCH` says, so the fake enforces the patched constant as the
+    real sqlite enforces its own.
+    """
+    import sqlite3
+
+    from bettermemory import index
+    from bettermemory.cli import session_start_cmd
+
+    store = _seeded_store(tmp_path, monkeypatch)
+    for n in range(5):
+        store.write(content=f"memory number {n}", scopes=["tools"])
+
+    monkeypatch.setattr(session_start_cmd, "_ID_BATCH", 2)
+    real = index.filenames_for_ids
+    batches: list[int] = []
+
+    def _bounded(root: Path, ids: list[str]) -> dict[str, str]:
+        if len(ids) > 2:
+            raise sqlite3.OperationalError("too many SQL variables")
+        batches.append(len(ids))
+        return real(root, ids)
+
+    monkeypatch.setattr(index, "filenames_for_ids", _bounded)
+
+    _run_session_start(monkeypatch, tmp_path)
+
+    captured = capsys.readouterr()
+    assert captured.out.startswith("bettermemory: 5 memories are in scope"), (
+        f"the hint went missing on a store past the parameter ceiling; "
+        f"stderr was {captured.err!r}"
+    )
+    assert batches == [2, 2, 1], (
+        f"expected the 5 ids read in batches of the patched _ID_BATCH; got {batches!r}"
+    )
+
+
+def test_id_batch_stays_under_the_lowest_sqlite_variable_ceiling() -> None:
+    """`_ID_BATCH` is only a fix while it is below every build's cap.
+
+    SQLite's compiled-in SQLITE_LIMIT_VARIABLE_NUMBER is 999 on anything
+    built before 3.32 and 32766 after — and a 3.11 interpreter on an
+    older distro can still link the former, so the constant has to clear
+    the LOW one, not the one this machine happens to report. Both are
+    asserted: the portable floor, and the running build's actual limit,
+    which is the number that would bite here.
+    """
+    import sqlite3
+
+    from bettermemory.cli.session_start_cmd import _ID_BATCH
+
+    conn = sqlite3.connect(":memory:")
+    try:
+        here = conn.getlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER)
+    finally:
+        conn.close()
+
+    assert _ID_BATCH <= 999, (
+        f"_ID_BATCH is {_ID_BATCH}; SQLite builds older than 3.32 cap a "
+        "statement at 999 parameters and `filenames_for_ids` binds one "
+        "per id, so the session-start gate would raise there"
+    )
+    assert _ID_BATCH <= here, (
+        f"_ID_BATCH is {_ID_BATCH} but this build caps a statement at {here} parameters"
+    )
+
+
 class _FailingStdout:
     """A stdout that fails the way a hook's real one can.
 

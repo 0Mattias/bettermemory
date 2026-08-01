@@ -377,6 +377,26 @@ def _represent_str(dumper: yaml.SafeDumper, data: str) -> yaml.ScalarNode:
 _NoAliasDumper.add_representer(str, _represent_str)
 
 
+def normalise_body(body: str) -> str:
+    """The presentation normalisation `dumps` applies to a body on the
+    way to disk: the same per-line `rstrip("\\r")` `loads` performs on the
+    way back, then a trailing `rstrip`.
+
+    Public because it is not only `dumps` that needs it. Anything holding
+    an in-memory body and comparing it against what a reader returns —
+    `doctor`'s index content leg is the first — is comparing across this
+    normalisation, and a private copy of the rule is a defect with a
+    countdown (`docs/incidents/2026-07-26-staleness-verdict-constant-function.md`,
+    "mirrored implementations guarded by comments"). One definition, two
+    callers, and the round-trip property `tests/test_frontmatter.py` pins
+    covers both.
+
+    See the comment at the `dumps` call site for why this is a per-line
+    strip rather than a `replace("\\r\\n", "\\n")`.
+    """
+    return "\n".join(ln.rstrip("\r") for ln in body.split("\n")).rstrip()
+
+
 def dumps(
     post: Post,
     *,
@@ -473,7 +493,7 @@ def dumps(
     # A lone `\r` not followed by a newline survives both sides untouched: it
     # is content, not a line terminator this format knows about. Like the
     # `rstrip` below, this normalises PRESENTATION, not content.
-    body = "\n".join(ln.rstrip("\r") for ln in post.content.split("\n")).rstrip()
+    body = normalise_body(post.content)
     final = f"{_DELIM}\n{yaml_text}\n{_DELIM}\n\n{body}"
     # Total-file cap: the `_MAX_YAML_BYTES` check above bounds only the
     # frontmatter region, but `load` rejects the WHOLE file (frontmatter +

@@ -38,9 +38,12 @@ than a fallback:
   ~74 % of the equivalent handler's cost, all of it per-file opens and
   YAML parsing for bodies this surface does not print.
 * Anything unusable — no store, empty store, absent/corrupt index, an
-  index whose row count disagrees with what is on disk — degrades to
-  EMPTY stdout, never to the expensive path. A session-start hook that
-  stalls the session is worse than one that says nothing.
+  index whose row count disagrees with what is on disk, or one whose
+  rows name a different SET of files than the listing does (equal
+  counts are the weaker claim: swap one memory for another out of band
+  and both sides still read N) — degrades to EMPTY stdout, never to the
+  expensive path. A session-start hook that stalls the session is worse
+  than one that says nothing.
 
 Diagnostics go to stderr (Claude Code routes it to the debug log, not
 the model's context) and the process always exits 0. `hooks.json` still
@@ -59,7 +62,24 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     # `run`. `cli/__init__.py` imports this module for every `bettermemory
     # <anything>` invocation, so a top-level `from ..origin import Origin`
     # would tax every other subcommand for a symbol only this one uses.
+    from pathlib import Path
+
     from ..origin import Origin
+
+# How many ids `_indexed_filenames` hands to one `filenames_for_ids`
+# call. That helper binds every id it is given as a SQL parameter
+# (`WHERE id IN (?,?,…)`), and SQLite refuses a statement carrying more
+# parameters than SQLITE_LIMIT_VARIABLE_NUMBER — measured at 32766 on
+# this machine's sqlite 3.50.4, but 999 on any build compiled before
+# SQLite 3.32, which a 3.11 interpreter on an older distro can still be
+# linked against. Over the limit the read raises
+# `sqlite3.OperationalError: too many SQL variables`, which `run` would
+# absorb into a stderr note — i.e. the hint would quietly stop appearing
+# for exactly the largest stores, the ones with most to say. Batching
+# below the lowest of those ceilings keeps the gate answerable at any
+# store size; a store under 900 memories still pays one query, the same
+# as before.
+_ID_BATCH = 900
 
 # How many scopes the context block names before collapsing the tail into
 # "+N more". The block is injected into EVERY session, so its cost is
@@ -194,6 +214,38 @@ def _blackhole_stdout() -> None:
         os.close(devnull)
 
 
+def _indexed_filenames(directory: Path) -> set[str] | None:
+    """The set of on-disk filenames the index's rows name, or `None`
+    when at least one row cannot be resolved to a filename.
+
+    Built from two public index reads — `indexed_ids` for the row keys,
+    `filenames_for_ids` for the `filename` column — rather than a raw
+    SELECT, so this surface cannot drift from the schema the rest of the
+    package reads through. `filenames_for_ids` drops rows whose filename
+    column is empty (a pre-v2 row), so a short result is the signal that
+    the comparison is not answerable; the caller declines on `None`
+    instead of comparing against a set it knows is incomplete.
+
+    The ids go in `_ID_BATCH`-sized chunks because `filenames_for_ids`
+    binds each one as a SQL parameter and SQLite caps how many a single
+    statement may carry — see that constant. `indexed_ids` needs no such
+    care: with `ids=None` it is an unparameterised full-column scan.
+
+    Errors propagate. `run`'s guard turns any of them into a quiet
+    stderr note, which is the right degradation for a hint."""
+    from .. import index as _index
+
+    ids = sorted(_index.indexed_ids(directory))
+    resolved: dict[str, str] = {}
+    for start in range(0, len(ids), _ID_BATCH):
+        resolved.update(
+            _index.filenames_for_ids(directory, ids[start : start + _ID_BATCH])
+        )
+    if len(resolved) != len(ids):
+        return None
+    return set(resolved.values())
+
+
 def _build_context_block() -> str | None:
     """Return the block to print, or None to stay silent.
 
@@ -207,7 +259,7 @@ def _build_context_block() -> str | None:
     from ..config import load_config
     from ..origin import capture as capture_origin
     from ..search import candidate_admitted
-    from ..store import count_active_memory_files
+    from ..store import active_memory_filenames
 
     directory = load_config().resolved_directory()
     if not directory.exists():
@@ -217,8 +269,11 @@ def _build_context_block() -> str | None:
 
     # Cheapest possible "is there anything here at all" probe: a bare
     # directory listing, no parsing. Also the disk side of the
-    # index-trust comparison below, so it is read once and used twice.
-    disk_count = count_active_memory_files(directory)
+    # index-trust comparison below, so it is read once and used twice —
+    # as a count first, then as the filename SET, which is the stronger
+    # of the two claims and costs the same listing.
+    disk_files = active_memory_filenames(directory)
+    disk_count = len(disk_files)
     if disk_count == 0:
         return None
 
@@ -259,11 +314,59 @@ def _build_context_block() -> str | None:
         )
         return None
 
+    # Equal counts are not the claim this surface needs. Remove one
+    # memory and add another out of band — the workflow the store's own
+    # one-file-per-memory design invites — and both sides still read N
+    # while the index describes a store that no longer exists; the scope
+    # table below would then be computed from the departed memory's
+    # scopes. The index carries each row's on-disk filename, so the set
+    # comparison needs no parse and no extra directory walk: it reuses
+    # the listing already taken above.
+    #
+    # TWO declines, not one, because they rest on different evidence and
+    # a single message would have to overclaim for one of them. `None`
+    # says a row could not be resolved to a filename at all (the column
+    # is empty, as on a pre-v2 row), so NOTHING was compared: reporting
+    # "a different set of files" there would assert a comparison this
+    # never performed — the exact overclaiming this command's gates
+    # exist to refuse. A mismatch is the stronger, evidenced case, and
+    # it gets the stronger sentence.
+    indexed_files = _indexed_filenames(directory)
+    if indexed_files is None:
+        print(
+            "[bettermemory] session-start: at least one of the index's "
+            f"{indexed_count} row(s) does not record which file it came "
+            "from, so its file set could not be compared against the "
+            f"{disk_count} on disk — skipping the hint rather than "
+            "publishing a scope table on a check that could not run. "
+            "`bettermemory reindex` restamps the rows.",
+            file=sys.stderr,
+        )
+        return None
+    if indexed_files != disk_files:
+        print(
+            f"[bettermemory] session-start: the index's {indexed_count} row(s) "
+            f"name a different set of files than the {disk_count} on disk — "
+            "skipping the hint rather than publishing a scope table built "
+            "from memories that are no longer there. "
+            "`bettermemory reindex` reconciles them.",
+            file=sys.stderr,
+        )
+        return None
+
     # Same auto-scope filter `memory_search` and `memory_scope_overview`
-    # apply, via the same predicate, so the number the model sees here is
-    # provably the number those surfaces would report. No scope
-    # exclusions: session-disabled scopes live in `SessionState`, and no
-    # session exists yet when this runs.
+    # apply, via the same predicate, so the number the model sees here
+    # cannot differ from those surfaces' by disagreeing about ADMISSION.
+    # What the two gates above establish is narrower than that and worth
+    # stating exactly: the index holds one row per file on disk, named
+    # for that file. They do not establish that each row's stored scopes
+    # still match its file's — a hand-edit leaves the id, the filename
+    # and the count untouched, and only a parse of every file catches
+    # it. That parse is the cost this command exists to avoid, so it
+    # stays `bettermemory doctor`'s job (its index-health check
+    # reconciles the content and pays the parse to do it).
+    # No scope exclusions: session-disabled scopes live in
+    # `SessionState`, and no session exists yet when this runs.
     current = capture_origin()
 
     def _admit(scopes: list[str], memory_origin: "Origin | None") -> bool:

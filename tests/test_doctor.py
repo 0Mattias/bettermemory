@@ -552,10 +552,209 @@ def test_index_health_ok_when_gap_is_only_unparseable_files(tmp_path: Path) -> N
     assert diag.details["disk_count"] == 2
     assert diag.details["unparseable_count"] == 1
     # This ok path certifies too — it must carry the same page-walk
-    # attestation as the full-match branch.
+    # attestation AND the same id/content reconciliation as the
+    # full-match branch. A certification is a certification.
     assert diag.details["quick_check"] == "ok"
+    assert diag.details["identity_reconciled"] is True
+    assert diag.details["content_reconciled"] is True
+    assert diag.details["content_drift_count"] == 0
     # ... and the sibling check owns the actual defect.
     assert _check_memory_parse_health(tmp_path).status == "warn"
+
+
+def test_index_health_warns_when_ids_diverge_at_equal_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Identity swap: remove one memory and add another out of band, and
+    the counts read N and N while the index describes a store that no
+    longer exists. Pre-fix this returned `ok` from `indexed_count ==
+    disk_count` before the id sets were ever compared — the third time
+    this check certified a broken index.
+
+    The status alone would pass against a check that guessed right for
+    the wrong reason, so the assertion that matters is that the
+    RECONCILIATION RAN: `store._has_confirmed_index_gap` — not a raw
+    `indexed_ids` diff, which reintroduces the concurrent-write false
+    positive that helper exists to kill — was called with this root, and
+    the content SELECT executed too.
+    """
+    from bettermemory import doctor as doctor_mod
+    from bettermemory.store import Store
+
+    store = Store(tmp_path)
+    store.write(content="alpha note about widgets", scopes=["tools"])
+    doomed = store.write(content="beta note about gadgets", scopes=["tools"])
+    beta_path = next(
+        p
+        for p in tmp_path.iterdir()
+        if p.suffix == ".md" and doomed.id.lower() in p.name
+    )
+    beta_path.unlink()
+    (tmp_path / "gamma-out-of-band.md").write_text(
+        _OUT_OF_BAND_MEMORY, encoding="utf-8"
+    )
+
+    # Premise pin: the counts the pre-fix check consulted still agree.
+    # If this ever fails the fixture stopped reproducing the defect and
+    # the assertions below would be testing a different bug.
+    from bettermemory import index
+
+    assert index.status(tmp_path)["indexed_count"] == 2
+    assert len(list(tmp_path.glob("*.md"))) == 2
+
+    gap_calls: list[Path] = []
+    real_gap = doctor_mod._has_confirmed_index_gap
+
+    def _spy_gap(root: Path, disk_paths: dict[str, Path]) -> bool:
+        gap_calls.append(root)
+        return real_gap(root, disk_paths)
+
+    content_calls: list[Path] = []
+    real_content = doctor_mod._index_content_rows
+
+    def _spy_content(index_file: Path) -> dict[str, tuple[str, str]]:
+        content_calls.append(index_file)
+        return real_content(index_file)
+
+    monkeypatch.setattr(doctor_mod, "_has_confirmed_index_gap", _spy_gap)
+    monkeypatch.setattr(doctor_mod, "_index_content_rows", _spy_content)
+
+    diag = _check_index_health(tmp_path)
+
+    assert gap_calls == [tmp_path], "the identity leg never ran"
+    assert content_calls == [index.index_path(tmp_path)], "the content leg never ran"
+    assert diag.details["identity_reconciled"] is True
+    assert diag.details["content_reconciled"] is True
+    assert diag.status == "warn"
+    assert "no longer describes the store" in diag.message
+    assert "indexed ids no longer match" in diag.message
+    assert "reindex" in (diag.fix_hint or "")
+    assert diag.details["indexed_count"] == diag.details["disk_count"] == 2
+    # The prescribed repair must actually clear it.
+    index.rebuild(tmp_path, Store(tmp_path).iter_active())
+    assert _check_index_health(tmp_path).status == "ok"
+
+
+def test_index_health_warns_when_a_body_was_hand_edited(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hand-edit: same id, same file, same count, edited scopes and body
+    — the workflow `docs/internals.md` advertises ("One file per memory,
+    grep-able and hand-editable"). No count and no id set can see it;
+    the index keeps serving the pre-edit text to FTS and the pre-edit
+    scopes to the session-start rollup while doctor certifies health.
+
+    Spies again rather than status alone: the identity leg finds nothing
+    here, so a `warn` that arrived without the content SELECT having run
+    would be a warn for the wrong reason.
+    """
+    from bettermemory import doctor as doctor_mod, index
+    from bettermemory.store import Store
+
+    store = Store(tmp_path)
+    written = store.write(
+        content="deploys go through the staging pipeline", scopes=["tools"]
+    )
+    path = next(p for p in tmp_path.iterdir() if p.suffix == ".md")
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        .replace("- tools", "- infrastructure")
+        .replace(
+            "deploys go through the staging pipeline",
+            "deploys go straight to production, no staging",
+        ),
+        encoding="utf-8",
+    )
+
+    # Premise pin: nothing the pre-fix check looked at moved.
+    assert index.status(tmp_path)["indexed_count"] == 1
+    assert len(list(tmp_path.glob("*.md"))) == 1
+    assert index.indexed_ids(tmp_path) == {written.id}
+
+    content_calls: list[Path] = []
+    real_content = doctor_mod._index_content_rows
+
+    def _spy_content(index_file: Path) -> dict[str, tuple[str, str]]:
+        content_calls.append(index_file)
+        return real_content(index_file)
+
+    monkeypatch.setattr(doctor_mod, "_index_content_rows", _spy_content)
+
+    diag = _check_index_health(tmp_path)
+
+    assert content_calls == [index.index_path(tmp_path)], "the content leg never ran"
+    assert diag.details["identity_reconciled"] is True
+    assert diag.details["content_reconciled"] is True
+    assert diag.status == "warn"
+    assert "no longer describes the store" in diag.message
+    assert written.id in diag.message
+    assert "reindex" in (diag.fix_hint or "")
+    assert diag.details["content_drift_count"] == 1
+    assert diag.details["content_drift_ids"] == [written.id]
+    # The prescribed repair must actually clear it.
+    index.rebuild(tmp_path, Store(tmp_path).iter_active())
+    assert _check_index_health(tmp_path).status == "ok"
+
+
+def test_index_health_does_not_read_crlf_normalisation_as_content_drift(
+    tmp_path: Path,
+) -> None:
+    """A CRLF body is not drift, and the content leg straddles the seam
+    where it would look like one.
+
+    `_index_upsert_quietly` indexes the in-memory `Memory`; the `.md`
+    reaches disk through `_frontmatter.dumps`, which strips
+    CR-before-newline. So the index holds `alpha\\r\\nbeta` while
+    `load_all` returns `alpha\\nbeta` for the same untouched record, and a
+    byte comparison calls that a hand-edit. The leg normalises both
+    sides through the one shared `_frontmatter.normalise_body` rather
+    than restating the rule, so this cannot drift back apart.
+
+    A false positive here is not cosmetic: it is a `warn` telling the
+    operator the index no longer describes a store that is in fact
+    perfect, from the check whose whole subject is trustworthy verdicts.
+    """
+    from bettermemory import index
+    from bettermemory.doctor import _index_content_rows
+    from bettermemory.store import Store
+
+    store = Store(tmp_path)
+    written = store.write(content="alpha\r\nbeta\r\ngamma", scopes=["tools"])
+
+    # Premise pin: the two sides really do disagree byte-for-byte, so a
+    # green below is the normalisation working rather than the fixture
+    # failing to reproduce the seam.
+    row = _index_content_rows(index.index_path(tmp_path))[written.id]
+    on_disk = next(m for m in Store(tmp_path).load_all() if m.id == written.id)
+    assert "\r" in row[1], "the index row lost its CRs; the seam moved"
+    assert "\r" not in on_disk.body, "dumps stopped normalising on write"
+
+    diag = _check_index_health(tmp_path)
+    assert diag.details["content_reconciled"] is True, "the content leg never ran"
+    assert diag.details["content_drift_count"] == 0
+    assert diag.status == "ok"
+
+
+def test_index_health_certification_names_only_what_it_checked(
+    tmp_path: Path,
+) -> None:
+    """The `ok` message is an inventory of the legs that ran, not the
+    word "healthy" over an unexamined index. Pre-fix it read "matches
+    disk" on the strength of a row count alone; the three times this
+    check certified a broken store all read like that. Pin the shape so
+    a future edit cannot quietly re-broaden the claim past the evidence.
+    """
+    from bettermemory.store import Store
+
+    store = Store(tmp_path)
+    store.write(content="alpha note about widgets", scopes=["tools"])
+    diag = _check_index_health(tmp_path)
+    assert diag.status == "ok"
+    assert "row count matches disk" in diag.message
+    assert "quick_check passed" in diag.message
+    assert "reconciled against disk" in diag.message
+    assert diag.details["identity_reconciled"] is True
+    assert diag.details["content_reconciled"] is True
 
 
 def test_index_health_real_divergence_annotated_with_unparseable_count(

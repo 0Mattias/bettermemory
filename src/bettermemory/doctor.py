@@ -58,9 +58,15 @@ from .config import Config, TelemetryConfig, load_config
 from .eval import is_admin_recorded_event
 from .events import EVENT_LOG_FILENAME, iter_all_events
 from .init import KNOWN_CLIENTS, command_launches_bettermemory, find_binary
-from .models import looks_truncated
+from .models import Memory, looks_truncated
 from .semantic_setup import _semantic_rank_leg_active
-from .store import Store, count_active_memory_files, count_unparseable_memory_files
+from .store import (
+    Store,
+    _has_confirmed_index_gap,
+    count_active_memory_files,
+    count_unparseable_memory_files,
+    scan_active_memory_ids,
+)
 
 
 CheckStatus = Literal["ok", "warn", "fail"]
@@ -392,7 +398,52 @@ def _check_storage_directory(cfg: Config) -> tuple[Diagnosis, Path | None]:
     )
 
 
-def _check_memory_parse_health(directory: Path) -> Diagnosis:
+class _MemoryLoad:
+    """One `Store(directory).load_all()`, shared by every check that
+    needs the parsed memories.
+
+    Three checks read the same list — parse health counts it, body
+    completeness reads the bodies, index health compares them against
+    the index rows — and each used to pay its own walk. Cost is the
+    smaller half of the reason to share: three independent samples of a
+    directory another agent may be writing to can disagree with each
+    other, and two checks reporting on two different snapshots is how a
+    report contradicts itself.
+
+    Each caller keeps its own degraded answer, so the failure is handed
+    back rather than raised: parse health owns the "cannot read the
+    store" verdict and the others must not report the same breakage a
+    second time in their own voice. A failed load is remembered as a
+    failure — retrying it once per check would be three chances to get
+    three different stories.
+
+    Constructing one per call site is the default (`load=None` on each
+    check) and stays correct: the sharing is an optimisation the caller
+    opts into, never a precondition. The `--fix` path relies on that —
+    it re-runs index health after a rebuild and must see the store as
+    it is now, not as the pre-fix report sampled it.
+    """
+
+    def __init__(self, directory: Path) -> None:
+        self._directory = directory
+        self._loaded = False
+        self._memories: list[Memory] | None = None
+        self._error: Exception | None = None
+
+    def get(self) -> tuple[list[Memory] | None, Exception | None]:
+        """`(memories, None)` on success, `(None, exc)` on failure."""
+        if not self._loaded:
+            self._loaded = True
+            try:
+                self._memories = Store(self._directory).load_all()
+            except Exception as exc:  # noqa: BLE001
+                self._error = exc
+        return self._memories, self._error
+
+
+def _check_memory_parse_health(
+    directory: Path, load: _MemoryLoad | None = None
+) -> Diagnosis:
     """Try to load every active memory; surface parse failures.
 
     Store.load_all already skips malformed files with a logged warning;
@@ -410,14 +461,12 @@ def _check_memory_parse_health(directory: Path) -> Diagnosis:
             status="ok",
             message="Storage dir does not exist yet — nothing to parse.",
         )
-    try:
-        store = Store(directory)
-        memories = store.load_all()
-    except Exception as exc:  # noqa: BLE001
+    memories, load_error = (load or _MemoryLoad(directory)).get()
+    if memories is None:
         return Diagnosis(
             name="memory_parse_health",
             status="fail",
-            message=f"Could not list memories: {exc}.",
+            message=f"Could not list memories: {load_error}.",
             fix_hint=f"Inspect {directory} for corrupt files.",
         )
 
@@ -463,7 +512,9 @@ def _check_memory_parse_health(directory: Path) -> Diagnosis:
     )
 
 
-def _check_memory_body_completeness(directory: Path) -> Diagnosis:
+def _check_memory_body_completeness(
+    directory: Path, load: _MemoryLoad | None = None
+) -> Diagnosis:
     """Report active memories whose body reads as cut off mid-sentence.
 
     The gap this closes: `memory_parse_health` above answers "does the
@@ -490,9 +541,8 @@ def _check_memory_body_completeness(directory: Path) -> Diagnosis:
             status="ok",
             message="Storage dir does not exist yet — nothing to check.",
         )
-    try:
-        memories = Store(directory).load_all()
-    except Exception as exc:  # noqa: BLE001
+    memories, load_error = (load or _MemoryLoad(directory)).get()
+    if memories is None:
         # Deliberately not a `fail`: `memory_parse_health` runs first and
         # owns the "cannot read the store" verdict. Reporting the same
         # breakage twice, in two voices, sends the operator looking for
@@ -500,7 +550,7 @@ def _check_memory_body_completeness(directory: Path) -> Diagnosis:
         return Diagnosis(
             name="memory_body_completeness",
             status="ok",
-            message=f"Skipped — could not list memories ({exc}).",
+            message=f"Skipped — could not list memories ({load_error}).",
         )
 
     suspect = [m.id for m in memories if looks_truncated(m.body)]
@@ -579,7 +629,143 @@ def _probe_index_integrity(index_file: Path) -> str | None:
     return "; ".join(findings) or "quick_check returned no rows"
 
 
-def _check_index_health(directory: Path) -> Diagnosis:
+def _index_content_rows(index_file: Path) -> dict[str, tuple[str, str]]:
+    """`{id: (scopes_json, body)}` for every row in the index.
+
+    The two columns a hand-edit can change without changing anything a
+    count or an id set can see. `index._upsert_memory` writes
+    `json.dumps(memory.scopes)` into `scopes_json` and `memory.body`
+    verbatim into `body`, so an unmodified store compares byte-equal on
+    both — measured on the maintainer's live store, 239 memories, zero
+    mismatches on either column.
+
+    Read-only (URI `mode=ro`) for the same reason as
+    `_probe_index_integrity`: a diagnostic must not be able to create
+    the file it is diagnosing, nor write to it. Errors propagate; the
+    caller decides how to degrade.
+    """
+    import sqlite3
+
+    conn = sqlite3.connect(
+        index_file.resolve().as_uri() + "?mode=ro", uri=True, timeout=5.0
+    )
+    try:
+        return {
+            str(row[0]): (str(row[1]), str(row[2]))
+            for row in conn.execute("SELECT id, scopes_json, body FROM memories")
+        }
+    finally:
+        conn.close()
+
+
+def _reconcile_index_against_disk(
+    directory: Path, *, details: dict[str, Any], load: _MemoryLoad
+) -> str | None:
+    """Answer whether the index still DESCRIBES the store, not merely
+    whether it holds the same number of rows. `None` when it does, else
+    a one-line description of the divergence.
+
+    Two shapes survive an equal count, and both are reachable through
+    the workflow this project advertises as its differentiator — one
+    file per memory, grep-able and hand-editable (`docs/internals.md`):
+
+    - **Identity.** Remove one memory and add another out of band and
+      the count is unchanged while the id sets are not. Resolved with
+      `store._has_confirmed_index_gap` rather than a set difference
+      against `index.indexed_ids`: every Store mutator lands the `.md`
+      and commits the row as two steps inside one `_locked()` block, so
+      a raw diff taken against a store a fleet is writing to reports a
+      hole that closes a millisecond later. That helper re-resolves each
+      candidate under the writer's own file lock, which synchronises
+      with the writer instead of guessing how long it will take.
+    - **Content.** Same id, same file, edited body or scopes. No id-set
+      comparison can see it; the index keeps serving the pre-edit text
+      to FTS and the pre-edit scopes to the scope rollup.
+
+    Both legs record whether they RAN in `details`, because "reconciled
+    and clean" and "could not reconcile" are different claims and this
+    check's whole history is of the second being reported as the first.
+    A leg that could not run is a divergence this cannot rule out, so it
+    reads as a finding rather than as a pass.
+
+    Both legs run even when the first has already found something: one
+    reindex repairs both, and an operator reading the report deserves
+    the whole list rather than the first item on it.
+    """
+    from . import index
+
+    problems: list[str] = []
+
+    try:
+        disk_paths, _ = scan_active_memory_ids(directory)
+        identity_gap = _has_confirmed_index_gap(directory, disk_paths)
+    except Exception as exc:  # noqa: BLE001
+        details["identity_reconciled"] = False
+        problems.append(
+            f"could not reconcile index ids against disk "
+            f"({exc.__class__.__name__}: {exc})"
+        )
+    else:
+        details["identity_reconciled"] = True
+        if identity_gap:
+            problems.append(
+                "the indexed ids no longer match the ids on disk (a memory "
+                "with no row, or a row naming an id that is not on disk)"
+            )
+
+    memories, load_error = load.get()
+    if memories is None:
+        details["content_reconciled"] = False
+        problems.append(
+            f"could not read the memory files to compare against the index "
+            f"rows ({load_error})"
+        )
+        return "; ".join(problems) or None
+    try:
+        rows = _index_content_rows(index.index_path(directory))
+    except Exception as exc:  # noqa: BLE001
+        details["content_reconciled"] = False
+        problems.append(
+            f"could not read the index rows to compare against disk "
+            f"({exc.__class__.__name__}: {exc})"
+        )
+        return "; ".join(problems) or None
+
+    details["content_reconciled"] = True
+    # Both bodies go through `_frontmatter.normalise_body` before the
+    # comparison, because the two sides sit on opposite banks of it.
+    # `_index_upsert_quietly` indexes the in-memory `Memory`, while the
+    # `.md` reaches disk through `dumps`, which strips CR-before-newline
+    # (`_frontmatter.py`, the CRLF note above the `normalise_body` call).
+    # A body written as `alpha\r\nbeta` is therefore stored with its CRs
+    # in the index and without them on disk, and `load_all` returns the
+    # disk form — so a byte comparison reports drift on a store where
+    # nothing drifted. Normalising both sides asks the question this leg
+    # means to ask: does the index still hold the same TEXT, as every
+    # reader of either side would see it.
+    from ._frontmatter import normalise_body
+
+    drifted = sorted(
+        m.id
+        for m in memories
+        if m.id in rows
+        and (json.dumps(m.scopes), normalise_body(m.body))
+        != (rows[m.id][0], normalise_body(rows[m.id][1]))
+    )
+    details["content_drift_count"] = len(drifted)
+    if drifted:
+        shown = drifted[:10]
+        more = len(drifted) - len(shown)
+        details["content_drift_ids"] = shown
+        problems.append(
+            f"{len(drifted)} memory file(s) carry a body or scope list the "
+            f"index row no longer matches: {', '.join(shown)}"
+            f"{f' (+{more} more)' if more else ''}"
+        )
+    return "; ".join(problems) or None
+
+
+def _check_index_health(directory: Path, load: _MemoryLoad | None = None) -> Diagnosis:
     """Probe the FTS5 index: `index.status()` (never raises) for the
     meta-level states, `PRAGMA quick_check` for the page-level
     corruption those meta reads can't see (see
@@ -604,6 +790,16 @@ def _check_index_health(directory: Path) -> Diagnosis:
     this check never prescribes a reindex that cannot clear it (those
     files are memory_parse_health's finding, with the accurate
     fix-the-file hint).
+
+    The count comparison is a TRIGGER, never the verdict. Twice before
+    (CHANGELOG "bettermemory doctor checks FTS index health", and again
+    for the torn interior page) this check certified an index that no
+    longer described the store, because equal counts returned `ok`
+    directly. Nothing certifies now without
+    `_reconcile_index_against_disk` having compared the ids and the
+    content behind those counts — see
+    `docs/incidents/2026-07-31-index-health-certified-a-stale-index.md`
+    for the third occurrence and why the message shape changed with it.
     """
     # Lazy import mirrors every other `index` consumer (store,
     # _handlers, the reindex CLI): an interpreter built without sqlite3
@@ -693,14 +889,34 @@ def _check_index_health(directory: Path) -> Diagnosis:
             details=details,
         )
     details["quick_check"] = "ok"
+    # The counts still line up per `status()`, but a count is not a
+    # description. Reconcile the ids and the content behind it before
+    # any `ok` leaves this function.
+    reconcile = _MemoryLoad(directory) if load is None else load
     indexed_count = int(status.get("indexed_count", 0) or 0)
     if indexed_count == disk_count:
+        divergence = _reconcile_index_against_disk(
+            directory, details=details, load=reconcile
+        )
+        if divergence is not None:
+            return Diagnosis(
+                name="index_health",
+                status="warn",
+                message=(
+                    f"Index no longer describes the store even though the "
+                    f"row count matches disk ({indexed_count} rows, "
+                    f"{disk_count} file(s)): {divergence}."
+                ),
+                fix_hint=fix,
+                details=details,
+            )
         return Diagnosis(
             name="index_health",
             status="ok",
             message=(
-                f"Index healthy: {indexed_count} memories indexed "
-                f"(matches disk; PRAGMA quick_check passed)."
+                f"Index healthy: {indexed_count} rows; row count matches "
+                f"disk; PRAGMA quick_check passed; every id and every "
+                f"body/scope list reconciled against disk."
             ),
             details=details,
         )
@@ -719,17 +935,39 @@ def _check_index_health(directory: Path) -> Diagnosis:
     details["unparseable_count"] = unparseable_count
     indexable_count = disk_count - unparseable_count
     if indexed_count == indexable_count:
-        # As synced as a rebuild can make it. The unparseable files are
-        # a real problem, but they're memory_parse_health's finding —
-        # warning here would prescribe a reindex that can never clear.
+        # As synced as a rebuild can make it — by count. This branch
+        # certifies too, so it owes the same reconciliation as the
+        # equal-count branch above; the unparseable files are excluded
+        # from both legs because `scan_active_memory_ids` skips exactly
+        # what `iter_active` skips.
+        divergence = _reconcile_index_against_disk(
+            directory, details=details, load=reconcile
+        )
+        if divergence is not None:
+            return Diagnosis(
+                name="index_health",
+                status="warn",
+                message=(
+                    f"Index no longer describes the store even though the "
+                    f"row count matches every parseable file on disk "
+                    f"({indexed_count} rows, {unparseable_count} unparseable "
+                    f"file(s) excluded): {divergence}."
+                ),
+                fix_hint=fix,
+                details=details,
+            )
+        # The unparseable files are a real problem, but they're
+        # memory_parse_health's finding — warning here would prescribe a
+        # reindex that can never clear.
         return Diagnosis(
             name="index_health",
             status="ok",
             message=(
-                f"Index healthy: {indexed_count} memories indexed — matches "
+                f"Index healthy: {indexed_count} rows; row count matches "
                 f"every parseable file on disk ({unparseable_count} "
-                f"unparseable file(s) excluded; see memory_parse_health). "
-                f"PRAGMA quick_check passed."
+                f"unparseable file(s) excluded; see memory_parse_health); "
+                f"PRAGMA quick_check passed; every id and every body/scope "
+                f"list reconciled against disk."
             ),
             details=details,
         )
@@ -3209,10 +3447,14 @@ def run_diagnostics() -> DoctorReport:
     checks.append(storage_diag)
 
     if directory is not None and directory.exists():
+        # One load for the three checks that need the parsed memories.
+        # Constructed here rather than inside them so all three report on
+        # the SAME snapshot of a directory other agents may be writing to.
+        memory_load = _MemoryLoad(directory)
         checks.append(
             _safe(
                 "memory_parse_health",
-                lambda: _check_memory_parse_health(directory),
+                lambda: _check_memory_parse_health(directory, memory_load),
             )
         )
         # Reads the bodies `memory_parse_health` only counted: parsing
@@ -3222,7 +3464,7 @@ def run_diagnostics() -> DoctorReport:
         checks.append(
             _safe(
                 "memory_body_completeness",
-                lambda: _check_memory_body_completeness(directory),
+                lambda: _check_memory_body_completeness(directory, memory_load),
             )
         )
         # After memory_parse_health deliberately: that check constructs
@@ -3233,7 +3475,7 @@ def run_diagnostics() -> DoctorReport:
         checks.append(
             _safe(
                 "index_health",
-                lambda: _check_index_health(directory),
+                lambda: _check_index_health(directory, memory_load),
             )
         )
         checks.append(_safe("event_log", lambda: _check_event_log_writable(directory)))
