@@ -9,6 +9,106 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+### Fixed — an optional extra that was installed and BROKEN killed all retrieval
+
+`memory_search` returned `Error executing tool memory_search: frozenset()` for
+every query. The store, the index and the ranker were all fine. What had
+happened is that a `transformers` install had been partially evicted by iCloud
+out of a venv living under `~/Documents` — 226 of 2347 `.py` files left on disk
+— so the lazy-import scan `transformers/__init__.py` runs over its own package
+tree found nothing and raised `KeyError: frozenset()` while executing.
+
+`sentence_transformers` imports `transformers`. bettermemory imports
+`sentence_transformers` to answer one boolean — is a semantic ranking leg
+available — and that probe caught `ImportError` and nothing else. So the
+exception escaped a PREDICATE, travelled up through
+`semantic_setup._semantic_model_or_none` and out of the MCP tool. A fault in an
+OPTIONAL ranking leg, whose entire documented behaviour is to degrade to
+keyword+BM25, took down required retrieval. The same factory backs write-time
+dedup, so capture was in the blast radius too — both halves of the product,
+from a dependency neither half requires.
+
+An optional dependency has THREE states — absent, working, and
+installed-but-broken — and every probe here modelled two. The asymmetry is
+visible in the old code: the model CONSTRUCTION in `_load_torch_model` was
+already guarded `except Exception  # model load can fail many ways`, while the
+import directly above it caught only `ImportError`. Many failure modes were
+anticipated for the constructor and exactly one for the import, though an
+import runs arbitrary third-party module-level code and so has strictly more.
+
+`semantic.extra_importable` is now the single place that owns the three-state
+answer. Broken returns False and logs once per process at WARNING — silence
+there would trade a loud crash for a silent capability downgrade, which is the
+worse failure, because search quietly gets worse and nothing in the process
+says why. Absent stays silent, since that is the default install and not a
+fault. `semantic.extra_import_failure` exposes the reason for diagnostics.
+Both model loaders grew the matching branch, and `find_spec` — documented to
+return `None` for "not found" but which raises on some damaged installs — now
+goes through `_spec_found`.
+
+### Fixed — `doctor` was silent about a broken extra on the default config
+
+`_check_embeddings_extra` returned `semantic_dedup disabled (no extras needed)`
+and stopped, whenever `semantic_dedup` was false. That is the DEFAULT. The gate
+was correct when the extra fed only write-time dedup and has been stale since
+`hybrid` became the default search mode and the extra started feeding ranking
+with no `semantic_dedup` involvement at all. So the one check that names the
+embeddings extra went quiet on precisely the population a broken extra
+degrades — this project's recurring shape, a check whose input population no
+longer matches the one the feature serves, and during the outage above it
+reported `ok`.
+
+The broken branch is now evaluated before the `semantic_dedup` gate, names the
+module and the import error, and says **reinstall** rather than install —
+telling someone to install what they already have sends them looking in the
+wrong place. The absent case still respects the gate: a default install with no
+extra is not a fault, and `retrieval_discrimination` already owns that advice
+with a measurement behind it.
+
+### Fixed — auto-detect picked a broken provider over a working one
+
+Two embeddings extras exist so one can cover for the other, and
+`resolve_provider`'s auto branch could not do that: it asked whether a provider
+was on disk, not whether it worked. With both installed and
+sentence-transformers broken, it returned `torch`, the loader then returned
+`None`, and the semantic leg was lost on a machine with a perfectly good
+fastembed installed. Worse, `_semantic_rank_leg_active` ORs across the
+providers, so it went on reporting that a semantic leg was scoring searches
+while none was — a false green in `doctor` and the web UI both.
+
+Auto-detect now returns the first provider that actually imports. When every
+installed extra is broken it still names one rather than returning `None`,
+because `None` reads as "no extra installed" downstream and earns the install
+hint — the wrong advice for someone who has it installed; naming it routes to
+the loader whose WARNING says what actually failed. An explicit
+`semantic_provider` is still honoured verbatim, broken or not: it is an
+instruction, and quietly serving a different provider would make the embedding
+cache's provider namespacing a lie.
+
+The same check also asked only about sentence-transformers when deciding
+whether `semantic_dedup = true` had what it needs, so `[embeddings-fast]`-only
+users were told the extra was not installed while their cosine dedup worked
+fine. Either extra now satisfies it.
+
+### Fixed — `docs/installation.md` still described the pre-3.x install contract
+
+It said the embeddings extra "alone doesn't change ranking — semantic search
+also needs the config opt-in". That has been false since `hybrid` became the
+default: installing either extra is sufficient, and `semantic_dedup` — the flag
+a reader would reach for to "activate" it — only ever controlled write-time
+dedup. This is the same foot-gun `semantic_setup` documents as already fixed
+("a documented foot-gun that cost two sessions' worth of wrong install
+advice"); the install page was the last surface still carrying it, and it is
+the page `doctor`'s own fix hint sends people to.
+
+`tests/test_broken_optional_extra.py` simulates the third state with a
+`sys.meta_path` finder whose loader raises at exec time, so it needs no broken
+package installed and runs on every matrix leg including the no-extras one.
+Verified as a negative control: reverting the source fails all of it, including
+an end-to-end case that reproduces the exact
+`Error executing tool memory_search: ...` string, and a provider case where the
+old presence-only resolver returns `torch` and then no model at all.
+
 ### Added — the release lists itself in the MCP registry
 
 `.github/workflows/publish-mcp.yml` submits `server.json` after a release is

@@ -58,6 +58,8 @@ Cache invalidation hierarchy (most-frequent first):
 from __future__ import annotations
 
 import contextlib
+import importlib
+import importlib.util
 import logging
 import os
 import re
@@ -109,6 +111,145 @@ EMBEDDING_FILENAME_SUFFIX = ".npz"
 _MODEL_CACHE: dict[tuple[Provider, str], Any] = {}
 _LOAD_FAILED: set[tuple[Provider, str]] = set()
 _LOAD_FAILED_LOGGED: set[tuple[Provider, str]] = set()
+
+# Probe results for `extra_importable`, keyed by module name, plus the
+# once-per-process log ledger for the broken-install branch.
+_EXTRA_PROBE: dict[str, bool] = {}
+_EXTRA_BROKEN_LOGGED: set[str] = set()
+# `"<ExcType>: <message>"` per module that was PRESENT but failed to
+# import. Absent modules are deliberately not recorded — see
+# `extra_import_failure`, which is the read surface for this.
+_EXTRA_BROKEN_REASON: dict[str, str] = {}
+
+
+def extra_importable(module: str) -> bool:
+    """True when the optional extra ``module`` imports CLEANLY.
+
+    The one place that answers "can this optional dependency be used",
+    because the answer has three states and the obvious two-state read
+    of it took the product down.
+
+    An optional extra can be (a) absent, (b) present and working, or
+    (c) present and BROKEN. Every probe in this codebase used to model
+    only (a) and (b)::
+
+        try:
+            import sentence_transformers
+            return True
+        except ImportError:
+            return False
+
+    which is correct right up until an installed package raises
+    something that is not ``ImportError`` while executing its own
+    ``__init__``. Then the exception propagates out of a capability
+    PROBE — a function whose entire contract is to return a bool — and
+    through whatever required path asked the question.
+
+    That is not hypothetical. It is the 2026-08-01 outage: a
+    ``transformers`` tree that iCloud had partially evicted (226 of
+    2347 ``.py`` files left on disk) made its own lazy-import scan find
+    nothing, so ``transformers/__init__.py`` raised
+    ``KeyError: frozenset()``. ``sentence_transformers`` imports
+    ``transformers``, so the probe raised, so
+    ``semantic_setup._semantic_model_or_none`` raised, so EVERY
+    ``memory_search`` call returned
+    ``Error executing tool memory_search: frozenset()``. Retrieval —
+    the product — was dead for a fault in an OPTIONAL ranking leg whose
+    documented behaviour is to degrade to keyword+bm25.
+
+    Note the asymmetry this repairs. The model CONSTRUCTION in
+    ``_load_torch_model`` was already guarded ``except Exception  #
+    model load can fail many ways``. The authors correctly anticipated
+    that a third-party model load fails in many ways, and assumed the
+    import preceding it fails in exactly one. An import runs arbitrary
+    third-party module-level code; it has strictly MORE ways to fail
+    than the constructor does.
+
+    Broken (c) is deliberately NOT silent. Returning a bare ``False``
+    for it would trade a loud crash for a silent capability downgrade —
+    search quietly gets worse and nothing in the process says why. So
+    (c) logs once per process at WARNING while (a) stays silent, since
+    "no extra installed" is the default install and not a fault.
+
+    Cached per module name: a broken extra costs a real import attempt
+    (the evicted tree above walked the filesystem for seconds before
+    failing) and ``memory_search`` probes on every single call.
+    ``reset_caches()`` clears it.
+    """
+    cached = _EXTRA_PROBE.get(module)
+    if cached is not None:
+        return cached
+
+    try:
+        importlib.import_module(module)
+    except ImportError:
+        # (a) Not installed — the default install. Silent by design;
+        # `get_model` owns the install hint for callers that asked for
+        # a model explicitly.
+        _EXTRA_PROBE[module] = False
+        return False
+    except Exception as exc:  # noqa: BLE001 — see the docstring: an
+        # import executes arbitrary third-party module-level code and
+        # can raise anything. The probe's contract is a bool.
+        _EXTRA_BROKEN_REASON[module] = f"{type(exc).__name__}: {exc}"
+        if module not in _EXTRA_BROKEN_LOGGED:
+            log.warning(
+                "optional extra %r is installed but failed to import "
+                "(%s: %s). Treating it as unavailable and falling back "
+                "to keyword/BM25 ranking (and Jaccard dedup). This is "
+                "usually a damaged or partially-upgraded install — "
+                "reinstall the extra to restore semantic ranking.",
+                module,
+                type(exc).__name__,
+                exc,
+            )
+            _EXTRA_BROKEN_LOGGED.add(module)
+        _EXTRA_PROBE[module] = False
+        return False
+
+    _EXTRA_PROBE[module] = True
+    return True
+
+
+def extra_import_failure(module: str) -> str | None:
+    """``"<ExcType>: <message>"`` when ``module`` is present but BROKEN.
+
+    ``None`` both when the extra imports cleanly and when it is simply
+    absent — the two states a caller has nothing to report about. This
+    exists so a DIAGNOSTIC can tell the user which of the three states
+    they are in, because the advice differs and getting it wrong wastes
+    their time: an absent extra wants "install it", a broken one wants
+    "reinstall it", and telling someone to install what they already
+    have is how a diagnostic sends them looking in the wrong place.
+
+    That is not a hypothetical either. During the 2026-08-01 outage the
+    only surface that mentions the extra at all
+    (``doctor``'s ``retrieval_discrimination`` fix hint) would have said
+    "Install an embeddings extra — that is now the whole fix" to a user
+    whose embeddings extra was installed and gutted.
+
+    Runs the probe (cached) so callers need not sequence the two calls.
+    """
+    extra_importable(module)
+    return _EXTRA_BROKEN_REASON.get(module)
+
+
+def _spec_found(module: str) -> bool:
+    """True when ``module``'s import spec resolves, without importing it.
+
+    ``find_spec`` is documented to return ``None`` for "not found", but
+    it RAISES for several flavours of damaged install:
+    ``ModuleNotFoundError`` when a parent package is missing,
+    ``ValueError`` when an entry in ``sys.modules`` has a ``__spec__``
+    of ``None``. Both are "you cannot use this extra", not "crash the
+    caller" — same three-state argument as ``extra_importable``, minus
+    the log, because a spec check is cheap enough to repeat and the
+    import probe that follows it owns the WARNING.
+    """
+    try:
+        return importlib.util.find_spec(module) is not None
+    except Exception:  # noqa: BLE001 — damaged install; see docstring.
+        return False
 
 
 class _FastembedAdapter:
@@ -167,6 +308,23 @@ def _load_torch_model(model_name: str) -> Any | None:
             _LOAD_FAILED_LOGGED.add(key)
         _LOAD_FAILED.add(key)
         return None
+    except Exception as exc:  # noqa: BLE001 — an installed-but-broken
+        # extra raises whatever its own module-level code raises. Same
+        # three-state argument as `extra_importable`: this loader's
+        # contract is "model or None", and a damaged optional package
+        # must not escape it into the required search path.
+        if key not in _LOAD_FAILED_LOGGED:
+            log.warning(
+                "the embeddings extra is installed but "
+                "`sentence_transformers` failed to import (%s: %s). "
+                "Falling back to Jaccard / keyword. Reinstall the "
+                "extra to restore semantic ranking.",
+                type(exc).__name__,
+                exc,
+            )
+            _LOAD_FAILED_LOGGED.add(key)
+        _LOAD_FAILED.add(key)
+        return None
 
     try:
         model = SentenceTransformer(model_name)
@@ -220,6 +378,20 @@ def _load_fastembed_model(model_name: str) -> Any | None:
             _LOAD_FAILED_LOGGED.add(key)
         _LOAD_FAILED.add(key)
         return None
+    except Exception as exc:  # noqa: BLE001 — installed-but-broken; see
+        # the matching branch in `_load_torch_model`.
+        if key not in _LOAD_FAILED_LOGGED:
+            log.warning(
+                "the embeddings-fast extra is installed but `fastembed` "
+                "failed to import (%s: %s). Falling back to Jaccard / "
+                "keyword. Reinstall the extra to restore semantic "
+                "ranking.",
+                type(exc).__name__,
+                exc,
+            )
+            _LOAD_FAILED_LOGGED.add(key)
+        _LOAD_FAILED.add(key)
+        return None
 
     try:
         model: Any = TextEmbedding(model_name=model_name)
@@ -243,21 +415,26 @@ def _load_fastembed_model(model_name: str) -> Any | None:
 def _torch_extra_installed() -> bool:
     """Return True iff the sentence-transformers import resolves.
 
-    Uses `importlib.util.find_spec` so we never actually import the
-    module — checking the extra's presence shouldn't pay the import
-    cost. Same idiom for `_fastembed_extra_installed`.
-    """
-    import importlib.util
+    Goes through `_spec_found`, which uses `importlib.util.find_spec`
+    so we never actually import the module — checking the extra's
+    presence shouldn't pay the import cost — and swallows the raises a
+    damaged install can produce. Same idiom for
+    `_fastembed_extra_installed`.
 
-    return importlib.util.find_spec("sentence_transformers") is not None
+    PRESENCE, not health: this answers "is it installed", and an
+    installed-but-broken extra answers True here. That is deliberate —
+    `resolve_provider` uses it to pick WHICH provider to try, and
+    `_load_torch_model` is the layer that discovers the breakage and
+    degrades. Don't repoint this at `extra_importable`: that would pay
+    a full import inside a function documented not to.
+    """
+    return _spec_found("sentence_transformers")
 
 
 def _fastembed_extra_installed() -> bool:
     """Return True iff the fastembed import resolves. See
     `_torch_extra_installed` for the spec-check rationale."""
-    import importlib.util
-
-    return importlib.util.find_spec("fastembed") is not None
+    return _spec_found("fastembed")
 
 
 def resolve_provider(preference: str | None = None) -> Provider | None:
@@ -268,10 +445,26 @@ def resolve_provider(preference: str | None = None) -> Provider | None:
     rule:
 
     - Explicit "torch" or "fastembed": honour it, even if the extra
-      isn't installed. The caller then sees None from `get_model()`
-      and the per-provider warning explains the missing extra.
-    - "auto" or None: torch wins when installed (existing caches stay
-      byte-stable), then fastembed, then None (no extra installed).
+      isn't installed or is broken. The caller then sees None from
+      `get_model()` and the per-provider warning explains which. An
+      explicit preference is an instruction, not a hint, and silently
+      serving a different provider than the one named would make the
+      embedding cache's provider namespacing a lie.
+    - "auto" or None: the first provider that actually WORKS, torch
+      first (existing caches stay byte-stable), then fastembed. If
+      neither works but one is installed, that one is returned anyway so
+      its loader fires the warning naming the breakage. None only when
+      no extra is installed at all.
+
+    Auto-detect deliberately asks about HEALTH, not presence, and that
+    costs an import probe (cached). Presence alone picked a broken torch
+    over a working fastembed and then returned no model — losing the
+    semantic leg entirely on a machine that had a perfectly good
+    provider installed, while `_semantic_rank_leg_active` went on
+    reporting that a semantic leg was scoring searches, because that
+    predicate ORs over the providers and this function had already
+    committed to one. Two extras exist so one can cover for the other;
+    a resolver that stops at "is it on disk" cannot do that.
 
     Returns the chosen Provider, or None when no provider is available.
     """
@@ -285,9 +478,21 @@ def resolve_provider(preference: str | None = None) -> Provider | None:
             "unknown semantic_provider %r; falling back to auto-detect.",
             preference,
         )
-    if _torch_extra_installed():
+    torch_present = _torch_extra_installed()
+    fastembed_present = _fastembed_extra_installed()
+    # Healthy first, in the historic preference order.
+    if torch_present and extra_importable("sentence_transformers"):
         return "torch"
-    if _fastembed_extra_installed():
+    if fastembed_present and extra_importable("fastembed"):
+        return "fastembed"
+    # Everything installed is broken. Return one anyway rather than None:
+    # None reads as "no extra installed" downstream and earns
+    # `get_model`'s install hint, which is the wrong advice for someone
+    # who has it installed. Returning it routes to the loader whose
+    # WARNING names the actual import failure.
+    if torch_present:
+        return "torch"
+    if fastembed_present:
         return "fastembed"
     return None
 
@@ -809,6 +1014,9 @@ def reset_caches() -> None:
     _MODEL_CACHE.clear()
     _LOAD_FAILED.clear()
     _LOAD_FAILED_LOGGED.clear()
+    _EXTRA_PROBE.clear()
+    _EXTRA_BROKEN_LOGGED.clear()
+    _EXTRA_BROKEN_REASON.clear()
     _EMBEDDING_CACHE.clear()
     _PERSISTENT_PATH = None
     _HYDRATED = False
@@ -826,6 +1034,8 @@ __all__ = [
     "get_model",
     "cached_embed",
     "cosine_similarity_normalized",
+    "extra_import_failure",
+    "extra_importable",
     "persistent_cache_flush_failures",
     "resolve_provider",
     "reset_caches",

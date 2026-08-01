@@ -2854,36 +2854,102 @@ def _check_retrieval_discrimination(directory: Path, cfg: Config) -> Diagnosis:
 
 
 def _check_embeddings_extra(cfg: Config) -> Diagnosis:
-    """If `behavior.semantic_dedup = true`, the embeddings extra has to
-    be installed or write-time dedup silently falls back to Jaccard.
-    The fallback is logged as a WARNING but a doctor pass surfaces the
-    problem proactively."""
-    if not cfg.behavior.semantic_dedup:
-        return Diagnosis(
-            name="embeddings_extra",
-            status="ok",
-            message="semantic_dedup disabled (no extras needed).",
-        )
-    try:
-        import sentence_transformers  # noqa: F401  # pyright: ignore[reportMissingImports]
-    except ImportError:
+    """Report the embeddings extra's state — absent, working, or BROKEN.
+
+    Three states, and the advice differs for each, which is why this
+    can't be the two-state `try/except ImportError` it used to be. An
+    extra that is installed and fails to import is not "missing": it
+    needs reinstalling, not installing, and a diagnostic that says
+    "install it" to someone who already has it sends them looking in
+    the wrong place.
+
+    The BROKEN branch is checked BEFORE the `semantic_dedup` gate, and
+    that ordering is the point. The gate made sense when the extra fed
+    only write-time dedup. It no longer does: since the `hybrid` default
+    the extra also feeds RANKING, via
+    `semantic_setup._semantic_model_configured`, with no `semantic_dedup`
+    involvement at all. So the old early return answered "no extras
+    needed" for the DEFAULT config — the one where a broken extra
+    degrades every search — and the check went quiet on exactly the
+    population it exists to serve.
+
+    That is this project's recurring failure shape (see
+    `docs/incidents/`) and it cost a full outage on 2026-08-01: search
+    died with `KeyError: frozenset()` out of a gutted `transformers`,
+    and doctor's only comment on embeddings was
+    `semantic_dedup disabled (no extras needed)`.
+
+    The absent case still respects the gate — a default install with no
+    extra is not a fault, and `retrieval_discrimination` already owns
+    the "consider installing one" advice with the measurement to back
+    it up.
+    """
+    from .semantic import extra_import_failure, extra_importable
+
+    for module, extra in (
+        ("sentence_transformers", "embeddings"),
+        ("fastembed", "embeddings-fast"),
+    ):
+        reason = extra_import_failure(module)
+        if reason is None:
+            continue
         return Diagnosis(
             name="embeddings_extra",
             status="fail",
             message=(
-                "`semantic_dedup = true` in config but the `embeddings` "
-                "extra is not installed; write-time dedup will fall back "
-                "to Jaccard with a logged WARNING."
+                f"the `{extra}` extra is INSTALLED but `{module}` fails to "
+                f"import ({reason}). Semantic ranking and cosine dedup are "
+                "silently degraded to keyword/BM25 and Jaccard."
             ),
             fix_hint=(
-                "Install the extra: `uv pip install -e .[embeddings]`, or "
-                "set `semantic_dedup = false` in config.toml."
+                f"Reinstall it: `uv pip install --force-reinstall {module}` "
+                f"(or `uv pip install -e .[{extra}]`). This usually means a "
+                "damaged or partially-synced install — a virtualenv inside "
+                "a cloud-synced folder (iCloud Drive, Dropbox) is the "
+                "common cause, and moving the venv outside it is the "
+                "durable fix."
+            ),
+            details={"module": module, "extra": extra, "error": reason},
+        )
+
+    if not cfg.behavior.semantic_dedup:
+        return Diagnosis(
+            name="embeddings_extra",
+            status="ok",
+            message="semantic_dedup disabled; no extra is installed-and-broken.",
+        )
+
+    # EITHER extra satisfies write-time dedup — `semantic_setup` resolves
+    # fastembed as a first-class provider — so asking only about
+    # sentence-transformers reported "the extra is not installed" to
+    # `[embeddings-fast]` users whose cosine dedup was working fine. A
+    # check that names one member of a set the feature treats as
+    # interchangeable measures the wrong population.
+    working = [
+        module
+        for module in ("sentence_transformers", "fastembed")
+        if extra_importable(module)
+    ]
+    if not working:
+        return Diagnosis(
+            name="embeddings_extra",
+            status="fail",
+            message=(
+                "`semantic_dedup = true` in config but neither the "
+                "`embeddings` nor the `embeddings-fast` extra is "
+                "installed; write-time dedup will fall back to Jaccard "
+                "with a logged WARNING."
+            ),
+            fix_hint=(
+                "Install one: `uv pip install -e .[embeddings]` (PyTorch) "
+                "or `uv pip install -e .[embeddings-fast]` (ONNX), or set "
+                "`semantic_dedup = false` in config.toml."
             ),
         )
     return Diagnosis(
         name="embeddings_extra",
         status="ok",
-        message="semantic_dedup enabled and `sentence_transformers` importable.",
+        message=f"semantic_dedup enabled and {', '.join(working)} importable.",
     )
 
 

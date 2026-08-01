@@ -185,19 +185,19 @@ def _embeddings_extra_importable() -> bool:
     Mirrors what ``get_model`` will find at runtime rather than asking
     the config what it wants — the failure this exists to catch is a
     config that asks for a model no install can supply.
+
+    Delegates the actual probing to ``semantic.extra_importable``, which
+    owns the three-state answer (absent / working / installed-but-
+    BROKEN). This function used to inline the probe with an
+    ``except ImportError`` on each arm, which meant an installed-but-
+    broken extra propagated its import-time exception out of a
+    predicate and killed every ``memory_search`` — see that function's
+    docstring for the incident. The knowledge of how an optional import
+    can fail belongs in one place; this is the wiring.
     """
-    try:
-        import sentence_transformers  # noqa: F401  # pyright: ignore[reportMissingImports]
+    from .semantic import extra_importable
 
-        return True
-    except ImportError:
-        pass
-    try:
-        import fastembed  # noqa: F401  # pyright: ignore[reportMissingImports]
-
-        return True
-    except ImportError:
-        return False
+    return extra_importable("sentence_transformers") or extra_importable("fastembed")
 
 
 def _semantic_model_or_none(config: Config) -> Any:

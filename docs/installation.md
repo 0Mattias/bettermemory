@@ -18,10 +18,18 @@ uv tool install 'bettermemory[ui]'                # FastAPI + uvicorn for `bette
 
 The two embeddings extras expose the same retrieval surface;
 `embeddings-fast` is the right pick on CI runners, small VMs, and
-air-gapped boxes. When both are installed, sentence-transformers wins
-unless `[behavior] semantic_provider = "fastembed"` is set. Note the
-extra alone doesn't change ranking — semantic search also needs the
-config opt-in (see [api.md](api.md)).
+air-gapped boxes. Installing either one is sufficient: the default
+`search_mode = "hybrid"` picks the model up on its own and fuses it as a
+third leg beside the two lexical ones. No config flag is required — in
+particular `semantic_dedup` is not one, and setting it to "activate"
+semantic search only flips write-time dedup from Jaccard to cosine.
+
+When both are installed, sentence-transformers wins unless
+`[behavior] semantic_provider = "fastembed"` is set — except that
+auto-detect skips a provider whose import is broken, so a damaged
+sentence-transformers falls through to a working fastembed rather than
+losing the semantic leg. `bettermemory doctor` names an extra that is
+installed but failing to import.
 
 Python 3.11–3.14. From a development clone: `uv tool install .` (or
 `uv pip install -e .` for editable). Either path puts a `bettermemory`

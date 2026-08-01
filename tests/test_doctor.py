@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from bettermemory import sync
+from bettermemory import semantic, sync
 
 from .conftest import set_git_discovery_ceiling
 from bettermemory.config import BehaviorConfig, Config, StorageConfig
@@ -1497,18 +1497,22 @@ def test_embeddings_extra_fails_when_enabled_but_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cfg = _config_for(tmp_path, semantic_dedup=True)
-    # Force the import to fail regardless of whether the extra is
-    # actually installed in the test environment.
-    import builtins
-
-    real_import = builtins.__import__
-
-    def fake_import(name: str, *args: Any, **kwargs: Any) -> Any:
-        if name == "sentence_transformers":
-            raise ImportError("forced")
-        return real_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", fake_import)
+    # Force BOTH extras to read as unavailable regardless of what this
+    # test environment has installed. Seeding `semantic._EXTRA_PROBE` is
+    # the seam because the check now asks `semantic.extra_importable`,
+    # which goes through `importlib.import_module` — the older
+    # `builtins.__import__` patch stopped intercepting, and because
+    # `sentence_transformers` IS installed on the embeddings CI leg the
+    # test would have silently measured the ok path instead of the one
+    # it names. `_EXTRA_PROBE` is production state, not a stub, and the
+    # probe's own behaviour is covered in
+    # `tests/test_broken_optional_extra.py`.
+    #
+    # Both modules must be seeded: either extra satisfies semantic dedup,
+    # so leaving `fastembed` unseeded would make this pass or fail on
+    # whether the runner happens to have `[embeddings-fast]` installed.
+    monkeypatch.setitem(semantic._EXTRA_PROBE, "sentence_transformers", False)
+    monkeypatch.setitem(semantic._EXTRA_PROBE, "fastembed", False)
     diag = _check_embeddings_extra(cfg)
     assert diag.status == "fail"
     assert "embeddings" in (diag.fix_hint or "")
