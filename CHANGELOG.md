@@ -7,7 +7,15 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
-## Unreleased
+## 3.35.0 - 2026-08-01
+
+This release has one subject: **an optional dependency has three states —
+absent, working, and installed-but-broken — and a probe that models two of them
+turns a fault in an optional feature into an outage in a required one.** A
+partially-evicted `transformers` tree took `memory_search` down completely,
+through a predicate whose entire job was to return a bool. The same two-state
+assumption then turned up in the provider resolver, in the `doctor` check that
+names the extra, and in the install docs.
 
 ### Fixed — an optional extra that was installed and BROKEN killed all retrieval
 
