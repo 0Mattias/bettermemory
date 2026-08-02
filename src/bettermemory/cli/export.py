@@ -70,9 +70,11 @@ def add_subparser(
             "null there rather than a zero nobody checked. Every `.md` in "
             "the store root the loader skips counts, including one you put "
             "there yourself (a README, say) — the store makes no exception "
-            "for those, so neither can this. `bettermemory doctor` names "
-            "the files, and reports them as a warning where --strict "
-            "escalates them to an exit code."
+            "for those, so neither can this. `bettermemory doctor` re-reads "
+            "the store and names the skipped ACTIVE files, reporting them as "
+            "a warning where --strict escalates them to an exit code; no "
+            "check anywhere reads the tombstone directory, so a dropped "
+            "tombstone is reported here or not at all."
         ),
     )
     return parser
@@ -185,9 +187,13 @@ def _cli_export(
     the store — the skipped files are not represented anywhere in it,
     not even as placeholders, and `tombstoned_memories: []` under a
     non-zero `skipped_tombstone_files` means "none survived the read",
-    not "none exist". Run `bettermemory doctor` to identify the
-    offending files. `--strict` turns any non-zero count into a
-    non-zero exit for scripted backups; the default stays exit 0 with a
+    not "none exist". `bettermemory doctor`'s memory_parse_health
+    re-reads the store and names the offending ACTIVE files; the
+    tombstone directory is read by no check anywhere, so a non-zero
+    `skipped_tombstone_files` is a number this command is alone in
+    reporting and the reader inspects `.tombstones/` by hand.
+    `--strict` turns any non-zero count into a non-zero exit for
+    scripted backups; the default stays exit 0 with a
     stderr warning so existing cron callers do not start failing on an
     unchanged store. Bump format_version on any breaking change —
     including a rename of these keys, which `format_version: 1` freezes
@@ -220,15 +226,31 @@ def _cli_export(
             raise
     scope_set = set(scopes) if scopes else None
 
+    # Count BEFORE the load, not after, and the order is the whole
+    # protection. These are two walks of a directory a live server may be
+    # writing to; whichever walk runs SECOND sees the newer state, and the
+    # delta only accuses the loader when the file walk is the larger
+    # number. Counting after the load meant a `memory_write` landing
+    # between them was indistinguishable from a file the loader refused —
+    # a backup reporting itself short, and under --strict a red cron job,
+    # on a store that was never damaged. Counting first inverts that: a
+    # memory written in the gap is loaded but never counted, so the delta
+    # goes negative and `max(0, …)` reads it as the non-event it is.
+    #
+    # It does not make the pair atomic. A `memory_remove` in the gap moves
+    # a counted file to `.tombstones/` before the load sees it and still
+    # over-reports by one — the residual race, and the rarer of the two by
+    # a wide margin (writes are a routine reflex; removals are curation).
+    # `bettermemory doctor` re-reads and names files rather than
+    # subtracting counts, which is why the warning below sends the reader
+    # there instead of asserting which file is at fault.
+    active_files_before = count_active_memory_files(directory)
     active = store.load_all()
     # Count the drop BEFORE the scope filter. A file the reader could not
     # parse has no scopes to test, so it can only be measured against the
     # unfiltered read — subtracting after the filter would blame the scope
-    # filter for every out-of-scope memory. `max(0, …)` because the count
-    # and the load are two separate walks: a concurrent `memory_write`
-    # between them makes the file count the larger number for reasons that
-    # are not a parse failure, and a backup must not cry wolf.
-    skipped_active_files = max(0, count_active_memory_files(directory) - len(active))
+    # filter for every out-of-scope memory.
+    skipped_active_files = max(0, active_files_before - len(active))
     if scope_set is not None:
         active = [m for m in active if scope_set.intersection(m.scopes)]
 
@@ -243,10 +265,16 @@ def _cli_export(
     # read — see the docstring: 0 would assert an absence nobody checked.
     skipped_tombstone_files: int | None = None
     if include_tombstones:
+        # Same count-then-load ordering as the active half above, for the
+        # same reason. The write that lands in this gap is a
+        # `memory_remove` (it creates the tombstone), and the removal that
+        # lands in it is a `memory_restore`; both are rarer here than a
+        # `memory_write` is there, but the ordering costs nothing and
+        # keeping the two halves symmetrical is what stops one of them
+        # from being reasoned about again from scratch.
+        tombstone_files_before = _count_tombstone_files(store)
         tombstoned = store.load_tombstones()
-        skipped_tombstone_files = max(
-            0, _count_tombstone_files(store) - len(tombstoned)
-        )
+        skipped_tombstone_files = max(0, tombstone_files_before - len(tombstoned))
         if scope_set is not None:
             tombstoned = [t for t in tombstoned if scope_set.intersection(t.scopes)]
         payload["tombstoned_memories"] = [t.model_dump(mode="json") for t in tombstoned]
@@ -268,6 +296,24 @@ def _cli_export(
             parts.append(f"{skipped_active_files} active memory file(s)")
         if skipped_tombstone_files:
             parts.append(f"{skipped_tombstone_files} tombstone file(s)")
+        # Where to go next, branched on which half dropped, because the
+        # two have different answers: doctor re-reads the active files and
+        # names them, and reads the tombstone directory not at all. A flat
+        # "run doctor" sent a user whose tombstone dropped to a command
+        # that would report their store clean.
+        if skipped_active_files and skipped_tombstone_files:
+            pointer = (
+                "Run `bettermemory doctor` to see the active files by name; "
+                "no check reads the tombstone directory, so inspect "
+                "`.tombstones/` by hand for that half."
+            )
+        elif skipped_active_files:
+            pointer = "Run `bettermemory doctor` to see the files by name."
+        else:
+            pointer = (
+                "No check reads the tombstone directory, so `doctor` will "
+                "not name these — inspect `.tombstones/` by hand."
+            )
         # Doctor's claim for the same delta: the loader skipped these, and
         # the two causes a count cannot tell apart are both named rather
         # than collapsed into "could not be read". Telling a user their
@@ -277,8 +323,7 @@ def _cli_export(
             f"WARNING: {' and '.join(parts)} in {directory} were skipped by "
             f"the loader (malformed frontmatter, or a schema_version newer "
             f"than this install) and are NOT in this export. The export is a "
-            f"partial capture of the store, not a complete backup. Run "
-            f"`bettermemory doctor` to identify the files.\n"
+            f"partial capture of the store, not a complete backup. {pointer}\n"
         )
 
     if output:

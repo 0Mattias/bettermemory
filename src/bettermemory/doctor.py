@@ -450,14 +450,78 @@ class _MemoryLoad:
         return self._memories, self._error
 
 
+# How many skipped filenames the one-line text report spells out. The
+# full list is always in `details["skipped_files"]` for `--json`; this
+# only bounds the terminal line, where a store that dropped its whole
+# root (a bad `sync pull`) would otherwise print hundreds of names and
+# push every other check off the screen. Five is enough to recognise a
+# pattern — one file, one directory, one migration — and the count in
+# front of them is the quantity.
+_PARSE_SKIP_NAMES_SHOWN = 5
+
+
+def _skipped_memory_filenames(directory: Path) -> tuple[int, list[str]]:
+    """One walk of the store root: `(files walked, names the loader skips)`.
+
+    The naming counterpart to `count_unparseable_memory_files`, which
+    answers the same question as a bare integer. Neither the file filter
+    nor the skip width is restated here — the filenames come from
+    `store.active_memory_filenames` (the `_iter_active_paths` rule) and
+    the verdict from the store's own `_parse_memory_file` under its own
+    `PARSE_SKIP_EXCEPTIONS`, so "named here" is "skipped there" by
+    construction rather than by two definitions agreeing today. Reaching
+    for the private parser is the same boundary crossing `_handlers.py`
+    (`store._load_path`) and `cli/export.py` (`store._iter_tombstone_paths`)
+    make, for the same reason.
+
+    Both halves come from ONE snapshot, which is what makes them
+    subtractable: the caller can report walked / skipped / parsed without
+    a concurrent `memory_write` landing between two walks and inventing a
+    file that failed to parse. Pays a full parse of the store, so callers
+    reach for it only once a cheaper signal says something is already
+    wrong. Returns the names sorted, for a stable report.
+
+    A file deleted mid-walk (a `memory_remove` racing this) fails its
+    parse with `FileNotFoundError` and is named — the same
+    indistinguishable-from-malformed case `load_all` swallows. It costs a
+    transient wrong name in a report, not a wrong verdict about a file
+    that is still there.
+    """
+    from .store import (
+        PARSE_SKIP_EXCEPTIONS,
+        _parse_memory_file,
+        active_memory_filenames,
+    )
+
+    names = sorted(active_memory_filenames(directory))
+    skipped: list[str] = []
+    for name in names:
+        try:
+            _parse_memory_file(directory / name)
+        except PARSE_SKIP_EXCEPTIONS:
+            skipped.append(name)
+    return len(names), skipped
+
+
 def _check_memory_parse_health(
     directory: Path, load: _MemoryLoad | None = None
 ) -> Diagnosis:
-    """Try to load every active memory; surface parse failures.
+    """Try to load every active memory; surface the files it could not.
 
-    Store.load_all already skips malformed files with a logged warning;
-    we run it here under a count-mode harness so doctor can report
-    "everything parses" or "N files failed to parse".
+    Two stages on purpose. The cheap one is a count comparison against
+    the shared `_MemoryLoad` — no second parse on the healthy path, which
+    is nearly every run. Only when that disagrees does the check pay
+    `_skipped_memory_filenames` for a walk that can say WHICH files, and
+    the confirming walk is then the authority for everything reported:
+    `bettermemory export --strict` and `index_health` both send the user
+    here to identify the files, and a count cannot identify anything.
+
+    The confirming walk also decides whether there is anything to report
+    at all. `load_all` and the file count are two walks of a directory a
+    live server may be writing to, so a `memory_write` landing between
+    them shows up as a delta with no unparseable file behind it — a
+    warning about corruption nobody can find. The re-read either names a
+    file or the check goes green.
     """
     # Don't construct a Store against a non-existent path: Store.__post_init__
     # would mkdir it (+ a .tombstones/ subdir), a write side effect from a
@@ -498,26 +562,54 @@ def _check_memory_parse_health(
             message=f"All {parsed} active memories parse cleanly.",
             details={"parsed": parsed, "files_on_disk": on_disk},
         )
-    # The count delta can't distinguish malformed frontmatter from an
+    # The counts disagree. Re-read the store naming names, and report
+    # that walk's numbers rather than the delta's: one snapshot keeps
+    # `parsed + skipped == files_on_disk` true in the report, and
+    # `skipped` equal to the `count_unparseable_memory_files` index_health
+    # subtracts, by construction instead of by coincidence.
+    walked, skipped_files = _skipped_memory_filenames(directory)
+    if not skipped_files:
+        return Diagnosis(
+            name="memory_parse_health",
+            status="ok",
+            message=(
+                f"All {walked} active memories parse cleanly. A first count "
+                f"disagreed with the load by {on_disk - parsed}, which a "
+                f"re-read did not reproduce — a memory written between "
+                f"doctor's two walks, not a file the loader refused."
+            ),
+            details={"parsed": walked, "files_on_disk": walked, "skipped": 0},
+        )
+    # The re-read can't distinguish malformed frontmatter from an
     # intentionally-skipped file (a schema_version newer than this install,
     # e.g. after a `sync pull` from a machine on a newer bettermemory). Don't
     # assert "did not parse" or point only at frontmatter — and don't claim a
-    # "logged warning" the skip path doesn't actually emit.
-    skipped = on_disk - parsed
+    # "logged warning" the skip path doesn't actually emit. Naming the files
+    # is what lets the user tell the two apart by looking.
+    skipped = len(skipped_files)
+    shown = skipped_files[:_PARSE_SKIP_NAMES_SHOWN]
+    listed = ", ".join(shown)
+    if skipped > len(shown):
+        listed += f", and {skipped - len(shown)} more"
     return Diagnosis(
         name="memory_parse_health",
         status="warn",
         message=(
-            f"{skipped} of {on_disk} memory files in {directory} were skipped "
+            f"{skipped} of {walked} memory files in {directory} were skipped "
             f"by the loader (malformed frontmatter, or a schema_version newer "
-            f"than this install)."
+            f"than this install): {listed}."
         ),
         fix_hint=(
-            "Check the frontmatter of files missing from `bettermemory "
-            "health`; if you recently downgraded bettermemory, upgrade back "
-            "to read memories written under the newer version."
+            "Check the frontmatter of the files named above; if you recently "
+            "downgraded bettermemory, upgrade back to read memories written "
+            "under the newer version."
         ),
-        details={"parsed": parsed, "files_on_disk": on_disk, "skipped": skipped},
+        details={
+            "parsed": walked - skipped,
+            "files_on_disk": walked,
+            "skipped": skipped,
+            "skipped_files": skipped_files,
+        },
     )
 
 
@@ -1516,12 +1608,18 @@ def _session_start_hook_broken_path(
     false alarm here is expensive and a missed alarm merely restores
     today's behaviour.
 
-    The shape it does judge is the one that actually rots. An absolute
-    path is what `bettermemory init` writes and what a hand-edited config
-    carries, and it goes stale exactly the way the MCP client's binary
-    path does when an environment is rebuilt or moved — silently, because
-    the trailing `|| true` every documented form carries turns a missing
-    binary into a successful no-op.
+    The shape it does judge is the one that actually rots, and it is
+    always a HAND-WRITTEN one: nothing this project ships writes a hook
+    at all. `bettermemory init` patches `mcpServers` and stops there, and
+    the plugin's `hooks/hooks.json` binds `uvx bettermemory session-start
+    || true` — the launcher form above, deliberately unjudged. A pinned
+    path gets into a config when someone runs `uv tool install` and wires
+    the answer `command -v bettermemory` gave (this check's own `fix_hint`
+    offers exactly that), or pastes a venv path. It then goes stale the
+    way the MCP client's binary path does when an environment is rebuilt
+    or moved, and it goes stale QUIETLY: the documented bindings all end
+    in `|| true` and a hand-written one usually copies that, so the
+    missing binary exits 0 and nothing anywhere reports it.
 
     Locates the executable as the token BEFORE `session-start` rather than
     the first token of the string: `cd /x && …`, `env …` and `uvx …` all
@@ -1609,6 +1707,19 @@ def _check_session_start_hook_wired(
     * no discoverable hook config at all — the user isn't running Claude
       Code, or hasn't configured it, and either way we have no evidence.
 
+    EVERY candidate is scanned, and one runnable binding anywhere wins
+    over any number of unrunnable ones. The candidate list is not a
+    precedence order — Claude Code merges the SessionStart bindings it
+    finds across settings files and plugin manifests and runs all of
+    them (which is why `_session_start_hook_config_candidates` collects
+    both families instead of stopping at the first hit). So a user who
+    hand-wired an absolute path years ago and has since installed the
+    plugin carries two bindings, and the hint DOES reach the model; a
+    scan that stopped at the first match would report the whole hook
+    broken because one of its two spellings rotted. The stale one still
+    gets named — it is dead weight and its `|| true` hides it — but as
+    a detail on an `ok`, not as a warning about a hook that works.
+
     `config_paths` is injectable for tests only; production passes None
     and takes `_session_start_hook_config_candidates()`.
     """
@@ -1638,6 +1749,8 @@ def _check_session_start_hook_wired(
     )
     unreadable: list[str] = []
     readable = 0
+    live: tuple[Path, str] | None = None
+    stale: list[dict[str, str]] = []
     for path in paths:
         try:
             text = path.read_text(encoding="utf-8")
@@ -1647,51 +1760,87 @@ def _check_session_start_hook_wired(
             continue
         readable += 1
         command = _session_start_hook_command(data)
-        if command is not None:
-            broken = _session_start_hook_broken_path(command)
-            if broken is not None:
-                return Diagnosis(
-                    name="session_start_hook",
-                    status="warn",
-                    message=(
-                        f"SessionStart hint hook is wired ({path}) but the "
-                        f"binary it names does not exist or is not "
-                        f"executable: {broken}. Every documented form of "
-                        f"this hook ends in `|| true`, so a missing binary "
-                        f"is a successful no-op — the hook is configured, "
-                        f"contributes nothing, and says nothing."
-                    ),
-                    fix_hint=(
-                        "Point the hook at a binary that exists — "
-                        "`bettermemory init --client claude-code` refreshes "
-                        "the MCP command path but NOT hook commands, so this "
-                        "one is edited by hand. `command -v bettermemory` "
-                        "gives a current path; `uvx bettermemory "
-                        "session-start || true` avoids pinning one at all."
-                    ),
-                    details={
-                        "wired_in": str(path),
-                        "command": command,
-                        "unrunnable_path": broken,
-                        "scanned": len(paths),
-                        "active_memories": active,
-                    },
-                )
-            return Diagnosis(
-                name="session_start_hook",
-                status="ok",
-                message=(
-                    f"SessionStart hint hook is wired ({path}) — new "
-                    f"sessions open with the per-scope counts already in "
-                    f"context."
-                ),
-                details={
-                    "wired_in": str(path),
-                    "command": command,
-                    "scanned": len(paths),
-                    "active_memories": active,
-                },
+        if command is None:
+            continue
+        broken = _session_start_hook_broken_path(command)
+        if broken is None:
+            # First runnable-or-unjudgeable binding wins the `wired_in`
+            # slot, but the scan continues: the remaining candidates can
+            # still hold a stale binding worth naming, and the whole point
+            # of scanning past this one is that they all run.
+            if live is None:
+                live = (path, command)
+            continue
+        stale.append(
+            {
+                "wired_in": str(path),
+                "command": command,
+                "unrunnable_path": broken,
+            }
+        )
+
+    if live is not None:
+        path, command = live
+        details: dict[str, Any] = {
+            "wired_in": str(path),
+            "command": command,
+            "scanned": len(paths),
+            "active_memories": active,
+        }
+        message = (
+            f"SessionStart hint hook is wired ({path}) — new sessions open "
+            f"with the per-scope counts already in context."
+        )
+        if stale:
+            details["stale_bindings"] = stale
+            message += (
+                f" {len(stale)} other binding(s) name a binary that cannot "
+                f"run (first: {stale[0]['unrunnable_path']} in "
+                f"{stale[0]['wired_in']}); the hint still reaches the model "
+                f"through the one above, so this is dead config rather than "
+                f"a broken hook."
             )
+        return Diagnosis(
+            name="session_start_hook",
+            status="ok",
+            message=message,
+            details=details,
+        )
+    if stale:
+        first = stale[0]
+        return Diagnosis(
+            name="session_start_hook",
+            status="warn",
+            message=(
+                f"SessionStart hint hook is wired ({first['wired_in']}) but "
+                f"the binary it names does not exist or is not executable: "
+                f"{first['unrunnable_path']}. Nothing in the {len(paths)} "
+                f"config file(s) scanned carries a binding that can run. "
+                f"The documented bindings all end in "
+                f"`|| true` and a hand-written one usually copies that, so "
+                f"the failure exits 0 — the hook is configured, contributes "
+                f"nothing, and says nothing."
+            ),
+            fix_hint=(
+                "Point the hook at a binary that exists — "
+                "`bettermemory init --client claude-code` refreshes "
+                "the MCP command path but NOT hook commands, so this "
+                "one is edited by hand. `command -v bettermemory` "
+                "gives a current path; `uvx bettermemory "
+                "session-start || true` avoids pinning one at all."
+            ),
+            # `first` is spread flat AND repeated inside `stale_bindings`:
+            # the flat `wired_in` / `command` / `unrunnable_path` keys are
+            # the shape consumers already read off this warn, and the list
+            # is what a second stale binding would otherwise have nowhere
+            # to appear.
+            details={
+                **first,
+                "stale_bindings": stale,
+                "scanned": len(paths),
+                "active_memories": active,
+            },
+        )
 
     info: dict[str, Any] = {
         "scanned": len(paths),
@@ -2745,15 +2894,24 @@ def _check_attestation_anchors(directory: Path, cwd: Path) -> Diagnosis:
       preferences, directives and decisions legitimately have no code
       anchor and flagging them would drown the real findings
     * no attested path this can read -> exempt (see `_readable_anchor`)
-    * memories from another repo -> skipped, since their anchors resolve
-      against a worktree this process is not in
+    * a memory recorded in ANOTHER worktree -> skipped before its anchors
+      are resolved at all. `_readable_anchor` drops an absolute path
+      outside this root on its own, but a RELATIVE one it joins to the
+      root of the worktree this process happens to be in — so a memory
+      written in repo B attesting `pyproject.toml` would otherwise be
+      judged against repo A's file and reported as a mis-anchor the user
+      cannot fix. `worktrees_match` draws the boundary, which keeps a
+      linked worktree of the same checkout on the "here" side; the one
+      case it still lets through is a recorded root that is positively
+      GONE, where there is no other worktree left to resolve against
+      either.
 
     Measured on a 189-memory store: 63 unanchored, 65 exempt for tokens,
     25 exempt for unreadable anchors, 36 checked, 1 finding — which was
     a genuine mis-anchor. Reported, never auto-fixed: only a reader can
     say which file actually backs a claim.
     """
-    from .origin import _git_worktree_root
+    from .origin import _git_worktree_root, worktrees_match
 
     raw_root = _git_worktree_root(cwd)
     root = Path(raw_root).resolve() if raw_root else None
@@ -2777,6 +2935,18 @@ def _check_attestation_anchors(directory: Path, cwd: Path) -> Diagnosis:
     for memory in memories:
         anchors = list(getattr(memory, "verified_paths", None) or [])
         if not anchors:
+            continue
+        # Before any anchor is resolved: a relative anchor is joined to
+        # `root`, which is THIS process's worktree, so judging a memory
+        # recorded elsewhere reads someone else's file and calls the
+        # attestation wrong. `verify._check_anchored_attestations` anchors
+        # the same lists to each memory's OWN `origin.worktree_root`; this
+        # check has one root to offer, so the honest move is to decline.
+        # `worktrees_match` rather than an equality test so the linked-
+        # worktree and dead-worktree relaxations stay defined in one place.
+        if not worktrees_match(
+            memory.origin.worktree_root if memory.origin else None, raw_root
+        ):
             continue
         tokens = _anchor_tokens(memory.body)
         if not tokens:
@@ -2873,14 +3043,23 @@ def _check_retrieval_discrimination(directory: Path, cfg: Config) -> Diagnosis:
     names it; nothing acts on it.
 
     The skip condition is `_semantic_rank_leg_active`, which is stricter
-    than "an extra is installed" ON PURPOSE. An importable extra is not a
-    semantic leg: with the DEFAULT `search_mode = "hybrid"` and
-    `semantic_dedup = false`, `_semantic_model_configured` never opens, so
-    the factory returns None and ranking stays purely lexical no matter
-    what is installed. Skipping on importability alone would report `ok`
-    for exactly the configuration that most needs the warning — a
-    green light computed over the wrong input, which is the failure this
-    check exists to expose.
+    than "an extra imports" ON PURPOSE — read that predicate for the three
+    conditions; what matters here is that two of them can fail while an
+    extra sits importable on disk. `semantic_dedup = true` under
+    `search_mode = "keyword"` asks for a model that `handlers.search`
+    never hands to the ranker, and `semantic_provider = "torch"` with only
+    fastembed installed resolves to a provider that returns None. Both
+    read as "an embeddings extra is installed" and rank purely lexically,
+    which is exactly the population this check exists to warn — skipping
+    them would be a green light computed over the wrong input.
+
+    Since ba7e857 the DEFAULT `search_mode = "hybrid"` picks an importable
+    extra up on its own, with no `semantic_dedup` involvement: under that
+    default `_semantic_model_configured` opens on importability alone, so
+    the skip above is the common outcome for anyone who installed one.
+    (`_check_embeddings_extra` below states the same semantics; if these
+    two ever disagree, the predicates in `semantic_setup` are the
+    authority over both.)
     """
     if _semantic_rank_leg_active(cfg):
         return Diagnosis(
