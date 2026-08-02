@@ -2445,10 +2445,9 @@ def _warn_on_index_divergence(root: Path) -> None:
 
     The raw count comparison is the cheap TRIGGER for the refine path,
     and it is ALSO the gate: equal counts return here without looking at
-    identities at all. That asymmetry is deliberate and it has a cost
-    worth stating plainly, because the docstring used to claim the
-    count was "never the verdict" and it is the verdict for exactly one
-    shape — an out-of-band swap that removes one memory and adds
+    identities at all. That asymmetry is deliberate and it has a cost.
+    The count is the verdict for exactly one shape — an out-of-band swap
+    that removes one memory and adds
     another. Counts N and N, identities different, this check silent.
     Reconciling every construction would put a full parse walk plus a
     lock dance on the server's boot path and on every cheap `Store()`,

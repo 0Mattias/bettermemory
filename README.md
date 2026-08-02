@@ -34,9 +34,9 @@ bettermemory init --client claude-desktop   # or cursor / cline / claude-code
 Restart the client. `bettermemory doctor` exits 0 when it's wired
 correctly and prints a one-line fix for anything that isn't.
 
-Kick the tyres without installing: `uvx bettermemory try` writes a
-memory citing a file, deletes the file, and shows the next search
-flagging it. Offline, throwaway store.
+Try it without installing: `uvx bettermemory try` writes a memory
+citing a file, deletes the file, and shows the next search flagging it.
+Offline, throwaway store.
 
 ## What it does
 
@@ -46,17 +46,15 @@ flagging it. Offline, throwaway store.
   default tools still charge schema every turn: a serialized
   `tools/list` of 33,960 bytes, 27,092 of it names and descriptions,
   measured 2026-07-31 at 3.32.0 ([bench/toolcost][toolcost]). CI caps
-  the descriptions. The claude-mem head-to-head in that directory is a
-  2026-07-26 run whose bettermemory arm predates these cuts, so its
-  ratio is dated rather than current.
+  the descriptions.
 - Write gates: transient state, secret-shaped tokens and near-duplicates
   bounce; claims about *you* stage for confirmation.
 - One markdown file per memory. Greppable, git-syncable. Markdown is
   canonical; the SQLite index next to it is a derived cache you can
   delete. No cloud, no account.
-- `bettermemory eval` measures whether memory actually helped, against
-  your own log. [Ours is published][eval-results] — a floor, from one
-  user's store, caveats and misses included.
+- `bettermemory eval` measures whether memory helped, against your own
+  log. [Ours is published][eval-results] — one store, one user, misses
+  included.
 
 ## For agents
 
@@ -85,8 +83,8 @@ long-form policy in your system prompt: `bettermemory init
 
 ## Everything else
 
-You shouldn't need it, but it's all written down: mechanics, storage
-format, the full tool surface, CLI, configuration and limitations in
+The rest is written down: mechanics, storage format, the full tool
+surface, CLI, configuration and limitations in
 [internals][internals]; per-client setup in [clients][clients] and
 [installation][installation]; eval methodology in [eval][eval];
 postmortems in [incidents][incidents]; release history in

@@ -1126,7 +1126,7 @@ def _commit_signing_enabled(root: Path) -> bool:
     `git commit` honours `commit.gpgSign`; `git commit-tree` does NOT —
     verified on git 2.50.1, where a repo with `commit.gpgSign=true` and an
     unusable signing key fails `git commit` (exit 128, "gpg failed to sign
-    the data") while `git commit-tree` cheerfully returns an UNSIGNED
+    the data") while `git commit-tree` returns an UNSIGNED
     commit. So the plumbing path has to pass `-S` itself or it would
     silently downgrade a store whose owner requires signed commits.
 
@@ -1135,8 +1135,8 @@ def _commit_signing_enabled(root: Path) -> bool:
     `true`, an unset key exits 1 and an unparseable value exits 128, and
     anything that is not a clean `true` is read as "not enabled". The
     conservative direction differs in consequence from the autostash
-    probe, and that is worth stating plainly: misreading here produces an
-    UNSIGNED commit where the user configured signing. It is bounded by
+    probe: misreading here produces an UNSIGNED commit where the user
+    configured signing. It is bounded by
     what `--bool` actually mis-parses (nothing that git itself would have
     accepted as true), not by an assumption.
 

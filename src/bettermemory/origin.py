@@ -7,7 +7,7 @@ silently changes meaning. Capture-at-write makes origin a durable
 property of the memory record.
 
 Used by `memory_search(auto_scope=True)` to default-filter results by the
-caller's current repo. The most embarrassing failure mode this addresses is
+caller's current repo. The failure mode this addresses is
 cross-project leakage: a memory written while working on Project A
 surfacing in Project B's conversation. Origin metadata + the auto-scope
 filter close that hole without forcing the model to manually tag every

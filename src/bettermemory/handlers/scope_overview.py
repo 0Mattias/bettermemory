@@ -372,8 +372,8 @@ def _count_recent_tombstones(
     same rule the active per-scope counts above and `memory_search`'s
     auto-scope run on, applied to the tombstone's own `origin` (a
     tombstone carries the origin of the memory it retired). Read that
-    function for the rule; what is worth stating HERE is the one extra
-    precondition this surface adds and why:
+    function for the rule; what this docstring adds is the one extra
+    precondition this surface imposes and why:
 
     * a tombstone with no `origin`, or an `origin` carrying no
       `worktree_root`, is excluded rather than passed. The shared rule
