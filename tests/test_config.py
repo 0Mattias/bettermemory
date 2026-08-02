@@ -75,6 +75,48 @@ def test_default_config_is_valid_toml() -> None:
     assert "telemetry" in parsed
 
 
+def test_default_config_scopes_prose_matches_the_ingest_exemption() -> None:
+    """The shipped `[scopes]` comment must not promise an absolute the
+    ingest path stopped honouring.
+
+    This text is written verbatim into every user's `config.toml` on first
+    run, so a drift here is a published false claim rather than an internal
+    comment — and it drifted exactly once already: it read "writes with
+    scopes outside this list fail" for a whole release window after ingest
+    grew an exemption for the scopes it stamps on a row ITSELF (the
+    provenance scope and the type-derived tag). The operator never typed
+    those and cannot opt out of them, so checking them against the
+    operator's own allowlist refused every row of any import.
+
+    Both halves are asserted here on purpose. The behavioural half fails if
+    someone removes the carve-out from `_scope_allowlist_reason`; the prose
+    half fails if someone restores the old absolute. Pinning either alone
+    would let the pair drift apart again, which is the whole defect.
+    """
+    from bettermemory.ingest import (
+        DEFAULT_PROVENANCE_SCOPE,
+        _scope_allowlist_reason,
+        _tool_stamped_scopes,
+    )
+
+    allowed = ["projects:demo"]
+    stamped = _tool_stamped_scopes("project")
+
+    # The scopes ingest stamps itself are exempt even though the allowlist
+    # names neither of them...
+    assert DEFAULT_PROVENANCE_SCOPE in stamped
+    assert _scope_allowlist_reason(sorted(stamped), allowed, stamped) is None
+
+    # ...while a scope the CALLER supplied is still refused, by name.
+    reason = _scope_allowlist_reason(["rogue"], allowed, stamped)
+    assert reason is not None
+    assert "rogue" in reason
+
+    block = DEFAULT_CONFIG.split("[scopes]")[1].split("[telemetry]")[0]
+    assert "caller-supplied" in block, block
+    assert "exempt" in block, block
+
+
 def test_default_config_round_trips_through_load_config(tmp_path: Path) -> None:
     """Writing DEFAULT_CONFIG and loading it yields the same defaults as
     constructing `Config()` from scratch. Closes the loop on the

@@ -269,7 +269,10 @@ curation_hint_enabled = true
 full_tool_surface = false
 
 [scopes]
-# If non-empty, writes with scopes outside this list fail. Empty = anything.
+# If non-empty, writes with caller-supplied scopes outside this list fail.
+# Empty = anything. Scopes bettermemory stamps on a row itself (ingest's
+# provenance + type tags) are exempt — you never typed them, so an
+# allowlist that doesn't name them can't silently refuse a whole import.
 allowed = []
 
 [telemetry]
