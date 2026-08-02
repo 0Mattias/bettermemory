@@ -7,6 +7,10 @@ Description-edit history:
   prominent leader paragraph so the verification side-effect lands
   before any parameter detail — it's the most consequential thing a
   caller needs to know about update vs. verify.
+- User-claim gate: one clause on the `content` bullet naming the new
+  `user_claim_warning` status and the one category it does not fire
+  on. Status name only — the remedy stays in the gate's own hint,
+  which is the split the description budget's slack is reserved for.
 """
 
 from __future__ import annotations
@@ -23,6 +27,7 @@ from ._shared import (
     _validate_content_size,
     _validate_scope_count,
 )
+from .write import _find_user_claims
 
 if TYPE_CHECKING:
     from .._handlers import ToolHandlers
@@ -59,7 +64,9 @@ DESC_MEMORY_UPDATE = (
     "- `content`: new body. Replacing the body clears "
     "`last_verified_at` and the verified-* attestations (the "
     "prior verification was for prose that no longer exists; "
-    "call memory_verify again after).\n"
+    "call memory_verify again after). A body that reads as a claim "
+    "ABOUT THE USER returns `user_claim_warning` unless the record "
+    "is already `user-inference`.\n"
     "- `scopes` / `links`: REPLACE semantics — pass the full new "
     "list, or `[]` to clear. Scope-only edits preserve "
     "`last_verified_at`.\n"
@@ -212,6 +219,67 @@ async def memory_update(
             if credential_hits and acknowledge_credential
             else []
         )
+        # User-claim gate — mirror `UserClaimGate` (handlers/write.py) so a
+        # claim ABOUT THE USER can't reach a `fact` / `ambient` record by
+        # EDITING one. Same laundering shape the credential gate above closes
+        # for secrets: `memory_write` hard-refuses this body, so without the
+        # mirror a caller writes an innocuous body, updates it to the claim,
+        # and the pending/veto handshake whose entire purpose is the user's
+        # veto never runs. Runs AFTER the credential gate for the reason the
+        # write chain orders them that way — a secret is refused before any
+        # other gate records body-derived data (here, `claim_phrases`) in the
+        # event log.
+        #
+        # Judged against the category the record will HAVE after this edit,
+        # which is what `UserClaimGate` reads off the write payload. That can
+        # only be `user-inference` when the record already was one, since the
+        # retag INTO that category is refused above — and that is exactly the
+        # structural escape this gate wants: a claim about the user belongs in
+        # a `user-inference` memory, and only `memory_write` can create one,
+        # staged so the user gets the veto. A legacy `category=None` record is
+        # gated, matching the runtime's fact-default reading of that field.
+        #
+        # NOT mirrored yet: `acknowledge_user_claim`, the write path's escape
+        # for a body whose subject is someone or something else ("Black
+        # prefers double quotes"). The parameter is only reachable if it lands
+        # on the `ToolHandlers.memory_update` facade in `_handlers.py` and on
+        # the signature/footprint pins in `tests/` in the same commit —
+        # adding it here alone leaves it invisible on the MCP surface. Until
+        # then such a body goes in through
+        # `memory_write(..., acknowledge_user_claim=True)`, which the hint
+        # names, so the refusal is not escape-hatchless.
+        if new_category != Category.USER_INFERENCE:
+            claim_hits = _find_user_claims(new_body)
+            if claim_hits:
+                deps.recorder.record(
+                    "update",
+                    id=id,
+                    status="user_claim_warning",
+                    category=(new_category.value if new_category is not None else None),
+                    claim_phrases=[h.phrase for h in claim_hits],
+                )
+                return {
+                    "status": "user_claim_warning",
+                    "markers": [
+                        {"phrase": h.phrase, "sentence": h.sentence} for h in claim_hits
+                    ],
+                    "hint": (
+                        "The updated body reads as a claim ABOUT THE USER, "
+                        "but this memory is filed as "
+                        f"`{(new_category or Category.FACT).value}`, so the "
+                        "edit would commit without asking them. "
+                        "Misattribution sticks, so the user gets the veto: "
+                        "file the claim with memory_write and "
+                        "category='user-inference', which stages it and "
+                        "returns a pending_id so you can ask in plain "
+                        "language first. Retagging this record into "
+                        "`user-inference` is not available — that is the "
+                        "write-time gate. When the subject is someone or "
+                        "something else (a teammate, a tool that 'prefers' "
+                        "a setting), memory_write takes the same body with "
+                        "acknowledge_user_claim=True."
+                    ),
+                }
 
     # `links` is REPLACE semantics — the caller passes the full new
     # list. Same shape as the `scopes` parameter: simpler than

@@ -16,10 +16,13 @@ Planned work, in rough priority order. Plans change; the
   is 0.4% false positive and 93.9% recall on a 234-record store, and a
   false positive costs one round-trip. But the parameter plus a
   description sentence on `memory_update` runs ~112–150 characters against
-  **127 characters** of margin before `_DESC_BUDGET_PRESSURE` warns
-  (25,773 live against a 26,000 ceiling). Ship it in a cycle that also
-  frees DESC budget, or alongside a ratchet-down; do not spend the last
-  of the margin on it.
+  **31 characters** of margin before `_DESC_BUDGET_PRESSURE` warns
+  (25,869 live against a 26,000 ceiling, so 131 before it fails). It no
+  longer fits at either end of that range: re-measured live when the
+  user-claim gate landed on `memory_update`, whose one-clause status
+  mention spent 120 of the margin this entry was reserving. Ship it in a
+  cycle that also frees DESC budget, or alongside a ratchet-down; do not
+  spend the last of the margin on it.
   Rejected alternatives, recorded so they are not re-derived: a
   "new body is a strict prefix of the old" guard is 0% false positive but
   misses the incident that motivated this (it was a rewrite that got cut,
@@ -36,7 +39,17 @@ Planned work, in rough priority order. Plans change; the
      than a mechanical reroute. `ingest.apply_ingest_plan` is the third:
      it bypasses `_validate_write_payload` entirely, and the residue
      worth closing is that it can plant scopes outside a configured
-     `[scopes] allowed` whitelist.
+     `[scopes] allowed` whitelist. Close it in `apply_ingest_plan` beside
+     the gate loop, not in `cli/ingest.py` — the library entry point is
+     reachable without the CLI, and enforcing at the CLI alone would make
+     the two disagree about the policy.
+     `memory_update` is the fourth, and it grew rather than shrank: it now
+     mirrors two gates by hand — the credential scan, and the user-claim
+     gate, added when write-then-update turned out to launder exactly the
+     body `memory_write` refuses. Routing it through `apply_write_gates`
+     is not mechanical either: `find_similar` takes no exclusion id, so
+     the dedup gates would score an edited body against the record's own
+     stored copy and report it as its own duplicate.
   2. Provenance on the read surface, after a design change: a tier
      derived from local write events would label an injection-driven
      write `locally-written` — its cleanest tier — so it cannot see the

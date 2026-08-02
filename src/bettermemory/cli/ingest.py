@@ -203,12 +203,31 @@ def _cli_ingest(
             max_bytes=ctx.config.telemetry.max_bytes,
             log_queries_verbatim=ctx.config.telemetry.log_queries_verbatim,
         )
-        # Thread the real config, not the `Config()` fallback: the
-        # allowed-scopes list and the dedup thresholds the content gates
-        # read are user knobs, and the CLI is the one caller that always
-        # has them resolved. `force` has to arrive here too, not only at
-        # plan time — the apply loop runs its own dedup gate, so a plan
-        # computed under --force was refused right back at commit.
+        # Thread the real config, not the `Config()` fallback: `[behavior]
+        # semantic_dedup` and the two similarity thresholds are user knobs,
+        # they are what the apply-time dedup gates score against, and the
+        # CLI is the one caller that always has them resolved. Passing the
+        # same object `resolve_dedup_policy` read above is also what keeps
+        # the plan and the commit on ONE dedup policy.
+        #
+        # What this does NOT carry, despite being on the same object: the
+        # `[scopes] allowed` whitelist. That is enforced in
+        # `_validate_write_payload` (handlers/_shared.py), which ingest
+        # never calls — `apply_ingest_plan` builds its `Store.write` payload
+        # itself — and no gate in `CONTENT_GATES` reads `config.scopes.allowed`
+        # (`consolidate._apply_llm_proposal` checks it by hand, precisely
+        # because the gates do not). So `ingest --scope <not-in-allowlist>`
+        # still lands, and so do the constant provenance and type-derived
+        # scopes when the whitelist omits them. Closing that belongs in
+        # `apply_ingest_plan` next to the gate loop, not here: the library
+        # entry point is reachable without this CLI, and enforcing at this
+        # site alone would make the CLI and the library disagree about the
+        # policy — the exact divergence the shared chain exists to end.
+        # `docs/ROADMAP.md` carries it as the remaining write-path residue.
+        #
+        # `force` has to arrive here too, not only at plan time — the apply
+        # loop runs its own dedup gate, so a plan computed under --force was
+        # refused right back at commit.
         apply_ingest_plan(
             plan, store, recorder=recorder, config=ctx.config, force=force
         )
