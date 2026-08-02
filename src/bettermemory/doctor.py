@@ -1504,8 +1504,8 @@ _SESSION_START_HOOK_MARKER = "bettermemory session-start"
 _PLUGIN_HOOK_SCAN_CAP = 200
 
 
-def _installed_plugin_roots(plugins_root: Path) -> list[Path]:
-    """Directories of the plugins this machine has actually INSTALLED.
+def _installed_plugin_roots(plugins_root: Path, *, cwd: Path) -> list[Path]:
+    """Directories of the plugins INSTALLED here and enabled for `cwd`.
 
     `~/.claude/plugins` is not one tree, it is two with opposite
     meanings, and only one of them is evidence of wiring:
@@ -1529,6 +1529,15 @@ def _installed_plugin_roots(plugins_root: Path) -> list[Path]:
     `hooks.json` files under `~/.claude/plugins` were catalogue copies
     of plugins that were not installed.
 
+    An install is also not necessarily enabled HERE. Each record carries
+    a `scope`, and a `"local"` one names the `projectPath` it was
+    installed for; Claude Code runs that plugin's hooks in that project
+    only. Counting one from another project is the same false green as
+    counting the catalogue, and a sharper one — the plugin really is
+    installed, so nothing about the directory looks wrong. Hence `cwd`:
+    the project being judged, against which project-scoped records are
+    filtered by `_install_is_for_another_project`.
+
     So the manifest is the authority. When it parses and names installs,
     those paths are the whole answer — a plugin the user uninstalled
     leaves its cache directory behind, and that is not wiring either.
@@ -1539,6 +1548,23 @@ def _installed_plugin_roots(plugins_root: Path) -> list[Path]:
     catalogue, and still one that protects a plugin user from a false
     "not wired" warn.
 
+    That last clause is why the manifest arm has to tell two empty
+    answers apart, and the file carries a `"version"` (a `2` on the
+    machine this was found on) precisely because its inner shape is
+    Claude Code's to change:
+
+    * we UNDERSTOOD the manifest and it yields nothing — `plugins` is
+      empty, or every record parsed and none survived the filters. That
+      is an answer, and the catalogue is not a second opinion on it.
+    * we understood NOTHING in a non-empty `plugins` — every record was
+      an unrecognised shape. That is the "shaped in a way this doesn't
+      recognise" case, and the fallback exists for exactly it.
+
+    Partial understanding counts as understanding: if some records parse
+    and others don't, the ones that parsed are the answer. Falling back
+    on a manifest we half-read would re-admit the uninstalled and the
+    out-of-project alongside the drift we couldn't follow.
+
     Returns only paths that are directories, and never raises — a
     damaged plugin tree is not this check's problem to report.
     """
@@ -1548,24 +1574,86 @@ def _installed_plugin_roots(plugins_root: Path) -> list[Path]:
     except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
         data = None
     if isinstance(data, dict) and isinstance(data.get("plugins"), dict):
+        by_plugin: dict[Any, Any] = data["plugins"]
         roots: list[Path] = []
+        understood = 0
         # Everything is defensively type-checked: this is a FOREIGN file
         # whose shape is Claude Code's to change, and a check that raises
         # on someone else's unexpected JSON is worse than no check.
-        for installs in data["plugins"].values():
+        for installs in by_plugin.values():
             if not isinstance(installs, list):
                 continue
             for install in installs:
                 if not isinstance(install, dict):
                     continue
                 install_path = install.get("installPath")
-                if isinstance(install_path, str) and install_path:
-                    roots.append(Path(install_path))
-        # An empty result here means "nothing is installed", which is an
-        # answer — not a reason to go looking in the catalogue.
-        return [p for p in roots if _is_dir_quiet(p)]
+                if not (isinstance(install_path, str) and install_path):
+                    continue
+                # Counted BEFORE the scope filter, not after: a record we
+                # read and deliberately dropped is still a record we
+                # understood. Counting only survivors would send a
+                # manifest holding nothing but other projects' installs
+                # into the `cache/` fallback, whose rglob would sweep
+                # those very installs straight back in.
+                understood += 1
+                if _install_is_for_another_project(install, cwd):
+                    continue
+                roots.append(Path(install_path))
+        if understood or not by_plugin:
+            return [p for p in roots if _is_dir_quiet(p)]
     cache = plugins_root / "cache"
     return [cache] if _is_dir_quiet(cache) else []
+
+
+def _install_is_for_another_project(install: dict[Any, Any], cwd: Path) -> bool:
+    """Is this install record scoped to a project other than `cwd`?
+
+    An `installed_plugins.json` record carries `"scope": "local"` plus
+    the `projectPath` it was installed for when the user installed the
+    plugin into one project rather than for the whole user. Claude Code
+    enables it there and nowhere else, so its `hooks/hooks.json` is not
+    evidence of a live SessionStart binding in any other project — and
+    since one runnable binding anywhere wins the live slot in
+    `_check_session_start_hook_wired`, letting one through turns a
+    genuinely-stale settings binding into a footnote on an `ok`.
+
+    Every uncertainty answers False, i.e. KEEP the record: no `scope`
+    (user-scope, the common case), a `scope` this doesn't know, a
+    missing or unusable `projectPath`, or a path pair that will not
+    compare. The failure to prefer on this side is the false "not wired"
+    warn at a plugin user, not the false ok — the same asymmetry that
+    puts a `cache/` fallback behind the manifest above.
+    """
+    if install.get("scope") != "local":
+        return False
+    project_path = install.get("projectPath")
+    if not isinstance(project_path, str) or not project_path:
+        return False
+    project = _resolved_quiet(Path(project_path))
+    here = _resolved_quiet(cwd)
+    if project is None or here is None:
+        return False
+    # An install scoped to a parent covers its subdirectories: doctor run
+    # from `<project>/src` is still doctor run inside that project.
+    return here != project and project not in here.parents
+
+
+def _resolved_quiet(path: Path) -> Path | None:
+    """`path` made absolute and symlink-free, or None if it cannot be.
+
+    Resolved rather than compared as text because the two sides are
+    written by different hands: `projectPath` was recorded by Claude
+    Code when the plugin was installed, `cwd` is whatever the shell
+    handed this process. A symlinked home, a `/tmp` that is really
+    `/private/tmp`, or a relative `cwd` would otherwise make two
+    spellings of one directory look like two projects — and reading the
+    user's own project as someone else's is how the filter above would
+    start causing the false warn it exists to prevent.
+    """
+    try:
+        return path.expanduser().resolve()
+    except (OSError, RuntimeError, ValueError):
+        return None
 
 
 def _is_dir_quiet(path: Path) -> bool:
@@ -1584,16 +1672,21 @@ def _session_start_hook_config_candidates(cwd: Path | None = None) -> list[Path]
 
     * Claude Code settings files (user- and project-scope, plus the
       `.local` overrides) — where a manual wiring lands.
-    * `hooks.json` manifests inside INSTALLED plugins — where a *plugin*
-      install's hooks live. This is the load-bearing half: a plugin user
-      never edits settings.json, so scanning settings alone would warn at
-      exactly the users who did the recommended thing.
+    * `hooks.json` manifests inside plugins INSTALLED and enabled for
+      `cwd` — where a *plugin* install's hooks live. This is the
+      load-bearing half: a plugin user never edits settings.json, so
+      scanning settings alone would warn at exactly the users who did
+      the recommended thing.
 
     The second family is deliberately not "every `hooks.json` under
     `~/.claude/plugins`". That sweeps in the marketplace catalogue, whose
     manifests belong to plugins that were never installed and whose hooks
-    therefore never run; `_installed_plugin_roots` documents the split
-    and why counting one as wiring flips this check's verdict.
+    therefore never run, and it sweeps in plugins installed into somebody
+    else's project, whose hooks do not run here;
+    `_installed_plugin_roots` documents both splits and why counting
+    either as wiring flips this check's verdict. `cwd` decides the second
+    one, which is why it is passed on rather than only used for the
+    project-scope settings files above.
 
     Only paths that exist are returned, which doubles as the "is this
     even a Claude Code install?" probe — an empty list means we have
@@ -1616,7 +1709,7 @@ def _session_start_hook_config_candidates(cwd: Path | None = None) -> list[Path]
         # and that budget is one budget.
         matches = 0
         try:
-            for root in _installed_plugin_roots(plugins_root):
+            for root in _installed_plugin_roots(plugins_root, cwd=base):
                 for path in root.rglob("hooks.json"):
                     if matches >= _PLUGIN_HOOK_SCAN_CAP:
                         break
@@ -3318,7 +3411,12 @@ def _check_embeddings_extra(cfg: Config) -> Diagnosis:
     The absent case still respects the gate — a default install with no
     extra is not a fault, and `retrieval_discrimination` already owns
     the "consider installing one" advice with the measurement to back
-    it up.
+    it up. "Absent" there means the config asked for nothing in
+    particular: `semantic_provider = "auto"` on a machine with no extra.
+    An EXPLICIT `semantic_provider` naming an extra this machine does
+    not have is a different proposition — the config asked for something
+    the install cannot supply — and the resolved-provider probe below
+    reports it whatever the gate says.
 
     WHICH broken extra decides the severity, and the resolver is what
     answers that. Two extras exist so one can cover for the other:
@@ -3343,11 +3441,41 @@ def _check_embeddings_extra(cfg: Config) -> Diagnosis:
     Inferring health from the gap published a `warn` saying ranking was
     "NOT degraded" and that resolution "reaches `torch`, which imports
     cleanly" about an import never attempted, on an install whose
-    semantic leg was gone. `semantic_setup._resolved_provider_importable`
-    and `handlers.search._semantic_mode_unavailable` both ask the
-    resolved provider directly; this now asks it the same way, and an
-    unimportable resolved provider is treated exactly like no resolved
-    provider at all.
+    semantic leg was gone.
+
+    That probe therefore runs UNCONDITIONALLY, above the broken split
+    rather than inside it, and that placement is the whole of the
+    repair. Probed only under `if broken:`, the same misconfiguration
+    with a HEALTHY sibling — `semantic_provider = "torch"`, no
+    sentence-transformers, a fine fastembed, nothing installed-and-
+    broken anywhere — fell past the split into a `semantic_dedup` gate
+    and a `working` list that ORs across BOTH extras, and published
+    "semantic_dedup enabled and fastembed importable" over a process
+    whose resolved provider loads nothing. The verdict was decided by a
+    provider that resolution had already declined to use. A check may
+    skip only on the condition it measures
+    (`docs/incidents/2026-07-25-doctor-false-green-on-importable-extra.md`,
+    lesson 1), and neither `semantic_dedup` nor "some extra imports" is
+    that condition. `working` survives below as supporting detail —
+    WHICH extras exist, for the message and for the nothing-installed
+    `fail` — and can no longer reach `ok` on its own, because the
+    unimportable-resolved-provider case has already returned by the time
+    it is read. `semantic_setup._resolved_provider_importable` and
+    `handlers.search._semantic_mode_unavailable` both ask the resolved
+    provider directly; this asks it the same way, on every branch.
+
+    SEVERITY is then a second and independent question: would anything
+    load a model under this config at all? `semantic_dedup = false`
+    under `search_mode = "keyword"`/`"bm25"` hands a model to neither
+    consumer, so a provider that cannot load degrades nothing that is
+    running. Asserting "silently degraded to keyword/BM25 and Jaccard"
+    there — and exiting 2, since `_EXIT_CODE_BY_STATUS` maps `fail` to
+    2 — breaks CI over an install whose configured behaviour is intact,
+    which is the green-over-the-wrong-input shape once more with the
+    sign flipped: a claim about a consumer, made without consulting the
+    consumer. `wants_model` below gates both the escalation and the
+    degradation clause; the breakage is still named, as the `warn` the
+    sibling branch already calls dead weight.
     """
     from .semantic import extra_import_failure, extra_importable, resolve_provider
 
@@ -3364,28 +3492,68 @@ def _check_embeddings_extra(cfg: Config) -> Diagnosis:
         for module, extra, provider in extras
         if (reason := extra_import_failure(module)) is not None
     ]
-    if broken:
-        # Resolved with the SAME preference production uses, so this
-        # cannot disagree with what `memory_search` actually loads.
-        resolved = resolve_provider(cfg.behavior.semantic_provider)
-        by_provider = {provider: (module, extra) for module, extra, provider in extras}
-        resolved_module, resolved_extra = by_provider.get(resolved or "", (None, None))
-        # PROBED. The warn below claims the resolved provider imports
-        # cleanly, so this is the import that has to have been attempted
-        # for the claim to mean anything — absence from `broken` proves
-        # only that the extra is not installed-and-broken, and "not
-        # installed at all" satisfies that too.
-        resolved_usable = resolved_module is not None and extra_importable(
-            resolved_module
+
+    # Resolved with the SAME preference production uses, so this cannot
+    # disagree with what `memory_search` actually loads — and resolved
+    # HERE, above every branch, because the answer decides all of them
+    # (see the docstring). It costs at most one import per PROVIDER per
+    # process, cached in `semantic._EXTRA_PROBE` — the same imports
+    # `retrieval_discrimination` already pays under the default config,
+    # and the price of a verdict that is measured instead of inferred.
+    resolved = resolve_provider(cfg.behavior.semantic_provider)
+    by_provider = {provider: (module, extra) for module, extra, provider in extras}
+    resolved_module, resolved_extra = by_provider.get(resolved or "", (None, None))
+    # PROBED. Every message below that says the resolved provider does or
+    # does not import is a claim about this call — absence from `broken`
+    # proves only that the extra is not installed-and-broken, and
+    # `extra_import_failure` returns None for "absent" too.
+    resolved_usable = resolved_module is not None and extra_importable(resolved_module)
+
+    # Would ANY configured consumer load a model? A pure config question,
+    # deliberately: `semantic_setup._semantic_model_configured` answers a
+    # near neighbour, but its `hybrid` arm ANDs in
+    # `_embeddings_extra_importable()`, so a broken extra makes it False
+    # and would talk this check out of reporting the 2026-08-01 outage
+    # shape — the one config it exists for. The mode comparison is left
+    # unnormalised for the reason `_semantic_rank_leg_active` records:
+    # `handlers.search` does not normalise either, so a mis-cased
+    # `"Hybrid"` gets no model there and must read as "wants none" here.
+    wants_model = bool(cfg.behavior.semantic_dedup) or (
+        cfg.behavior.search_mode or "hybrid"
+    ) in ("semantic", "hybrid")
+
+    details: dict[str, Any] = {
+        "resolved_provider": resolved,
+        "resolved_provider_importable": resolved_usable,
+        "broken_modules": [row[0] for row in broken],
+        "wants_model": wants_model,
+    }
+
+    # One consequence clause for every "the resolved provider cannot
+    # load" branch, and its two truths. `fail` STATES a degradation, so
+    # it may only be reached when some consumer would have loaded a
+    # model; otherwise the identical breakage is inert under this config
+    # and the honest verdict is a `warn` that says when it will bite.
+    if wants_model:
+        unusable_status: CheckStatus = "fail"
+        unusable_note = (
+            " Semantic ranking and cosine dedup are silently degraded to "
+            "keyword/BM25 and Jaccard."
         )
+    else:
+        unusable_status = "warn"
+        unusable_note = (
+            " Nothing is degraded today: `semantic_dedup` is off and "
+            f"`search_mode = {cfg.behavior.search_mode!r}` is not one "
+            "`handlers.search` hands a model to, so no consumer asks for "
+            "one. It is dead weight until either changes — at which point "
+            "ranking drops to keyword/BM25 and dedup to Jaccard."
+        )
+
+    if broken:
         fatal = [row for row in broken if row[2] == resolved]
-        details: dict[str, Any] = {
-            "resolved_provider": resolved,
-            "resolved_provider_importable": resolved_usable,
-            "broken_modules": [row[0] for row in broken],
-        }
         if fatal or not resolved_usable:
-            module, extra, _provider, reason = (fatal or broken)[0]
+            module, extra, broken_provider, reason = (fatal or broken)[0]
             reinstall = (
                 f"Reinstall it: `uv pip install --force-reinstall {module}` "
                 f"(or `uv pip install -e .[{extra}]`). This usually means a "
@@ -3399,37 +3567,51 @@ def _check_embeddings_extra(cfg: Config) -> Diagnosis:
                 fix_hint = reinstall
             elif resolved_extra is not None:
                 # Reachable only through an explicit `semantic_provider`
-                # naming an extra that is not installed — `auto` returns
-                # a healthy provider or one of the broken ones, never a
-                # third thing. The typo class
+                # naming an extra that is ABSENT: installed-and-broken
+                # would have put it in `fatal`, installed-and-healthy
+                # would have made `resolved_usable` true. `auto` never
+                # lands here — it returns a healthy provider or one of
+                # the broken ones, never a third thing. The typo class
                 # `semantic_setup._resolved_provider_importable` exists
-                # for, met here by a second broken extra beside it.
+                # for, met here by the OTHER extra being broken.
+                #
+                # There are exactly two providers, so this state has NO
+                # working one: the named extra is absent, its sibling is
+                # installed and broken. That is why the hint does not
+                # offer `auto` the way the wording here used to —
+                # `semantic.resolve_provider` deliberately falls back to
+                # a present-but-unimportable provider so its loader can
+                # name the failure, so `auto` resolves to the broken
+                # sibling and the operator's install is exactly as dead
+                # as before they took the advice.
                 gap = (
                     f"and `{resolved}` — the provider this config does "
                     f"resolve to — is not importable either, because its "
                     f"`{resolved_extra}` extra is not installed"
                 )
                 fix_hint = (
-                    f"Two independent problems. Install what this config "
-                    f"asks for (`uv pip install -e .[{resolved_extra}]`), or "
-                    f"point `[behavior] semantic_provider` at a provider you "
-                    f"have — or at `auto`, which picks a working one. "
-                    f"Separately, the installed `{module}` is broken and "
-                    f"wants `uv pip install --force-reinstall {module}`; a "
-                    "virtualenv inside a cloud-synced folder (iCloud Drive, "
-                    "Dropbox) is the usual cause of that."
+                    f"Two independent problems, and between them this "
+                    f"install has no working provider. Install the extra "
+                    f"this config asks for (`uv pip install -e "
+                    f".[{resolved_extra}]`), or repair the one you do have "
+                    f"(`uv pip install --force-reinstall {module}`) and "
+                    f"point `[behavior] semantic_provider` at "
+                    f"`{broken_provider}`. `auto` is not a third option "
+                    f"here: with `{resolved_extra}` absent it resolves to "
+                    f"the broken `{module}`. A virtualenv inside a "
+                    "cloud-synced folder (iCloud Drive, Dropbox) is the "
+                    "usual cause of a damaged install; moving the venv "
+                    "outside it is the durable fix."
                 )
             else:
                 gap = "and no provider resolves at all"
                 fix_hint = reinstall
             return Diagnosis(
                 name="embeddings_extra",
-                status="fail",
+                status=unusable_status,
                 message=(
                     f"the `{extra}` extra is INSTALLED but `{module}` fails "
-                    f"to import ({reason}), {gap}. Semantic ranking and "
-                    "cosine dedup are silently degraded to keyword/BM25 "
-                    "and Jaccard."
+                    f"to import ({reason}), {gap}.{unusable_note}"
                 ),
                 fix_hint=fix_hint,
                 details={"module": module, "extra": extra, "error": reason, **details},
@@ -3456,24 +3638,98 @@ def _check_embeddings_extra(cfg: Config) -> Diagnosis:
             details={"module": module, "extra": extra, "error": reason, **details},
         )
 
-    if not cfg.behavior.semantic_dedup:
-        return Diagnosis(
-            name="embeddings_extra",
-            status="ok",
-            message="semantic_dedup disabled; no extra is installed-and-broken.",
-        )
-
     # EITHER extra satisfies write-time dedup — `semantic_setup` resolves
     # fastembed as a first-class provider — so asking only about
     # sentence-transformers reported "the extra is not installed" to
     # `[embeddings-fast]` users whose cosine dedup was working fine. A
     # check that names one member of a set the feature treats as
     # interchangeable measures the wrong population.
+    #
+    # Supporting detail ONLY, and read strictly after the resolved
+    # provider has had its say. This OR spans both providers while
+    # resolution commits to one, so on its own it answers a question
+    # nobody asked — a healthy fastembed publishing `ok` over a config
+    # pinned to an absent torch is precisely the shape the hoisted probe
+    # above exists to catch.
     working = [
         module
         for module in ("sentence_transformers", "fastembed")
         if extra_importable(module)
     ]
+
+    # Nothing is installed-and-broken. That is a different sentence from
+    # "the provider this config will load imports", and one config typo
+    # separates them: an explicit `semantic_provider` naming an extra
+    # that was never installed resolves to a provider in nobody's broken
+    # list which still returns no model from the factory. With `broken`
+    # empty this is the ONLY way `resolved` can be unusable — `auto`
+    # returns a healthy provider or, with nothing installed, None.
+    # Keyed off `resolved_extra` rather than `resolved` so the extra name
+    # the messages below print is known by construction: `by_provider`
+    # covers both `semantic.Provider` literals, so the two conditions are
+    # the same condition.
+    if resolved_extra is not None and not resolved_usable:
+        if working:
+            # `working` here is exactly the sibling: `resolved_usable` is
+            # the same probe on the same module, so the resolved one
+            # cannot be in this list.
+            alternative = (
+                "torch" if working[0] == "sentence_transformers" else "fastembed"
+            )
+            beside = (
+                f" `{', '.join(working)}` imports cleanly beside it, but "
+                "resolution commits to ONE provider and it is not that one."
+            )
+            fix_hint = (
+                f"Install what this config asks for (`uv pip install -e "
+                f".[{resolved_extra}]`), or point `[behavior] "
+                f"semantic_provider` at `{alternative}`, which this machine "
+                f"actually has — or at `auto`, which probes for health and "
+                f"would pick it. Unlike the branch where the sibling is "
+                f"itself broken, there IS a working provider here."
+            )
+        else:
+            beside = " No embeddings extra is installed at all."
+            fix_hint = (
+                f"Install it: `uv pip install -e .[{resolved_extra}]`. "
+                "Repointing `[behavior] semantic_provider` cannot help and "
+                "neither can `auto` — with no extra installed at all there "
+                "is nothing for either to resolve to."
+            )
+        return Diagnosis(
+            name="embeddings_extra",
+            status=unusable_status,
+            message=(
+                f"`[behavior] semantic_provider` resolves to `{resolved}`, "
+                f"whose `{resolved_extra}` extra is NOT installed — probed, "
+                f"not inferred from the absence of a broken one.{beside}"
+                f"{unusable_note}"
+            ),
+            fix_hint=fix_hint,
+            details=details,
+        )
+
+    if not cfg.behavior.semantic_dedup:
+        return Diagnosis(
+            name="embeddings_extra",
+            status="ok",
+            message=(
+                (
+                    "semantic_dedup disabled; no extra is installed-and-"
+                    f"broken, and provider resolution reaches `{resolved}`, "
+                    "which was probed and imports cleanly."
+                )
+                if resolved is not None
+                else "semantic_dedup disabled and no embeddings extra is installed."
+            ),
+            details=details,
+        )
+
+    # Reachable only with `resolved is None` — the branch above returned
+    # for every unusable resolved provider, and a usable one is by
+    # definition in `working`. So this is the genuinely bare install:
+    # nothing installed, nothing named, and a config that asks for cosine
+    # dedup anyway.
     if not working:
         return Diagnosis(
             name="embeddings_extra",
@@ -3489,11 +3745,17 @@ def _check_embeddings_extra(cfg: Config) -> Diagnosis:
                 "or `uv pip install -e .[embeddings-fast]` (ONNX), or set "
                 "`semantic_dedup = false` in config.toml."
             ),
+            details=details,
         )
     return Diagnosis(
         name="embeddings_extra",
         status="ok",
-        message=f"semantic_dedup enabled and {', '.join(working)} importable.",
+        message=(
+            f"semantic_dedup enabled and {', '.join(working)} importable; "
+            f"provider resolution reaches `{resolved}`, which was probed "
+            "and imports cleanly."
+        ),
+        details=details,
     )
 
 

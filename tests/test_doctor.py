@@ -1730,6 +1730,222 @@ def test_embeddings_extra_fails_when_the_resolved_provider_is_not_INSTALLED(
     assert "semantic_provider" in (diag.fix_hint or "")
 
 
+def test_embeddings_extra_probes_the_resolver_with_no_broken_extra_anywhere(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The release-blocker shape: nothing installed-and-BROKEN at all.
+
+    The resolved-provider probe used to live inside `if broken:`, so it
+    only ran when some extra was installed and failing to import. Take
+    the broken sibling away and the same misconfiguration — an explicit
+    `semantic_provider` naming an absent extra, with a perfectly healthy
+    other extra beside it — fell through to a `semantic_dedup` gate and
+    a `working` list that ORs across BOTH extras, and published
+    "semantic_dedup enabled and fastembed importable" over a process
+    that loads no model at all. The verdict was decided by whether an
+    installed-and-broken sibling happened to be present — a fact about a
+    provider that resolution had already declined to use.
+
+    Lesson 1 of `docs/incidents/2026-07-25-doctor-false-green-on-
+    importable-extra.md`: a check may skip only on the condition it
+    measures.
+    """
+    from bettermemory import semantic_setup
+
+    _pin_extra_state(monkeypatch, torch=None, fastembed="ok")
+    cfg = _config_for(
+        tmp_path,
+        search_mode="hybrid",
+        semantic_dedup=True,
+        semantic_provider="torch",
+    )
+
+    # The premise, measured rather than assumed: nothing is broken, the
+    # OR over both extras is true, and yet no model can load.
+    assert semantic.extra_import_failure("sentence_transformers") is None
+    assert semantic.extra_import_failure("fastembed") is None
+    assert semantic_setup._embeddings_extra_importable() is True
+    assert semantic.resolve_provider(cfg.behavior.semantic_provider) == "torch"
+    assert semantic_setup._resolved_provider_importable(cfg) is False
+
+    diag = _check_embeddings_extra(cfg)
+
+    assert diag.status == "fail", diag
+    assert diag.details["resolved_provider"] == "torch"
+    assert diag.details["resolved_provider_importable"] is False
+    # The green message that used to be published here, in the spelling
+    # it had. `working` may still appear as supporting detail, but it
+    # must never again be the thing that decides the verdict.
+    assert "semantic_dedup enabled" not in diag.message
+    assert "silently degraded" in diag.message
+    # The provider that cannot load is named, since that is the one fact
+    # the operator cannot get from anywhere else.
+    assert "torch" in diag.message
+    assert "embeddings]" in (diag.fix_hint or "")
+
+
+def test_embeddings_extra_probe_survives_the_dedup_gate_too(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other early return the hoisted probe has to outrank.
+
+    `semantic_dedup = false` returned `ok` before anything asked the
+    resolver a question. Since ba7e857 the extra feeds RANKING under the
+    default `hybrid` mode with no `semantic_dedup` involvement, so that
+    gate answers "no extras needed" for the population most likely to be
+    silently lexical.
+    """
+    _pin_extra_state(monkeypatch, torch=None, fastembed="ok")
+    cfg = _config_for(
+        tmp_path,
+        search_mode="hybrid",
+        semantic_dedup=False,
+        semantic_provider="torch",
+    )
+
+    diag = _check_embeddings_extra(cfg)
+
+    assert diag.status == "fail", diag
+    assert "disabled" not in diag.message
+    assert diag.details["resolved_provider_importable"] is False
+
+
+def test_embeddings_extra_hint_points_at_the_provider_this_machine_has(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Counterweight to the `auto` ban below: `auto` IS right here.
+
+    With no broken extra and a healthy sibling there genuinely is a
+    working provider, so `auto` resolves to it and the advice holds. The
+    ban in `test_..._never_recommends_auto_when_nothing_works` is about
+    the state where it does not — pinning both directions is what keeps
+    the two hints from being collapsed into one wrong one.
+    """
+    _pin_extra_state(monkeypatch, torch="ok", fastembed=None)
+    cfg = _config_for(
+        tmp_path,
+        search_mode="hybrid",
+        semantic_dedup=False,
+        semantic_provider="fastembed",
+    )
+
+    # Measured: `auto` really would pick the healthy torch here.
+    assert semantic.resolve_provider("auto") == "torch"
+
+    diag = _check_embeddings_extra(cfg)
+
+    assert diag.status == "fail", diag
+    assert "`torch`" in (diag.fix_hint or "")
+    assert "auto" in (diag.fix_hint or "")
+
+
+def test_embeddings_extra_never_recommends_auto_when_nothing_works(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fix_hint is a claim, and this one was false.
+
+    Reachable only with the named provider ABSENT and the other one
+    installed-and-BROKEN. There are exactly two providers, so that state
+    has no working one: `resolve_provider` deliberately falls back to a
+    present-but-unimportable provider (so its loader can name the
+    failure), which means `auto` lands on the broken sibling. The hint
+    told the operator to point `semantic_provider` "at a provider you
+    have — or at `auto`, which picks a working one"; they follow it and
+    nothing improves.
+    """
+    _pin_extra_state(monkeypatch, torch=None, fastembed="RuntimeError: onnx missing")
+    cfg = _config_for(
+        tmp_path,
+        search_mode="hybrid",
+        semantic_dedup=False,
+        semantic_provider="torch",
+    )
+
+    # The premise, measured: `auto` resolves to the BROKEN provider.
+    assert semantic.resolve_provider("auto") == "fastembed"
+    assert semantic.extra_importable("fastembed") is False
+
+    diag = _check_embeddings_extra(cfg)
+
+    assert diag.status == "fail", diag
+    hint = diag.fix_hint or ""
+    # The retired sentence, in the spelling it had.
+    assert "which picks a working one" not in hint
+    assert "no working provider" in hint
+    assert "not a third option" in hint
+    # Both real repairs still named.
+    assert "embeddings]" in hint
+    assert "force-reinstall fastembed" in hint
+
+
+@pytest.mark.parametrize(
+    ("search_mode", "semantic_dedup"),
+    [("keyword", False), ("bm25", False)],
+    ids=["keyword", "bm25"],
+)
+def test_embeddings_extra_warns_rather_than_failing_when_no_consumer_loads(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    search_mode: str,
+    semantic_dedup: bool,
+) -> None:
+    """`fail` asserts a degradation, so it has to check for one.
+
+    The branch escalated on the breakage alone and printed "Semantic
+    ranking and cosine dedup are silently degraded to keyword/BM25 and
+    Jaccard" without consulting either consumer. Under `keyword`/`bm25`
+    with `semantic_dedup = false` neither one ever loads a model —
+    `handlers.search` passes `semantic_model=None` regardless — so
+    nothing is degraded, and `_EXIT_CODE_BY_STATUS` was breaking CI with
+    exit 2 over an install whose configured behaviour is intact. The
+    breakage is still real dead weight, so it still warns.
+    """
+    _pin_extra_state(monkeypatch, torch="KeyError: frozenset()", fastembed=None)
+    cfg = _config_for(tmp_path, search_mode=search_mode, semantic_dedup=semantic_dedup)
+
+    diag = _check_embeddings_extra(cfg)
+
+    assert diag.status == "warn", diag
+    assert _EXIT_CODE_BY_STATUS[diag.status] == 1
+    # The claim that was never checked, gone.
+    assert "silently degraded" not in diag.message
+    # But the breakage itself must still be named, with its reason.
+    assert "INSTALLED but" in diag.message
+    assert "KeyError" in diag.message
+    assert "Reinstall" in (diag.fix_hint or "")
+    assert diag.details["wants_model"] is False
+
+
+@pytest.mark.parametrize(
+    ("search_mode", "semantic_dedup"),
+    [("hybrid", False), ("semantic", False), ("keyword", True)],
+    ids=["hybrid-ranks", "semantic-ranks", "keyword-but-dedup-wants-cosine"],
+)
+def test_embeddings_extra_still_fails_when_some_consumer_wants_a_model(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    search_mode: str,
+    semantic_dedup: bool,
+) -> None:
+    """Counterweight: the de-escalation must not swallow the outage.
+
+    Same broken install as above; the only thing that moves is whether a
+    consumer would have loaded a model. Two arms want one from the
+    ranker, one from write-time dedup, and every arm has to keep the
+    `fail` — without this, gating on `wants_model` could be widened to
+    "any breakage warns" and the 2026-08-01 shape goes quiet again.
+    """
+    _pin_extra_state(monkeypatch, torch="KeyError: frozenset()", fastembed=None)
+    cfg = _config_for(tmp_path, search_mode=search_mode, semantic_dedup=semantic_dedup)
+
+    diag = _check_embeddings_extra(cfg)
+
+    assert diag.status == "fail", diag
+    assert _EXIT_CODE_BY_STATUS[diag.status] == 2
+    assert "silently degraded" in diag.message
+    assert diag.details["wants_model"] is True
+
+
 @pytest.mark.parametrize(
     ("torch", "fastembed", "provider"),
     [
@@ -1740,6 +1956,9 @@ def test_embeddings_extra_fails_when_the_resolved_provider_is_not_INSTALLED(
         ("KeyError: frozenset()", None, "fastembed"),
         ("KeyError: frozenset()", "RuntimeError: onnx missing", None),
         ("KeyError: frozenset()", None, None),
+        (None, "ok", "torch"),
+        ("ok", None, "fastembed"),
+        (None, None, "torch"),
     ],
     ids=[
         "auto-falls-past-broken-torch",
@@ -1749,6 +1968,9 @@ def test_embeddings_extra_fails_when_the_resolved_provider_is_not_INSTALLED(
         "explicit-fastembed-absent",
         "both-broken",
         "only-torch-installed-broken",
+        "nothing-broken-explicit-torch-absent",
+        "nothing-broken-explicit-fastembed-absent",
+        "nothing-installed-explicit-torch",
     ],
 )
 def test_embeddings_extra_severity_tracks_the_resolved_provider_probe(
@@ -1758,7 +1980,7 @@ def test_embeddings_extra_severity_tracks_the_resolved_provider_probe(
     fastembed: str | None,
     provider: str | None,
 ) -> None:
-    """One invariant behind all seven shapes, tied to the production
+    """One invariant behind all ten shapes, tied to the production
     predicate rather than to a hand-copied verdict table.
 
     `semantic_setup._resolved_provider_importable` is what decides
@@ -1767,6 +1989,29 @@ def test_embeddings_extra_severity_tracks_the_resolved_provider_probe(
     agree — rather than listing expected statuses — means the two cannot
     drift apart the way they did: a verdict table would have been
     written to match whatever the check did that day.
+
+    The last three rows are the ones that make this an invariant rather
+    than a description. Every earlier row carries at least one
+    installed-and-BROKEN extra, so all seven landed inside the check's
+    `if broken:` arm — which is where the resolved-provider probe used
+    to live. The invariant was simply false outside that arm, and the
+    parametrization was quietly excluding the shapes that would have
+    shown it: `ok` came back for a config resolving to a provider that
+    imports nothing.
+
+    `search_mode` is held at the ranking default across every row on
+    purpose, so `wants_model` is constant-True and the status can only
+    move with the probe. The severity gate that reads `search_mode` is
+    pinned separately by
+    `test_embeddings_extra_warns_rather_than_failing_when_no_consumer_loads`
+    and its counterweight.
+
+    Contract of the table, since the `warn` arm is narrower than the
+    `fail` one: every row is a fault of some kind — a broken extra, an
+    unusable resolved provider, or both — so `ok` is never a correct
+    answer here. A row with NOTHING broken and a resolved provider that
+    imports would correctly return `ok` and does not belong; that shape
+    is pinned by `test_embeddings_extra_ok_when_nothing_is_broken`.
     """
     from bettermemory import semantic_setup
 
@@ -6701,10 +6946,24 @@ def test_hook_candidates_skip_a_cache_dir_the_manifest_no_longer_lists(
 
 @pytest.mark.parametrize(
     "manifest_body",
-    [None, "{ not json", "[]", '{"version": 1}'],
-    ids=["missing", "malformed", "not-an-object", "unrecognised-shape"],
+    [
+        None,
+        "{ not json",
+        "[]",
+        '{"version": 1}',
+        '{"version": 1, "plugins": {"p@mkt": {"installPath": "INSTALL_ROOT"}}}',
+        '{"version": 3, "plugins": {"p@mkt": [{"path": "INSTALL_ROOT"}]}}',
+    ],
+    ids=[
+        "missing",
+        "malformed",
+        "not-an-object",
+        "no-plugins-key",
+        "inner-dict-of-dicts",
+        "inner-renamed-key",
+    ],
 )
-def test_hook_candidates_fall_back_to_the_cache_tree_without_a_manifest(
+def test_hook_candidates_fall_back_to_the_cache_tree_without_a_USABLE_manifest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, manifest_body: str | None
 ) -> None:
     """No usable manifest must not mean "no plugin user has this wired".
@@ -6714,16 +6973,247 @@ def test_hook_candidates_fall_back_to_the_cache_tree_without_a_manifest(
     scans the tree those `installPath`s point into on a normal install.
     It is coarser than the manifest — and it still excludes the
     catalogue, which is the whole point of the split.
+
+    "Usable" is the whole point of the last two cases, and they are the
+    ones this originally missed: `{"version": 1}` has no `plugins` key at
+    all, so the TOP-LEVEL gate rejects it and the fallback was never in
+    doubt. The two below drift INSIDE a well-formed `plugins` object, and
+    the file carries a `"version"` (a `2` on the machine this was found
+    on) precisely because that inner shape is Claude Code's to change. On
+    one of those the manifest arm used to commit on the top-level gate
+    alone, `continue` past every record it did not recognise, and return
+    the resulting empty list from INSIDE that branch, so the fallback
+    below could never run. The plugin arm went silent and every plugin
+    user got told to install the plugin they had already installed.
     """
     home = _claude_home(tmp_path, monkeypatch)
     plugins, installed, catalogue = _plugin_trees(home)
     if manifest_body is not None:
+        # The drifted bodies name the REAL install directory, so they stay
+        # honest fixtures rather than shapes that only pass because their
+        # paths are bogus: a future reader that learns one of these shapes
+        # must keep this test green by understanding it, not be blocked by
+        # it. `json.dumps` rather than a bare `str()` because a Windows
+        # `installPath` carries backslashes, and pasting those into a JSON
+        # string literal makes the fixture itself unparseable.
+        manifest_body = manifest_body.replace(
+            '"INSTALL_ROOT"', json.dumps(str(installed.parent.parent))
+        )
         (plugins / "installed_plugins.json").write_text(manifest_body, encoding="utf-8")
 
     found = _session_start_hook_config_candidates(cwd=tmp_path / "proj")
 
     assert installed in found
     assert catalogue not in found
+
+
+def test_hook_candidates_do_not_fall_back_when_only_SOME_records_parse(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Counterweight to the drifted-shape cases above.
+
+    "Fall back whenever any record is unrecognised" would satisfy them
+    and re-open the hole the manifest arm exists to close: a half-read
+    manifest would send the scan into `cache/`, which sweeps in every
+    uninstalled leftover and every other project's install alongside the
+    drift it could not follow. Partial understanding is understanding —
+    the records that parsed are the answer.
+    """
+    home = _claude_home(tmp_path, monkeypatch)
+    plugins, installed, _catalogue = _plugin_trees(home)
+    # One record in a shape this cannot read, naming the plugin that DOES
+    # carry a binding, and one it can read, naming a plugin that carries
+    # none. Only the fallback could put the first one in the answer.
+    other = plugins / "cache" / "mkt" / "no-hooks" / "1.0.0"
+    other.mkdir(parents=True)
+    (plugins / "installed_plugins.json").write_text(
+        json.dumps(
+            {
+                "version": 3,
+                "plugins": {
+                    "drifted@mkt": [{"path": str(installed.parent.parent)}],
+                    "known@mkt": [{"scope": "user", "installPath": str(other)}],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    found = _session_start_hook_config_candidates(cwd=tmp_path / "proj")
+
+    assert found == []
+
+
+# ---------------------------------------------------------------------------
+# session_start_hook — an install can be real and still not apply HERE
+#
+# `installed_plugins.json` records a `scope` per install, and a `"local"`
+# one names the `projectPath` it was installed into. Claude Code enables
+# that plugin in that project only. Reading its `hooks/hooks.json` as
+# wiring anywhere else is a false green of the same family as the
+# catalogue above, and a sharper one: the plugin genuinely is installed,
+# so nothing about the directory looks wrong. This machine carries
+# exactly such a record.
+# ---------------------------------------------------------------------------
+
+
+def _write_project_scoped_install(
+    plugins: Path, install_root: Path, project: Path, **overrides: object
+) -> None:
+    """`installed_plugins.json` holding ONE project-scoped install.
+
+    The record shape is copied from a real one: `scope`, `projectPath`
+    and `installPath` siblings under a per-plugin list. `overrides`
+    replaces or drops (with `None`) individual keys so the
+    unjudgeable-record cases can be written as data.
+    """
+    record: dict[str, object] = {
+        "scope": "local",
+        "projectPath": str(project),
+        "version": "unknown",
+        "installPath": str(install_root),
+    }
+    for key, value in overrides.items():
+        if value is None:
+            record.pop(key, None)
+        else:
+            record[key] = value
+    (plugins / "installed_plugins.json").write_text(
+        json.dumps({"version": 2, "plugins": {"p@mkt": [record]}}),
+        encoding="utf-8",
+    )
+
+
+def test_hook_candidates_skip_a_plugin_scoped_to_ANOTHER_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A project-scoped install is not wiring outside its project.
+
+    `installPath` alone reads as "installed, therefore live", so doctor
+    run in project B counted the SessionStart binding of a plugin
+    installed only into project A. Such a binding is unjudgeable by
+    construction — the plugin ships `uvx bettermemory session-start ||
+    true` and the fixture here the equally unjudgeable bare-name form,
+    both of which `_session_start_hook_broken_path` declines to fault —
+    so it wins the live slot outright and the check returns `ok` for a
+    project where the hook does not fire.
+    """
+    home = _claude_home(tmp_path, monkeypatch)
+    plugins, installed, _catalogue = _plugin_trees(home)
+    _write_project_scoped_install(
+        plugins, installed.parent.parent, tmp_path / "elsewhere"
+    )
+
+    found = _session_start_hook_config_candidates(cwd=tmp_path / "proj")
+
+    assert installed not in found
+    # Empty, not merely "without that one": a record we read and dropped
+    # is a record we understood, so this must not tip into the `cache/`
+    # fallback — whose rglob would sweep the same install back in.
+    assert found == []
+
+
+@pytest.mark.parametrize(
+    "suffix", ["", "src", "src/deep"], ids=["at-root", "one-level", "nested"]
+)
+def test_hook_candidates_keep_a_plugin_scoped_to_THIS_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, suffix: str
+) -> None:
+    """Counterweight: the filter is "another project", not "any project".
+
+    Dropping every `scope: local` record would pass the test above and
+    warn at the user who installed the plugin into the project they are
+    standing in. Running doctor from a subdirectory is still running it
+    inside that project, which is why an ancestor counts.
+    """
+    home = _claude_home(tmp_path, monkeypatch)
+    plugins, installed, _catalogue = _plugin_trees(home)
+    project = tmp_path / "proj"
+    _write_project_scoped_install(plugins, installed.parent.parent, project)
+
+    found = _session_start_hook_config_candidates(
+        cwd=project / suffix if suffix else project
+    )
+
+    assert installed in found
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"scope": None, "projectPath": None},
+        {"scope": "user", "projectPath": None},
+        {"projectPath": None},
+        {"scope": "workspace"},
+        {"projectPath": 17},
+        {"projectPath": ""},
+    ],
+    ids=[
+        "no-scope-key",
+        "user-scope",
+        "local-without-projectPath",
+        "unknown-scope",
+        "projectPath-not-a-string",
+        "projectPath-empty",
+    ],
+)
+def test_hook_candidates_keep_installs_whose_scope_they_cannot_judge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, overrides: dict[str, object]
+) -> None:
+    """Every uncertainty keeps the record, on purpose.
+
+    Six shapes none of which may read as "installed for somebody else".
+    Two are ordinary user-scope records, the regression guard that the
+    filter costs nothing in the common case. The other four each carry a
+    `projectPath` naming a DIFFERENT project, or claim `local` scope with
+    no usable `projectPath` at all, so a filter that consulted the path
+    without checking the scope, or dropped every `local` record it could
+    not resolve, would take each of them out. The failure to prefer on
+    this side is the false "not wired" warn at a plugin user — the same
+    asymmetry that puts a `cache/` fallback behind the manifest — so an
+    unfamiliar shape must read as user-scope.
+    """
+    home = _claude_home(tmp_path, monkeypatch)
+    plugins, installed, _catalogue = _plugin_trees(home)
+    _write_project_scoped_install(
+        plugins, installed.parent.parent, tmp_path / "elsewhere", **overrides
+    )
+
+    found = _session_start_hook_config_candidates(cwd=tmp_path / "proj")
+
+    assert installed in found
+
+
+def test_session_start_hook_warns_when_only_ANOTHER_PROJECTS_plugin_is_runnable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The verdict flip, end to end through the production collector.
+
+    Same story as the catalogue flip test, one step subtler: the plugin
+    is genuinely installed, just into a different project. A user with
+    one stale hand-wired binding and no plugin enabled HERE has a hook
+    that contributes nothing and must be told so — instead the other
+    project's manifest filled the live slot and demoted the stale
+    binding to a footnote on an `ok`.
+    """
+    root = _store_with_one_memory(tmp_path)
+    home = _claude_home(tmp_path, monkeypatch)
+    here = tmp_path / "here"
+    here.mkdir()
+    monkeypatch.chdir(here)  # so the project-scope candidates are ours
+    plugins, installed, _catalogue = _plugin_trees(home)
+    _write_project_scoped_install(
+        plugins, installed.parent.parent, tmp_path / "elsewhere"
+    )
+    gone = tmp_path / "deleted-venv" / "bin" / "bettermemory"
+    _hook_settings_with_command(
+        home / ".claude" / "settings.json", f"{gone} session-start || true"
+    )
+
+    diag = _check_session_start_hook_wired(root)
+
+    assert diag.status == "warn", diag.message
+    assert diag.details["unrunnable_path"] == str(gone)
 
 
 def test_session_start_hook_warns_when_only_a_CATALOGUE_copy_is_runnable(
