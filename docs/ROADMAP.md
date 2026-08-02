@@ -54,8 +54,24 @@ Planned work, in rough priority order. Plans change; the
      every row for anyone with a whitelist. What is left of the residue is
      the three caps in the same `_validate_write_payload` that no gate
      reads either: `max_content_bytes`, `min_content_tokens`,
-     `max_scopes_per_write`. Those are still apply-time-only, so a
-     `--dry-run` over-promises on a row any of them would refuse.
+     `max_scopes_per_write`. Those are unenforced at BOTH phases, which
+     is what makes this half unlike the `[scopes] allowed` half:
+     `compute_ingest_plan` never checks them and `apply_ingest_plan`
+     builds its `Store.write` payload by hand, so the plan and the commit
+     agree exactly and neither one refuses. Measured 2026-08-02 against a
+     throwaway store with all three set tight — `max_content_bytes` 200,
+     `min_content_tokens` 50, `max_scopes_per_write` 1: a 3,098-byte body
+     and a 3-token body, two scopes on each, every row planned as `write`
+     and every row committed. So there is no `--dry-run` over-promise to
+     fix; the residue is that ingest lands rows `memory_write` would
+     refuse, and closing it means adding the predicate on both sides at
+     once rather than reconciling a divergence. Two earlier wordings
+     called the caps "apply-time-only" — introduced in f281c39, carried
+     through 964baad. That described `_validate_write_payload`'s position
+     on the `memory_write` path, never anything ingest does;
+     `apply_ingest_plan`'s docstring, written in that same f281c39, has
+     said the caps are "still missed on this path" correctly all along.
+     The two halves of one commit disagreed from the day they landed.
      `memory_update` is the fourth, and it grew rather than shrank: it now
      mirrors two gates by hand — the credential scan, and the user-claim
      gate, added when write-then-update turned out to launder exactly the
