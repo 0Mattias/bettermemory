@@ -100,10 +100,12 @@ Docstrings and ``#`` comments are read, never statement bodies — the
 self-tests below are built from deliberately invalid paths and symbols
 that exist precisely to be rejected, so scanning bodies would misfire by
 construction.
-**Corollary for anyone editing this file: keep synthetic examples inside
-statement bodies — a fixture string or a local — never in a docstring or
-a ``#`` comment.** Both are prose to this module now, and the extractors
-do not know that a quoted counter-example is only being discussed.
+**Corollary for anyone editing this file: a synthetic example belongs in
+a statement body — a fixture string or a local — unless it is one of the
+obvious placeholder shapes the extractors already skip (``N``, ``x.py``).
+Anything else parked in a docstring or a ``#`` comment is read as a
+claim.** Both are prose to this module now, and the extractors do not
+know that a quoted counter-example is only being discussed.
 
 The comment used to be the mirror-image trap: prose a reader weighs like
 any other, sitting where no rule here could see it — and an example is
@@ -678,7 +680,13 @@ def _living_docs() -> list[tuple[str, str]]:
 
 
 def _prose_sources() -> list[tuple[str, str]]:
-    """Everything scanned for path/symbol claims: living docs + changelog."""
+    """The markdown half of the path/symbol corpus: living docs + changelog.
+
+    Not everything those two checkers see — ``collect_failures`` also runs
+    them over ``_code_docstrings`` and ``_code_comments``. This half is the
+    prose that lives outside Python, and it is the only half ``check_line_refs``
+    and ``check_test_counts`` are run against at all.
+    """
     out = _living_docs()
     out.append((_CHANGELOG, (_REPO_ROOT / _CHANGELOG).read_text(encoding="utf-8")))
     return out
