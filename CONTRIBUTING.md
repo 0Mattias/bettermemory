@@ -10,14 +10,18 @@ See [`docs/installation.md`](docs/installation.md) for the install side. For a d
 git clone https://github.com/0Mattias/bettermemory.git
 cd bettermemory
 
-# direnv handles UV_PROJECT_ENVIRONMENT=venv automatically; otherwise:
+# direnv reads .envrc and sets UV_PROJECT_ENVIRONMENT; otherwise export it
+# by hand — `venv` outside a cloud-synced folder, a path outside the
+# synced tree inside one (see below).
 export UV_PROJECT_ENVIRONMENT=venv
 
 uv sync --extra dev
-source venv/bin/activate
+source "$UV_PROJECT_ENVIRONMENT/bin/activate"
 ```
 
-The env directory is `venv/`, not `.venv/`, because macOS Sequoia auto-applies the `UF_HIDDEN` BSD flag to any directory whose name starts with a leading dot inside iCloud-synced folders. Once flagged, the directory is invisible to `ls` (without `-la`), to most TUIs, and to the Finder — including the editor file pickers that surface "your active venv". The `.envrc` and `pyproject.toml` therefore point at `venv/` (no leading dot). If you don't sync the project directory through iCloud you can use `.venv/` as usual, but the checked-in defaults assume the conservative path. Run `chflags nohidden .venv` to unhide a directory that's already been flagged.
+The default is `venv/`, not `.venv/`, because macOS Sequoia auto-applies the `UF_HIDDEN` BSD flag to any directory whose name starts with a leading dot inside iCloud-synced folders. Once flagged, the directory is invisible to `ls` (without `-la`), to most TUIs, and to the Finder — including the editor file pickers that surface "your active venv". Run `chflags nohidden .venv` to unhide a directory that's already been flagged.
+
+Inside a synced folder the rename is not enough, because syncing itself damages an environment in place: duplicate `name 2.py` conflict copies, two dist-info directories for one package, a partially-materialised package tree that raises on import (see [`docs/incidents/2026-08-01-broken-optional-extra-killed-retrieval.md`](docs/incidents/2026-08-01-broken-optional-extra-killed-retrieval.md)). So [`.envrc`](.envrc) resolves a checkout under `~/Documents` or `~/Desktop` to `$HOME/.venvs/<checkout-dir-name>` — outside the synced tree, keyed by directory name so sibling worktrees keep separate environments — and leaves the in-repo `venv` default alone everywhere else. `[tool.pyright]` in `pyproject.toml` points at an in-repo `.venv`, so with the environment outside the repo, symlink it or pyright reports every import as missing: `ln -s "$UV_PROJECT_ENVIRONMENT" .venv`.
 
 ## Running the suite
 
@@ -65,16 +69,20 @@ Body: what changed and why, in plain declarative prose, wrapped at 100.
 
 `type` is one of `feat`, `fix`, `docs`, `test`, `ci`, `perf`, `refactor`, `build`, `chore`, `style`, `revert`, `bench`, `release`. `scope` is optional and lowercase. The description starts lowercase, is written in the imperative mood ("release the lock", not "released the lock"), and does not end with a period. A `!` before the colon marks a breaking change.
 
-**Register.** Describe the change, not the session that produced it, and not how anyone felt about it.
+**Register.** Technical and declarative. Describe the change, not the session that produced it, and not how anyone felt about it.
 
 - **No first person.** No "I", "my", "myself". A quoted user utterance or a literal query is a citation and is exempt — `memory_search("how do I cut a release")` is fine.
 - **No narration of the process.** "turns out", "finally!", "oops", "as promised" tell the reader nothing about the code. If a wrong first hypothesis is worth recording, record the *conclusion* it produced and the evidence, not the journey.
-- **No aphorisms, jokes, or slogans in the subject.** The subject is an index entry. `perf(footprint): stop paying for prose and titles nobody reads` is a slogan; `perf(builder): drop pydantic schema titles from the served tool surface` is an index entry.
+- **No references to the sitting that produced the commit.** "this session", "the last round", "an adversarial pass over the previous six commits" name a boundary that exists only in the author's calendar. The reader is bisecting; give them the sha. Domain windows — a demotion window, a tag range — are unaffected.
+- **No editorialising about the project's own record.** State what the code did and what it does now. That a defect was embarrassing, is the third of its kind, or is "worth stating plainly" grades the defect instead of describing it, and none of it is actionable. What *is* actionable survives: name the incident file, the defect class, the earlier commit.
+- **No aphorisms, jokes, or slogans in the subject.** The subject is an index entry. `perf(footprint): stop paying for prose and titles nobody reads` is a slogan; `perf(builder): drop pydantic schema titles from the served tool surface` is an index entry. A `release:` subject is the version alone — the release's argument goes in the CHANGELOG entry the tag points at, which has room to cite.
 - **No anthropomorphism.** Guards do not have patience and ratchets cannot be taught. Say what the code now does.
 
-**Body.** Explain *why* the change is correct and what it costs, at whatever length that honestly takes — this project's bodies are long on purpose and that is not the problem being corrected here. Cite files, symbols, measured numbers, and commit SHAs. Every published number must trace to a committed artifact; see [Project values](#project-values-in-case-they-help-review-judgment).
+**Body.** Explain *why* the change is correct and what it costs. Cite files, symbols, measured numbers, and commit SHAs. Every published number must trace to a committed artifact; see [Project values](#project-values).
 
-**Enforcement.** [`tools/commit_lint.py`](tools/commit_lint.py) encodes the mechanical rules — envelope, subject shape and length, blank line before the body, body wrapping, first person, filler. Tone is not machine-checkable and is left to review. The `commit messages` CI job lints exactly the commits a push or pull request introduces; history written before the rules landed is not re-graded. To catch a violation before it is recorded rather than after, install the hook once per clone:
+Length follows from that and from nothing else. A body earns each paragraph by carrying a fact the reader cannot get from the diff — a reproduction, a measurement, a rejected alternative, a consequence. Bodies here run long because the changes are usually load-bearing, not because length is the house style; a one-line body over a one-line fix is correct, and a long body that restates the diff in prose is not.
+
+**Enforcement.** [`tools/commit_lint.py`](tools/commit_lint.py) encodes the mechanical rules — envelope, subject shape and length, blank line before the body, body wrapping, first person, filler, session references, editorialising, and the bare `release:` subject. The rest of tone is not machine-checkable and is left to review. The `commit messages` CI job lints exactly the commits a push or pull request introduces; history written before the rules landed is not re-graded. To catch a violation before it is recorded rather than after, install the hook once per clone:
 
 ```bash
 git config core.hooksPath .githooks
@@ -150,14 +158,14 @@ Every major bump ships with:
 - A `Migration` section in `docs/release.md` (or its own `docs/migrations/<from>-to-<to>.md` if substantial) walking the user through the upgrade.
 - A `bettermemory migrate <subcommand>` for any breaking on-disk-format change. The migration is idempotent (re-running is safe) and atomic per file (`.tmp` plus rename). See `bettermemory migrate origin` (a 0.x to 0.x migration that shipped before this policy was written) for the existing pattern.
 
-## Project values, in case they help review judgment
+## Project values
 
-These are not rules so much as the trade-offs the project makes consistently. They are helpful for guessing whether a change is in or out of scope:
+These are not rules so much as the trade-offs the project makes consistently. Use them to judge whether a change is in or out of scope:
 
 - **Memory is opt-in retrieval.** Anything that auto-injects context the model did not ask for is the failure mode this project exists to fix. Default-to-not-retrieve over default-to-include.
 - **False negatives beat false positives.** Missed context the user supplies in one followup turn is much cheaper than irrelevant context cascading through a conversation.
 - **The on-disk format is the user's data.** It is plain markdown with YAML frontmatter so the user can `grep`, `git log`, and hand-edit it. Code that obfuscates the format (binary encoding, opaque hashing of the bodies, anything that requires the running server to interpret) is out.
-- **Honest disclosure beats clever caveats.** The README's "Limitations" section lists what the project does not do. New limitations land there explicitly when discovered, rather than being papered over in a footnote elsewhere.
+- **Disclosure beats caveats.** The "Limitations" section of [`docs/internals.md`](docs/internals.md) lists what the project does not do. New limitations land there explicitly when discovered, rather than being papered over in a footnote elsewhere.
 - **Static surfaces beat configuration.** Each new config-toml-knob is friction and documentation debt; default behavior should be sensible without ever editing the file. When a knob really is needed (`semantic_dedup`, `verification_stale_days`), it lives in `[behavior]` with prose explaining when to flip it.
 
 ## Releasing
