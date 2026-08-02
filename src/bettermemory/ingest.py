@@ -27,12 +27,15 @@ Design notes:
   gate-driven apply phase reach the same *dedup* verdict for a row
   instead of scoring it under two different policies. The other
   content gates still run only at apply time, so a `--dry-run` can
-  over-promise on a row carrying a credential or a transient marker
-  — and, since `apply_ingest_plan` grew the `[scopes] allowed` check
-  (see `_scope_allowlist_reason`), on a row whose scopes fall outside
-  a configured whitelist. `compute_ingest_plan` takes no `Config` at
-  all, which is why the asymmetry stands rather than being closed
-  here.
+  over-promise on a row carrying a credential or a transient marker.
+  The `[scopes] allowed` check (see `_scope_allowlist_reason`) is
+  NOT in that residue: `compute_ingest_plan` takes the same optional
+  `Config` `apply_ingest_plan` does and runs the identical predicate
+  in the identical position — ahead of the dedup gates — so a row
+  the allowlist will refuse is already `skip_invalid` in the plan.
+  It was apply-time-only for one commit, and in that window a
+  `--dry-run` reporting "would write N" was followed by a commit
+  that wrote none of them.
 
 - **Tombstone-aware.** Source files that match a tombstoned memory
   surface as skipped with the reason ``previously_removed`` — the same
@@ -243,6 +246,7 @@ def _classify_one(
     tombstoned: list[TombstonedMemory],
     extra_scopes: list[str],
     high_threshold: float,
+    allowed_scopes: list[str] | None = None,
     semantic_model: Any | None = None,
     force: bool = False,
 ) -> IngestRow:
@@ -344,6 +348,31 @@ def _classify_one(
         if s not in scope_list:
             scope_list.append(s)
 
+    # `[scopes] allowed`, in the SAME position `apply_ingest_plan` runs it:
+    # ahead of the dedup gates, which is where `memory_write` runs it too
+    # (`_validate_write_payload` precedes `apply_write_gates`). The position
+    # is half the point of running it here at all — a plan that reached the
+    # same verdict by a different route could still label a row
+    # `skip_duplicate` where the apply says `skip_invalid`, and the two
+    # renderings would disagree about WHY. Costs nothing when the knob is
+    # unset: `_scope_allowlist_reason` returns None on an empty list before
+    # touching the row.
+    scope_reason = _scope_allowlist_reason(
+        scope_list, list(allowed_scopes or []), _tool_stamped_scopes(auto_type)
+    )
+    if scope_reason is not None:
+        return IngestRow(
+            source_path=source_path,
+            title=title,
+            description=description,
+            auto_memory_type=auto_type,
+            body=composed,
+            scopes=scope_list,
+            category=category,
+            action="skip_invalid",
+            reason=scope_reason,
+        )
+
     # Dedup gate: active store wins, then tombstones. Both checks use
     # the scorer and threshold `resolve_dedup_policy` hands the caller,
     # which is the same pair `memory_write`'s dedup gates resolve, so a
@@ -419,6 +448,7 @@ def compute_ingest_plan(
     now: datetime | None = None,
     high_threshold: float = HIGH_SIMILARITY,
     semantic_model: Any | None = None,
+    config: "Config | None" = None,
     force: bool = False,
 ) -> IngestPlan:
     """Walk the source root for `.md` files and classify each one.
@@ -428,6 +458,21 @@ def compute_ingest_plan(
     scope list (after the provenance + type-derived defaults).
     `force=True` bypasses the active-store dedup gate (parity with
     `memory_write`'s `force`); tombstone dedup is always honoured.
+
+    `config` is here for one reason: `[scopes] allowed`. It is the same
+    optional `Config` `apply_ingest_plan` takes, and a caller that will
+    follow up with an apply must pass the SAME object to both, exactly as
+    it must pass the same `force` — otherwise the plan and the commit
+    disagree about which rows survive, which is the whole failure mode
+    `resolve_dedup_policy` exists to prevent for the dedup half. Omitting
+    it means "no allowlist" (`Config()`'s default is an empty list, which
+    means "any scope"), so a read-only caller that only wants the
+    classification — `doctor._check_auto_memory_stranded` — keeps working
+    unchanged. Nothing else on the object is read here: the dedup knobs
+    reach this function pre-resolved as `semantic_model` /
+    `high_threshold`, and re-reading them from `config` would be the
+    second copy of that resolution `resolve_dedup_policy` was written to
+    delete.
 
     `semantic_model` + `high_threshold` are the dedup policy this plan
     is scored under. Callers that will follow up with
@@ -444,6 +489,12 @@ def compute_ingest_plan(
     """
     now = now or datetime.now(timezone.utc)
     extras = list(extra_scopes or [])
+    # `config is None` -> empty list -> `_scope_allowlist_reason` no-ops,
+    # which is the same answer `Config()`'s default gives. Spelled without
+    # constructing a `Config()` fallback because that fallback is what
+    # `_gate_deps` owns for the apply side; a second copy here is how the
+    # two sides drift.
+    allowed_scopes = list(config.scopes.allowed) if config is not None else []
 
     if not source_root.exists():
         raise FileNotFoundError(
@@ -498,6 +549,7 @@ def compute_ingest_plan(
             tombstoned=existing_tombstones,
             extra_scopes=extras,
             high_threshold=high_threshold,
+            allowed_scopes=allowed_scopes,
             semantic_model=semantic_model,
             force=force,
         )
@@ -600,11 +652,12 @@ def _gate_context(payload: dict[str, Any]) -> Any:
     scope-mismatch one. That gate's premise is a MODEL mis-tagging a
     conversational write; ingest is the user pointing a CLI at their own
     per-cwd auto-memory directory, where a body naming its own project is
-    the norm rather than the mis-tag signal. Ingested rows also carry only
-    the provenance and type-derived scopes, never a `projects:*` one, so
-    on any store that already holds a project scope the gate refuses
-    realistic imports wholesale. Acknowledging also skips the gate's
-    per-row `store.load_all()`.
+    the norm rather than the mis-tag signal. Ingested rows also carry no
+    `projects:*` scope unless the operator passed one on `--scope` — by
+    default just the provenance and type-derived tags — so on any store
+    that already holds a project scope the gate refuses realistic imports
+    wholesale. Acknowledging also skips the gate's per-row
+    `store.load_all()`.
 
     Each flag is passed explicitly rather than left to its default: a gate
     added later that reads one of them should have to change this call,
@@ -645,7 +698,27 @@ def _gate_skip_reason(decision: Any) -> str:
     return f"{text} — {detail}" if detail else text
 
 
-def _scope_allowlist_reason(scopes: list[str], allowed: list[str]) -> str | None:
+def _tool_stamped_scopes(auto_type: str | None) -> set[str]:
+    """The scopes ingest puts on a row of this type by itself.
+
+    `_classify_one` seeds every scope list with `DEFAULT_PROVENANCE_SCOPE`
+    and appends the `_TYPE_TO_EXTRA_SCOPE` tag for the row's auto-memory
+    type; only what follows those came from the caller. Derived per row
+    from `auto_memory_type` rather than returned as one flat constant set,
+    so `--scope feedback` on a `project`-typed row is still a
+    caller-supplied scope and still checked — on a `feedback` row that same
+    string is stamped anyway, so exempting it changes nothing.
+    """
+    stamped = {DEFAULT_PROVENANCE_SCOPE}
+    extra = _TYPE_TO_EXTRA_SCOPE.get(auto_type or "")
+    if extra is not None:
+        stamped.add(extra)
+    return stamped
+
+
+def _scope_allowlist_reason(
+    scopes: list[str], allowed: list[str], stamped: set[str]
+) -> str | None:
     """Row `reason` when `scopes` breaks `[scopes] allowed`; None when it doesn't.
 
     The `[scopes] allowed` whitelist is enforced in `_validate_write_payload`
@@ -654,8 +727,26 @@ def _scope_allowlist_reason(scopes: list[str], allowed: list[str]) -> str | None
     `config.scopes.allowed` either, which is why `consolidate._apply_llm_proposal`
     checks it by hand too. So without this function the knob was a no-op on the
     ingest path: `ingest --scope <not-in-allowlist>` planted an unsanctioned
-    scope that `memory_write` and `memory_update` both refuse, and so did the
-    constant provenance and type-derived scopes when the whitelist omits them.
+    scope that `memory_write` and `memory_update` both refuse.
+
+    `stamped` is the load-bearing parameter, and it is not a refinement —
+    without it this check refuses EVERY row of EVERY store with a non-empty
+    allowlist. `[scopes] allowed` is a policy about what the user may scope a
+    memory to, and `DEFAULT_PROVENANCE_SCOPE` plus the type-derived tag are
+    not that: ingest stamps them itself, the user never typed them and cannot
+    opt out of them, so any allowlist that did not happen to name the
+    provenance scope plus the type tag of every row in the batch turned a
+    working import into a silent no-op. Reproduced before the
+    exemption landed: `allowed = ["projects:demo"]` with
+    `ingest --scope projects:demo` skipped every row for scopes the operator
+    never asked for. So the list is enforced against what the CALLER supplied
+    and the tool's own stamps are exempt — the same line `memory_write`
+    draws; it just never has stamps of its own to exempt. Today the caller's
+    contribution is `extra_scopes` (`--scope`) plus, at apply time, whatever
+    a programmatic caller left on `IngestRow.scopes`; no frontmatter field
+    supplies scopes yet. The predicate is written as "everything not
+    stamped" rather than "the extras list" so a source-carried scope would
+    be checked the day one exists, without a second decision here.
 
     An empty `allowed` means "any scope" — the same semantics
     `_validate_write_payload` gives it, and the same guard consolidate's
@@ -665,12 +756,9 @@ def _scope_allowlist_reason(scopes: list[str], allowed: list[str]) -> str | None
     The first sentence is `_validate_write_payload`'s message verbatim so an
     operator reading `render_ingest_text` sees the words `memory_write` would
     have returned, the same reason `_gate_skip_reason` keeps each gate's own
-    `status`. The second is ingest-specific and load-bearing: every row carries
-    `DEFAULT_PROVENANCE_SCOPE` plus a type-derived tag that the *user* never
-    typed, and a whole-batch refusal on a store with a whitelist is far more
-    likely to mean "the allowlist doesn't name ingest's own scopes" than
-    "--scope was wrong". It names them without claiming which one failed —
-    `unknown` already says that, and it is just as often a `--scope` value.
+    `status`. The rest is ingest-specific: it says which scopes were exempt,
+    so the operator does not go add `imported-from-claude-code` to the
+    allowlist looking for a fix that is already in place.
 
     Returns a reason rather than raising: consolidate raises because it
     refuses per cluster, but a plan is a batch and one unsanctioned row must
@@ -680,14 +768,15 @@ def _scope_allowlist_reason(scopes: list[str], allowed: list[str]) -> str | None
     if not allowed:
         return None
     allowed_set = set(allowed)
-    unknown = [s for s in scopes if s not in allowed_set]
+    unknown = [s for s in scopes if s not in allowed_set and s not in stamped]
     if not unknown:
         return None
     return (
         f"scope(s) not in allowed list: {unknown}. "
-        f"Allowed: {sorted(allowed)}. Ingest stamps "
-        f"{DEFAULT_PROVENANCE_SCOPE!r} plus a type-derived scope on every "
-        "row; the allowlist applies to those too."
+        f"Allowed: {sorted(allowed)}. Only caller-supplied scopes are "
+        f"checked — the scopes ingest stamps itself ({sorted(stamped)}) are "
+        "exempt, so the offender above is one you supplied (`--scope`, on "
+        "the CLI)."
     )
 
 
@@ -712,10 +801,19 @@ def apply_ingest_plan(
     dedup knobs. This function builds its `Store.write` payload by hand and
     so never reaches `_validate_write_payload`, which is where every other
     write path enforces that list; `_scope_allowlist_reason` closes exactly
-    that hole and nothing more. The other three checks
+    that hole and nothing more — and it is enforced against the scopes the
+    CALLER supplied, not against the ones ingest stamps on every row (see
+    `_tool_stamped_scopes`). The other three checks
     `_validate_write_payload` owns — `max_content_bytes`,
     `min_content_tokens` and `max_scopes_per_write` — are still missed on
     this path, and no gate in `CONTENT_GATES` reads them either.
+
+    Pass the SAME ``config`` to ``compute_ingest_plan``: it runs the
+    identical allowlist predicate in the identical position, and that is
+    what makes a `--dry-run`'s row count the count a commit produces. The
+    check stays here as well as there — this is the enforcement boundary,
+    the only side that writes, and it is reachable with a plan computed by
+    a caller that passed no config at all.
 
     ``force`` must match the flag the plan was computed under. It drops
     the active-store dedup gate for this run (see ``_content_gates``);
@@ -811,7 +909,15 @@ def apply_ingest_plan(
         # secret named, not the secret being kept out. And a row that would
         # be refused anyway skips the dedup gates' per-row `store.load_all()`,
         # which is the dominant cost of this loop.
-        scope_reason = _scope_allowlist_reason(row.scopes, allowed_scopes)
+        #
+        # `compute_ingest_plan` runs this same predicate at this same point,
+        # so on the CLI path every row reaching here has already passed it
+        # and this is a re-check, not the first check. Kept because it is
+        # the enforcement boundary: a library caller can hand this function
+        # a plan computed with no config, and only this side writes.
+        scope_reason = _scope_allowlist_reason(
+            row.scopes, allowed_scopes, _tool_stamped_scopes(row.auto_memory_type)
+        )
         if scope_reason is not None:
             row.action = "skip_invalid"
             row.reason = scope_reason

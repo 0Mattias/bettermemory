@@ -16,13 +16,16 @@ Planned work, in rough priority order. Plans change; the
   is 0.4% false positive and 93.9% recall on a 234-record store, and a
   false positive costs one round-trip. But the parameter plus a
   description sentence on `memory_update` runs ~112–150 characters against
-  **31 characters** of margin before `_DESC_BUDGET_PRESSURE` warns
-  (25,869 live against a 26,000 ceiling, so 131 before it fails). It no
-  longer fits at either end of that range: re-measured live when the
-  user-claim gate landed on `memory_update`, whose one-clause status
-  mention spent 120 of the margin this entry was reserving. Ship it in a
-  cycle that also frees DESC budget, or alongside a ratchet-down; do not
-  spend the last of the margin on it.
+  **10 characters** of margin before `_DESC_BUDGET_PRESSURE` warns
+  (25,890 live against a 26,000 ceiling, so 110 before it fails). It no
+  longer fits at either end of that range — at this measurement the low
+  end no longer clears even the hard ceiling. `memory_update`'s own
+  description is where the margin went, in two edits: the user-claim
+  gate's one-clause status mention spent 120 (`DESC_MEMORY_UPDATE`
+  1,892 -> 2,012), and naming that gate's `acknowledge_user_claim` escape
+  spent 21 more (2,012 -> 2,033). Ship it in a cycle that also frees DESC
+  budget, or alongside a ratchet-down; do not spend the last of the
+  margin on it.
   Rejected alternatives, recorded so they are not re-derived: a
   "new body is a strict prefix of the old" guard is 0% false positive but
   misses the incident that motivated this (it was a rewrite that got cut,
@@ -39,16 +42,20 @@ Planned work, in rough priority order. Plans change; the
      than a mechanical reroute. `ingest.apply_ingest_plan` is the third:
      it bypasses `_validate_write_payload` entirely. The `[scopes]
      allowed` half of that residue is now closed —
-     `ingest._scope_allowlist_reason` runs beside the gate loop (in
-     `apply_ingest_plan`, not `cli/ingest.py`: the library entry point is
-     reachable without the CLI, and enforcing at the CLI alone would make
-     the two disagree about the policy) and flips an offending row to
-     `skip_invalid` rather than aborting the batch. What is left of it is
+     `ingest._scope_allowlist_reason` runs beside the gate loop in
+     `apply_ingest_plan`, which stays the enforcement boundary because the
+     library entry point is reachable without the CLI, and it flips an
+     offending row to `skip_invalid` rather than aborting the batch.
+     `compute_ingest_plan` runs the same predicate when it is given a
+     `Config`, so `--dry-run` predicts the commit instead of contradicting
+     it. Only scopes the CALLER supplied are checked: the provenance and
+     type-derived scopes ingest stamps itself are exempt, because
+     enforcing a user-scope policy against scopes the tool chose refused
+     every row for anyone with a whitelist. What is left of the residue is
      the three caps in the same `_validate_write_payload` that no gate
      reads either: `max_content_bytes`, `min_content_tokens`,
-     `max_scopes_per_write`. Those are also apply-time-only, and
-     `compute_ingest_plan` takes no `Config`, so a `--dry-run` still
-     over-promises on a row any of them would refuse.
+     `max_scopes_per_write`. Those are still apply-time-only, so a
+     `--dry-run` over-promises on a row any of them would refuse.
      `memory_update` is the fourth, and it grew rather than shrank: it now
      mirrors two gates by hand — the credential scan, and the user-claim
      gate, added when write-then-update turned out to launder exactly the

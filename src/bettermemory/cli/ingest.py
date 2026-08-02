@@ -55,7 +55,11 @@ def add_subparser(
         help=(
             "Extra scope tag(s) to append to every ingested memory, on top "
             "of the default `imported-from-claude-code` and the type-derived "
-            "tag. Repeat for multiple."
+            "tag. Repeat for multiple. These are the scopes `[scopes] "
+            "allowed` is checked against when that list is non-empty — a "
+            "value outside it skips the row, in the plan and at commit "
+            "alike; the two tags above are stamped by ingest itself and "
+            "are exempt."
         ),
     )
     parser.add_argument(
@@ -178,6 +182,13 @@ def _cli_ingest(
             extra_scopes=extra_scopes,
             high_threshold=high_threshold,
             semantic_model=semantic_model,
+            # Same object the apply below gets, for the same reason the
+            # dedup policy is resolved once above: `[scopes] allowed` is
+            # read on BOTH sides, and a plan that did not know about it
+            # printed "would write N" for rows the commit then refused
+            # wholesale. Threading it here is what makes `--dry-run`
+            # predict the commit rather than describe a different run.
+            config=ctx.config,
             force=force,
         )
     except (FileNotFoundError, NotADirectoryError) as exc:
@@ -210,25 +221,29 @@ def _cli_ingest(
         # same object `resolve_dedup_policy` read above is also what keeps
         # the plan and the commit on ONE dedup policy.
         #
-        # The same object also carries the `[scopes] allowed` whitelist,
-        # and that one is read in `apply_ingest_plan`, not here — the
-        # library entry point is reachable without this CLI, and enforcing
-        # at this site alone would make the CLI and the library disagree
-        # about the policy, the exact divergence the shared chain exists to
-        # end. `_validate_write_payload` (handlers/_shared.py) is where
-        # every other write path enforces it, and ingest never calls it
-        # (`apply_ingest_plan` builds its `Store.write` payload itself), so
-        # `ingest --scope <not-in-allowlist>` used to land an unsanctioned
-        # scope; `ingest._scope_allowlist_reason` now flips that row to
-        # `skip_invalid` instead. It refuses per row, not per run, so a
-        # conforming row in the same batch still commits.
+        # The same object also carries the `[scopes] allowed` whitelist.
+        # That one is enforced inside `apply_ingest_plan` (and predicted
+        # by `compute_ingest_plan` above, which is why both calls get this
+        # object) — never by a check written at this call site: the
+        # library entry points are reachable without this CLI, and
+        # enforcing at this site alone would make the CLI and the library
+        # disagree about the policy, the exact divergence the shared chain
+        # exists to end. `_validate_write_payload` (handlers/_shared.py) is
+        # where every other write path enforces it, and ingest never calls
+        # it (`apply_ingest_plan` builds its `Store.write` payload itself),
+        # so `ingest --scope <not-in-allowlist>` used to land an
+        # unsanctioned scope; `ingest._scope_allowlist_reason` now flips
+        # that row to `skip_invalid` instead. It refuses per row, not per
+        # run, so a conforming row in the same batch still commits.
         #
-        # Note that the constant `imported-from-claude-code` and the
-        # type-derived scope are subject to the same list: with a whitelist
-        # naming neither, an ingest is refused wholesale. That is the
-        # policy `memory_write` already applies to those scopes, so the
-        # answer is to name them in `[scopes] allowed`, not to exempt them
-        # here. The refusal reason says so per row.
+        # What it does NOT refuse: the constant `imported-from-claude-code`
+        # and the type-derived scope. Ingest stamps those on every row, the
+        # user never typed them and cannot opt out, so enforcing a
+        # user-scope policy against them made every allowlist that omitted
+        # them refuse every row — `--scope projects:demo` under
+        # `allowed = ["projects:demo"]` imported nothing. They are exempt;
+        # the list is checked against `--scope` values and anything a
+        # source file carries.
         #
         # Still NOT enforced on this path, and `docs/ROADMAP.md` carries
         # them: the `max_content_bytes` / `min_content_tokens` /

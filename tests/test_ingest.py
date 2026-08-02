@@ -1041,18 +1041,29 @@ class TestApplyIngestPlanOnNonEmptyStore:
 
 
 class TestApplyIngestPlanScopeAllowlist:
-    """`[scopes] allowed` is enforced on the ingest path.
+    """`[scopes] allowed` is enforced on the ingest path — against the
+    scopes the CALLER supplied, and identically in the plan and the apply.
 
-    It was not. `apply_ingest_plan` builds its `Store.write` payload by
-    hand, so it never reaches `_validate_write_payload` — the one place
-    every other write path enforces the whitelist — and no gate in
-    `CONTENT_GATES` reads `config.scopes.allowed` either, which is why
-    `consolidate._apply_llm_proposal` hand-rolls the same check. Under
-    `Config(scopes=ScopesConfig(allowed=["tools"]))` a probe still wrote a
-    memory with `scopes=['imported-from-claude-code', 'feedback',
-    'rogue']` — on top of `ba6360e`, whose message already claimed "it is
-    enforced now". That is what these tests exist to stop repeating: the
-    behaviour is pinned here, not asserted in a commit message.
+    Three regressions are pinned here, in the order they happened.
+
+    1. The knob was a no-op. `apply_ingest_plan` builds its `Store.write`
+       payload by hand, so it never reaches `_validate_write_payload` — the
+       one place every other write path enforces the whitelist — and no gate
+       in `CONTENT_GATES` reads `config.scopes.allowed` either, which is why
+       `consolidate._apply_llm_proposal` hand-rolls the same check. Under
+       `allowed=["tools"]` a probe wrote a memory scoped `rogue` anyway.
+    2. Closing (1) broke ingest outright for every store with a non-empty
+       allowlist. Every row is stamped `imported-from-claude-code` plus a
+       type-derived tag that the user never typed and cannot opt out of, so
+       an allowlist that did not happen to name all five strings refused
+       every row: `--scope projects:demo` under `allowed=["projects:demo"]`
+       imported nothing. Those stamps are exempt now
+       (`_tool_stamped_scopes`); the list is a policy about what the user
+       may scope a memory to.
+    3. The check ran at apply time only, so `--dry-run` printed "would
+       write N" for rows the commit then refused. `compute_ingest_plan`
+       takes the same `Config` and runs the same predicate in the same
+       position.
 
     The refusal is per ROW, not per run: consolidate raises because it
     judges one cluster at a time, but an ingest plan is a batch and one
@@ -1066,11 +1077,17 @@ class TestApplyIngestPlanScopeAllowlist:
         *,
         allowed: list[str] | None,
         extra_scopes: list[str] | None = None,
+        expect_plan_actions: set[str] | None = None,
     ) -> dict[str, Any]:
         """Plan + apply, keyed by source filename.
 
         `allowed=None` passes `config=None` — the library caller that
         holds no `Config`, which `_gate_deps` resolves to `Config()`.
+
+        `expect_plan_actions` asserts what the PLAN said before the apply
+        ran. Without it an assertion below could pass on a row the plan had
+        already skipped for an unrelated reason; with it, each test also
+        states whether the plan and the apply agreed.
         """
         config = (
             None if allowed is None else Config(scopes=ScopesConfig(allowed=allowed))
@@ -1080,11 +1097,9 @@ class TestApplyIngestPlanScopeAllowlist:
             existing_memories=store.load_all(),
             existing_tombstones=store.load_tombstones(),
             extra_scopes=extra_scopes or [],
+            config=config,
         )
-        # Every row must be a candidate write before apply, or an
-        # assertion below could pass on a row the PLAN had already
-        # skipped for an unrelated reason.
-        assert {r.action for r in plan.rows} == {"write"}
+        assert {r.action for r in plan.rows} == (expect_plan_actions or {"write"})
         apply_ingest_plan(plan, store, config=config)
         return {r.source_path.name: r for r in plan.rows}
 
@@ -1126,11 +1141,22 @@ class TestApplyIngestPlanScopeAllowlist:
     def test_offending_row_skipped_and_conforming_row_still_lands(
         self, source_root: Path, store: Store
     ) -> None:
-        """The decisive one. Two rows differing only in the type-derived
-        scope: with `project-context` outside the list, that row flips to
-        `skip_invalid` while the `feedback` row commits. Without the
-        enforcement BOTH land — the whole-batch abort consolidate uses
-        would instead lose both."""
+        """The decisive one for per-ROW containment: one unsanctioned row
+        must not cost the operator the conforming ones. With the
+        whole-batch abort consolidate uses, both rows would be lost;
+        without the check at all, both would land.
+
+        `extra_scopes` is per RUN, and no source-file field carries scopes
+        today, so the only way two rows in one batch differ in their
+        caller-supplied scopes is a caller that edits the plan — which is
+        also the shape a future source-carried scope would take. Editing
+        `row.scopes` after planning is therefore not a contrivance around
+        the plan-side check; it is the case that makes `apply_ingest_plan`
+        the enforcement boundary rather than a re-check, which is exactly
+        why the check stayed there when the plan side grew one too. The
+        pre-fix version of this test told the rows apart by their
+        type-derived scope, which stopped meaning anything once ingest's
+        own stamps became exempt."""
         _write_auto_memory(
             source_root,
             "keeper",
@@ -1145,24 +1171,35 @@ class TestApplyIngestPlanScopeAllowlist:
             description="the release workflow",
             body="The release tag push triggers the PyPI publish workflow.",
         )
-        rows = self._apply(
-            source_root, store, allowed=[DEFAULT_PROVENANCE_SCOPE, "feedback"]
+        config = Config(scopes=ScopesConfig(allowed=["sanctioned"]))
+        plan = compute_ingest_plan(
+            source_root,
+            existing_memories=store.load_all(),
+            existing_tombstones=store.load_tombstones(),
+            extra_scopes=["sanctioned"],
+            config=config,
         )
+        assert {r.action for r in plan.rows} == {"write"}
+        rows = {r.source_path.name: r for r in plan.rows}
+        rows["outsider.md"].scopes.append("rogue")
+        apply_ingest_plan(plan, store, config=config)
         assert rows["keeper.md"].action == "write"
         assert rows["keeper.md"].written_id is not None
         assert rows["outsider.md"].action == "skip_invalid"
         assert rows["outsider.md"].written_id is None
-        # The decisive assertion: exactly the conforming row reached disk.
+        # The decisive assertion: exactly the conforming row reached disk,
+        # carrying the stamps the allowlist never named.
         assert [m.scopes for m in store.load_all()] == [
-            [DEFAULT_PROVENANCE_SCOPE, "feedback"]
+            [DEFAULT_PROVENANCE_SCOPE, "feedback", "sanctioned"]
         ]
 
     def test_extra_scope_outside_the_allowlist_is_refused(
         self, source_root: Path, store: Store
     ) -> None:
-        """The reported repro verbatim: `ingest --scope rogue` against
-        `allowed=["tools"]` planted a scope `memory_write` and
-        `memory_update` both refuse."""
+        """The originally-reported repro verbatim: `ingest --scope rogue`
+        against `allowed=["tools"]` planted a scope `memory_write` and
+        `memory_update` both refuse. Still refused — the stamp exemption
+        narrows the check to caller-supplied scopes, and this is one."""
         _write_auto_memory(
             source_root,
             "ordinary",
@@ -1170,9 +1207,77 @@ class TestApplyIngestPlanScopeAllowlist:
             body="Auto-memory files are read from the project memory dir.",
         )
         rows = self._apply(
-            source_root, store, allowed=["tools"], extra_scopes=["rogue"]
+            source_root,
+            store,
+            allowed=["tools"],
+            extra_scopes=["rogue"],
+            expect_plan_actions={"skip_invalid"},
         )
         assert rows["ordinary.md"].action == "skip_invalid"
+        assert store.load_all() == []
+
+    def test_scopes_ingest_stamps_itself_are_exempt(
+        self, source_root: Path, store: Store
+    ) -> None:
+        """The regression that broke ingest for every allowlist user.
+
+        `allowed=["projects:demo"]` with `--scope projects:demo` names
+        every scope the operator asked for and none of the two ingest
+        stamps. Enforcing the list against the stamps refused all four
+        rows — one per auto-memory type, so all four type-derived tags are
+        covered — and the import silently landed nothing. Fails without
+        the `_tool_stamped_scopes` exemption: `_scope_allowlist_reason`
+        reports `['imported-from-claude-code', <type tag>]` as unknown."""
+        for name, auto_type in (
+            ("feedback-row", "feedback"),
+            ("user-row", "user"),
+            ("project-row", "project"),
+            ("reference-row", "reference"),
+        ):
+            _write_auto_memory(
+                source_root,
+                name,
+                auto_type=auto_type,
+                description=f"summary for {name}",
+                body=f"Distinct prose about {name} so dedup keeps them apart.",
+            )
+        rows = self._apply(
+            source_root,
+            store,
+            allowed=["projects:demo"],
+            extra_scopes=["projects:demo"],
+        )
+        assert {r.action for r in rows.values()} == {"write"}
+        assert len(store.load_all()) == 4
+        # And the stamps are on disk — exempt from the check, not stripped
+        # to satisfy it.
+        for stored in store.load_all():
+            assert stored.scopes[0] == DEFAULT_PROVENANCE_SCOPE
+            assert stored.scopes[-1] == "projects:demo"
+            assert len(stored.scopes) == 3
+
+    def test_stamped_exemption_is_per_row_not_a_flat_constant_set(
+        self, source_root: Path, store: Store
+    ) -> None:
+        """`--scope feedback` on a `project`-typed row is a caller-supplied
+        scope and stays checked, even though `feedback` is a string ingest
+        stamps on OTHER rows. Exempting the union of every type tag would
+        quietly widen the allowlist by four strings for everybody."""
+        _write_auto_memory(
+            source_root,
+            "project-row",
+            auto_type="project",
+            description="the release workflow",
+            body="The release tag push triggers the PyPI publish workflow.",
+        )
+        rows = self._apply(
+            source_root,
+            store,
+            allowed=["tools"],
+            extra_scopes=["feedback"],
+            expect_plan_actions={"skip_invalid"},
+        )
+        assert "'feedback'" in (rows["project-row.md"].reason or "")
         assert store.load_all() == []
 
     def test_reason_names_the_offenders_in_memory_writes_own_words(
@@ -1181,33 +1286,36 @@ class TestApplyIngestPlanScopeAllowlist:
         """The operator reads `render_ingest_text`, not the source. The
         reason opens on `_validate_write_payload`'s sentence so the words
         match what `memory_write` would have returned (the same rule
-        `_gate_skip_reason` follows for gate statuses), then names the two
-        scopes ingest stamps itself — with a whitelist naming neither, an
-        import is refused wholesale and nothing else says why."""
+        `_gate_skip_reason` follows for gate statuses), then names the
+        scopes that were EXEMPT — otherwise the obvious reading of a
+        refusal is "add `imported-from-claude-code` to the allowlist",
+        which is a fix for a bug that is no longer there."""
         _write_auto_memory(
             source_root,
             "ordinary",
             description="the parser lives in ingest.py",
             body="Auto-memory files are read from the project memory dir.",
         )
+        config = Config(scopes=ScopesConfig(allowed=["tools"]))
         plan = compute_ingest_plan(
             source_root,
             existing_memories=store.load_all(),
             existing_tombstones=store.load_tombstones(),
             extra_scopes=["rogue"],
+            config=config,
         )
-        apply_ingest_plan(
-            plan, store, config=Config(scopes=ScopesConfig(allowed=["tools"]))
-        )
+        apply_ingest_plan(plan, store, config=config)
         [row] = plan.rows
         reason = row.reason or ""
         assert "scope(s) not in allowed list" in reason
-        # Only the unsanctioned scopes are named as offenders, the
-        # allowlist itself is echoed so the fix is visible from the line,
-        # and the two scopes ingest stamps are called out by name.
-        assert "'rogue'" in reason
+        # Only the caller's unsanctioned scope is named as an offender —
+        # the stamps must NOT appear in the offender list.
+        assert "not in allowed list: ['rogue']" in reason
+        # The allowlist itself is echoed so the fix is visible from the
+        # line, and the exempt stamps are named so nobody goes adding them.
         assert "'tools'" in reason
         assert DEFAULT_PROVENANCE_SCOPE in reason
+        assert "exempt" in reason
         # And it survives to the surface the operator actually reads.
         assert reason in render_ingest_text(plan, dry_run=False)
 
@@ -1228,6 +1336,157 @@ class TestApplyIngestPlanScopeAllowlist:
             "against; re-resolving `config if config is not None else "
             "Config()` here reopens the drift this pins shut"
         )
+
+
+class TestScopeAllowlistPlanMatchesApply:
+    """A `--dry-run` under `[scopes] allowed` must predict the commit.
+
+    For one commit it did not: the allowlist was checked in
+    `apply_ingest_plan` only, so `compute_ingest_plan` — which is what
+    `--dry-run` renders and what `doctor._check_auto_memory_stranded`
+    reads — reported `write` for rows the commit refused. Reproduced with
+    `allowed=["projects:demo"]` and `ingest --scope projects:demo`: "would
+    write 1", then `wrote 0 / skip invalid 1`.
+
+    That is the same dry-run-lies class the `--scope` pre-validation in
+    `cli/ingest.py` and `resolve_dedup_policy` both exist to prevent, so
+    it is pinned the same way: on the summary, which is what the operator
+    actually reads off the two runs.
+    """
+
+    @staticmethod
+    def _both(
+        source_root: Path, store: Store, *, allowed: list[str], extra: list[str]
+    ) -> tuple[dict[str, int], dict[str, int], int]:
+        """`(dry-run summary, commit summary, rows on disk)`."""
+        config = Config(scopes=ScopesConfig(allowed=allowed))
+
+        def _plan() -> Any:
+            return compute_ingest_plan(
+                source_root,
+                existing_memories=store.load_all(),
+                existing_tombstones=store.load_tombstones(),
+                extra_scopes=extra,
+                config=config,
+            )
+
+        dry = _plan()
+        live = _plan()
+        apply_ingest_plan(live, store, config=config)
+        return dry.summary, live.summary, len(store.load_all())
+
+    def test_dry_run_counts_match_the_commit_for_an_allowlist_user(
+        self, source_root: Path, store: Store
+    ) -> None:
+        """The reported repro. Fails without the plan-side check AND
+        without the stamp exemption, for opposite reasons: with neither,
+        the dry-run promises 2 writes and the commit delivers 0; with only
+        the plan-side check, the two agree on 0 and the allowlist user
+        still cannot import anything."""
+        _write_auto_memory(
+            source_root,
+            "ordinary",
+            description="the parser lives in ingest.py",
+            body="Auto-memory files are read from the project memory dir.",
+        )
+        _write_auto_memory(
+            source_root,
+            "second",
+            auto_type="project",
+            description="the release workflow",
+            body="The release tag push triggers the PyPI publish workflow.",
+        )
+        dry, live, on_disk = self._both(
+            source_root, store, allowed=["projects:demo"], extra=["projects:demo"]
+        )
+        assert dry == live
+        assert dry["write"] == 2
+        assert on_disk == 2
+
+    def test_dry_run_counts_match_the_commit_when_rows_are_refused(
+        self, source_root: Path, store: Store
+    ) -> None:
+        """The other direction, and the one the plan-side check is really
+        for: a genuinely-unsanctioned `--scope` is `skip_invalid` in the
+        plan too, so the dry-run never promises a write the commit refuses.
+        Fails without threading `config` into `compute_ingest_plan` — the
+        plan reports `write: 1` against the commit's `skip_invalid: 1`."""
+        _write_auto_memory(
+            source_root,
+            "ordinary",
+            description="the parser lives in ingest.py",
+            body="Auto-memory files are read from the project memory dir.",
+        )
+        dry, live, on_disk = self._both(
+            source_root, store, allowed=["tools"], extra=["rogue"]
+        )
+        assert dry == live
+        assert dry["write"] == 0
+        assert dry["skip_invalid"] == 1
+        assert on_disk == 0
+
+    def test_plan_refuses_scope_before_dedup_just_like_the_apply(
+        self, source_root: Path, store: Store
+    ) -> None:
+        """Agreement on the COUNT is not enough — the two sides must also
+        agree on the reason. `apply_ingest_plan` runs the allowlist ahead
+        of its gate chain (the order `memory_write` uses), so the plan runs
+        it ahead of the dedup pass: a row that is both a duplicate and
+        unsanctioned reads `skip_invalid` on both sides rather than
+        `skip_duplicate` in the plan and `skip_invalid` at commit."""
+        _write_auto_memory(
+            source_root,
+            "ordinary",
+            description="the parser lives in ingest.py",
+            body="Auto-memory files are read from the project memory dir.",
+        )
+        config = Config(scopes=ScopesConfig(allowed=["tools"]))
+        # First import with no allowlist, so the store holds the memory
+        # this row now duplicates.
+        seed = compute_ingest_plan(
+            source_root,
+            existing_memories=store.load_all(),
+            existing_tombstones=store.load_tombstones(),
+        )
+        apply_ingest_plan(seed, store)
+        assert len(store.load_all()) == 1
+
+        plan = compute_ingest_plan(
+            source_root,
+            existing_memories=store.load_all(),
+            existing_tombstones=store.load_tombstones(),
+            extra_scopes=["rogue"],
+            config=config,
+        )
+        [row] = plan.rows
+        assert row.action == "skip_invalid"
+        assert "not in allowed list" in (row.reason or "")
+        # Same verdict from the apply side, on a plan it did not compute.
+        apply_ingest_plan(plan, store, config=config)
+        assert row.action == "skip_invalid"
+        assert len(store.load_all()) == 1
+
+    def test_plan_without_config_enforces_nothing(
+        self, source_root: Path, store: Store
+    ) -> None:
+        """`config` is optional on `compute_ingest_plan` and omitting it
+        means "no allowlist", not "an empty one I should invent". That is
+        what keeps `doctor._check_auto_memory_stranded` — a read-only
+        caller that passes no config — classifying exactly as it did
+        before this parameter existed."""
+        _write_auto_memory(
+            source_root,
+            "ordinary",
+            description="the parser lives in ingest.py",
+            body="Auto-memory files are read from the project memory dir.",
+        )
+        plan = compute_ingest_plan(
+            source_root,
+            existing_memories=store.load_all(),
+            existing_tombstones=store.load_tombstones(),
+            extra_scopes=["rogue"],
+        )
+        assert [r.action for r in plan.rows] == ["write"]
 
 
 class _FixedVectorModel:
@@ -1967,3 +2226,66 @@ class TestCLI:
         assert len(grown) == 1, grown
         assert grown[0] != EVENT_LOG_FILENAME  # a shard, not the legacy log
         assert re.fullmatch(r"\.events\.\d{2}\.jsonl", grown[0])
+
+    def test_ingest_under_a_scope_allowlist_dry_run_matches_commit(
+        self, tmp_path: Path, capsys: Any, monkeypatch: Any
+    ) -> None:
+        """The reported repro, on the surface it was reported from.
+
+        `[scopes] allowed = ["projects:demo"]` plus
+        `ingest --scope projects:demo` printed `would write 1` and then
+        `wrote 0 / skip invalid 1`, refusing the row for
+        `imported-from-claude-code` and `feedback` — two scopes the
+        operator never typed. Both halves are pinned here rather than only
+        in the library tests because neither half is visible below the
+        CLI: the plan/apply agreement needs one caller running both legs
+        off one `Config`, and the "would write" wording lives in
+        `render_ingest_text`.
+        """
+        import argparse
+
+        from bettermemory.cli.ingest import _cli_ingest
+        from bettermemory.config import Config, ScopesConfig, StorageConfig
+
+        store_dir = tmp_path / "store"
+        store_dir.mkdir()
+        cfg = Config(
+            storage=StorageConfig(directory=str(store_dir)),
+            scopes=ScopesConfig(allowed=["projects:demo"]),
+        )
+        monkeypatch.setattr("bettermemory.cli._common.load_config", lambda: cfg)
+
+        source = tmp_path / "source"
+        _write_auto_memory(
+            source,
+            "allowlisted",
+            description="the parser lives in ingest.py",
+            body="Auto-memory files are read from the project memory dir.",
+        )
+
+        def _run(dry_run: bool) -> str:
+            _cli_ingest(
+                source=str(source),
+                dry_run=dry_run,
+                extra_scopes=["projects:demo"],
+                force=False,
+                json_out=False,
+                parser=argparse.ArgumentParser(),
+            )
+            return capsys.readouterr().out
+
+        # Matched by regex, not by literal column spacing: the claim is
+        # "the count is 1 on both legs", and hardcoding the renderer's
+        # padding would make this test fail on a reflow that changed
+        # nothing about the behaviour it exists to pin.
+        dry = _run(True)
+        assert re.search(r"^\s+would write\s+1$", dry, re.MULTILINE), dry
+        assert "skip invalid" not in dry
+        assert len(Store(store_dir).load_all()) == 0  # a dry run wrote nothing
+
+        live = _run(False)
+        assert re.search(r"^\s+wrote\s+1$", live, re.MULTILINE), live
+        assert "skip invalid" not in live
+        [stored] = Store(store_dir).load_all()
+        # The two stamps rode along; only `--scope` was ever checked.
+        assert stored.scopes == [DEFAULT_PROVENANCE_SCOPE, "feedback", "projects:demo"]
