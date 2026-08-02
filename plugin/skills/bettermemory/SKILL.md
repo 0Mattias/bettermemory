@@ -17,7 +17,7 @@ This skill is the long-form companion to the MCP server's `instructions` block: 
 | Write? | proactive — something durable just entered the conversation → yes. Don't wait for *"remember that"*. State or timestamps → no (the tool will reject). |
 | Category? | claim about the user → `user-inference`. Atmospheric / no verifiable claims → `ambient`. Else → `fact`. |
 | Outcome? | retrieval shaped reply → silence (auto-commits as `applied`). Off-topic or wrong → explicit `ignored` / `contradicted` / `corrected`. |
-| Verify? | `staleness_verdict != "fresh"` → `path_drift.missing` on the hit lists what rotted; `memory_update` those, `memory_verify` the rest with `verified_paths`. |
+| Verify? | `staleness_verdict != "fresh"` → `path_drift.claim_anchored_missing` on the hit is the subset that moved it; `memory_update` those, `memory_verify` the rest with `verified_paths`. |
 | Scope? | project name if obvious; never `general`. |
 
 Detail on each tool lives in the tool's own description — this skill is the policy.
@@ -71,13 +71,13 @@ When the memory shaped a user-visible sentence, pass the load-bearing phrase as 
 
 ## Verify before relying
 
-Memory is a snapshot; it does not auto-refresh. Every retrieval carries a derived `staleness_verdict`:
+Memory is a snapshot; it does not auto-refresh. Every retrieval carries a derived `staleness_verdict`. Only CLAIM-ANCHORED drift moves it: a path you attested via `verified_paths`, a citation resolved against the memory's own recorded worktree, or a commit touching what the body cites. A path-shaped token scraped out of prose still ships as evidence but no longer raises a tier. The three tiers:
 
-- `"fresh"`: verification fresh AND no drift. Body claims are presumed current.
-- `"spot_check_recommended"`: verification calendar-fresh but the world has moved (path missing, or repo has commits since the last verify). Quick check before relying.
+- `"fresh"`: verification fresh AND no claim-anchored drift. Body claims are presumed current. A hit can read `"fresh"` while carrying entries in `path_drift.missing` — those are the prose-scraped half, evidence you judge rather than a tier you act on.
+- `"spot_check_recommended"`: verification calendar-fresh but the world has moved — an anchored path went missing, or the repo has commits since the last verify touching what the body cites. Quick check before relying.
 - `"spot_check_required"`: the verification anchor is missing (`"never"`), or it is expired (`"stale"`) and no measurement is available to stand the calendar leg down. A `"stale"` memory whose commit-drift leg actually ran and returned zero reads `"fresh"` instead — the measurement wins, the calendar proxy yields. The leg returning `None` (it could not ask) is not a measurement and does not demote.
 
-When the verdict isn't `"fresh"`, the hit already carries the actionable detail. `path_drift.missing` (when present) lists the body-cited paths that no longer exist — `memory_update` those directly, no memory_show round-trip needed. The remaining un-drifted claims (`path_drift.verified` plus the rest of the body) can be attested with `memory_verify(id, verified_paths=[…])`; paths are the attestation the drift legs read back, both against the memory's own worktree and as the anchor narrowing the commit-drift count. `verified_commits` and `verified_versions` are recorded for the audit trail and echoed back, but nothing on the read path resolves them — a commit attestation is provenance for the next reader, not a signal. `memory_update` resets `last_verified_at`, so verify again after fixing drifted prose to close the loop.
+When the verdict isn't `"fresh"`, the hit already carries the actionable detail. `path_drift.claim_anchored_missing` (added to a search hit only when non-empty; carried on every non-null `memory_show` report, empty list included) is the subset that moved the verdict — `memory_update` those directly, no memory_show round-trip needed. It is always a subset of `path_drift.missing`, whose remaining entries are the prose-scraped absences: real evidence (a path the body names is gone), but weigh them rather than treating them as a tier. The remaining un-drifted claims (`path_drift.verified` plus the rest of the body) can be attested with `memory_verify(id, verified_paths=[…])`; paths are the attestation the drift legs read back, both against the memory's own worktree and as the anchor narrowing the commit-drift count. `verified_commits` and `verified_versions` are recorded for the audit trail and echoed back, but nothing on the read path resolves them — a commit attestation is provenance for the next reader, not a signal. `memory_update` resets `last_verified_at`, so verify again after fixing drifted prose to close the loop.
 
 ## When to write
 

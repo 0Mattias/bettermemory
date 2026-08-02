@@ -48,15 +48,27 @@ async def memory_remove(
     except ValueError as exc:
         # Reachable when even the adaptively-trimmed removal metadata (empty
         # reason, dropped session) does not fit under one of the two caps
-        # `Store.tombstone`'s re-dump enforces: the absolute file cap (only a
-        # legacy record written within the removal-metadata headroom of it) or
-        # the frontmatter-YAML cap (a record whose frontmatter — e.g. dense
-        # verified_* lists grown by a legal memory_verify — sits within that
-        # headroom of `_MAX_YAML_BYTES`; that axis has no band-reservation
-        # discipline). Translate the raw cap-refusal into a remediation the
-        # caller can act on instead of leaking the dumper's "refusing to write"
-        # text with no next step. Note the frontmatter-YAML case is NOT fixed by
-        # a shorter body (the body is outside the YAML region) — shrinking the
+        # `Store.tombstone`'s re-dump enforces. BOTH axes now reserve the
+        # removal-metadata budget, so on either one this is a shape the store
+        # can no longer MINT — only one it can still be handed:
+        #   * the absolute file cap — a legacy record written within the
+        #     removal-metadata headroom of it (`_MAX_WRITE_BYTES` reserves
+        #     that headroom at admission, `_lifecycle_redump_cap` on every
+        #     metadata-only re-dump);
+        #   * the frontmatter-YAML cap — a record whose frontmatter ALREADY
+        #     sat within that headroom of `_MAX_YAML_BYTES` before the
+        #     discipline applied: a legacy or hand-written file, one arriving
+        #     over `sync pull`, or such a file re-admitted by `restore`, which
+        #     re-dumps at the flat caps so that no loadable tombstone becomes
+        #     a one-way door. Dense verified_* lists grown by a legal
+        #     memory_verify used to be the live route into this band and are
+        #     not any more: `_lifecycle_redump_yaml_cap` refuses the growth,
+        #     and `_yaml_admission_cap` refuses a content-admitting
+        #     write/update that would land a record there.
+        # Translate the raw cap-refusal into a remediation the caller can act
+        # on instead of leaking the dumper's "refusing to write" text with no
+        # next step. Note the frontmatter-YAML case is NOT fixed by a shorter
+        # body (the body is outside the YAML region) — shrinking the
         # frontmatter is what makes room, so lead with that.
         raise ValueError(
             f"cannot tombstone memory {id}: even trimmed removal metadata does "

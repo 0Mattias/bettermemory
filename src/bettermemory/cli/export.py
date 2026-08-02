@@ -73,7 +73,7 @@ def add_subparser(
             "for those, so neither can this. `bettermemory doctor` re-reads "
             "the store and names the skipped ACTIVE files, reporting them as "
             "a warning where --strict escalates them to an exit code; no "
-            "check anywhere reads the tombstone directory, so a dropped "
+            "check anywhere COUNTS a skipped tombstone, so a dropped "
             "tombstone is reported here or not at all."
         ),
     )
@@ -188,10 +188,17 @@ def _cli_export(
     not even as placeholders, and `tombstoned_memories: []` under a
     non-zero `skipped_tombstone_files` means "none survived the read",
     not "none exist". `bettermemory doctor`'s memory_parse_health
-    re-reads the store and names the offending ACTIVE files; the
-    tombstone directory is read by no check anywhere, so a non-zero
+    re-reads the store and names the offending ACTIVE files; nothing
+    anywhere COUNTS a skipped tombstone, so a non-zero
     `skipped_tombstone_files` is a number this command is alone in
-    reporting and the reader inspects `.tombstones/` by hand.
+    reporting and the reader inspects `.tombstones/` by hand. The
+    directory itself is not unread — doctor's `auto_memory_stranded`
+    check calls `store.load_tombstones()` for ingest dedup (when a
+    Claude Code auto-memory dir exists for the cwd) — but that reader
+    swallows every per-file failure and returns only what parsed, so a
+    file it dropped leaves no trace on that surface: it silently widens
+    the set of sources that check calls stranded rather than reporting
+    itself.
     `--strict` turns any non-zero count into a non-zero exit for
     scripted backups; the default stays exit 0 with a
     stderr warning so existing cron callers do not start failing on an
@@ -298,21 +305,25 @@ def _cli_export(
             parts.append(f"{skipped_tombstone_files} tombstone file(s)")
         # Where to go next, branched on which half dropped, because the
         # two have different answers: doctor re-reads the active files and
-        # names them, and reads the tombstone directory not at all. A flat
-        # "run doctor" sent a user whose tombstone dropped to a command
-        # that would report their store clean.
+        # names them, and no check anywhere names a skipped tombstone. Its
+        # `auto_memory_stranded` check does READ `.tombstones/` (via
+        # `store.load_tombstones`, for ingest dedup), but that reader
+        # swallows per-file failures, so a dropped tombstone shows up there
+        # only as one more source file called stranded — never as itself.
+        # A flat "run doctor" sent a user whose tombstone dropped to a
+        # command that cannot name the file they need.
         if skipped_active_files and skipped_tombstone_files:
             pointer = (
                 "Run `bettermemory doctor` to see the active files by name; "
-                "no check reads the tombstone directory, so inspect "
+                "no check names a skipped tombstone, so inspect "
                 "`.tombstones/` by hand for that half."
             )
         elif skipped_active_files:
             pointer = "Run `bettermemory doctor` to see the files by name."
         else:
             pointer = (
-                "No check reads the tombstone directory, so `doctor` will "
-                "not name these — inspect `.tombstones/` by hand."
+                "No check names a skipped tombstone, so `doctor` will "
+                "not report these — inspect `.tombstones/` by hand."
             )
         # Doctor's claim for the same delta: the loader skipped these, and
         # the two causes a count cannot tell apart are both named rather

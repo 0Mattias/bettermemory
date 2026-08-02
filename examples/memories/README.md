@@ -34,13 +34,25 @@ throwaway `BETTERMEMORY_DIR` if you want to poke at them with
 `memory_search` returns each hit alongside metadata derived from the
 file: `staleness_verdict ∈ {fresh, spot_check_recommended,
 spot_check_required}` is computed per call from calendar age,
-file-path drift, and git commit drift. Path drift is checked
-against paths the body cites — `verified_paths` acts as an
-attestation set that *excludes* those paths from the drift signal
-(the writer has already vouched for them). The auto-scope filter
+file-path drift, and git commit drift. Path drift is *checked*
+against every path-shaped token the body cites, but only the
+CLAIM-ANCHORED misses move the verdict: a path named in
+`verified_paths` that has since disappeared, or a relative citation
+resolved against the memory's own recorded `origin.worktree_root`.
+Those arrive as `path_drift.claim_anchored_missing`, a subset of
+`path_drift.missing`; the rest of `missing` (tokens scraped out of
+prose — a remote host's path, a documentation example) still ships
+as evidence but no longer raises a tier. So `verified_paths` is not
+an exclusion list — attesting a path is what makes its next
+disappearance escalate. The list that *excludes* a path from the
+drift signal is `verified_absent_paths`, the mirror attestation for
+a path that is intentionally absent here; those land in
+`path_drift.expected_absent` instead. The auto-scope filter
 uses the `origin.repo` / `origin.worktree_root` fields to
 default-filter to the caller's current project. None of these
 fields are required — legacy memories without `last_verified_at`
 surface as `spot_check_required` (the verification status is
 `never`); a `memory_verify(id, verified_paths=[…])` call drops the
-verdict to `fresh`.
+verdict to `fresh` — provided the paths you attest are actually
+there, since an attested path that is already gone is precisely the
+anchored miss that holds the verdict up.

@@ -371,14 +371,25 @@ def test_stale_dimension_cache_entries_are_purged() -> None:
 # ---------------------------------------------------------------------------
 # _semantic_model_or_none — consumer gating (semantic_setup.py)
 #
-# The factory must resolve the model when EITHER configured consumer
-# needs it: write-dedup (`semantic_dedup = true`) or retrieval
-# (`search_mode = "semantic"`). Regression for the conflation where
-# gating on `semantic_dedup` alone hard-errored `search_mode =
+# The factory must resolve the model when ANY configured consumer
+# wants it, and since ba7e857 that is THREE arms, not two: write-dedup
+# (`semantic_dedup = true`), retrieval that REQUIRES a model
+# (`search_mode = "semantic"`), and retrieval that would USE one
+# (`search_mode = "hybrid"`, the package default) — the third gated on
+# an embeddings extra actually importing. Regression for the conflation
+# where gating on `semantic_dedup` alone hard-errored `search_mode =
 # "semantic"` searches (and no_signal'd every audit probe) for users
 # who never enabled dedup — even with an embeddings extra installed.
-# Hybrid is deliberately NOT a trigger — see
-# `_search_mode_needs_model`'s docstring and the hybrid test below.
+#
+# Hybrid is not a trigger in `_search_mode_needs_model`, and that is a
+# statement about that predicate rather than about hybrid: it answers
+# "does the mode BREAK without a model", and hybrid degrades to
+# keyword+bm25 instead of raising. `_semantic_model_configured` widens
+# the question to "…or would use one it can actually get", so hybrid
+# DOES resolve a model once an extra is present and attempts nothing
+# when none is. Both halves are pinned below
+# (`test_factory_hybrid_resolves_a_model_once_an_extra_is_installed`,
+# `test_factory_hybrid_stays_silent_without_an_extra`).
 #
 # All tests pin the extra-presence probes and `get_model` via
 # monkeypatch, so they are extras-independent (no `no_extras` marker

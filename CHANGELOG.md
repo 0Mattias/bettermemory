@@ -9,6 +9,134 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+### Fixed — one unreadable subtree sank the whole health report
+
+`report_for_directory` called `EpisodeStore(root).volume()` unguarded, and
+`iter_session_ids` reaches the tree through a bare `iterdir()`. An `episodes`
+FILE where a directory belongs — the shape a bad sync or a half-finished export
+leaves — raised `NotADirectoryError`; an unreadable directory raised
+`PermissionError`. Neither stayed local to the episode gauge. Both came out of
+`memory_health`, `bettermemory health` and the web health pages alike, so every
+staleness, drift and curation signal in the report was intact and unreachable,
+sunk by a stat-only footnote that parses no frontmatter and answers three
+integers.
+
+Both shapes were reproduced before the fix. The episode volume now degrades to
+absent the way any other unavailable input does, and the rest of the report is
+delivered.
+
+### Fixed — a claim about the user could be laundered in through `memory_update`
+
+`UserClaimGate` exists so a body that reads as a claim ABOUT THE USER cannot
+commit as a `fact` without the pending handshake: misattribution sticks, so the
+user gets the veto. It sits in the shared gate chain, which `memory_update`
+never consulted, so the refusal was one hop wide. Write "the deploy script
+lives in bin/" as a `fact`, then `memory_update`
+that body to "Mattias prefers tabs over spaces", and the exact body
+`memory_write` hard-refuses landed verbatim, in the category `PendingGate`
+reads, with nobody asked. It is the same laundering shape the credential gate on
+this surface already closes for secrets.
+
+`memory_update` now runs the gate on the new body and returns the same
+`user_claim_warning` shape — a new status on that tool — judged against the
+category the record will HAVE after the edit, which can only be `user-inference`
+when the record already was one, since the retag INTO that category is refused a
+few lines above. Metadata-only edits are untouched, or curating the mis-filed
+records that predate the gate would be impossible.
+
+The write path's `acknowledge_user_claim` escape is mirrored here, and the gap
+between the two surfaces was not cosmetic: `_find_user_claims` ORs in a
+case-insensitive `we (?:use|prefer|avoid|always|never)` branch, so an ordinary
+project memory — "We use ruff for linting in this repo." — trips the refusal.
+That body is writable with `memory_write(..., acknowledge_user_claim=True)`, so
+without the parameter on this surface there was a body you could CREATE and then
+could not EDIT into an existing record by any route, while passing the flag to
+`memory_update` was dropped as an unknown argument and the refusal came back
+anyway with nothing saying the flag did nothing. It has to reach the
+`ToolHandlers.memory_update` facade to be on the wire at all — the served schema
+is built from that signature, so a handler-only parameter never leaves the
+process.
+
+### Fixed — `doctor` judged another repo's attestations against this one
+
+`_check_attestation_anchors` claimed cross-repo memories were "skipped, since
+their anchors resolve against a worktree this process is not in". The loop never
+read `memory.origin`. Relative `verified_paths` were joined to the CURRENT
+worktree, so on a store shared across projects a memory written in repo B
+attesting `pyproject.toml` was judged against repo A's copy and reported as
+drift, with a hint to re-attest an anchor that was never wrong. The claim held
+only for absolute anchors. It skips on repo mismatch now, matching how
+`unverifiable_attestations` already anchors.
+
+### Fixed — `export --strict` counted what it promised to name
+
+Three `export --strict` surfaces promised that `doctor` would NAME the skipped
+files; `doctor` reported a count. It names them now — the walk it needed was
+already there. And `skipped_active_files` counted files AFTER loading them, so a
+`memory_write` landing between the two walks manufactured a skip that never
+happened and exited 1: routine capture turning a clean backup into a red cron
+job on a store that was never damaged. Both walks take their count first now,
+which reads the interleaved write as the non-event it is, and `doctor`'s twin of
+that race is closed the same way. A `memory_remove` in the same gap still
+over-reports by one — the rarer half, since writes are a reflex and removals are
+curation — and the warning sends the reader to `doctor` rather than asserting
+which file is at fault.
+
+### Fixed — the detail page and `memory_show` disagreed about staleness
+
+`_render_memory_detail` computed its verdict from the FULL `path_drift.missing`
+count while every MCP surface had been narrowed to `claim_anchored_missing`. So
+a calendar-fresh memory whose body merely MENTIONS a path this machine does not
+have — a remote host's config, an `/etc/...` example — rendered `spot-check
+recommended` on the page and `fresh` from `memory_show`, sending a curator to
+re-verify a memory the sweep says is almost certainly fine. Its own docstring
+asserted that the page "cannot disagree with what the model sees for the same
+memory", and this is the second time web-versus-MCP staleness diverged on this
+one file.
+
+The page passes the anchored subset now. The evidence stays on it — the missing
+path is still rendered, it just no longer speaks as a verdict — and the
+docstring points at the test that enforces the parity instead of asserting it.
+
+Two more readers of the pre-narrowing rule went with it.
+`SYSTEM_PROMPT_ADDENDUM` is resident on every turn and still defined `fresh` as
+"verification fresh AND no drift", so the model was being pointed at exactly the
+set the verdict deliberately ignores; it is rewritten against what
+`compute_staleness_verdict` does, came out shorter, and `docs/system_prompt.md`,
+pinned byte-for-byte to it, moved with it. And the `/memories` note that told the
+user "an embeddings extra is installed" renders behind a gate that opens on
+`semantic_dedup = true` alone — with that set and no extra present it asserted an
+install the user does not have. It names its condition now instead of asserting
+it.
+
+### Changed — an extra that is installed but fails to import is BROKEN, not absent
+
+3.35.0 shipped the three-state reading of an optional extra — absent, working,
+installed-but-broken — and two surfaces still collapsed it to two.
+
+`semantic.extra_importable` classified by exception TYPE: any `ImportError` was
+filed as "not installed". But absent and broken both raise it —
+`sentence_transformers` present with `torch` uninstalled raises
+`ModuleNotFoundError: No module named 'torch'`, which by exception type alone is
+indistinguishable from `sentence_transformers` never having been installed. The
+state is decided by PRESENCE now, by whichever means the arm has: the
+`ImportError` arm consults `_spec_found` — is it on disk, answered without
+importing — which this file already had, and the exception only supplies the
+reason string, while a non-`ImportError` needs no lookup because the module was
+found and its own code ran to raise it. Grepping for
+clones found the same exception-type split inside `_load_torch_model` and
+`_load_fastembed_model`; both pick their wording by presence through one shared
+helper.
+
+Two things change for the user. `doctor` reports `fail` and "reinstall it" where
+it reported `ok` — and that `ok` was not merely uninformative, it asserted "no
+extra is installed-and-broken" while the probe behind it could not see a broken
+one. And the `mode='semantic'` hard error no longer tells someone who already
+has the extra to `pip install` it: it resolves the provider that will actually
+load, consults `extra_import_failure`, and branches three ways — reinstall,
+install, or no-model-resolved, naming both candidate causes without asserting
+either.
+
 ### Fixed — `session_start_hook` certified a hook that could not run
 
 The check reported `ok` on the strength of a `SessionStart` command string
@@ -16,12 +144,14 @@ containing `bettermemory session-start`. It never asked whether that command
 could execute — so a hook naming a binary that no longer exists read as fully
 wired.
 
-That gap is not theoretical and it is not recoverable by the user noticing. Hook
-commands are absolute paths in every form `init` writes or a hand-edit produces,
-and they go stale exactly the way the MCP client's binary path does when an
-environment is rebuilt, moved, or deleted. The trailing `|| true` that every
-documented form carries then turns the missing binary into a *successful* no-op.
-And unlike the Stop hook, this one records nothing by design, so there is no
+That gap is not theoretical and it is not recoverable by the user noticing. A
+hook command that names its binary by absolute path is a hand-edit — `init`
+writes no hook at all, it patches only `mcpServers`, and the plugin ships
+`uvx bettermemory session-start` — and a hand-wired path goes stale exactly the
+way the MCP client's binary path does when an environment is rebuilt, moved, or
+deleted. The trailing `|| true` that every documented form carries then turns
+the missing binary into a *successful* no-op. And unlike the Stop hook, this one
+records nothing by design, so there is no
 telemetry to notice its absence: the hook is configured, contributes nothing,
 and says nothing. `doctor`'s green light was the only observable, and it was
 green for the wrong reason.
@@ -39,6 +169,31 @@ them stay quiet, and the executable is located as the token before
 `env` as the binary is how a check invents failures that aren't there. On a
 check whose value is a green light, a false alarm is expensive and a missed
 alarm merely restores the previous behaviour.
+
+The first cut of the probe was a no-op on the one platform it mattered most on.
+POSIX `shlex` treats `\` as an ESCAPE, so `C:\Users\me\bin\bettermemory`
+tokenized to `C:Usersmebinbettermemory` — no separator left, so the probe
+declined to judge it as a path and went on reporting a stale hook as wired. It
+tokenizes with `posix=False` on Windows now, and strips the quotes non-posix
+mode leaves behind, since `C:\Program Files\…` has to be quoted to survive its
+space and a candidate still wearing them resolves nowhere. `os.X_OK` is
+meaningful only on POSIX — `os.access` reports it for any existing file on
+Windows — so there the check reduces to existence, which is the half that
+actually rots. The hook path's platform is an explicit `windows=` argument
+rather than a read of `os.name`, because patching that global made `pathlib`
+build a `WindowsPath` on Linux on Python 3.11 and older, which turned a failed
+assertion into a whole-run crash.
+
+And it judges the set, not the first hit. The check originally warned on the
+first candidate file carrying a matching command whose path would not run, and
+stopped scanning. Claude Code merges the `SessionStart` bindings it finds across
+settings files and plugin manifests and runs all of them, so a user who
+hand-wired an absolute path years ago and has since installed the plugin carries
+two bindings and a hint that reaches the model — and `doctor` called that hook
+broken. Every candidate FILE is scanned now (within one file the first matching
+binding is still the one judged), one runnable or unjudgeable binding anywhere
+returns `ok`, and the stale spelling is named as a detail on that `ok`: dead
+config rather than a broken hook.
 
 ### Changed — inside a cloud-synced folder, `.envrc` puts the venv outside it
 
