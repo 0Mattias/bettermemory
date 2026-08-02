@@ -953,12 +953,15 @@ class TestApplyIngestPlanOnNonEmptyStore:
     ) -> None:
         """The reproduced refusal, as a regression test.
 
-        Ingested rows carry only `imported-from-claude-code` plus the
-        type-derived scope — never `projects:*` — while the source files
-        come from a per-cwd auto-memory directory, so a body naming its
-        own project is the norm. On any store holding one `projects:*`
-        memory, that combination tripped the gate and the whole import
-        came back `skip_invalid`.
+        Ingested rows carry no `projects:*` scope unless the operator
+        passed one on `--scope` — by default just
+        `imported-from-claude-code` plus the type-derived tag — while the
+        source files come from a per-cwd auto-memory directory, so a body
+        naming its own project is the norm. On any store holding one
+        `projects:*` memory, that combination tripped the gate and the
+        whole import came back `skip_invalid`. This test exercises the
+        default: `compute_ingest_plan` below is called with no
+        `extra_scopes`, so the two stamps are the whole scope list.
         """
         store.write(
             content="The webapp deploy pipeline is documented in the runbook.",
@@ -2289,3 +2292,105 @@ class TestCLI:
         [stored] = Store(store_dir).load_all()
         # The two stamps rode along; only `--scope` was ever checked.
         assert stored.scopes == [DEFAULT_PROVENANCE_SCOPE, "feedback", "projects:demo"]
+
+    def test_cli_dry_run_predicts_the_allowlist_refusal(
+        self, tmp_path: Path, capsys: Any, monkeypatch: Any
+    ) -> None:
+        """The REFUSING half of the same agreement, pinned on the CLI.
+
+        The sibling test above runs a `--scope` the allowlist permits, so
+        plan and apply agree at `write` — and they agree there whether or
+        not the plan was told about `[scopes] allowed`, because a plan
+        that knows nothing about the knob also says `write`. That makes it
+        blind to the one line the agreement actually rests on: the
+        `config=ctx.config` argument `cli/ingest.py` threads into
+        `compute_ingest_plan`. Deleting that argument was verified by
+        mutation testing to leave the entire suite green.
+
+        This lane is the half that is NOT blind. With a `--scope` OUTSIDE
+        the allowlist the two legs only agree if the plan was handed the
+        config: without it the dry run prints `would write 1` for a row
+        the commit then refuses `skip_invalid` — the exact `--dry-run` lie
+        the fix exists to remove, and a lie that is worse than useless
+        because `--dry-run` is what an operator reaches for precisely when
+        they are unsure the run will do what they want.
+
+        Nothing below the CLI can catch this: `compute_ingest_plan` and
+        `apply_ingest_plan` each enforce the list correctly in isolation
+        (both are covered directly elsewhere in this file) — the wiring
+        that puts ONE config on both legs is the thing under test, and the
+        CLI is its only caller.
+        """
+        import argparse
+
+        from bettermemory.cli.ingest import _cli_ingest
+        from bettermemory.config import Config, ScopesConfig, StorageConfig
+
+        store_dir = tmp_path / "store"
+        store_dir.mkdir()
+        cfg = Config(
+            storage=StorageConfig(directory=str(store_dir)),
+            scopes=ScopesConfig(allowed=["projects:demo"]),
+        )
+        monkeypatch.setattr("bettermemory.cli._common.load_config", lambda: cfg)
+
+        source = tmp_path / "source"
+        _write_auto_memory(
+            source,
+            "outside-the-allowlist",
+            description="the parser lives in ingest.py",
+            body="Auto-memory files are read from the project memory dir.",
+        )
+
+        def _run(dry_run: bool) -> str:
+            _cli_ingest(
+                source=str(source),
+                dry_run=dry_run,
+                # A well-formed scope (`validate_scope` passes it, so the
+                # up-front `parser.error` arm is not what refuses this
+                # row) that simply is not on the list.
+                extra_scopes=["projects:other"],
+                force=False,
+                json_out=False,
+                parser=argparse.ArgumentParser(),
+            )
+            return capsys.readouterr().out
+
+        def _detail(out: str) -> list[str]:
+            """The per-row lines of `render_ingest_text`: the
+            `[action] file …` line and its indented reason.
+
+            These are what "the same per-row outcome and the same reason"
+            means concretely, and the renderer emits them identically on
+            both legs — the banner and the `would write`/`wrote` verb are
+            the only lines that are SUPPOSED to differ, which is why they
+            are filtered out here instead of being compared."""
+            return [
+                line
+                for line in out.splitlines()
+                if line.startswith("  [") or line.startswith("      ")
+            ]
+
+        dry = _run(True)
+        # The headline claim. Under the mutation this line is absent and
+        # `would write 1` is printed in its place.
+        assert re.search(r"^\s+skip invalid\s+1$", dry, re.MULTILINE), dry
+        assert re.search(r"^\s+would write\s+0$", dry, re.MULTILINE), dry
+        assert len(Store(store_dir).load_all()) == 0  # a dry run wrote nothing
+
+        live = _run(False)
+        assert re.search(r"^\s+skip invalid\s+1$", live, re.MULTILINE), live
+        assert re.search(r"^\s+wrote\s+0$", live, re.MULTILINE), live
+        # The commit refused it too, so the dry run was not merely
+        # pessimistic — it was right.
+        assert len(Store(store_dir).load_all()) == 0
+
+        # Same ACTION and same REASON, not merely the same counts: a plan
+        # that reached `skip_invalid` by some other route (dedup, say)
+        # would satisfy the count assertions above while still telling the
+        # operator the wrong thing about why.
+        assert _detail(dry) == _detail(live), (dry, live)
+        assert any(
+            "scope(s) not in allowed list: ['projects:other']" in line
+            for line in _detail(dry)
+        ), dry
