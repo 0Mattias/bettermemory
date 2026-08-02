@@ -36,10 +36,14 @@ What is checked — four shapes and one follow-up, each a mechanically
 decidable slice
 ------------------------------------------------------------------
 The corpus is every tracked ``*.py`` file; the prose read from it is
-docstrings **and** ``#`` comments. Comments matter here: they are the
-blind spot ``tests/test_doc_claims.py`` names in its own docstring, and
-several of the citations repaired alongside this file's first commit
-lived in one.
+docstrings **and** ``#`` comments. Comments matter here: several of the
+citations repaired alongside this file's first commit lived in one. They
+were this module's alone to read at the time — ``tests/test_doc_claims.py``
+named them as its own blind spot — and it has since closed that half for
+the ``src/`` and ``tests/`` prefixes, so the Python prose the two modules
+read now overlaps there. The corpora still differ in both directions:
+this file also scans tracked ``*.py`` outside those prefixes, and that
+one also scans markdown, which is not in this corpus at all.
 
 1. ``dotted-symbol`` — ```` `stem.name` ```` where ``stem`` is the
    basename of a module in ``src/bettermemory/`` and ``name`` is an

@@ -66,8 +66,8 @@ fast each claim shape decays:
   now, so a frozen release note that was right when written would drift
   into permanent allowlist churn.
 
-On src/ and tests/ docstrings: INCLUDED
----------------------------------------
+On src/ and tests/ docstrings and comments: INCLUDED
+----------------------------------------------------
 Decided by measurement, not taste — but the measurement is deliberately
 not written down here. A standing total ("across all N docstrings…") is
 precisely the rot-prone shape this module exists to catch, and it lands
@@ -84,31 +84,38 @@ of docstrings being added:
 
 * Only three shapes are run against Python sources at all — ``path``,
   ``symbol`` and ``file-count`` (see ``collect_failures``) — and
-  docstrings are dense prose but sparse in even those, so extending the
-  corpus this way is cheap.
+  docstrings and comments are dense prose but sparse in even those, so
+  extending the corpus this way is cheap.
 * It costs nothing in exemptions. Every misfire found in a docstring —
   an illustrative ``docs/y.md``, builder.py's past-tense
   "``_register_tools`` lived in ``server.py``" — was answered with an
   extractor rule, never an allowlist entry. That is the load-bearing
   half, so it is derived rather than asserted from memory:
-  ``test_no_allowlist_entry_covers_a_docstring_source`` fails the moment
-  a docstring needs exempting.
+  ``test_no_allowlist_entry_covers_a_python_source`` fails the moment a
+  scanned ``src/`` or ``tests/`` source needs exempting, and it computes
+  its population from both corpora so the comment half cannot drift out
+  from under it.
 
-Only docstrings are read, never statement bodies — the self-tests below are
-built from deliberately invalid paths and symbols that exist precisely
-to be rejected, so scanning bodies would misfire by construction.
-**Corollary for anyone editing this file: keep synthetic examples in
-code, not in docstrings.** Every rule here now applies to this file's
-own prose, and the extractors do not know that a quoted counter-example
-is only being discussed.
+Docstrings and ``#`` comments are read, never statement bodies — the
+self-tests below are built from deliberately invalid paths and symbols
+that exist precisely to be rejected, so scanning bodies would misfire by
+construction.
+**Corollary for anyone editing this file: keep synthetic examples inside
+statement bodies — a fixture string or a local — never in a docstring or
+a ``#`` comment.** Both are prose to this module now, and the extractors
+do not know that a quoted counter-example is only being discussed.
 
-The mirror-image trap is the ``#`` comment. Only docstrings are read from
-``.py`` sources, so a false example parked in a comment is invisible to
-every rule here — and an example is exactly where a reader's scepticism
-slides off. **Illustrative prose in this file is held to the same
-standard as its assertions:** an example is either an obvious shape
-(``N``, ``x.py``) or a fact checked against the tree, never a
-plausible-looking number nobody counted.
+The comment used to be the mirror-image trap: prose a reader weighs like
+any other, sitting where no rule here could see it — and an example is
+exactly where a reader's scepticism slides off. That hole is closed (see
+``_code_comments``), which is why the corollary above names comments
+alongside docstrings rather than offering them as the refuge. Statement
+bodies remain unread, but they are not the same trap: nobody mistakes a
+fixture string for a claim the project is making.
+**Illustrative prose in this file is held to the same standard as its
+assertions:** an example is either an obvious shape (``N``, ``x.py``) or
+a fact checked against the tree, never a plausible-looking number nobody
+counted.
 
 Scanning ``tests/`` matters because this file is itself shipped prose,
 and its first commit miscounted the files carrying the name
@@ -187,9 +194,15 @@ What is deliberately NOT checked
   ``_PLACEHOLDER_STEMS`` are skipped. This is an extractor rule, not an
   allowlist entry, because these are permanent by intent and an allowlist
   entry could never be retired.
-* **Statement bodies in ``src/`` and ``tests/``.** Only docstrings are
-  read from Python sources. Comments and string literals are not prose
-  the project ships, and test bodies are synthetic by design.
+* **Statement bodies in ``src/`` and ``tests/``.** Docstrings and ``#``
+  comments are read from Python sources; string literals inside statements
+  are not, because the self-tests below are built from deliberately invalid
+  paths and symbols that exist precisely to be rejected, so scanning bodies
+  would misfire by construction. Comments were once excluded alongside
+  them, on the grounds that they "are not prose the project ships". That
+  was false — this repo's citation defects have lived in comments — and
+  admitting them caught a path claim no checker in either module could
+  see. See ``_code_comments``.
 * **Counting prose outside the pinned phrasings.** ``file-count`` matches
   "N files are named ``x.py``" and the elided "N are named ``x.py``".
   "``x.py`` names three files" says the same thing and is *not* matched.
@@ -475,8 +488,14 @@ _RESTRICTIVE = re.compile(r"^\s*(that|which|covering|pinning|exercising)\b", re.
 
 # Matches "N files are named `x.py`" and the elided "N are named `x.py`",
 # where N is one to four digits or a word from `_NUMBER_WORDS`. Those are
-# regex shapes, not counts about this repo — a comment is invisible to every
-# rule in this file, so an example parked here must not read as a claim.
+# regex shapes, not counts about this repo — and this comment is itself in
+# the scanned corpus now, so an example parked here must not read as a
+# claim. Two independent things keep these two out, and a live claim
+# needs both undone: the literal `N` is not among the counts `_NUM`
+# accepts, so the pattern never matches at all; and `x` is in
+# `_PLACEHOLDER_STEMS`, which `check_file_counts` drops before counting.
+# So swapping in a real module name is NOT enough to arm an example —
+# it takes a real count as well.
 # Deliberately one phrasing (plus its elision) rather than a net for every
 # English way of counting files — see the module docstring.
 _FILECOUNT = re.compile(
@@ -705,6 +724,48 @@ def _code_docstrings() -> list[tuple[str, int, str]]:
     the corpus it polices.
     """
     return _docstrings_under("src/") + _docstrings_under("tests/")
+
+
+def _code_comments() -> list[tuple[str, int, str]]:
+    """``(relpath, line, text)`` for every ``#`` comment line.
+
+    A comment's unit is ONE line, matching ``_prose_units`` in
+    ``tests/test_symbol_citations.py``. That module measured the
+    alternative first — grouping contiguous comment lines into one block
+    let a neighbouring line's words reach across and excuse a live
+    citation — and the widening misfires here for a second reason: a
+    trailing comment on a code line would join the standalone block
+    beneath it, so the two together can read as a claim neither one makes.
+
+    Same prefixes as ``_code_docstrings``, so the two Python corpora are
+    one scope rather than two. Reading every tracked ``*.py`` here would
+    admit sources outside ``src/`` and ``tests/`` whose docstrings this
+    module still does not read, and every scope sentence in the module
+    docstring would then describe only the narrower half.
+
+    Comments were excluded here on the stated grounds that they "are not
+    prose the project ships". That was false: this repo's citation defects
+    have lived in comments, which is why the sibling module scans them.
+    But its rules are symbol-shaped plus ``module-file``, which matches a
+    bare module filename carrying no directory prefix — so a
+    directory-prefixed ``path`` claim, or a ``file-count`` claim, written
+    in a comment was checked by neither module. Admitting them closes that
+    gap; the defect it caught on its first run was a repo-relative
+    citation in ``src/bettermemory/verify.py`` naming a file that does not
+    exist.
+
+    No yield figure is recorded here on purpose: a standing count is the
+    rot-prone shape this module exists to catch.
+    """
+    out: list[tuple[str, int, str]] = []
+    for rel in _all_py_files():
+        if not rel.startswith(("src/", "tests/")):
+            continue
+        src = (_REPO_ROOT / rel).read_text(encoding="utf-8")
+        for token in tokenize.generate_tokens(io.StringIO(src).readline):
+            if token.type == tokenize.COMMENT:
+                out.append((rel, token.start[0], token.string.lstrip("#")))
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -1285,6 +1346,10 @@ def collect_failures() -> list[Failure]:
         out.extend(check_paths(rel, text, line_offset=lineno - 1))
         out.extend(check_symbols(rel, text, line_offset=lineno - 1))
         out.extend(check_file_counts(rel, text, line_offset=lineno - 1))
+    for rel, lineno, text in _code_comments():
+        out.extend(check_paths(rel, text, line_offset=lineno - 1))
+        out.extend(check_symbols(rel, text, line_offset=lineno - 1))
+        out.extend(check_file_counts(rel, text, line_offset=lineno - 1))
     return out
 
 
@@ -1343,20 +1408,82 @@ def test_allowlist_entries_carry_a_reason() -> None:
         assert len(reason.strip()) >= 40, f"{key} needs a substantive reason"
 
 
-def test_no_allowlist_entry_covers_a_docstring_source() -> None:
+def test_every_comment_is_reported_at_its_own_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A claim reported at the wrong line sends the reader to the wrong place.
+
+    Two halves, because each can fail without the other noticing. First
+    every line a comment is filed under carries a ``#`` at all, derived
+    against the tree rather than a fixture — enough to catch a systematic
+    shift (a uniform off-by-one strays onto thousands of code lines), not
+    enough to catch a misfiling that lands inside another comment. Then the
+    offset ``collect_failures`` applies is checked end to end, by planting
+    all three claim shapes in a synthetic comment and reading back both the
+    kinds that fired and the line they landed on — arithmetic no amount of
+    reading the corpus can confirm.
+    """
+    comments = _code_comments()
+    assert comments, "no comments reached the corpus"
+    for rel, lineno, _ in comments:
+        # `split("\n")`, never `splitlines()`: the tokenizer counts physical
+        # lines, but `str.splitlines()` also breaks on U+2028 and U+2029, and
+        # `tests/test_store_properties.py` carries both as literals — so
+        # `splitlines()` invents entries and shifts every index past them.
+        line = (_REPO_ROOT / rel).read_text(encoding="utf-8").split("\n")[lineno - 1]
+        assert "#" in line, f"{rel}:{lineno} is filed as a comment but is not one"
+
+    # One planted comment carrying all three shapes the module runs against
+    # Python, so dropping any single checker from the loop in
+    # `collect_failures` fails this — guarding one of the three would leave
+    # the other two free to be deleted silently.
+    planted = [
+        (
+            "src/planted.py",
+            42,
+            " see `src/bettermemory/nope_xyz.py`, `nope_attr_xyz` in "
+            "`store.py`, and 99 files are named `verify.py`",
+        )
+    ]
+    # `setitem` on the module globals, because `collect_failures` resolves
+    # `_code_comments` as a global at call time — patching the name here is
+    # what makes the assertions below fail if the wiring is ever removed.
+    monkeypatch.setitem(globals(), "_code_comments", lambda: planted)
+    landed = [f for f in collect_failures() if f.claim.source == "src/planted.py"]
+    kinds = {f.claim.kind for f in landed}
+    assert kinds == {"path", "symbol", "file-count"}, (
+        f"the planted comment produced {sorted(kinds)} — every checker the "
+        f"comment loop in `collect_failures` runs must fire, so a missing "
+        f"kind means that checker was dropped from the loop (or the whole "
+        f"comment corpus is not wired into it)"
+    )
+    assert {f.claim.line for f in landed} == {42}, (
+        f"a claim planted on comment line 42 was reported at "
+        f"{sorted({f.claim.line for f in landed})} — the offset applied in "
+        f"`collect_failures` is wrong"
+    )
+
+
+def test_no_allowlist_entry_covers_a_python_source() -> None:
     """Derives the 'costs nothing in exemptions' claim in the module docstring.
 
     Including ``src/`` and ``tests/`` docstrings in the corpus was
     justified on the grounds that their misfires get answered with
-    extractor rules rather than allowlist entries. That is a standing
-    claim about the allowlist, so it is asserted here instead of being
-    written down as a count that would drift.
+    extractor rules rather than allowlist entries. Admitting ``#``
+    comments rode on the same justification, so both corpora are covered
+    here. That is a standing claim about the allowlist, so it is asserted
+    instead of being written down as a count that would drift.
     """
-    docstring_sources = {rel for rel, _, _ in _code_docstrings()}
-    offenders = sorted(key for key in _ALLOWLIST if key[0] in docstring_sources)
+    # Both Python corpora, not just docstrings. On today's tree the comment
+    # sources are a subset of the docstring sources, so the union changes
+    # nothing — it is here so that a source carrying comments and no
+    # docstring at all cannot later contribute claims this never counts.
+    sources = {rel for rel, _, _ in _code_docstrings()}
+    sources |= {rel for rel, _, _ in _code_comments()}
+    offenders = sorted(key for key in _ALLOWLIST if key[0] in sources)
     assert not offenders, (
-        f"a docstring source now needs an exemption: {offenders}. Fix the "
-        f"docstring — it is prose this repo owns and can simply correct."
+        f"a Python source now needs an exemption: {offenders}. Fix the prose "
+        f"— it is a docstring or comment this repo owns and can simply correct."
     )
 
 

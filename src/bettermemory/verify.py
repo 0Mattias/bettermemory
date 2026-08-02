@@ -234,7 +234,7 @@ _WELLKNOWN_ROUTE_SEGMENTS: frozenset[str] = frozenset(
 _DOMAIN_ROUTE_RE = re.compile(r"\b[\w-]+(?:\.[\w-]+){1,20}/([\w.\-]+)")
 
 # Repo-relative citation: `src/bettermemory/eval.py`, `docs/ROADMAP.md`,
-# `plugin/.claude-plugin/marketplace.json`, `CHANGELOG.md` — the dominant
+# `plugin/.claude-plugin/plugin.json`, `CHANGELOG.md` — the dominant
 # citation style in real memory bodies, which the absolute/`~` extractor
 # above deliberately ignores (a relative path can't be stat'd without
 # knowing its root, so it is useless for PATH drift). For COMMIT drift the
