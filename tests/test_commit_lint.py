@@ -189,6 +189,89 @@ def test_filler_is_rejected() -> None:
     )
 
 
+def test_session_narration_is_rejected() -> None:
+    """The sitting that produced a commit is not addressable by its reader."""
+    assert "session-narration" in rules(
+        "fix: repair four claims the last round overstated"
+    )
+    assert "session-narration" in rules(
+        "docs(changelog): note the ingest allowlist\n"
+        "\n"
+        "Nearly every fix in this window is a check that reported on something\n"
+        "other than the thing it claimed to report on.\n"
+    )
+    assert "session-narration" in rules(
+        "fix(doctor): probe the resolved provider\n"
+        "\n"
+        "An adversarial pass over the previous six commits found the repair\n"
+        "described itself more strongly than the code supported.\n"
+    )
+
+
+def test_a_domain_window_is_not_session_narration() -> None:
+    """This project has real windows — demotion, verification, tag ranges.
+
+    The determiners are enumerated rather than left open precisely so that
+    a sentence about one of those does not have to be contorted around the
+    rule. Only the deictic forms that point at the author's own calendar
+    are matched.
+    """
+    message = (
+        "fix(demotion): count an outcome once per window\n"
+        "\n"
+        "The 30-day demotion window and the newest tag window are both\n"
+        "half-open, and the current window was double-counting its edge.\n"
+    )
+    assert rules(message) == set()
+
+
+def test_editorial_grading_of_a_defect_is_rejected() -> None:
+    """Describe the defect; do not comment on how bad it was."""
+    assert "editorial" in rules(
+        "fix(doctor): reconcile the index against disk\n"
+        "\n"
+        "`doctor` certified a stale index for the third time.\n"
+    )
+    assert "editorial" in rules(
+        "docs(claims): describe the corpus each half covers\n"
+        "\n"
+        "The gap is worth stating plainly: the ratchet scanned 12 of 43 files.\n"
+    )
+    assert "editorial" in rules(
+        "fix(ingest): enforce the scope allowlist\n"
+        "\n"
+        "`--dry-run` cheerfully reported writes that were about to be refused.\n"
+    )
+
+
+def test_naming_a_recurrence_as_a_fact_is_not_editorialising() -> None:
+    """A cited incident and a named defect class are evidence, not grading.
+
+    The rule has to leave room for the thing that makes a recurrence
+    actionable — which incident, which lesson, which earlier commit — or
+    it would push authors into vaguer prose than they started with.
+    """
+    message = (
+        "fix(doctor): probe the resolved provider instead of inferring it\n"
+        "\n"
+        "This is the shape lesson 1 of\n"
+        "docs/incidents/2026-07-25-doctor-false-green-on-importable-extra.md\n"
+        "names: a check may skip only on the condition it measures. The repair\n"
+        "in `0bf7a49` covered the sibling branch and not this one.\n"
+    )
+    assert rules(message) == set()
+
+
+def test_a_release_subject_carries_the_version_alone() -> None:
+    """The tag's argument belongs in the CHANGELOG entry, not the subject."""
+    assert "release-subject" in rules(
+        "release: 3.36.0 (a green light is only worth what it measured)"
+    )
+    assert "release-subject" in rules("release: the mcp 2.x port")
+    assert rules("release: 3.36.0") == set()
+    assert rules("release: 3.36.0rc1") == set()
+
+
 def test_missing_blank_line_before_body_is_rejected() -> None:
     message = "fix(store): release the lock earlier\nThe body starts here.\n"
     assert "body-separator" in rules(message)

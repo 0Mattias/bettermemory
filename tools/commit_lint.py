@@ -12,14 +12,15 @@ Two entry points, one rule set:
   linter existed were written under the old, looser guidance, and grading
   them would fail every run forever over something nobody can fix.
 
-The rules here are deliberately the MECHANICAL subset of the style. Tone —
-"describe the change, do not narrate the session" — is a judgement a linter
-cannot make, so it lives in prose in CONTRIBUTING.md and is enforced by
-review. What is encoded here is only what can be decided without taste:
-the Conventional Commits envelope, subject shape and length, the blank
-line before the body, body wrapping, and the two categories of wording
-that are objectively out of place in a project's permanent record —
-first-person narration and conversational filler.
+The rules here are deliberately the MECHANICAL subset of the style. Most
+of tone is a judgement a linter cannot make, so it lives in prose in
+CONTRIBUTING.md and is enforced by review. What is encoded here is only
+what can be decided without taste: the Conventional Commits envelope,
+subject shape and length, the blank line before the body, body wrapping,
+and the four categories of wording that are objectively out of place in a
+project's permanent record — first-person narration, conversational
+filler, references to the authoring session, and editorialising about the
+project's own past mistakes.
 
 Exit status is 0 when every message passes and 1 otherwise, with each
 violation printed as ``<sha-or-file>: <rule>: <detail>``.
@@ -35,9 +36,10 @@ from dataclasses import dataclass
 
 
 # Conventional Commits types this project uses. `release` is ours: the
-# version-bump commits (`release: 3.32.0 (...)`) predate this linter and
-# are a real, recurring category. `bench` likewise — the benchmark
-# harnesses under bench/ are neither src nor tests.
+# version-bump commits (`release: 3.36.0`) predate this linter and are a
+# real, recurring category, graded by `_RELEASE_DESCRIPTION_RE` below.
+# `bench` likewise — the benchmark harnesses under bench/ are neither src
+# nor tests.
 TYPES = (
     "bench",
     "build",
@@ -101,6 +103,56 @@ _FILLER_RE = re.compile(
     r")(?!\w)",
     re.IGNORECASE,
 )
+
+# References to the authoring session. A commit is read years later by
+# someone bisecting, who has no access to the sitting that produced it:
+# "the last round", "this window", "an adversarial pass over the previous
+# six commits" name a boundary that exists only in the author's calendar.
+# The facts they gesture at — which commit, which repair, which claim —
+# are all citable by sha, and the rule is that they must be. The
+# determiners are enumerated rather than left open (`the current window`
+# is not here) because this project has real time windows in its domain:
+# demotion windows, verification windows, tag windows.
+_SESSION_RE = re.compile(
+    r"(?<!\w)(?:"
+    r"(?:this|the last|the previous|the preceding)\s+(?:session|round|sweep|window)"
+    r"|(?:last|previous)\s+(?:session|round)"
+    r"|adversarial pass|audit pass"
+    r"|earlier (?:today|in this session)|as of this writing"
+    r")(?!\w)",
+    re.IGNORECASE,
+)
+
+# Editorialising about the project's own record. Distinct from `_FILLER_RE`
+# above, which covers conversational tics: these are phrases that grade a
+# defect rather than describe it. A permanent record states what the code
+# did and what it does now; that a maintainer found it embarrassing, or
+# that it is the third occurrence, changes nothing a reader can act on and
+# reads as apology rather than engineering. Anything a reader WOULD act on
+# survives the rule — an incident path, a sha, a recurrence named as a
+# defect class, a lesson cited from docs/incidents/ — because those are
+# facts, not gradings.
+_EDITORIAL_RE = re.compile(
+    r"(?<!\w)(?:"
+    r"to be honest|being honest|in all honesty|if we(?:'re| are) honest"
+    r"|worth (?:stating|saying|admitting|confessing)(?:\s+(?:plainly|outright|here))?"
+    r"|needless to say|it (?:should|must|has to) be said|let it be said"
+    r"|mea culpa|embarrassing(?:ly)?|shameful(?:ly)?|humiliating"
+    r"|cheerfully|blithely|merrily|gleefully|smugly"
+    r"|for the (?:second|third|fourth|fifth|umpteenth) time"
+    r"|which was the whole point|that is the whole point"
+    r")(?!\w)",
+    re.IGNORECASE,
+)
+
+# A `release:` subject carries the version and nothing else. The version
+# is the index entry a reader scans for; a parenthetical thesis beside it
+# ("release: 3.36.0 (a green light is only worth what it measured)") is a
+# headline, and the release's argument belongs in the CHANGELOG entry the
+# tag points at, where it has room to cite. Any trailing metadata a
+# version legitimately carries — `3.36.0rc1`, `3.36.0+local` — is
+# admitted; whitespace and punctuation are not.
+_RELEASE_DESCRIPTION_RE = re.compile(r"^\d+\.\d+\.\d+[0-9A-Za-z.+-]*$")
 
 # Emoji and other pictographs. The subject line is read in tooling that
 # does not render them consistently.
@@ -220,6 +272,18 @@ def _check_subject(subject: str, where: str) -> list[Violation]:
     if description.endswith("."):
         out.append(Violation(where, "subject-period", "description ends with a period"))
 
+    if match.group("type") == "release" and not _RELEASE_DESCRIPTION_RE.match(
+        description
+    ):
+        out.append(
+            Violation(
+                where,
+                "release-subject",
+                f"a release subject is the version alone — got {description!r}; "
+                "the release's argument goes in its CHANGELOG entry",
+            )
+        )
+
     if _EMOJI_RE.search(subject):
         out.append(Violation(where, "subject-emoji", "subject contains an emoji"))
 
@@ -253,6 +317,26 @@ def _check_wording(text: str, where: str) -> list[Violation]:
                     "filler",
                     f"{filler.group(0)!r} in {line.strip()!r} — carries no "
                     "information about the change",
+                )
+            )
+        session = _SESSION_RE.search(graded)
+        if session is not None:
+            out.append(
+                Violation(
+                    where,
+                    "session-narration",
+                    f"{session.group(0)!r} in {line.strip()!r} — the reader has "
+                    "no access to the authoring session; cite the commit by sha",
+                )
+            )
+        editorial = _EDITORIAL_RE.search(graded)
+        if editorial is not None:
+            out.append(
+                Violation(
+                    where,
+                    "editorial",
+                    f"{editorial.group(0)!r} in {line.strip()!r} — grade the "
+                    "defect by describing it, not by commenting on it",
                 )
             )
     return out
