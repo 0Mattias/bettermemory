@@ -1,6 +1,6 @@
 {
   "name": "bettermemory",
-  "version": "3.35.0",
+  "version": "3.36.0",
   "description": "A trust layer between Claude Code and its own past: memory with per-hit staleness verdicts, claim-level use attribution, measured effectiveness, and episodic run-state. Retrieval is opt-in, never auto-injected context.",
   "author": {
     "name": "Mattias Rask",

@@ -7,7 +7,23 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
-## Unreleased
+## 3.36.0 - 2026-08-02
+
+This release has one subject: **a green light is only worth what it measured.**
+Nearly every fix below is a check, gate or verdict that reported confidently on
+something other than the thing it claimed to be reporting on. `doctor` certified
+a hook whose binary does not exist, asserted an extra "imports cleanly" without
+importing it, and counted another project's plugin as this project's wiring. The
+`[scopes] allowed` whitelist governed every write path except the one that
+imports in bulk. `export --strict` promised to name the files it had only
+counted. The health report answered nothing at all because a stat-only footnote
+could not read one directory. The detail page and `memory_show` gave different
+staleness verdicts for the same memory, and the gate chain that refuses a claim
+about the user was never consulted by the tool that edits one.
+
+The failure mode they share is not a missing check. It is a check that skips, or
+answers, on a condition other than the one it measures — which is indistinguishable
+from working right up until it matters.
 
 ### Fixed — `ingest` checks `[scopes] allowed`, and only against scopes you typed
 
