@@ -57,6 +57,7 @@ from bettermemory.doctor import (
     _fix_context,
     _pattern_matches_tracked_path,
     _probe_index_integrity,
+    _session_start_hook_config_candidates,
     _EXIT_CODE_BY_STATUS,
     _FIXERS,
     _STATUS_GLYPH,
@@ -1682,6 +1683,105 @@ def test_embeddings_extra_ok_when_nothing_is_broken(
     diag = _check_embeddings_extra(cfg)
 
     assert diag.status == "ok", diag
+
+
+def test_embeddings_extra_fails_when_the_resolved_provider_is_not_INSTALLED(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The warn's premise has to be PROBED, not inferred from the gap.
+
+    The split above downgraded to `warn` whenever the broken extra was
+    not the resolved one — reading "absent from the broken list" as "the
+    resolved provider is healthy". Those are different statements, and
+    `resolve_provider` honours an explicit `semantic_provider` even when
+    that extra is not installed at all, so they come apart here:
+    `semantic_provider = "torch"` with sentence-transformers ABSENT and a
+    broken fastembed beside it resolves to a provider that appears in
+    nobody's broken list and still loads no model. The published `warn`
+    said ranking was "NOT degraded" and that resolution reaches a
+    provider "which imports cleanly" — about an import never attempted —
+    on an install whose semantic leg was gone.
+    """
+    _pin_extra_state(monkeypatch, torch=None, fastembed="RuntimeError: onnx missing")
+    cfg = _config_for(
+        tmp_path,
+        search_mode="hybrid",
+        semantic_dedup=False,
+        semantic_provider="torch",
+    )
+
+    # The premise, measured: resolution commits to torch, and torch
+    # cannot be imported — so no model loads.
+    assert semantic.resolve_provider(cfg.behavior.semantic_provider) == "torch"
+    assert semantic.extra_importable("sentence_transformers") is False
+
+    diag = _check_embeddings_extra(cfg)
+
+    assert diag.status == "fail", diag
+    assert "silently degraded" in diag.message
+    assert diag.details["resolved_provider"] == "torch"
+    assert diag.details["resolved_provider_importable"] is False
+    # The two claims that were false must be gone in every spelling.
+    assert "NOT degraded" not in diag.message
+    assert "imports cleanly" not in diag.message
+    # Reinstalling the broken sibling would not fix this install, so the
+    # hint has to name the missing extra as well.
+    assert "embeddings]" in (diag.fix_hint or "")
+    assert "semantic_provider" in (diag.fix_hint or "")
+
+
+@pytest.mark.parametrize(
+    ("torch", "fastembed", "provider"),
+    [
+        ("KeyError: frozenset()", "ok", None),
+        ("KeyError: frozenset()", "ok", "torch"),
+        ("KeyError: frozenset()", "ok", "fastembed"),
+        (None, "RuntimeError: onnx missing", "torch"),
+        ("KeyError: frozenset()", None, "fastembed"),
+        ("KeyError: frozenset()", "RuntimeError: onnx missing", None),
+        ("KeyError: frozenset()", None, None),
+    ],
+    ids=[
+        "auto-falls-past-broken-torch",
+        "explicit-torch-broken",
+        "explicit-fastembed-healthy",
+        "explicit-torch-absent",
+        "explicit-fastembed-absent",
+        "both-broken",
+        "only-torch-installed-broken",
+    ],
+)
+def test_embeddings_extra_severity_tracks_the_resolved_provider_probe(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    torch: str | None,
+    fastembed: str | None,
+    provider: str | None,
+) -> None:
+    """One invariant behind all seven shapes, tied to the production
+    predicate rather than to a hand-copied verdict table.
+
+    `semantic_setup._resolved_provider_importable` is what decides
+    whether a semantic leg actually ranks anything, and this check's
+    `fail`/`warn` split is a claim about exactly that. Asserting they
+    agree — rather than listing expected statuses — means the two cannot
+    drift apart the way they did: a verdict table would have been
+    written to match whatever the check did that day.
+    """
+    from bettermemory import semantic_setup
+
+    _pin_extra_state(monkeypatch, torch=torch, fastembed=fastembed)
+    kwargs: dict[str, Any] = {"search_mode": "hybrid", "semantic_dedup": False}
+    if provider is not None:
+        kwargs["semantic_provider"] = provider
+    cfg = _config_for(tmp_path, **kwargs)
+
+    leg_ranks = semantic_setup._resolved_provider_importable(cfg)
+    diag = _check_embeddings_extra(cfg)
+
+    assert diag.status == ("warn" if leg_ranks else "fail"), diag
+    assert diag.details["resolved_provider_importable"] is leg_ranks
+    assert ("silently degraded" in diag.message) is not leg_ranks
 
 
 # ---------------------------------------------------------------------------
@@ -6475,3 +6575,206 @@ def test_session_start_hook_stays_quiet_on_unjudgeable_commands(
     diag = _check_session_start_hook_wired(root, [settings])
 
     assert diag.status == "ok", diag.message
+
+
+# ---------------------------------------------------------------------------
+# session_start_hook — WHICH plugin manifests count as wiring
+#
+# `~/.claude/plugins` holds two trees that mean opposite things. `cache/`
+# is what an install puts on disk; `marketplaces/<mkt>/` is the
+# marketplace's own git checkout, which ships a source copy of every
+# plugin it offers — installed or not — each with its own
+# `hooks/hooks.json`. Collecting every `hooks.json` under the root swept
+# the catalogue in, and since a runnable binding ANYWHERE wins the live
+# slot, a plugin the user never installed could fill it and demote a
+# genuinely-stale settings binding from `warn` to a footnote on an `ok`.
+# On the machine this was found on, all five `hooks.json` files under
+# `~/.claude/plugins` were catalogue copies of uninstalled plugins.
+# ---------------------------------------------------------------------------
+
+
+def _claude_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A fake `~` with `Path.home()` pointed at it.
+
+    `Path.home()` rather than `$HOME`: on Windows `home()` reads
+    `USERPROFILE`, so an env-var seam would silently stop isolating this
+    check on one leg of the matrix and let it read the real user's
+    plugin tree.
+    """
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", classmethod(lambda _cls: home))
+    return home
+
+
+_LIVE_HOOK_COMMAND = "bettermemory session-start || true"
+
+
+def _write_hooks_manifest(directory: Path, command: str) -> Path:
+    """A plugin-shaped `hooks/hooks.json` binding `command`."""
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / "hooks.json"
+    path.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "SessionStart": [
+                        {"hooks": [{"type": "command", "command": command}]}
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def _plugin_trees(home: Path) -> tuple[Path, Path, Path]:
+    """Both trees, each carrying a runnable binding.
+
+    Returns `(plugins_root, installed_manifest, catalogue_manifest)`. The
+    two bindings are identical on purpose: only WHERE the file sits may
+    decide whether it counts.
+    """
+    plugins = home / ".claude" / "plugins"
+    installed = _write_hooks_manifest(
+        plugins / "cache" / "mkt" / "hinter" / "1.0.0" / "hooks", _LIVE_HOOK_COMMAND
+    )
+    catalogue = _write_hooks_manifest(
+        plugins / "marketplaces" / "mkt" / "plugins" / "never-installed" / "hooks",
+        _LIVE_HOOK_COMMAND,
+    )
+    return plugins, installed, catalogue
+
+
+def _write_installed_plugins(plugins: Path, *install_paths: Path) -> None:
+    """`installed_plugins.json` in the v2 shape Claude Code writes."""
+    (plugins / "installed_plugins.json").write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "plugins": {
+                    f"p{i}@mkt": [{"scope": "user", "installPath": str(path)}]
+                    for i, path in enumerate(install_paths)
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_hook_candidates_take_installed_plugins_and_skip_the_catalogue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The load-bearing half stays, the catalogue goes.
+
+    Both halves in one assertion because either alone is satisfiable by
+    the wrong fix: dropping the plugin arm entirely would exclude the
+    catalogue, and it would also start warning at every plugin user.
+    """
+    home = _claude_home(tmp_path, monkeypatch)
+    plugins, installed, catalogue = _plugin_trees(home)
+    _write_installed_plugins(plugins, installed.parent.parent)
+
+    found = _session_start_hook_config_candidates(cwd=tmp_path / "proj")
+
+    assert installed in found
+    assert catalogue not in found
+
+
+def test_hook_candidates_skip_a_cache_dir_the_manifest_no_longer_lists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An uninstall leaves the cache directory behind; that is not wiring.
+
+    Counterweight to the test above: "scan `cache/` instead of the whole
+    root" would pass that one while still counting a plugin the manifest
+    says is gone. The manifest is the authority whenever it parses.
+    """
+    home = _claude_home(tmp_path, monkeypatch)
+    plugins, installed, _catalogue = _plugin_trees(home)
+    _write_installed_plugins(plugins)  # nothing installed
+
+    assert _session_start_hook_config_candidates(cwd=tmp_path / "proj") == []
+    assert installed.is_file()  # still on disk, just not installed
+
+
+@pytest.mark.parametrize(
+    "manifest_body",
+    [None, "{ not json", "[]", '{"version": 1}'],
+    ids=["missing", "malformed", "not-an-object", "unrecognised-shape"],
+)
+def test_hook_candidates_fall_back_to_the_cache_tree_without_a_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, manifest_body: str | None
+) -> None:
+    """No usable manifest must not mean "no plugin user has this wired".
+
+    A `warn` at someone whose plugin binding we simply failed to read is
+    the false alarm the plugin arm exists to prevent, so the fallback
+    scans the tree those `installPath`s point into on a normal install.
+    It is coarser than the manifest — and it still excludes the
+    catalogue, which is the whole point of the split.
+    """
+    home = _claude_home(tmp_path, monkeypatch)
+    plugins, installed, catalogue = _plugin_trees(home)
+    if manifest_body is not None:
+        (plugins / "installed_plugins.json").write_text(manifest_body, encoding="utf-8")
+
+    found = _session_start_hook_config_candidates(cwd=tmp_path / "proj")
+
+    assert installed in found
+    assert catalogue not in found
+
+
+def test_session_start_hook_warns_when_only_a_CATALOGUE_copy_is_runnable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The verdict flip, end to end through the production collector.
+
+    A user with one genuinely-stale hand-wired binding and no installed
+    plugin has a hook that contributes nothing, and must be told so. With
+    the catalogue swept in, an uninstalled plugin's manifest filled the
+    live slot and the `warn` became an `ok` — doctor certifying a hook
+    that cannot run, on evidence from a plugin that is not there.
+    """
+    root = _store_with_one_memory(tmp_path)
+    home = _claude_home(tmp_path, monkeypatch)
+    monkeypatch.chdir(tmp_path)  # so the project-scope candidates are ours
+    plugins = home / ".claude" / "plugins"
+    _write_hooks_manifest(
+        plugins / "marketplaces" / "mkt" / "plugins" / "never-installed" / "hooks",
+        _LIVE_HOOK_COMMAND,
+    )
+    _write_installed_plugins(plugins)
+    gone = tmp_path / "deleted-venv" / "bin" / "bettermemory"
+    _hook_settings_with_command(
+        home / ".claude" / "settings.json", f"{gone} session-start || true"
+    )
+
+    diag = _check_session_start_hook_wired(root)
+
+    assert diag.status == "warn", diag.message
+    assert diag.details["unrunnable_path"] == str(gone)
+
+
+def test_session_start_hook_ok_when_an_INSTALLED_plugin_carries_the_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Counterweight to the flip test: the same stale settings binding,
+    the same runnable manifest — but the plugin is installed this time,
+    so the hook really does run and the `ok` is earned."""
+    root = _store_with_one_memory(tmp_path)
+    home = _claude_home(tmp_path, monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    plugins, installed, _catalogue = _plugin_trees(home)
+    _write_installed_plugins(plugins, installed.parent.parent)
+    gone = tmp_path / "deleted-venv" / "bin" / "bettermemory"
+    _hook_settings_with_command(
+        home / ".claude" / "settings.json", f"{gone} session-start || true"
+    )
+
+    diag = _check_session_start_hook_wired(root)
+
+    assert diag.status == "ok", diag.message
+    assert diag.details["wired_in"] == str(installed)
+    assert len(diag.details["stale_bindings"]) == 1

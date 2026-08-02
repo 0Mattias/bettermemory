@@ -1488,21 +1488,92 @@ _SESSION_START_HOOK_MARKER = "bettermemory session-start"
 # collects, and so on how many files this check then opens and parses.
 # It bounds the parsing, not the traversal: `rglob` yields lazily, so
 # breaking at the cap only stops a walk that has already found that many
-# manifests — under the cap (a handful on a real install) the whole of
-# `~/.claude/plugins` is still visited. That split is the intended one.
-# `~/.claude/plugins` holds marketplace CHECKOUTS — ordinary git repos of
-# unbounded size — but visiting one is readdir/stat with no file opens
-# and stays in the low milliseconds, whereas reading and JSON-parsing
-# every match pays per file for however many manifests a checkout ships
-# (test fixtures, vendored plugins). Hitting the cap can make this check
-# publish a false "not wired" warn — a binding past the cap is simply
-# never read — so the cap is a real accuracy trade, not a free one. It is
-# an acceptable trade because the settings-file candidates above are
+# manifests — under the cap (a handful on a real install) every installed
+# plugin's directory is still visited in full. That split is the intended
+# one. Visiting a directory is readdir/stat with no file opens and stays
+# in the low milliseconds, whereas reading and JSON-parsing every match
+# pays per file for however many manifests a plugin ships (test fixtures,
+# vendored sub-plugins). Hitting the cap can make this check publish a
+# false "not wired" warn — a binding past the cap is simply never read —
+# so the cap is a real accuracy trade, not a free one. It is an
+# acceptable trade because the settings-file candidates above are
 # collected FIRST and are never truncated, so a hand-wired user is never
 # missed; only a plugin binding sitting behind 200 other manifests is,
 # and a real install carries a handful. Raise the cap rather than
 # rationalise the warn if that ever stops being true.
 _PLUGIN_HOOK_SCAN_CAP = 200
+
+
+def _installed_plugin_roots(plugins_root: Path) -> list[Path]:
+    """Directories of the plugins this machine has actually INSTALLED.
+
+    `~/.claude/plugins` is not one tree, it is two with opposite
+    meanings, and only one of them is evidence of wiring:
+
+    * `cache/<marketplace>/<plugin>/<version>/` — what an install
+      actually puts on disk. `installed_plugins.json` records one entry
+      per install with the `installPath` pointing here.
+    * `marketplaces/<marketplace>/` — the marketplace's own git
+      CHECKOUT, recorded in `known_marketplaces.json` under
+      `installLocation`. It ships the CATALOGUE: a source copy of every
+      plugin the marketplace offers, installed or not, each with its
+      `hooks/hooks.json`. Adding a marketplace clones all of them.
+
+    A catalogue copy declares hooks that Claude Code will never run,
+    because the plugin behind it was never installed. Counting one as
+    live wiring is a false green, and with the "one runnable binding
+    anywhere wins" rule in `_check_session_start_hook_wired` it is a
+    verdict-flipping one: a catalogue entry can fill the live slot and
+    demote a user's genuinely-stale settings binding from `warn` to a
+    detail on an `ok`. On the machine this was found on, all five
+    `hooks.json` files under `~/.claude/plugins` were catalogue copies
+    of plugins that were not installed.
+
+    So the manifest is the authority. When it parses and names installs,
+    those paths are the whole answer — a plugin the user uninstalled
+    leaves its cache directory behind, and that is not wiring either.
+    Only when the manifest is missing, unreadable, or shaped in a way
+    this doesn't recognise does it fall back to the `cache/` tree, which
+    is where the recorded `installPath`s point on a normal install: a
+    coarser answer than the manifest, but still one that excludes the
+    catalogue, and still one that protects a plugin user from a false
+    "not wired" warn.
+
+    Returns only paths that are directories, and never raises — a
+    damaged plugin tree is not this check's problem to report.
+    """
+    manifest = plugins_root / "installed_plugins.json"
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        data = None
+    if isinstance(data, dict) and isinstance(data.get("plugins"), dict):
+        roots: list[Path] = []
+        # Everything is defensively type-checked: this is a FOREIGN file
+        # whose shape is Claude Code's to change, and a check that raises
+        # on someone else's unexpected JSON is worse than no check.
+        for installs in data["plugins"].values():
+            if not isinstance(installs, list):
+                continue
+            for install in installs:
+                if not isinstance(install, dict):
+                    continue
+                install_path = install.get("installPath")
+                if isinstance(install_path, str) and install_path:
+                    roots.append(Path(install_path))
+        # An empty result here means "nothing is installed", which is an
+        # answer — not a reason to go looking in the catalogue.
+        return [p for p in roots if _is_dir_quiet(p)]
+    cache = plugins_root / "cache"
+    return [cache] if _is_dir_quiet(cache) else []
+
+
+def _is_dir_quiet(path: Path) -> bool:
+    """`path.is_dir()`, with an OSError reading as "no"."""
+    try:
+        return path.is_dir()
+    except OSError:
+        return False
 
 
 def _session_start_hook_config_candidates(cwd: Path | None = None) -> list[Path]:
@@ -1513,10 +1584,16 @@ def _session_start_hook_config_candidates(cwd: Path | None = None) -> list[Path]
 
     * Claude Code settings files (user- and project-scope, plus the
       `.local` overrides) — where a manual wiring lands.
-    * `hooks.json` manifests under `~/.claude/plugins` — where a
-      *plugin* install's hooks live. This is the load-bearing half: a
-      plugin user never edits settings.json, so scanning settings alone
-      would warn at exactly the users who did the recommended thing.
+    * `hooks.json` manifests inside INSTALLED plugins — where a *plugin*
+      install's hooks live. This is the load-bearing half: a plugin user
+      never edits settings.json, so scanning settings alone would warn at
+      exactly the users who did the recommended thing.
+
+    The second family is deliberately not "every `hooks.json` under
+    `~/.claude/plugins`". That sweeps in the marketplace catalogue, whose
+    manifests belong to plugins that were never installed and whose hooks
+    therefore never run; `_installed_plugin_roots` documents the split
+    and why counting one as wiring flips this check's verdict.
 
     Only paths that exist are returned, which doubles as the "is this
     even a Claude Code install?" probe — an empty list means we have
@@ -1534,12 +1611,20 @@ def _session_start_hook_config_candidates(cwd: Path | None = None) -> list[Path]
 
     plugins_root = home / ".claude" / "plugins"
     if plugins_root.is_dir():
+        # The cap counts matches across ALL installed plugins, not per
+        # plugin: it bounds how many files this check opens and parses,
+        # and that budget is one budget.
+        matches = 0
         try:
-            for i, path in enumerate(plugins_root.rglob("hooks.json")):
-                if i >= _PLUGIN_HOOK_SCAN_CAP:
+            for root in _installed_plugin_roots(plugins_root):
+                for path in root.rglob("hooks.json"):
+                    if matches >= _PLUGIN_HOOK_SCAN_CAP:
+                        break
+                    matches += 1
+                    if path.is_file():
+                        found.append(path)
+                if matches >= _PLUGIN_HOOK_SCAN_CAP:
                     break
-                if path.is_file():
-                    found.append(path)
         except OSError:
             # An unreadable plugins tree is not this check's problem to
             # report — the settings-file arm still has something to say.
@@ -3248,6 +3333,21 @@ def _check_embeddings_extra(cfg: Config) -> Diagnosis:
     provider that actually got RESOLVED (including "all installed
     providers are broken", where the resolver names one anyway so its
     loader can explain) costs the leg and earns the `fail`.
+
+    The downgrade is earned by PROBING the resolved provider, not by
+    the broken one's absence from that slot. "Not in the broken list"
+    is not "healthy": `resolve_provider` honours an explicit
+    `semantic_provider` even when that extra is ABSENT, so `torch` +
+    no sentence-transformers + a broken fastembed resolves to a
+    provider that is in nobody's broken list and still loads no model.
+    Inferring health from the gap published a `warn` saying ranking was
+    "NOT degraded" and that resolution "reaches `torch`, which imports
+    cleanly" about an import never attempted, on an install whose
+    semantic leg was gone. `semantic_setup._resolved_provider_importable`
+    and `handlers.search._semantic_mode_unavailable` both ask the
+    resolved provider directly; this now asks it the same way, and an
+    unimportable resolved provider is treated exactly like no resolved
+    provider at all.
     """
     from .semantic import extra_import_failure, extra_importable, resolve_provider
 
@@ -3268,35 +3368,71 @@ def _check_embeddings_extra(cfg: Config) -> Diagnosis:
         # Resolved with the SAME preference production uses, so this
         # cannot disagree with what `memory_search` actually loads.
         resolved = resolve_provider(cfg.behavior.semantic_provider)
+        by_provider = {provider: (module, extra) for module, extra, provider in extras}
+        resolved_module, resolved_extra = by_provider.get(resolved or "", (None, None))
+        # PROBED. The warn below claims the resolved provider imports
+        # cleanly, so this is the import that has to have been attempted
+        # for the claim to mean anything — absence from `broken` proves
+        # only that the extra is not installed-and-broken, and "not
+        # installed at all" satisfies that too.
+        resolved_usable = resolved_module is not None and extra_importable(
+            resolved_module
+        )
         fatal = [row for row in broken if row[2] == resolved]
-        # `resolved is None` means nothing is installed to fall back to,
-        # so a broken extra there does cost the leg.
-        if fatal or resolved is None:
+        details: dict[str, Any] = {
+            "resolved_provider": resolved,
+            "resolved_provider_importable": resolved_usable,
+            "broken_modules": [row[0] for row in broken],
+        }
+        if fatal or not resolved_usable:
             module, extra, _provider, reason = (fatal or broken)[0]
+            reinstall = (
+                f"Reinstall it: `uv pip install --force-reinstall {module}` "
+                f"(or `uv pip install -e .[{extra}]`). This usually means a "
+                "damaged or partially-synced install — a virtualenv inside "
+                "a cloud-synced folder (iCloud Drive, Dropbox) is the "
+                "common cause, and moving the venv outside it is the "
+                "durable fix."
+            )
+            if fatal:
+                gap = "and it is the provider this config resolves to"
+                fix_hint = reinstall
+            elif resolved_extra is not None:
+                # Reachable only through an explicit `semantic_provider`
+                # naming an extra that is not installed — `auto` returns
+                # a healthy provider or one of the broken ones, never a
+                # third thing. The typo class
+                # `semantic_setup._resolved_provider_importable` exists
+                # for, met here by a second broken extra beside it.
+                gap = (
+                    f"and `{resolved}` — the provider this config does "
+                    f"resolve to — is not importable either, because its "
+                    f"`{resolved_extra}` extra is not installed"
+                )
+                fix_hint = (
+                    f"Two independent problems. Install what this config "
+                    f"asks for (`uv pip install -e .[{resolved_extra}]`), or "
+                    f"point `[behavior] semantic_provider` at a provider you "
+                    f"have — or at `auto`, which picks a working one. "
+                    f"Separately, the installed `{module}` is broken and "
+                    f"wants `uv pip install --force-reinstall {module}`; a "
+                    "virtualenv inside a cloud-synced folder (iCloud Drive, "
+                    "Dropbox) is the usual cause of that."
+                )
+            else:
+                gap = "and no provider resolves at all"
+                fix_hint = reinstall
             return Diagnosis(
                 name="embeddings_extra",
                 status="fail",
                 message=(
                     f"the `{extra}` extra is INSTALLED but `{module}` fails "
-                    f"to import ({reason}), and it is the provider this "
-                    f"config resolves to. Semantic ranking and cosine dedup "
-                    "are silently degraded to keyword/BM25 and Jaccard."
+                    f"to import ({reason}), {gap}. Semantic ranking and "
+                    "cosine dedup are silently degraded to keyword/BM25 "
+                    "and Jaccard."
                 ),
-                fix_hint=(
-                    f"Reinstall it: `uv pip install --force-reinstall "
-                    f"{module}` (or `uv pip install -e .[{extra}]`). This "
-                    "usually means a damaged or partially-synced install — "
-                    "a virtualenv inside a cloud-synced folder (iCloud "
-                    "Drive, Dropbox) is the common cause, and moving the "
-                    "venv outside it is the durable fix."
-                ),
-                details={
-                    "module": module,
-                    "extra": extra,
-                    "error": reason,
-                    "resolved_provider": resolved,
-                    "broken_modules": [row[0] for row in broken],
-                },
+                fix_hint=fix_hint,
+                details={"module": module, "extra": extra, "error": reason, **details},
             )
         module, extra, _provider, reason = broken[0]
         return Diagnosis(
@@ -3305,11 +3441,10 @@ def _check_embeddings_extra(cfg: Config) -> Diagnosis:
             message=(
                 f"the `{extra}` extra is INSTALLED but `{module}` fails to "
                 f"import ({reason}). Ranking is NOT degraded by it — "
-                f"provider resolution reaches `{resolved}`, which imports "
-                "cleanly, so the broken one is never consulted. It is dead "
-                "weight: one import attempt and a WARNING per process, and "
-                "it is what resolution would fall back to if the working "
-                "provider ever went."
+                f"provider resolution reaches `{resolved}`, which was "
+                "probed and imports cleanly, so the broken one is never "
+                "consulted. It is dead weight: one import attempt and a "
+                "WARNING per process."
             ),
             fix_hint=(
                 f"Reinstall it: `uv pip install --force-reinstall {module}` "
@@ -3318,13 +3453,7 @@ def _check_embeddings_extra(cfg: Config) -> Diagnosis:
                 "virtualenv inside a cloud-synced folder (iCloud Drive, "
                 "Dropbox); moving the venv outside it is the durable fix."
             ),
-            details={
-                "module": module,
-                "extra": extra,
-                "error": reason,
-                "resolved_provider": resolved,
-                "broken_modules": [row[0] for row in broken],
-            },
+            details={"module": module, "extra": extra, "error": reason, **details},
         )
 
     if not cfg.behavior.semantic_dedup:
