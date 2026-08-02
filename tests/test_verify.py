@@ -3976,21 +3976,19 @@ def test_no_verdict_site_escalates_on_the_full_missing_set() -> None:
     reads the argument's SOURCE at every call site, which is the level
     the mistake happens on.
 
-    `web.py` is excluded and the exclusion self-retires: the assertion
-    below requires it to still be non-compliant, so the day that
-    surface is switched over this test fails and the exclusion has to
-    go. It is carved out because it belongs to a concurrent workstream,
-    not because the divergence is acceptable — `_render_memory_detail`
-    documents that the page "cannot disagree with what the model sees
-    for the same memory", and right now it does.
+    No file is excluded. `web.py` used to be: its `_render_memory_detail`
+    passed the full set while claiming the page "cannot disagree with
+    what the model sees for the same memory", and the carve-out existed
+    to record that known divergence rather than to bless it. The
+    divergence is gone, so the carve-out is too — the behavioural half of
+    that repair (the detail page and `memory_show` returning the same
+    verdict for a prose-only miss) is pinned in `test_web.py`.
     """
     import ast
 
     root = Path(__file__).resolve().parents[1] / "src" / "bettermemory"
-    pending_cross_lane = {"web.py"}
 
     offenders: list[str] = []
-    excluded_still_offending: set[str] = set()
     seen_sites = 0
     for path in sorted(root.rglob("*.py")):
         text = path.read_text(encoding="utf-8")
@@ -4024,9 +4022,6 @@ def test_no_verdict_site_escalates_on_the_full_missing_set() -> None:
                 }
                 if ok:
                     continue
-                if path.name in pending_cross_lane:
-                    excluded_still_offending.add(path.name)
-                    continue
                 offenders.append(f"{path.name}: path_drift_missing={arg_src}")
 
     assert seen_sites >= 5, (
@@ -4037,9 +4032,4 @@ def test_no_verdict_site_escalates_on_the_full_missing_set() -> None:
         "these verdict sites escalate on the FULL missing set, including "
         f"prose-scraped absences: {offenders}. Pass "
         "len(drift.claim_anchored_missing) — see PathDriftReport."
-    )
-    assert excluded_still_offending == pending_cross_lane, (
-        "the pending cross-lane exclusion is stale: "
-        f"{sorted(pending_cross_lane - excluded_still_offending)} now feeds the "
-        "claim-anchored count, so drop it from `pending_cross_lane`"
     )

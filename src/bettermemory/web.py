@@ -43,11 +43,15 @@ Scope:
   of `search.search`, so a new ranker input cannot land on the MCP side
   unnoticed — `test_web.py` fails until it is threaded or filed. The
   load-bearing entry is `semantic_model`: this process never loads an
-  embedding model, so under the two configs where `memory_search`
-  ranks WITH one — `search_mode = "semantic"`, or the default
-  `hybrid` plus `semantic_dedup = true` — the two orders, and the two
-  row sets, can differ. `_lexical_only_note` puts that on the page, in
-  the shape that config actually diverges in, rather than letting a
+  embedding model, while `memory_search` ranks with one under
+  `search_mode = "semantic"` and — since installing an embeddings extra
+  became sufficient by itself — under the default `hybrid` whenever the
+  provider that config resolves to actually imports. Where the two
+  rankings differ, so can the two row sets. `_lexical_only_note` owns the
+  disclosure and its exact wording — restating the trigger here is how
+  this bullet came to name `semantic_dedup = true` as the hybrid one long
+  after that stopped being the rule. That helper puts the divergence on
+  the page in the shape each config diverges in, rather than letting a
   lexical order pass for the model's order.
 - No JS framework: server-side rendered HTML, minimal inline CSS,
   no template engine. Each route returns a complete HTML response
@@ -180,9 +184,10 @@ _RANKER_INPUTS_DIVERGENT = frozenset(
 )
 
 
-# Rendered above the ranked hits whenever `memory_search` would rank with
-# a semantic leg and this page would not — see `_lexical_only_note` for the
-# gate, which is NOT the same question as "does the config load a model".
+# Rendered above the ranked hits whenever `memory_search` may rank with a
+# semantic leg and this page cannot — "may", because the gate reads the
+# config and not this process's installs; see `_lexical_only_note` for it,
+# and for why the notes carry that remaining condition in their text.
 # This page ranks the same way under either note (`semantic` is coerced to
 # `hybrid` in the route), so the lead sentence is shared; the divergence it
 # names is not, so the rest is per-config. Same discipline the silent-miss
@@ -191,21 +196,49 @@ _RANKER_INPUTS_DIVERGENT = frozenset(
 # scorer the model would not have used.
 _LEXICAL_ONLY_LEAD = "Ranked with keyword + BM25 fusion only. "
 
-# `search_mode` at its `hybrid` default (or unset) with a model resolvable:
+# `search_mode` at its `hybrid` default (or unset). With a model resolvable
 # the handler resolves one and `search.search` appends `_score_semantic` as a
-# THIRD RRF leg beside the two this page fused.
+# THIRD RRF leg beside the two this page fused; with none resolvable it fuses
+# the same two legs this page did, and the orders match. Both reach this
+# string, which is what the wording has to survive.
 #
-# The TRIGGER changed and this prose had to follow it. It used to name
-# `semantic_dedup = true` as the cause, because that flag was the only thing
-# that opened the factory under `hybrid`. Installing an embeddings extra is
-# now sufficient on its own, so blaming the dedup flag would send a reader
-# who never set it looking for a config line they do not have. The note
-# names the extra, which is the thing that is actually true in both cases.
+# The TRIGGER moved twice and this prose had to follow it twice; the second
+# follow-up overshot. It used to name `semantic_dedup = true` as the cause,
+# because that flag was the only thing that opened the factory under
+# `hybrid`. Installing an embeddings extra is now sufficient on its own, so
+# blaming the dedup flag would send a reader who never set it looking for a
+# config line they do not have.
+#
+# What replaced it stated the extra as a FACT — "An embeddings extra is
+# installed and search_mode is hybrid" — and the gate cannot support that.
+# `_semantic_model_configured` opens on `semantic_dedup = true` ALONE,
+# without probing any install, so a reader with the flag and no importable
+# provider was told they had an extra they do not have, and told to expect a
+# reordering that does not happen: the factory returns None there and
+# `memory_search` fuses the same two legs this page just fused.
+#
+# The repair is in the sentence, not the gate. ANDing an importability probe
+# into `_lexical_only_note` is the merge `_semantic_rank_leg_active`'s
+# docstring refuses and
+# `docs/incidents/2026-08-01-broken-optional-extra-killed-retrieval.md`
+# records being tried — these notes describe what the HANDLER does, and a
+# probe the handler need not have used is not that. So the extra is a
+# CONDITION here and both branches are spelled out, which is the shape
+# `_LEXICAL_ONLY_SEMANTIC_NOTE` below already had (it names its own no-extra
+# branch rather than assuming one). A conditional sentence is true under
+# every config that can reach it; an asserted one is true under some.
+#
+# "Resolves to hybrid", not "your config sets hybrid": this note also renders
+# for an UNSET `search_mode`, which the handler and this page both default to
+# hybrid. The sibling note can name its config value because only an explicit
+# `search_mode = "semantic"` reaches it.
 _LEXICAL_ONLY_FUSED_NOTE = _LEXICAL_ONLY_LEAD + (
-    "An embeddings extra is installed and search_mode is hybrid, so "
-    "memory_search fuses a third, semantic leg on top of these two and can "
-    "order (or include) hits differently. This page never loads a model, so "
-    "it always shows the two lexical legs."
+    "search_mode resolves to hybrid here, where memory_search fuses a third, "
+    "semantic leg on top of these two whenever an embeddings extra loads — "
+    "with one installed, its rows and their order can differ from this "
+    "page's; with none, it fuses these same two legs and the two orders "
+    "agree. This page never loads a model either way, so it always shows the "
+    "two lexical legs."
 )
 
 # `search_mode = "semantic"`: NOT a leg on top of these two. The handler
@@ -244,6 +277,20 @@ def _lexical_only_note(config: Config) -> str:
       be a fabricated divergence. Measured, not assumed: driving the
       handler across the config matrix, `search_mode = "keyword"` +
       `semantic_dedup = true` never enters `_score_semantic`.
+
+    Two conditions, NOT the three of
+    `semantic_setup._semantic_rank_leg_active`: whether an extra imports
+    in this process is deliberately left out, and both notes carry that
+    condition in their TEXT instead. The reason is recorded on that
+    predicate ("must not be merged") and in
+    `docs/incidents/2026-08-01-broken-optional-extra-killed-retrieval.md`,
+    which records the attempt to merge them — these strings describe what
+    the HANDLER does, and gating them on a probe the handler need not
+    have used couples the description to something else. The obligation
+    that leaves is on the prose: a note that renders under a config where
+    no extra is importable has to be TRUE there too, which is why
+    `_LEXICAL_ONLY_FUSED_NOTE` names the install as a condition and spells
+    out both branches rather than asserting one of them.
 
     A per-call `mode=` argument overrides the config mode for one
     `memory_search` request; no page can anticipate that, so this reads
@@ -892,10 +939,18 @@ def _render_memory_detail(
     attestations, `compute_verification_status` for the calendar axis,
     `compute_commit_drift` (claim-anchored, only meaningful when this
     server runs inside the memory's origin repo), and
-    `compute_staleness_verdict` folding all three. Same functions, same
-    inputs — the page cannot disagree with what the model sees for the
-    same memory. The `stale (verified Nd ago)` phrasing is a rendering
-    contract pinned by tests; keep it.
+    `compute_staleness_verdict` folding all three — over the
+    CLAIM-ANCHORED drift count, which is the argument the mirroring
+    turns on and the one it used to get wrong (see the call below).
+
+    "Same functions, same inputs" is a claim about the call, not a
+    property of it: it was true of the functions and false of the inputs
+    for as long as this site passed `len(drift.missing)`. So the
+    agreement is pinned by a test that renders this page and calls
+    `memory_show` for the same memory
+    (`test_web.py::test_detail_page_verdict_matches_memory_show_on_a_prose_miss`),
+    not by this sentence. The `stale (verified Nd ago)` phrasing is a
+    rendering contract pinned by tests; keep it.
     """
     now = datetime.now(timezone.utc)
     drift = detect_path_drift(
@@ -916,7 +971,20 @@ def _render_memory_detail(
     )
     verdict = compute_staleness_verdict(
         verification=verification,
-        path_drift_missing=len(drift.missing),
+        # The claim-anchored subset, which is what `handlers/show.py`
+        # passes: attested paths that vanished, plus citations resolved
+        # against this memory's own recorded worktree. The full `missing`
+        # list is still rendered below under "Missing paths" — prose
+        # absences stay visible as evidence here too, they just no longer
+        # raise the tier. Passing `len(drift.missing)` instead is what
+        # made this page escalate a calendar-fresh memory that
+        # `memory_show` called `fresh` whenever its body mentioned an
+        # unattested path this machine does not have (a remote host's
+        # path, an `/etc/...` example) — the ~0-of-15 class the
+        # provenance split was measured on. `verdict_from_signals`
+        # carries the measurement; `test_verify.py`'s AST guard reads
+        # this argument's source so a revert cannot land quietly.
+        path_drift_missing=len(drift.claim_anchored_missing),
         commit_drift_count=(
             commit_drift.commits_since_verify if commit_drift is not None else None
         ),

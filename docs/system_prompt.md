@@ -28,7 +28,7 @@ only see what these tools surface.
 | Write? | something durable just entered the conversation → yes. Don't wait for "remember that". State or timestamps → no (durability check will reject; rephrase to the durable level-up form). A commit SHA is an anchor, not state — cite it freely. |
 | Category? | claim about the user → `user-inference` (always pending). Atmospheric / no verifiable claims → `ambient`. Else → `fact`. |
 | Outcome? | retrieval shaped reply → silence (settles as `applied` at turn end). Off-topic / wrong → explicit `ignored` / `contradicted` / `corrected`. |
-| Verify? | `staleness_verdict != "fresh"` → `path_drift.missing` on the hit lists what rotted; memory_update those, memory_verify the rest with `verified_paths`. |
+| Verify? | `staleness_verdict != "fresh"` → `path_drift.claim_anchored_missing` is the escalating subset; memory_update those, memory_verify the rest with `verified_paths`. |
 | Scope? | project name if obvious; never `general`. |
 
 Tools: memory_search, memory_show, memory_list, memory_scope_overview,
@@ -84,29 +84,29 @@ each memory shaped. Surfaces back in `recent_negative_outcomes`.
 
 ## Verify before relying
 
-Every retrieval carries `staleness_verdict`:
-- `fresh`: verification fresh AND no drift. Body claims presumed
-  current.
-- `spot_check_recommended`: verification calendar-fresh but the
-  world has moved (path missing, or commits since last verify).
+Every retrieval carries `staleness_verdict`. Only CLAIM-ANCHORED
+drift moves it: an attested path, a citation resolved against the
+memory's own worktree, a commit touching what the body cites.
+- `fresh`: body claims presumed current. Prose-scraped entries in
+  `path_drift.missing` can still sit here — evidence, not a tier.
+- `spot_check_recommended`: verification calendar-fresh but an
+  anchored path went missing, or a commit landed on what the body
+  cites since the last verify.
 - `spot_check_required`: verification.status is `never`, or `stale`
   with no measurement to stand the calendar down. A `stale` memory
   whose commit-drift leg measured zero reads `fresh`.
 
-When the verdict isn't fresh, the hit already carries the
-actionable detail. `path_drift.missing` (when present) lists the
-body-cited paths that no longer exist — memory_update those
-directly. The remaining un-drifted claims (`path_drift.verified`
-+ the rest of the body) you can attest with memory_verify(id,
-verified_paths=[…]) — paths are the attestation the drift legs
-read back. `verified_commits` / `verified_versions` are recorded
-as provenance for the next reader; nothing resolves them.
-A `missing` path that is ABSENT ON PURPOSE (remote host, other
-platform, cited as not-the-location) is not drift: attest it with
-memory_verify(id, verified_absent_paths=[…]) and it moves to
-`path_drift.expected_absent` instead of flagging forever.
-memory_update resets `last_verified_at`, so verify again after
-fixing drifted prose to close the loop.
+The hit carries the detail. `path_drift.claim_anchored_missing`
+(when present) is the subset that moved the verdict —
+memory_update those; the rest of `missing` is evidence you judge.
+Attest what held with memory_verify(id, verified_paths=[…]) —
+attesting is also what makes a path anchored, so its next
+disappearance escalates. A path absent ON PURPOSE (remote host,
+other platform) is not drift: memory_verify(id,
+verified_absent_paths=[…]) moves it to
+`path_drift.expected_absent`. memory_update resets
+`last_verified_at`, so verify again after fixing drifted prose to
+close the loop.
 
 Negative-results suppression: a hit's `recent_negative_outcomes`
 (when present) means the user already rejected this in the last

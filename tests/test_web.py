@@ -219,7 +219,16 @@ def test_detail_flags_missing_cited_paths(
 ) -> None:
     """The detail page runs the real path-drift check: cite a file,
     delete it, and the page must show the missing bucket plus a
-    non-fresh verdict — the `bettermemory try` demo, on the web."""
+    non-fresh verdict — the `bettermemory try` demo, on the web.
+
+    Which axis carries the verdict here is worth naming, because it is
+    not the drift: this memory was never verified, so the CALENDAR leg
+    alone earns `spot-check required`. The absence is prose-provenance
+    and no longer raises a tier on its own — see
+    `test_detail_page_verdict_matches_memory_show_on_a_prose_miss` for
+    the calendar-fresh version of this same body, where the bucket
+    renders and the verdict stays `fresh`.
+    """
     target = tmp_path / "cited-then-deleted.md"
     target.write_text("ephemeral", encoding="utf-8")
     m = store.write(content=f"The runbook lives at {target}", scopes=["tools"])
@@ -739,6 +748,67 @@ def test_search_hits_fold_in_commit_drift_like_the_mcp_surface(
     assert "spot-check recommended" in detail.text
 
 
+async def test_detail_page_verdict_matches_memory_show_on_a_prose_miss(
+    memory_dir: Path, store: Store, tmp_path: Path
+) -> None:
+    """The detail page's verdict, checked against the MCP answer for the
+    same memory rather than against a hard-coded string.
+
+    `_render_memory_detail` claims it "cannot disagree with what the
+    model sees for the same memory" — and it did, on the one input the
+    two sites did not share: it folded the FULL `path_drift.missing`
+    count into `compute_staleness_verdict` while `handlers/show.py`
+    folded in `claim_anchored_missing`. The trigger is ordinary, not
+    exotic: any calendar-fresh memory whose body mentions a path this
+    machine does not have and nobody attested — a remote host's config,
+    an `/etc/...` example — read `fresh` to the model and `spot-check
+    recommended` on the page, sending a curator to re-verify a memory the
+    ~0-of-15 sweep says is almost certainly fine.
+
+    Both halves of the provenance contract are pinned here, because the
+    cheap way to make the verdicts agree would be to stop rendering the
+    evidence: the path stays on the page, it just no longer speaks as a
+    verdict.
+    """
+    import html as html_mod
+
+    from bettermemory.server import build_server
+    from bettermemory.session import SessionState
+    from bettermemory.web import _verdict_chip
+
+    cited = tmp_path / "prose-only.toml"
+    cited.write_text("x\n", encoding="utf-8")
+    m = store.write(
+        content=f"The bastion reads its collector config from `{cited}`.",
+        scopes=["tools"],
+    )
+    # Verified just now (calendar-fresh) with NOTHING attested, then the
+    # cited file goes away — so the absence is prose-provenance only.
+    store.mark_verified(m.id)
+    cited.unlink()
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    server = build_server(config=cfg, store=store, state=SessionState())
+    shown = await _mcp_call(server, "memory_show", {"id": m.id})
+
+    # Premise, stated rather than assumed: the model is shown the absence
+    # and still told `fresh`.
+    assert shown["path_drift"]["missing"] == [str(cited)]
+    assert shown["path_drift"]["claim_anchored_missing"] == []
+    assert shown["staleness_verdict"] == "fresh"
+
+    client = _app_with(memory_dir, store, cfg.behavior)
+    detail = client.get(f"/memories/{m.id}")
+    assert detail.status_code == 200
+    assert _verdict_chip(shown["staleness_verdict"]) in detail.text
+    # The pre-fix render, named explicitly so a regression cannot pass by
+    # rendering both chips.
+    assert "spot-check recommended" not in detail.text
+    # And the evidence is still on the page.
+    assert "Missing paths" in detail.text
+    assert html_mod.escape(str(cited)) in detail.text
+
+
 def test_search_threads_every_ranking_input_the_handler_threads(
     memory_dir: Path, store: Store, monkeypatch: Any
 ) -> None:
@@ -918,7 +988,11 @@ def test_search_stays_lexical_and_says_so_under_a_semantic_config(
 # drives it and fails if the handler's answer moves.
 _SEMANTIC_LEG_MATRIX = [
     # Every row below runs with an embeddings extra pinned IMPORTABLE, which
-    # is what the patched `get_model` already implied.
+    # is what the patched `get_model` already implied. That is a PREMISE of
+    # this matrix, not an omission: the gate deliberately does not probe
+    # importability, so the config where none is importable is not a row here
+    # — the note still fires there, and what it must then SAY is pinned by
+    # `test_fused_caveat_holds_when_no_embeddings_extra_can_load`.
     #
     # `hybrid` + dedup off used to be the "nothing asks for the model" row.
     # It is now the headline case instead: installing the extra is by itself
@@ -957,6 +1031,12 @@ async def test_lexical_only_note_fires_exactly_when_a_semantic_leg_ranks(
     the caveat under `search_mode = "keyword"` / `"bm25"` + dedup, where
     `memory_search` passes `semantic_model=None` and both surfaces run the
     same single scorer.
+
+    Every row runs with an extra importable, deliberately — see the matrix
+    comment. The gate's other false-positive class, `semantic_dedup = true`
+    with nothing importable, is not a gate question at all: the note fires
+    there by design and it is its TEXT that has to survive, which
+    `test_fused_caveat_holds_when_no_embeddings_extra_can_load` drives.
 
     Which legs ran is observed, not inferred: `_score_semantic` /
     `_score_keyword` / `_score_bm25` are spied at their `search` call sites,
@@ -1034,6 +1114,98 @@ async def test_lexical_only_note_fires_exactly_when_a_semantic_leg_ranks(
             # Neither of this page's legs contributed to that ranking.
             assert ran == {"_score_semantic"}, label
             assert note == _LEXICAL_ONLY_SEMANTIC_NOTE, label
+
+
+async def test_fused_caveat_holds_when_no_embeddings_extra_can_load(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The config the matrix above holds fixed away: `hybrid` +
+    `semantic_dedup = true` on a machine where nothing imports.
+
+    `_semantic_model_configured` opens on that flag ALONE, without probing
+    any install, so the caveat renders here — and it is supposed to. The
+    gate is two conditions on purpose: narrowing it with an importability
+    probe is the merge `semantic_setup._semantic_rank_leg_active` refuses
+    and `docs/incidents/2026-08-01-broken-optional-extra-killed-retrieval.md`
+    records being attempted, because these notes describe what the HANDLER
+    does rather than what this process could import.
+
+    The burden that leaves is on the sentence, and the sentence failed it:
+    it read "An embeddings extra is installed and search_mode is hybrid",
+    which told this reader they had an extra they do not have and promised
+    a reordering that cannot happen — measured below, the handler fuses the
+    same two legs the page fuses. The contract is not a phrasing; it is
+    that ONE string has to be true on both machines, which is what forces
+    the install to appear as a condition with both branches spelled out.
+    """
+    import bettermemory.search as search_mod
+    from bettermemory.config import BehaviorConfig, StorageConfig
+    from bettermemory.models import Memory
+    from bettermemory.server import build_server
+    from bettermemory.session import SessionState
+    from bettermemory.web import _LEXICAL_ONLY_FUSED_NOTE, _lexical_only_note
+
+    legs: list[str] = []
+
+    def _spy(name: str) -> Any:
+        real = getattr(search_mod, name)
+
+        def wrapper(*a: Any, **k: Any) -> Any:
+            legs.append(name)
+            return real(*a, **k)
+
+        return wrapper
+
+    for scorer in ("_score_keyword", "_score_bm25"):
+        monkeypatch.setattr(search_mod, scorer, _spy(scorer))
+
+    def fake_semantic(candidates: list[Memory], *a: Any, **k: Any) -> Any:
+        # Same stand-in the matrix uses: a regression that resolves a model
+        # here fails the assertion below instead of dying inside a real
+        # cosine scorer on a machine with no extra.
+        legs.append("_score_semantic")
+        return [(m, 1.0, ["theta"]) for m in candidates]
+
+    monkeypatch.setattr(search_mod, "_score_semantic", fake_semantic)
+
+    # One machine, told consistently: nothing imports, nothing is on disk,
+    # and the factory therefore hands back no model. Patched at the probe
+    # `semantic.extra_importable` rather than at a derived predicate, so
+    # `_embeddings_extra_importable` and `resolve_provider` both run for
+    # real — and so the row means the same thing on a CI leg that has an
+    # extra installed as on one that does not.
+    monkeypatch.setattr("bettermemory.semantic.extra_importable", lambda _module: False)
+    monkeypatch.setattr("bettermemory.semantic._torch_extra_installed", lambda: False)
+    monkeypatch.setattr(
+        "bettermemory.semantic._fastembed_extra_installed", lambda: False
+    )
+    monkeypatch.setattr("bettermemory.semantic.get_model", lambda *a, **k: None)
+
+    md = tmp_path / "store"
+    store = Store(md)
+    store.write(content="theta rollout runbook alpha", scopes=["tools"])
+    cfg = Config(
+        storage=StorageConfig(directory=str(md)),
+        behavior=BehaviorConfig(search_mode="hybrid", semantic_dedup=True),
+    )
+    server = build_server(config=cfg, store=store, state=SessionState())
+    payload = await _mcp_call(server, "memory_search", {"query": "theta runbook"})
+    assert payload is not None
+    # Measured, not assumed: `memory_search` ran exactly this page's two legs.
+    assert set(legs) == {"_score_keyword", "_score_bm25"}, legs
+
+    note = _lexical_only_note(cfg)
+    assert note == _LEXICAL_ONLY_FUSED_NOTE, "the gate fires here by design"
+    assert "An embeddings extra is installed" not in note, (
+        "the caveat asserts an install the gate never checked — this reader "
+        "has none. Name the extra as a condition instead."
+    )
+    for branch in ("with one installed", "with none"):
+        assert branch in note, (
+            f"the caveat no longer spells out the {branch!r} branch. Reword "
+            "freely, but the same string renders with and without an extra, "
+            "so it has to be true in both cases."
+        )
 
 
 def test_lexical_only_note_stays_silent_and_inert_on_an_unknown_search_mode(
