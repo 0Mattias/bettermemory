@@ -6055,52 +6055,66 @@ def test_session_start_hook_ok_when_its_binary_path_resolves(tmp_path: Path) -> 
     assert diag.status == "ok", diag.message
 
 
-def test_session_start_hook_judges_a_windows_style_path(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Simulates Windows so the tokenizer choice is pinned everywhere.
+def test_session_start_hook_judges_a_windows_style_path() -> None:
+    """Pins the tokenizer choice on every leg, not just the Windows one.
 
     POSIX `shlex` treats `\\` as an ESCAPE character, so
     `C:\\Users\\me\\bin\\bettermemory` tokenizes to
     `C:Usersmebinbettermemory` — no separator left, so the probe declines
     to judge a path that is perfectly judgeable, and the check reports a
-    stale hook as wired. That is exactly how this shipped and how the
-    Windows CI leg caught it.
+    stale hook as wired. That is how this shipped, and the Windows runner
+    is what caught it.
 
-    Running the real Windows path only on the Windows runner would make
-    that a slow feedback loop, and a future refactor dropping
-    `posix=False` would look green everywhere else. So the environment is
-    simulated here and the assertion runs on every leg.
+    Exercising it only there is a slow loop: a refactor dropping
+    `posix=False` would look green on ten of eleven legs. Hence the
+    explicit `windows=` seam — NOT a monkeypatched `os.name`, which on
+    Python <= 3.11 makes `pathlib` build a `WindowsPath` on Linux and
+    raise inside pytest's own failure formatting, turning a failed
+    assertion into an INTERNALERROR that takes the whole run down. That
+    mistake cost a second red CI run before this test reached a safe form.
     """
     from bettermemory.doctor import _session_start_hook_broken_path
 
-    monkeypatch.setattr(os, "name", "nt")
-    monkeypatch.setattr(os, "sep", "\\")
-    monkeypatch.setattr(os, "altsep", "/")
-
     stale = r"C:\gone\bin\bettermemory"
-    assert _session_start_hook_broken_path(f"{stale} session-start || true") == stale, (
-        "a Windows-style path must survive tokenizing and be judged"
+    assert (
+        _session_start_hook_broken_path(f"{stale} session-start || true", windows=True)
+        == stale
+    ), "a Windows-style path must survive tokenizing and be judged"
+
+
+def test_session_start_hook_strips_quotes_around_a_windows_path() -> None:
+    """Non-posix tokenizing keeps the quotes; the probe must not.
+
+    `C:\\Program Files\\…` has to be quoted to survive its space, and a
+    candidate still wearing its quotes resolves nowhere — it would read as
+    unjudgeable and silently pass.
+    """
+    from bettermemory.doctor import _session_start_hook_broken_path
+
+    stale = r"C:\Program Files\bm\bettermemory"
+    assert (
+        _session_start_hook_broken_path(
+            f'"{stale}" session-start || true', windows=True
+        )
+        == stale
     )
 
 
-def test_session_start_hook_strips_quotes_around_a_windows_path(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Non-posix tokenizing keeps the quotes; the probe must not.
+def test_session_start_hook_posix_probe_ignores_a_windows_path() -> None:
+    """The counterweight: on POSIX a backslash string is not a path.
 
-    `C:\\Program Files\\…` has to be quoted to survive the space, and a
-    candidate still wearing its quotes is not a path any filesystem call
-    will resolve — it would read as unjudgeable and silently pass.
+    Without this, `separators` could be widened to include `\\` on every
+    platform and both tests above would still pass — while a POSIX box
+    started warning about a config it has no standing to judge.
     """
     from bettermemory.doctor import _session_start_hook_broken_path
 
-    monkeypatch.setattr(os, "name", "nt")
-    monkeypatch.setattr(os, "sep", "\\")
-    monkeypatch.setattr(os, "altsep", "/")
-
-    stale = r"C:\Program Files\bm\bettermemory"
-    assert _session_start_hook_broken_path(f'"{stale}" session-start || true') == stale
+    assert (
+        _session_start_hook_broken_path(
+            r"C:\gone\bin\bettermemory session-start || true", windows=False
+        )
+        is None
+    )
 
 
 @pytest.mark.parametrize(

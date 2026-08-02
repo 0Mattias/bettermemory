@@ -1497,7 +1497,9 @@ def _declares_session_start_hook(data: Any) -> bool:
     return _session_start_hook_command(data) is not None
 
 
-def _session_start_hook_broken_path(command: str) -> str | None:
+def _session_start_hook_broken_path(
+    command: str, *, windows: bool | None = None
+) -> str | None:
     """The explicit binary path this command names, when it cannot run.
 
     ``None`` means "no complaint" — either the command names the binary by
@@ -1526,6 +1528,16 @@ def _session_start_hook_broken_path(command: str) -> str | None:
     put something else first, and reading that as the binary is how a
     check invents failures that aren't there.
     """
+    # `windows` is a test seam, and an explicit one on purpose. Simulating
+    # the platform by monkeypatching `os.name` looks tidier and is a trap:
+    # on Python <= 3.11 `pathlib.Path.__new__` dispatches on `os.name`, so
+    # a patched `os.name` makes `Path(...)` build a `WindowsPath` on Linux
+    # and raise `NotImplementedError` — including inside pytest's own
+    # failure formatting, which turns a test failure into an
+    # INTERNALERROR. A parameter mutates nothing and behaves the same on
+    # every interpreter.
+    is_windows = os.name == "nt" if windows is None else windows
+
     # `posix=False` on Windows because POSIX tokenizing treats `\` as an
     # ESCAPE character: `C:\Users\me\bin\bettermemory` comes back as
     # `C:Usersmebinbettermemory`, which no longer contains a separator, so
@@ -1534,9 +1546,8 @@ def _session_start_hook_broken_path(command: str) -> str | None:
     # wired, which is the defect this function exists to close. Non-posix
     # mode keeps backslashes but also keeps the quotes around a quoted
     # token, hence the strip.
-    posix = os.name != "nt"
     try:
-        tokens = shlex.split(command, posix=posix)
+        tokens = shlex.split(command, posix=not is_windows)
     except ValueError:
         # Unbalanced quotes in a foreign, hand-edited file. Not our
         # business to adjudicate.
@@ -1549,15 +1560,17 @@ def _session_start_hook_broken_path(command: str) -> str | None:
         return None
     candidate = tokens[index - 1]
     if (
-        not posix
+        is_windows
         and len(candidate) >= 2
         and candidate[0] == candidate[-1]
         and candidate[0] in "\"'"
     ):
         candidate = candidate[1:-1]
     # Only an explicit path is judgeable. A bare name may be resolved by a
-    # launcher that precedes it, or fetched on demand.
-    if os.sep not in candidate and (os.altsep or os.sep) not in candidate:
+    # launcher that precedes it, or fetched on demand. Separators come from
+    # `is_windows` rather than `os.sep` so the seam covers this too.
+    separators = ("\\", "/") if is_windows else ("/",)
+    if not any(sep in candidate for sep in separators):
         return None
     # An unexpanded placeholder or variable is a template, not a path.
     if "$" in candidate or "%" in candidate:
