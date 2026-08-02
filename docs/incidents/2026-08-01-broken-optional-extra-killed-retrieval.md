@@ -106,8 +106,8 @@ returns `False` silently, because that is the default install and not a fault.
 Logging the broken case is load-bearing: a bare `False` would have traded a loud
 crash for a silent capability downgrade, where search quietly gets worse and
 nothing in the process says why — the failure this directory exists to catch.
-`extra_import_failure` retains the reason string, because logs go to a file
-nobody reads and `doctor` needs the text.
+`extra_import_failure` retains the reason string, because the log file is not
+what a user consults at diagnosis time and `doctor` needs the text.
 
 Both model loaders grew the matching `except Exception` arm, and `find_spec` —
 documented to return `None` for "not found" but which raises on some damaged

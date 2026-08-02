@@ -46,7 +46,7 @@ repro2 -> []
 
 ### Blast radius
 
-Narrower today than it reads, and worth stating exactly rather than dramatically.
+Bounded by store size, and the bound is stated exactly below.
 
 The maintainer's live store holds 239 memories. `_handlers._INDEX_THRESHOLD_DEFAULT` is 500, and `_handlers.load_search_candidates` only draws candidates from the FTS index at or above that threshold — below it every `memory_search` runs a full `load_all` off disk. So on a store this size a stale index does **not** poison search candidate selection. What it does poison:
 

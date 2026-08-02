@@ -555,7 +555,7 @@ processes, never mocks — mocks are a regression guard layered on top
 of a live run, never a substitute (house rule). No phase merges until
 its benchmark number is recorded in this doc.
 
-## The claim ladder — what each phase lets you honestly say
+## The claim ladder — what each phase licenses you to claim
 
 - **Today:** "multiple agents can safely share one store." (True,
   small-scale, unmeasured.)

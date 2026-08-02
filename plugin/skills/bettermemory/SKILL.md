@@ -63,7 +63,7 @@ Call `memory_record_use(memory_ids=[…], outcome=…)` explicitly only to overr
 
 The explicit override wins via override semantics — the server purges the pending token before recording.
 
-Outcomes are not just audit rows. Under the usage-aware ranking flags (`[behavior] endorsement_boost` / `outcome_demotion`, both opt-in), an explicit `applied` nudges the memory up on later searches and an active `ignored`/`contradicted` slides it down — all bounded near-tie breakers, cleared by a later genuine `applied` or by `memory_update`/`memory_verify`. Record honestly; the ranker learns from it.
+Outcomes are not just audit rows. Under the usage-aware ranking flags (`[behavior] endorsement_boost` / `outcome_demotion`, both opt-in), an explicit `applied` nudges the memory up on later searches and an active `ignored`/`contradicted` slides it down — all bounded near-tie breakers, cleared by a later genuine `applied` or by `memory_update`/`memory_verify`. Record the outcome that actually occurred; the ranking flags read these rows.
 
 ### Claim-level provenance
 

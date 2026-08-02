@@ -35,7 +35,7 @@ Scan detail — last 30d: 1,282 retrieval occurrences · 808 applied-use
 events · 244 turns audited (32 no-signal excluded, 59 repeat audits
 deduped). All time: 2,768 · 1,652 · 403 (38 no-signal, 59 deduped).
 
-Reading it honestly:
+Reading the table:
 
 - The 30-day rates beat the all-time rates — `memory_helped` by
   roughly two to one — because the attestation tooling matured

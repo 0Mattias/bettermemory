@@ -78,7 +78,7 @@ Two caveats, both directionally favorable to the rules:
   tombstoned ("unknown"). Traced in the event log: written and then
   removed at explicit user request as part of a project trace-removal,
   tombstone included. The detail lane's `unknown` status rendered a
-  deliberate purge honestly — no curation action.
+  deliberate purge accurately — no curation action.
 - One flagged turn's top hit was a plainly wrong memory while the
   right one (same domain, explicitly named in the message) existed but
   ranked below it — a ranking miss, single occurrence, noted for the

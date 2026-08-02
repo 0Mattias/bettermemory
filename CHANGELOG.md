@@ -49,6 +49,19 @@ The 3.36.0 entry above lost its aphorism lede and four phrases that graded the
 release instead of describing it. Four source comments went the same way
 (`sync.py`, `store.py`, `origin.py`, `handlers/scope_overview.py`).
 
+A sweep of every tracked markdown file except this one, using the linter's three
+wording regexes, found 34 hits. Six are fixed: the shipped plugin skill told the
+model to "record honestly" and credited a ranker with learning, where the
+mechanism is `endorsement_boost` and `outcome_demotion` reading a table;
+`docs/eval-results.md`, which README links, introduced its published figures
+under "reading it honestly"; and four passages in the incident and planning
+documents now state a fact rather than commenting on it. The 28 that stay are
+deliberate — 13 in the bench preregistrations and READMEs, which grade their own
+pre-committed predictions as their method; 8 uses of the MCP *session* concept
+the tools are named for; 3 naming the audit sweep that found an incident, in the
+field that records exactly that; and 4 one-offs, among them `CONTRIBUTING.md`'s
+own rule quoting the word it bans, and vendored third-party material.
+
 ### Fixed — `CONTRIBUTING.md` described a setup that no longer exists
 
 The "Local setup" section still told a contributor to `source venv/bin/activate`
