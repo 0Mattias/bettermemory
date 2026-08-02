@@ -142,9 +142,14 @@ def test_all_version_headings_well_formed() -> None:
     repo is named `vX.Y.Z`, so an author writing the heading beside
     `git tag -a v3.29.0` is one keystroke from a heading no guard reads.
 
-    Only the CURRENT version is covered elsewhere (a mangled heading
-    makes `_entry_text` return None and
-    `test_changelog_has_entry_for_current_version` fail). Historical
+    Only the CURRENT version is covered elsewhere, by two guards that
+    read the headings differently. A mangled heading hides the version
+    from `_changelog_headings`, failing
+    `test_pyproject_version_has_matching_changelog_heading` — the one
+    that always runs. It also makes `_entry_text` return None, failing
+    `test_newest_tag_window_commits_are_represented`, but only where that
+    test does not skip: it needs the tag pushed, two strict `vX.Y.Z`
+    tags, and enough history to enumerate the window. Historical
     headings have this test and nothing else — and rotting historical
     headings are the documented 1.3.0 / 1.2.1 / 2.6.0 class, bodies
     intact with the `##` line silently gone.

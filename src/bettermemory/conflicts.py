@@ -290,7 +290,7 @@ class ConflictQueue:
 
         "Skipped" UNDERSTATES it, and the reader should know before
         relying on this: every mutation path is a read-modify-write —
-        `upsert_scan` and `record_verdict` both call this and then hand
+        `upsert_scan` and `resolve` both call this and then hand
         the result to `_write_all_locked`, which rewrites the whole file
         from the survivors. So a line this cannot parse is not skipped
         for the duration of one read, it is DELETED on the next write.
