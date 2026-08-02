@@ -6261,6 +6261,19 @@ _DESC_BUDGET_PRESSURE = _DESC_BUDGET_CEILING - 100
 # pinned retrieval-event set stay; the probe-construction and
 # why-this-matters essay moved to docs/api.md, where the hook author who
 # needs it already reads. Same trade `DESC_EPISODE_SEARCH` made.
+#
+# Re-measured 2026-08-02, and one row had rotted exactly the way the rule at
+# the top of this comment warns: memory_update 1,892 -> 2,033 (+141), from two
+# commits that edited `DESC_MEMORY_UPDATE` and left the table alone — ba6360e's
+# `user_claim_warning` clause on the `content` bullet, then 0bf7a49's
+# `acknowledge_user_claim` escape (part-funded by deleting a `scopes` bullet
+# the leader paragraph already taught). Every OTHER row was re-measured in the
+# same probe and none had moved, so the table sums to the live total again:
+# 25,890 — 110 under `_DESC_BUDGET_CEILING`, 10 under the
+# `_DESC_BUDGET_PRESSURE` warning. 0bf7a49 wrote that live total into its own
+# commit message and still left the row behind it stale, which is the split
+# the rule is about: the total is what fails the build, the row is the only
+# map from that failure to the string you typed.
 _DESC_BASELINE = {
     "episode_handoff": 1560,
     # Re-measured 2026-07-31: 1597 -> 1700 (+103) for the state-channel
@@ -6301,7 +6314,7 @@ _DESC_BASELINE = {
     "memory_scope_overview": 2820,
     "memory_search": 3575,
     "memory_show": 851,
-    "memory_update": 1892,
+    "memory_update": 2033,
     "memory_verify": 1649,
     "memory_write": 2753,
     "memory_write_cancel": 216,
@@ -6396,7 +6409,16 @@ async def test_default_on_descriptions_fit_budget(tmp_path: Path) -> None:
     #             (3.6.4 audited the remaining 16 default-on descriptions;
     #             residual policy-dup collapsed, all field reference kept) ->
     #             27,248 at 8e12b99 -> 27,398 (Phase 7's episode work) ->
-    #             25,535 (the footprint phase's cuts) = `_DESC_BASELINE`'s.
+    #             25,535 (the footprint phase's cuts) -> 25,773, once
+    #             that phase's closing follow-ups added 238 back. The
+    #             25,535 was taken before them, which is why the rows
+    #             that commit landed sum to 25,773 and why three of its
+    #             four per-tool cut figures above sit below the row
+    #             printed beside them; tests/test_resident_footprint.py
+    #             records the +238, and four published surfaces had to be
+    #             corrected for the same snapshot. Then -> 25,749
+    #             (memory_audit_turn's false clause) -> 25,890, measured
+    #             live 2026-08-02 and equal to `_DESC_BASELINE`'s sum.
     #   ceilings: 27,800 -> 27,100 (3.6.4 ratcheted the sweep in) -> 27,250
     #             (3.8.0, for one field-pin: the credential gate's
     #             `credential_warning` status and its `acknowledge_credential`
@@ -6404,7 +6426,9 @@ async def test_default_on_descriptions_fit_budget(tmp_path: Path) -> None:
     #             existing transient pair) -> 27,500 -> `_DESC_BUDGET_CEILING`
     #             (the footprint phase ratcheted the cuts in, rule 3).
     # Slack held deliberately constant across the last two recalibrations —
-    # 452 chars at 27,500, 465 here — so the ratchet-down tightened the
+    # 452 chars at 27,500, 465 here (the same pre-follow-up snapshot as the
+    # 25,535 above; 227 against the 25,773 that actually landed, and 110
+    # today) — so the ratchet-down tightened the
     # budget by 1,500 without also tightening the posture toward the next
     # legitimate field-pin. A ratchet that silently does both is how a
     # budget starts arbitrating edits that have nothing to do with it,

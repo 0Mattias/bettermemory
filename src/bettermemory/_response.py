@@ -112,11 +112,13 @@ class ResponseBuilder:
         applies, but not the same no-signal SHAPE: `memory_show` renders a
         failing gate as an explicit `null`, this surface omits the key
         entirely (`attach_commit_drift_counts` below has the long form —
-        the two are easy to conflate and have been). A
-        `spot_check_recommended` hit with `path_drift.missing =
-        ["src/auth/middleware.py"]` is directly actionable: the model
-        memory_updates the rotted bit or memory_verifies the rest, no
-        memory_show round-trip required.
+        the two are easy to conflate and have been). The lists are what
+        spare the caller a memory_show round-trip, but `missing` is not
+        by itself the set to act on: only its `claim_anchored_missing`
+        subset (below) moves the verdict, so a hit can ship `fresh` with
+        entries in `missing`, and a `spot_check_recommended` hit can
+        carry prose-scraped entries beside the anchored one that
+        actually escalated it.
 
         A non-empty route-suppressed set (`PathDriftReport`'s
         `dropped_as_route` bucket, threaded through
@@ -306,8 +308,11 @@ class ResponseBuilder:
         `staleness_verdict` is computed here WITHOUT a commit-drift
         contribution (`commit_drift_count=None`, since no per-row repo is
         resolved), so it can read fresher than the same memory's
-        `memory_show` verdict. `path_drift` does contribute — the body is
-        loaded on this path, unlike `summary_to_dict`'s.
+        `memory_show` verdict. Path drift does contribute — the body is
+        loaded on this path, unlike `summary_to_dict`'s — but only
+        through `claim_anchored_missing`, the narrowed input every other
+        verdict site passes; a prose-scraped miss leaves the verdict
+        where it was.
         """
         from .models import first_summary_line
 

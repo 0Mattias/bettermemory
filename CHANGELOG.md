@@ -190,10 +190,12 @@ stopped scanning. Claude Code merges the `SessionStart` bindings it finds across
 settings files and plugin manifests and runs all of them, so a user who
 hand-wired an absolute path years ago and has since installed the plugin carries
 two bindings and a hint that reaches the model — and `doctor` called that hook
-broken. Every candidate FILE is scanned now (within one file the first matching
-binding is still the one judged), one runnable or unjudgeable binding anywhere
-returns `ok`, and the stale spelling is named as a detail on that `ok`: dead
-config rather than a broken hook.
+broken. Every binding in every readable candidate FILE is judged now — both
+bindings can sit in one settings.json, so a stale one above a runnable one no
+longer hides it, and when they are all stale the warning counts the bindings it
+actually read rather than the files it looked at. One runnable or unjudgeable
+binding anywhere returns `ok`, and the stale spelling is named as a detail on
+that `ok`: dead config rather than a broken hook.
 
 ### Changed — inside a cloud-synced folder, `.envrc` puts the venv outside it
 
