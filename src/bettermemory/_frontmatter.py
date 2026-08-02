@@ -418,12 +418,35 @@ def dumps(
     `_MAX_FILE_BYTES` to use the full read cap for that bounded growth.
 
     `max_yaml_bytes` is the analogous bound on just the frontmatter-YAML
-    region. It defaults to the flat `_MAX_YAML_BYTES`, so a first write is
-    unaffected; the metadata-only LIFECYCLE re-dumps (`mark_verified` /
-    `rename_scope`) pass a reduced ceiling (`store._lifecycle_redump_yaml_cap`)
-    that reserves `_REMOVAL_META_BUDGET_BYTES` below `_MAX_YAML_BYTES`, mirroring
-    the file-axis band ceiling. The reduced ceiling only ever binds *tighter*
-    than the flat cap — it can never relax it (see the two checks below).
+    region. The signature default is the flat `_MAX_YAML_BYTES` — but that says
+    only what an argument-less caller gets, NOT that a first write is
+    unaffected, which is what this docstring inferred until
+    `store._yaml_admission_cap` (645d909) made the inference false. A reduced
+    ceiling now reaches here from TWO sources, keyed on what the write DOES
+    rather than on which function performs it:
+
+      * `store._yaml_admission_cap()` — `Store._write_path`'s own default, so
+        every write that ADMITS content (`Store.write`, `Store.update`) arrives
+        with a reduced ceiling, a first write included. `memory_update` can grow
+        the frontmatter without touching the body — 64 `links`, each with a long
+        `note`, are all individually legal and together land the frontmatter
+        just under the flat cap — and without the reservation that minted
+        records `memory_remove` could then never tombstone.
+      * `store._lifecycle_redump_yaml_cap(current_yaml)` — the metadata-only
+        re-dumps of an already-admitted record (`mark_verified`,
+        `record_corroboration`, `rename_scope`'s active branch, `migrate`'s
+        origin backfill/repair) reserve the same `_REMOVAL_META_BUDGET_BYTES`,
+        but keyed on the record's CURRENT frontmatter, so a record already past
+        the ceiling freezes there rather than being refused outright.
+
+    A caller that passes nothing takes the flat cap, which is what the re-dumps
+    that must not become refusable want — `store.tombstone` (it adaptively trims
+    its own removal metadata to fit rather than lean on a ceiling),
+    `store.restore`, `rename_scope`'s tombstone branch — and what `episodes`
+    wants, being written once and never tombstoned, so it reserves nothing for a
+    removal that never comes. Neither reduced ceiling can RELAX the flat cap: both
+    are `<= _MAX_YAML_BYTES`, and the second check below fires only for a
+    ceiling that comes in strictly under it.
     """
     # Pre-flight: reject an alias/nesting bomb BEFORE `yaml.dump` materializes
     # its (alias-free) expansion. The `_MAX_YAML_BYTES` check below is a
@@ -455,16 +478,21 @@ def dumps(
             f"({yaml_bytes} bytes); refusing to write — a file this large "
             "would be rejected on read, silently dropping the record"
         )
-    # Additional, tighter YAML ceiling for LIFECYCLE re-dumps. This fires ONLY
-    # when a caller opts in with a reduced `max_yaml_bytes` (< the flat cap
-    # checked above), so it never weakens the flat enforcement — a first write,
-    # which passes the default `_MAX_YAML_BYTES`, skips it entirely. It gives the
-    # frontmatter-YAML axis the band-reservation discipline the file axis already
-    # has (`store._lifecycle_redump_cap`): a legal `mark_verified` / `rename_scope`
-    # can no longer grow an active record's frontmatter to within the removal-
-    # metadata budget of `_MAX_YAML_BYTES`, which would strand the record
-    # un-removable (its tombstone re-dump could not fit the `removed:` metadata
-    # under the flat YAML cap even after the adaptive trim).
+    # Additional, tighter YAML ceiling, opted into per call. This fires ONLY
+    # when a caller passes a reduced `max_yaml_bytes` (strictly under the flat
+    # cap checked above), so it never weakens the flat enforcement, and a caller
+    # that passes nothing skips it entirely. It gives the frontmatter-YAML axis
+    # the removal-budget reservation the file axis already has, on BOTH of that
+    # axis's arms: admission (`store._yaml_admission_cap`, mirroring
+    # `_MAX_WRITE_BYTES`) and lifecycle re-dump
+    # (`store._lifecycle_redump_yaml_cap`, mirroring `store._lifecycle_redump_cap`).
+    # Either way, a record cannot be grown to within the removal-metadata budget
+    # of `_MAX_YAML_BYTES` and stranded un-removable — its tombstone re-dump
+    # could not fit the `removed:` metadata under the flat YAML cap even after
+    # the adaptive trim. The message below says "lifecycle" because that arm
+    # shipped first (dde864f); the admission arm (645d909) raises it too, so a
+    # `memory_update` that over-fills `links` sees it on a content-admitting
+    # write rather than on a re-dump.
     if max_yaml_bytes < _MAX_YAML_BYTES and yaml_bytes > max_yaml_bytes:
         raise ValueError(
             f"frontmatter YAML exceeds {max_yaml_bytes}-byte lifecycle cap "

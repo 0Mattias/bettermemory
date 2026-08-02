@@ -136,12 +136,33 @@ Trusted publishing does not change the yank flow. From PyPI's project page, go t
 ## Listing in the MCP registry
 
 `.github/workflows/publish-mcp.yml` submits `server.json` to the MCP registry.
-It fires on `release: published`, not on the tag, because the registry refuses
-a listing whose version is not yet on PyPI — and `release.yml`'s
-`github-release` job declares `needs: publish-pypi`, so a published release is
-the first moment that precondition is known to hold. It is a separate workflow
-rather than another job in `release.yml` so that a registry outage cannot turn
-a good PyPI release red.
+The registry refuses a listing whose version is not yet on PyPI, so the trigger
+has to *follow* the PyPI publish rather than race it off the `v*` tag push the
+upstream guide suggests. Three triggers are declared, and on the automated path
+the one that actually fires is `workflow_run` against the **Release** workflow:
+it observes that run finishing, and on a tag push that run cannot conclude
+`success` unless its `publish-pypi` job did — `publish-pypi` is not skipped on
+a `push` event, and `github-release` further declares `needs: publish-pypi`.
+The job is gated on a succeeded run whose `head_branch` starts with `v`, so a
+failed release and the TestPyPI dispatch list nothing, and it checks out that
+tag rather than the default branch — under `workflow_run` the default checkout
+is wherever `main` points *now*, which would publish a `server.json` describing
+some version other than the one that just went to PyPI.
+
+`release: published` is the second trigger and is kept deliberately, but it
+covers only a release cut by hand or with a PAT. A release created by
+`release.yml`'s `github-release` job raises no run-starting event: GitHub
+suppresses events raised by a job authenticating with the default
+`GITHUB_TOKEN` — a recursion guard — and that job uses exactly that token. The
+workflow shipped in 3.35.0 with `release: published` as its only automatic
+trigger and consequently never fired once; the 3.34.0 listing that existed had
+come from the `workflow_dispatch` backfill below, so a succeeding fallback hid
+a primary path that could not run. If you are reasoning about why a release did
+or did not get listed, the Release run is the thing to look at, not the
+release event.
+
+It is a separate workflow rather than another job in `release.yml` so that a
+registry outage cannot turn a good PyPI release red.
 
 No secret is involved. Authentication is GitHub OIDC (`id-token: write`), and
 the token's repository-owner claim is what authorises the

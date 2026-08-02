@@ -949,15 +949,22 @@ class Store:
               `_REMOVED_TIMESTAMP_HEADROOM_BYTES` of the read cap — the
               `_lifecycle_redump_cap` band discipline stops an active record
               from being GROWN into that zone. The frontmatter-YAML axis now
-              mirrors that discipline: `_lifecycle_redump_yaml_cap` reserves
-              `_REMOVAL_META_BUDGET_BYTES` below `_MAX_YAML_BYTES` on every
-              `mark_verified` / `rename_scope` re-dump, so a legal attestation
+              mirrors that discipline on BOTH arms: `_lifecycle_redump_yaml_cap`
+              reserves `_REMOVAL_META_BUDGET_BYTES` below `_MAX_YAML_BYTES` on
+              every metadata-only re-dump (`mark_verified`,
+              `record_corroboration`, `rename_scope`), so a legal attestation
               can no longer grow an active record's frontmatter into the fatal
-              zone. It stays reachable only for a record whose frontmatter was
-              ALREADY within `_REMOVED_TIMESTAMP_HEADROOM_BYTES` of the YAML cap
-              before the discipline applied — a legacy/hand-written file, or a
-              first write admitted with pathological frontmatter (first writes
-              are deliberately not subject to the lifecycle YAML reservation).
+              zone, and `_yaml_admission_cap` reserves the same budget on
+              `write` / `update`, so a content-admitting write can no longer
+              land a record in it either. It stays reachable only for a record
+              whose frontmatter was ALREADY within
+              `_REMOVED_TIMESTAMP_HEADROOM_BYTES` of the YAML cap before the
+              discipline applied — a legacy or hand-written file, one arriving
+              over `sync pull`, or such a file re-admitted by `restore`, which
+              re-dumps at the flat caps rather than the admission ceiling so
+              that no loadable tombstone becomes a one-way door. The other route
+              this clause used to name — a pathological FIRST write — is exactly
+              what `_yaml_admission_cap` closed.
               `memory_remove` translates it with a shrink-first remediation hint.
         """
         path = self._find_path_for_id(memory_id)
@@ -2856,10 +2863,21 @@ def _lifecycle_redump_yaml_cap(current_yaml_size: int) -> int:
       removal headroom.
 
     The result is always `<= _MAX_YAML_BYTES`, so passing it to `dumps` can only
-    bind tighter than the flat cap, never relax it. There is no YAML analog of
-    the file axis's admission reservation (`_MAX_WRITE_BYTES`): a first write is
-    deliberately NOT subject to this ceiling (see `dumps`), so the YAML mirror has
-    only the band-ceiling and freeze arms, not a third sub-write-cap arm.
+    bind tighter than the flat cap, never relax it.
+
+    The YAML axis DOES have an admission reservation of its own — the
+    `_yaml_admission_cap` above, added once `memory_update` turned out to be
+    able to mint an un-removable record — and it is numerically this function's
+    `reserved_ceiling`. The two differ only in what they do with a record whose
+    frontmatter is ALREADY past that ceiling: admission REFUSES the content
+    edit, while this freezes the record at its current size so a legal verify /
+    rename still lands. There is still no third, sub-write-cap arm here, and
+    that is a property of the axis rather than an oversight: the file axis needs
+    one because it has two distinct ceilings — `_MAX_WRITE_BYTES` for admission,
+    `_MAX_FILE_BYTES` for reads — with a maintenance band between them, so a
+    sub-write-cap record has to be held out of that band; the YAML axis has a
+    single flat cap with one reserved ceiling below it, which the band arm above
+    already enforces.
     """
     reserved_ceiling = frontmatter._MAX_YAML_BYTES - _REMOVAL_META_BUDGET_BYTES
     return min(max(reserved_ceiling, current_yaml_size), frontmatter._MAX_YAML_BYTES)
@@ -3068,11 +3086,22 @@ def _atomic_write_post(
     lifecycle re-dump paths (`tombstone` / `rename_scope`) pass the full
     read cap so appending removal metadata to a near-cap record can't fail.
 
-    `max_yaml_bytes` is likewise forwarded to `dumps`: it defaults to the flat
-    YAML cap, and the metadata-only re-dump callers (`mark_verified` /
-    `rename_scope`'s active branch) pass a reduced ceiling to reserve the
-    removal-metadata budget on the frontmatter-YAML axis (the mirror of the
-    file-axis band ceiling — see `_lifecycle_redump_yaml_cap`).
+    `max_yaml_bytes` is likewise forwarded to `dumps`, and the reduced ceiling
+    on that axis has TWO sources, not one. `_write_path` always passes one of
+    them: `_yaml_admission_cap()`, its own default, for the writes that ADMIT
+    content (`write` / `update` — which is why a FIRST write is subject to a
+    reduced ceiling too), or `_lifecycle_redump_yaml_cap(current_yaml)` when a
+    metadata-only re-dump caller (`mark_verified`, `record_corroboration`,
+    `rename_scope`'s active branch) supplies it; `migrate`'s origin
+    backfill/repair calls this helper directly with that same lifecycle
+    ceiling. Both hold the write at `_MAX_YAML_BYTES` minus
+    `_REMOVAL_META_BUDGET_BYTES` — the frontmatter-YAML mirror of the file
+    axis's admission reservation and band ceiling respectively — the lifecycle
+    one relaxing to the record's current frontmatter size when it already sits
+    above that ceiling, so a legal verify still lands. The flat default here is
+    therefore reached only by the callers that bypass `_write_path` and pass
+    nothing — `tombstone` (whose removal metadata is adaptively trimmed to fit
+    instead), `restore`, and `rename_scope`'s tombstone branch.
     """
     atomic_write_bytes(
         path,
