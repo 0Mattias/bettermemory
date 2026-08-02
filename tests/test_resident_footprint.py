@@ -198,10 +198,21 @@ class Footprint(NamedTuple):
 # description edit that is free. Recorded here in the same commit as the
 # edit, per the rule above — a -24 is exactly the size of drift this
 # diagnostic table has already been caught carrying.
+# RE-MEASURED again, descriptions 25,749 -> 25,890 (+141) and input_schemas
+# 5,233 -> 5,293 (+60), when `memory_update` grew the `acknowledge_user_claim`
+# parameter and the paragraph documenting it. The commit that made that edit
+# re-measured `_DESC_BASELINE` in tests/test_server.py — memory_update 1,892
+# -> 2,033, the same +141 — and left THIS table alone, so the two sibling
+# tables disagreed about one description for a whole release window. That is
+# the rot the rule at the top of this file exists to prevent, caught by an
+# audit rather than by the suite, because the assertion below is DIAGNOSTIC
+# and a stale row never fails. Re-measuring one of two tables is the same
+# defect as re-measuring neither: when a leg moves, grep for every table that
+# records it.
 _FOOTPRINT_BASELINE = Footprint(
     instructions=1_608,
-    descriptions=25_749,
-    input_schemas=5_233,
+    descriptions=25_890,
+    input_schemas=5_293,
     output_schemas=1_077,
     skill_frontmatter=759,
     tool_count=18,
