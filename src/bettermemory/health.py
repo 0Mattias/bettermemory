@@ -1135,8 +1135,11 @@ class HealthReport:
     # Null when the report was built by `compute_health` directly — that
     # function takes memories + events and never sees `root`, so unit
     # fixtures and offline callers that hand in a list keep getting None.
-    # Populated on every production path, all of which go through
-    # `report_for_directory`.
+    # Production paths all go through `report_for_directory`, which does
+    # have a root; there it is null only when the episode subtree could
+    # not be walked at all (see that function's OSError guard). Either
+    # way None reads as "no measurement", never as "measured, empty" —
+    # an empty subtree has its own reading, all zeroes.
     episode_volume: EpisodeVolume | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -3347,7 +3350,30 @@ def report_for_directory(
     # `bettermemory health` are curation-pass surfaces, not per-turn
     # ones. `memory_scope_overview` — the session-start hot path — does
     # not call this function and must not grow an episode walk.
-    report.episode_volume = EpisodeStore(root).volume()
+    #
+    # Guarded because the tiers fail separately: this is the one line in
+    # the function that touches `<root>/episodes`, and it reaches it
+    # through the bare `iterdir` in `EpisodeStore.iter_session_ids`. A
+    # regular FILE where that directory belongs (a bad export, a sync
+    # conflict copy) raises NotADirectoryError; a directory this process
+    # cannot read raises PermissionError. Both are OSError, both arrive
+    # after every bucket above is already computed, and not one of those
+    # buckets reads an episode — so letting the raise through would trade
+    # the whole memory-health surface for its one episode gauge.
+    #
+    # Degrades to None rather than a zeroed `EpisodeVolume`, because an
+    # unwalkable subtree is not an empty one and the readers act on that
+    # distinction: on None `render_text` omits its "Episodes:" line and
+    # `to_dict` carries a null, where zeroes would have both state an
+    # empty subtree over episodes nobody could count. None already means
+    # "no reading" for a `compute_health` caller, which never has a root
+    # to measure — this widens that case to "no root, or a root whose
+    # episode subtree could not be walked" rather than inventing a second
+    # null meaning.
+    try:
+        report.episode_volume = EpisodeStore(root).volume()
+    except OSError:
+        report.episode_volume = None
     return report
 
 

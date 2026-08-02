@@ -248,7 +248,28 @@ def accept_proposal(
         if gc.credential_hits and acknowledge_credential
         else []
     )
-    # Same axis for the transient gate, now that it is reachable here.
+    # Same axis for the transient gate, now that it is reachable here —
+    # with one asymmetry against `memory_write` worth naming, because the
+    # obvious repair for it is wrong. There this field is a rollup input
+    # as well as audit evidence: `health._StatsAccumulator` dispatches on
+    # event KIND, and its `write` handler counts `markers` as fires and
+    # `markers_acknowledged` as overrides into `MarkerStats`. This event's
+    # kind is `memory_proposals`, so an accept-time override here is
+    # grep-able in the log — the same standing this surface's
+    # `credentials_acknowledged` has, which no rollup reads either — and
+    # is absent from `MarkerStats.override_rate`.
+    #
+    # Keep it that way while the fires are missing. A refusal on this
+    # surface records no event carrying its `markers` (`_gate_refusal`
+    # drops the gate's `event_kwargs`; the accept event fires only when
+    # the write lands), so the fire the write path logs when the gate
+    # actually refuses has no counterpart here. Dispatching the kind for
+    # its overrides alone would score a marker 1.000 where the same
+    # block-then-acknowledge sequence through `memory_write` scores 0.500
+    # — past the ceiling `MarkerStats.override_rate`'s own docstring
+    # calibrates readers against, and reading as rubber-stamping on any
+    # marker the two surfaces share. Recording the refusal's markers is
+    # the prerequisite, not an optional companion.
     markers_acknowledged = (
         [h.marker for h in gc.transient_hits]
         if gc.transient_hits and acknowledge_transient
