@@ -21,7 +21,7 @@ import pytest
 
 import typing
 
-from bettermemory.config import BehaviorConfig, Config
+from bettermemory.config import BehaviorConfig, Config, ScopesConfig
 from bettermemory.ingest import (
     DEFAULT_PROVENANCE_SCOPE,
     _ACTIONS,
@@ -1037,6 +1037,196 @@ class TestApplyIngestPlanOnNonEmptyStore:
             "a second gate reading that field now inherits the "
             "acknowledgement. Give the new gate its own flag, or extend "
             "`ingest._gate_context`'s rationale to cover it deliberately."
+        )
+
+
+class TestApplyIngestPlanScopeAllowlist:
+    """`[scopes] allowed` is enforced on the ingest path.
+
+    It was not. `apply_ingest_plan` builds its `Store.write` payload by
+    hand, so it never reaches `_validate_write_payload` — the one place
+    every other write path enforces the whitelist — and no gate in
+    `CONTENT_GATES` reads `config.scopes.allowed` either, which is why
+    `consolidate._apply_llm_proposal` hand-rolls the same check. Under
+    `Config(scopes=ScopesConfig(allowed=["tools"]))` a probe still wrote a
+    memory with `scopes=['imported-from-claude-code', 'feedback',
+    'rogue']` — on top of `ba6360e`, whose message already claimed "it is
+    enforced now". That is what these tests exist to stop repeating: the
+    behaviour is pinned here, not asserted in a commit message.
+
+    The refusal is per ROW, not per run: consolidate raises because it
+    judges one cluster at a time, but an ingest plan is a batch and one
+    unsanctioned row must not cost the operator the conforming ones.
+    """
+
+    @staticmethod
+    def _apply(
+        source_root: Path,
+        store: Store,
+        *,
+        allowed: list[str] | None,
+        extra_scopes: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Plan + apply, keyed by source filename.
+
+        `allowed=None` passes `config=None` — the library caller that
+        holds no `Config`, which `_gate_deps` resolves to `Config()`.
+        """
+        config = (
+            None if allowed is None else Config(scopes=ScopesConfig(allowed=allowed))
+        )
+        plan = compute_ingest_plan(
+            source_root,
+            existing_memories=store.load_all(),
+            existing_tombstones=store.load_tombstones(),
+            extra_scopes=extra_scopes or [],
+        )
+        # Every row must be a candidate write before apply, or an
+        # assertion below could pass on a row the PLAN had already
+        # skipped for an unrelated reason.
+        assert {r.action for r in plan.rows} == {"write"}
+        apply_ingest_plan(plan, store, config=config)
+        return {r.source_path.name: r for r in plan.rows}
+
+    def test_empty_allowlist_enforces_nothing(
+        self, source_root: Path, store: Store
+    ) -> None:
+        """The default, and the reason the check is guarded on a non-empty
+        list: an unset `[scopes] allowed` means "any scope" in
+        `_validate_write_payload`, so enforcing it here would turn an
+        untouched knob into a total refusal of every import."""
+        _write_auto_memory(
+            source_root,
+            "ordinary",
+            description="the parser lives in ingest.py",
+            body="Auto-memory files are read from the project memory dir.",
+        )
+        rows = self._apply(source_root, store, allowed=[], extra_scopes=["rogue"])
+        assert rows["ordinary.md"].action == "write"
+        assert rows["ordinary.md"].written_id is not None
+        [stored] = store.load_all()
+        assert stored.scopes == [DEFAULT_PROVENANCE_SCOPE, "feedback", "rogue"]
+
+    def test_absent_config_enforces_nothing(
+        self, source_root: Path, store: Store
+    ) -> None:
+        """`config=None` is the library caller `_gate_deps` documents, and
+        it must not start refusing rows: the `Config()` fallback carries an
+        empty allowlist, which is the case above."""
+        _write_auto_memory(
+            source_root,
+            "ordinary",
+            description="the parser lives in ingest.py",
+            body="Auto-memory files are read from the project memory dir.",
+        )
+        rows = self._apply(source_root, store, allowed=None, extra_scopes=["rogue"])
+        assert rows["ordinary.md"].written_id is not None
+        assert len(store.load_all()) == 1
+
+    def test_offending_row_skipped_and_conforming_row_still_lands(
+        self, source_root: Path, store: Store
+    ) -> None:
+        """The decisive one. Two rows differing only in the type-derived
+        scope: with `project-context` outside the list, that row flips to
+        `skip_invalid` while the `feedback` row commits. Without the
+        enforcement BOTH land — the whole-batch abort consolidate uses
+        would instead lose both."""
+        _write_auto_memory(
+            source_root,
+            "keeper",
+            auto_type="feedback",
+            description="the parser lives in ingest.py",
+            body="Auto-memory files are read from the project memory dir.",
+        )
+        _write_auto_memory(
+            source_root,
+            "outsider",
+            auto_type="project",
+            description="the release workflow",
+            body="The release tag push triggers the PyPI publish workflow.",
+        )
+        rows = self._apply(
+            source_root, store, allowed=[DEFAULT_PROVENANCE_SCOPE, "feedback"]
+        )
+        assert rows["keeper.md"].action == "write"
+        assert rows["keeper.md"].written_id is not None
+        assert rows["outsider.md"].action == "skip_invalid"
+        assert rows["outsider.md"].written_id is None
+        # The decisive assertion: exactly the conforming row reached disk.
+        assert [m.scopes for m in store.load_all()] == [
+            [DEFAULT_PROVENANCE_SCOPE, "feedback"]
+        ]
+
+    def test_extra_scope_outside_the_allowlist_is_refused(
+        self, source_root: Path, store: Store
+    ) -> None:
+        """The reported repro verbatim: `ingest --scope rogue` against
+        `allowed=["tools"]` planted a scope `memory_write` and
+        `memory_update` both refuse."""
+        _write_auto_memory(
+            source_root,
+            "ordinary",
+            description="the parser lives in ingest.py",
+            body="Auto-memory files are read from the project memory dir.",
+        )
+        rows = self._apply(
+            source_root, store, allowed=["tools"], extra_scopes=["rogue"]
+        )
+        assert rows["ordinary.md"].action == "skip_invalid"
+        assert store.load_all() == []
+
+    def test_reason_names_the_offenders_in_memory_writes_own_words(
+        self, source_root: Path, store: Store
+    ) -> None:
+        """The operator reads `render_ingest_text`, not the source. The
+        reason opens on `_validate_write_payload`'s sentence so the words
+        match what `memory_write` would have returned (the same rule
+        `_gate_skip_reason` follows for gate statuses), then names the two
+        scopes ingest stamps itself — with a whitelist naming neither, an
+        import is refused wholesale and nothing else says why."""
+        _write_auto_memory(
+            source_root,
+            "ordinary",
+            description="the parser lives in ingest.py",
+            body="Auto-memory files are read from the project memory dir.",
+        )
+        plan = compute_ingest_plan(
+            source_root,
+            existing_memories=store.load_all(),
+            existing_tombstones=store.load_tombstones(),
+            extra_scopes=["rogue"],
+        )
+        apply_ingest_plan(
+            plan, store, config=Config(scopes=ScopesConfig(allowed=["tools"]))
+        )
+        [row] = plan.rows
+        reason = row.reason or ""
+        assert "scope(s) not in allowed list" in reason
+        # Only the unsanctioned scopes are named as offenders, the
+        # allowlist itself is echoed so the fix is visible from the line,
+        # and the two scopes ingest stamps are called out by name.
+        assert "'rogue'" in reason
+        assert "'tools'" in reason
+        assert DEFAULT_PROVENANCE_SCOPE in reason
+        # And it survives to the surface the operator actually reads.
+        assert reason in render_ingest_text(plan, dry_run=False)
+
+    def test_allowlist_read_from_the_same_config_the_gates_use(self) -> None:
+        """`apply_ingest_plan` reads the list off `_gate_deps(...).config`
+        rather than re-deriving the `config or Config()` fallback. A second
+        copy of that resolution is how the plan and apply sides drifted
+        apart over the dedup policy, and here the drift would be silent in
+        the unsafe direction — a divergent fallback decides the knob is
+        empty and enforces nothing."""
+        import inspect
+
+        from bettermemory import ingest as ingest_mod
+
+        src = inspect.getsource(ingest_mod.apply_ingest_plan)
+        assert "gate_deps.config.scopes.allowed" in src, (
+            "the allowlist must come from the same object the gates run "
+            "against; re-resolving `config if config is not None else "
+            "Config()` here reopens the drift this pins shut"
         )
 
 

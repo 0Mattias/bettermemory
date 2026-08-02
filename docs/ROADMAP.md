@@ -37,12 +37,18 @@ Planned work, in rough priority order. Plans change; the
      and similarity, each with a deliberate rationale (it gates the LLM
      claim, not the stamped body), so that half is policy review rather
      than a mechanical reroute. `ingest.apply_ingest_plan` is the third:
-     it bypasses `_validate_write_payload` entirely, and the residue
-     worth closing is that it can plant scopes outside a configured
-     `[scopes] allowed` whitelist. Close it in `apply_ingest_plan` beside
-     the gate loop, not in `cli/ingest.py` — the library entry point is
+     it bypasses `_validate_write_payload` entirely. The `[scopes]
+     allowed` half of that residue is now closed —
+     `ingest._scope_allowlist_reason` runs beside the gate loop (in
+     `apply_ingest_plan`, not `cli/ingest.py`: the library entry point is
      reachable without the CLI, and enforcing at the CLI alone would make
-     the two disagree about the policy.
+     the two disagree about the policy) and flips an offending row to
+     `skip_invalid` rather than aborting the batch. What is left of it is
+     the three caps in the same `_validate_write_payload` that no gate
+     reads either: `max_content_bytes`, `min_content_tokens`,
+     `max_scopes_per_write`. Those are also apply-time-only, and
+     `compute_ingest_plan` takes no `Config`, so a `--dry-run` still
+     over-promises on a row any of them would refuse.
      `memory_update` is the fourth, and it grew rather than shrank: it now
      mirrors two gates by hand — the credential scan, and the user-claim
      gate, added when write-then-update turned out to launder exactly the

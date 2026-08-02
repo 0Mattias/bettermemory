@@ -27,7 +27,12 @@ Design notes:
   gate-driven apply phase reach the same *dedup* verdict for a row
   instead of scoring it under two different policies. The other
   content gates still run only at apply time, so a `--dry-run` can
-  over-promise on a row carrying a credential or a transient marker.
+  over-promise on a row carrying a credential or a transient marker
+  — and, since `apply_ingest_plan` grew the `[scopes] allowed` check
+  (see `_scope_allowlist_reason`), on a row whose scopes fall outside
+  a configured whitelist. `compute_ingest_plan` takes no `Config` at
+  all, which is why the asymmetry stands rather than being closed
+  here.
 
 - **Tombstone-aware.** Source files that match a tombstoned memory
   surface as skipped with the reason ``previously_removed`` — the same
@@ -640,6 +645,52 @@ def _gate_skip_reason(decision: Any) -> str:
     return f"{text} — {detail}" if detail else text
 
 
+def _scope_allowlist_reason(scopes: list[str], allowed: list[str]) -> str | None:
+    """Row `reason` when `scopes` breaks `[scopes] allowed`; None when it doesn't.
+
+    The `[scopes] allowed` whitelist is enforced in `_validate_write_payload`
+    (handlers/_shared.py), and `apply_ingest_plan` never calls it — it builds
+    its `Store.write` payload by hand. No gate in `CONTENT_GATES` reads
+    `config.scopes.allowed` either, which is why `consolidate._apply_llm_proposal`
+    checks it by hand too. So without this function the knob was a no-op on the
+    ingest path: `ingest --scope <not-in-allowlist>` planted an unsanctioned
+    scope that `memory_write` and `memory_update` both refuse, and so did the
+    constant provenance and type-derived scopes when the whitelist omits them.
+
+    An empty `allowed` means "any scope" — the same semantics
+    `_validate_write_payload` gives it, and the same guard consolidate's
+    check opens with. Enforcing on an empty list would turn an unset knob
+    into a total refusal.
+
+    The first sentence is `_validate_write_payload`'s message verbatim so an
+    operator reading `render_ingest_text` sees the words `memory_write` would
+    have returned, the same reason `_gate_skip_reason` keeps each gate's own
+    `status`. The second is ingest-specific and load-bearing: every row carries
+    `DEFAULT_PROVENANCE_SCOPE` plus a type-derived tag that the *user* never
+    typed, and a whole-batch refusal on a store with a whitelist is far more
+    likely to mean "the allowlist doesn't name ingest's own scopes" than
+    "--scope was wrong". It names them without claiming which one failed —
+    `unknown` already says that, and it is just as often a `--scope` value.
+
+    Returns a reason rather than raising: consolidate raises because it
+    refuses per cluster, but a plan is a batch and one unsanctioned row must
+    not abort the rest of the import — the same per-row containment the
+    `except (ValueError, OSError)` arm around `store.write` provides.
+    """
+    if not allowed:
+        return None
+    allowed_set = set(allowed)
+    unknown = [s for s in scopes if s not in allowed_set]
+    if not unknown:
+        return None
+    return (
+        f"scope(s) not in allowed list: {unknown}. "
+        f"Allowed: {sorted(allowed)}. Ingest stamps "
+        f"{DEFAULT_PROVENANCE_SCOPE!r} plus a type-derived scope on every "
+        "row; the allowlist applies to those too."
+    )
+
+
 def apply_ingest_plan(
     plan: IngestPlan,
     store: Store,
@@ -656,6 +707,15 @@ def apply_ingest_plan(
     a single write don't abort the run — the row's action flips to
     `skip_invalid` with the exception text as `reason` so the user
     can see which file failed without losing the rest of the batch.
+
+    ``config`` supplies the `[scopes] allowed` whitelist as well as the
+    dedup knobs. This function builds its `Store.write` payload by hand and
+    so never reaches `_validate_write_payload`, which is where every other
+    write path enforces that list; `_scope_allowlist_reason` closes exactly
+    that hole and nothing more. The other three checks
+    `_validate_write_payload` owns — `max_content_bytes`,
+    `min_content_tokens` and `max_scopes_per_write` — are still missed on
+    this path, and no gate in `CONTENT_GATES` reads them either.
 
     ``force`` must match the flag the plan was computed under. It drops
     the active-store dedup gate for this run (see ``_content_gates``);
@@ -715,6 +775,13 @@ def apply_ingest_plan(
         origin = capture(cwd).model_copy(update={"branch": None})
     gate_deps = _gate_deps(store, config)
     gates = _content_gates(force=force)
+    # Read the allowlist off the SAME object the gates run against rather
+    # than re-deriving `config if config is not None else Config()` here. A
+    # second copy of that fallback is how the plan and apply sides drifted
+    # over the dedup policy (see `resolve_dedup_policy`), and the failure
+    # mode is worse for a whitelist: a divergent fallback would silently
+    # decide the knob is empty and enforce nothing.
+    allowed_scopes = list(gate_deps.config.scopes.allowed)
     # This loop is O(rows x store): each surviving row's dedup gates re-read
     # the whole store and the whole tombstone log from disk. Measured rather
     # than assumed (2026-07-30, synthetic 40-token bodies, one machine): the
@@ -733,6 +800,21 @@ def apply_ingest_plan(
     # this loop across every size tried.
     for row in plan.rows:
         if row.action != "write":
+            continue
+        # `[scopes] allowed`, BEFORE the gate chain — the ordering
+        # `memory_write` uses, where `_validate_write_payload` (which owns
+        # this check) runs ahead of `apply_write_gates`. Two consequences,
+        # both intended. A row refused for scope is not scanned for
+        # credentials, exactly as `memory_write` refuses an unsanctioned
+        # scope before `CredentialGate` ever runs — nothing is written on
+        # either path, so what is deferred is the operator seeing the
+        # secret named, not the secret being kept out. And a row that would
+        # be refused anyway skips the dedup gates' per-row `store.load_all()`,
+        # which is the dominant cost of this loop.
+        scope_reason = _scope_allowlist_reason(row.scopes, allowed_scopes)
+        if scope_reason is not None:
+            row.action = "skip_invalid"
+            row.reason = scope_reason
             continue
         payload: dict[str, Any] = {
             "content": row.body,
