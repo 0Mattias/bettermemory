@@ -7,10 +7,62 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## Unreleased
+
+### Changed — the commit-message register is narrower, and three more rules are enforced
+
+The "Register" rules in `CONTRIBUTING.md` said to describe the change rather than
+the session that produced it, and left everything past first-person narration and
+conversational filler to review. Review did not hold the line: across the last 600
+commits, 28 bodies name the sitting that produced them ("this window", "the last
+round", "an adversarial pass over the previous six commits"), 4 grade a defect
+instead of describing it ("worth stating plainly", "cheerfully reported", "for the
+third time"), and 18 release subjects carry a parenthetical thesis beside the
+version. None of it is actionable for the reader the log is written for, who is
+bisecting a regression and has no access to anyone's calendar.
+
+`tools/commit_lint.py` encodes the decidable part as three new rules —
+`session-narration`, `editorial`, and `release-subject`. Graded against 600 commits
+of real history, they fire 50 times and every hit is a genuine instance; the
+determiners in the session rule are enumerated rather than open (`the current
+window` is absent) so that this project's real domain windows — demotion,
+verification, tag ranges — do not trip it, and the editorial rule leaves the facts
+that make a recurrence actionable alone: incident paths, defect classes, cited
+shas. A `release:` subject is now the version alone, since the release's argument
+belongs in the CHANGELOG entry the tag points at. History is not re-graded; CI
+lints only the commits a push introduces.
+
+The prose rules moved with the linter, and `CONTRIBUTING.md`'s body guidance no
+longer licenses length for its own sake: a body earns each paragraph by carrying a
+fact the diff does not, and a one-line body over a one-line fix is correct.
+
+### Changed — shipped prose states its limits without apologising for them
+
+`README.md` carried three self-undermining asides: a caveat about the age of the
+`bench/toolcost` head-to-head ratio, inside a bullet that does not state the ratio
+and links to the bench README that owns the caveat in more precise terms; a
+hedge on the published eval; and "you shouldn't need it, but" in front of the
+documentation index. The facts are unchanged and the measurements are untouched —
+the serialized `tools/list` figures still trace to their artifact.
+
+The 3.36.0 entry above lost its aphorism lede and four phrases that graded the
+release instead of describing it. Four source comments went the same way
+(`sync.py`, `store.py`, `origin.py`, `handlers/scope_overview.py`).
+
+### Fixed — `CONTRIBUTING.md` described a setup that no longer exists
+
+The "Local setup" section still told a contributor to `source venv/bin/activate`
+and explained the `venv/` rename as the whole story, which stopped being true when
+`.envrc` began resolving a checkout under `~/Documents` or `~/Desktop` to
+`$HOME/.venvs/<checkout-dir-name>` — so the documented command activates nothing
+on exactly the machine the workaround exists for. It now documents both branches
+and the `.venv` symlink that `[tool.pyright]` needs. The "Project values" section
+also pointed at a "Limitations" section of the README; that section is in
+`docs/internals.md`.
+
 ## 3.36.0 - 2026-08-02
 
-This release has one subject: **a green light is only worth what it measured.**
-Nearly every fix below is a check, gate or verdict that reported confidently on
+Nearly every fix below is a check, gate or verdict that reported on
 something other than the thing it claimed to be reporting on. `doctor` certified
 a hook whose binary does not exist, asserted an extra "imports cleanly" without
 importing it, and counted another project's plugin as this project's wiring. The
@@ -21,9 +73,9 @@ could not read one directory. The detail page and `memory_show` gave different
 staleness verdicts for the same memory, and the gate chain that refuses a claim
 about the user was never consulted by the tool that edits one.
 
-The failure mode they share is not a missing check. It is a check that skips, or
-answers, on a condition other than the one it measures — which is indistinguishable
-from working right up until it matters.
+The shared defect is not a missing check but a check that skips, or answers, on
+a condition other than the one it measures. Such a check is indistinguishable
+from a correct one until the two conditions disagree.
 
 ### Fixed — `ingest` checks `[scopes] allowed`, and only against scopes you typed
 
@@ -34,13 +86,13 @@ committed anyway. The scope allowlist is enforced here now, per row and ahead of
 the gate chain, and an offending row takes the existing `skip_invalid` outcome
 rather than aborting the batch.
 
-Enforcing it naively broke the opposite way, and that half is worth stating
-plainly because it both shipped and was caught inside this window. Ingest stamps
+Enforcing it naively broke the opposite way, and that half shipped and was
+caught inside this release. Ingest stamps
 every row with `imported-from-claude-code` plus a tag derived from the row's own
 type, and the first cut checked *those* against the operator's allowlist. Nobody
 types them and nobody can opt out of them, so any allowlist that failed to name
 them refused every row of every import — while `--dry-run`, which ran no such
-check, cheerfully reported the writes that were about to be refused. Only the
+check, reported the writes that were about to be refused. Only the
 scopes ingest stamps itself are exempt now, derived per row from that row's
 type, so `--scope feedback` on a `project` row is still caller-supplied and
 still checked. `compute_ingest_plan` runs the same predicate in the same
@@ -250,8 +302,8 @@ containing `bettermemory session-start`. It never asked whether that command
 could execute — so a hook naming a binary that no longer exists read as fully
 wired.
 
-That gap is not theoretical and it is not recoverable by the user noticing. A
-hook command that names its binary by absolute path is a hand-edit — `init`
+The gap is reachable on a normal install and produces no signal the user could
+act on. A hook command that names its binary by absolute path is a hand-edit — `init`
 writes no hook at all, it patches only `mcpServers`, and the plugin ships
 `uvx bettermemory session-start` — and a hand-wired path goes stale exactly the
 way the MCP client's binary path does when an environment is rebuilt, moved, or
@@ -276,7 +328,7 @@ them stay quiet, and the executable is located as the token before
 check whose value is a green light, a false alarm is expensive and a missed
 alarm merely restores the previous behaviour.
 
-The first cut of the probe was a no-op on the one platform it mattered most on.
+The probe was initially a no-op on Windows.
 POSIX `shlex` treats `\` as an ESCAPE, so `C:\Users\me\bin\bettermemory`
 tokenized to `C:Usersmebinbettermemory` — no separator left, so the probe
 declined to judge it as a path and went on reporting a stale hook as wired. It
