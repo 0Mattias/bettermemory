@@ -102,17 +102,56 @@ It does mean the argument has to be stated at that strength — a safety
 argument resting on a false absolute is worse than none, since it stops
 the next reader from checking.
 
-One consequence worth naming, because it is the sharpest edge: the
-durable memory is stamped with the PROMOTER's origin. Promoting across a
-worktree boundary therefore RELOCATES the content — the source worktree
-loses the journal entry, and the replacement memory does not come back
-under that worktree's default auto-scoped `memory_search` (it is still
-reachable by `memory_show(id)`, or `memory_search(auto_scope=False)`).
-For the ephemeral sub-agent checkout this is the correct end state and
-it self-heals: once that worktree is deleted, `worktrees_match`'s
-dead-worktree degrade makes the memory globally visible again. For two
-long-lived sibling worktrees it is a real relocation, so promote another
-tree's episode only when you mean to take ownership of the fact.
+One consequence worth naming, because it is the sharpest edge: on a
+promote that actually commits, the durable memory is stamped with the
+PROMOTER's origin, so promoting across a worktree boundary can RELOCATE
+the content — the source worktree loses the journal entry (only on that
+committed path, or on the deferred unlink `memory_write_confirm` runs;
+every non-committed status above leaves the episode in place). Whether
+the replacement memory then comes back under the source tree's default
+auto-scoped `memory_search` is NOT simply the old answer: the root
+recorded on the memory is the promoter's, and `worktrees_match` weighs
+that against the caller's own root, so both trees are operands. Where it
+does not come back, the memory is still reachable by `memory_show(id)`
+or `memory_search(auto_scope=False)`.
+
+Which tree is ephemeral therefore decides the outcome, and the cases do
+not mirror each other. Read `worktrees_match` for the governing rule
+rather than trusting this summary — these are its consequences for
+promote, not a restatement of it:
+
+- **Promoter is the primary checkout** — the canonical swarm fan-in, a
+  coordinator promoting a sub-agent's episode. The memory lands under
+  the primary and stays visible there, and from any worktree LINKED to
+  that primary via relaxation 1 — which includes the sub-agent's own
+  while it lives, for the `git worktree` fan-out this project runs. A
+  sub-agent in a separate CLONE is not linked and does not get that
+  relaxation. Deleting the sub-agent checkout afterwards changes
+  nothing, since its path was never recorded on the memory. Nothing
+  self-heals here because nothing needs to.
+- **Promoter is itself an ephemeral checkout.** The memory carries a
+  root that is about to vanish, and is hidden from the primary and from
+  every sibling for as long as that tree exists. This is the case the
+  dead-worktree degrade repairs — once the PROMOTER's own worktree is
+  positively gone, `worktrees_match` degrades to repo-level matching and
+  the memory surfaces again. A path that has merely become unstattable
+  (unmounted volume, permission-denied parent) is NOT evidence of death
+  and holds the isolation instead.
+- **Promoter is a live sibling** — the memory is rooted there, and the
+  source is the primary or another sibling. A real relocation with no
+  degrade to rescue it, since the recorded root stays alive and unequal.
+  Note this is bullet 1 with the trees swapped and it does NOT mirror
+  it: relaxation 1 is asymmetric by design, resolving a caller's primary
+  and comparing that to the memory's root, so it rescues a memory rooted
+  at the primary and never one rooted at a sibling. Promote another
+  tree's episode only when you mean to take ownership of the fact.
+
+One assumption underneath all three: "the PROMOTER's origin" is the
+origin of the PROCESS serving the call. `capture_origin()` accepts a cwd
+but no production call site passes one, so it reads the server's own
+`Path.cwd()`. For a stdio server spawned per worktree that is the
+promoting tree; a server shared across worktrees stamps every promote
+with its single cwd instead.
 
 Deliberately NOT mirrored into `DESC_EPISODE_PROMOTE`: it was drafted
 there and pulled back out. `test_default_on_descriptions_fit_budget` is
@@ -383,9 +422,10 @@ async def episode_promote(
         # that the caller had to name an unguessable ULID rather than by
         # any read filter. Note the content is distilled, not destroyed:
         # the durable memory now holds it — but stamped with THIS
-        # caller's origin, so a cross-worktree promote relocates the
-        # fact out of the source worktree's default auto-scoped
-        # retrieval.
+        # caller's origin, which is what decides where it stays visible.
+        # Whether that relocates the fact away from the source worktree
+        # depends on how the two trees relate; the module docstring
+        # works the cases through.
         _delete_source_episode(deps, episode_session_id, episode_id)
     elif status == "pending":
         # Stash the linkage so memory_write_confirm can delete the
