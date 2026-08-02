@@ -59,36 +59,61 @@ def _search_mode_needs_model(config: Config) -> bool:
     the load; a missing extra surfaces via ``get_model``'s
     per-provider WARNING plus the handler's install hint.
 
-    ``hybrid`` is deliberately NOT a trigger, even with an extra
-    installed. The factory result feeds every consumer — including
-    the write-dedup gates (``handlers/write.py`` passes any non-None
-    factory result straight into ``find_similar``) — so resolving for
-    hybrid would silently flip dedup from Jaccard to cosine for any
-    extra-installed user who never opted into ``semantic_dedup``, and
-    would make the DEFAULT config (hybrid) pay a model load the
-    moment an extra is present. Hybrid keeps its graceful
-    keyword+bm25 degrade, and per-call ``mode="semantic"`` without
-    the config-level opt-in keeps its explicit install-hint error
-    (``tests/test_server_search_mode.py`` pins that contract).
-    Decoupling the search model from the dedup model would let hybrid
-    fuse semantic without the dedup side effect; that needs the
-    write-path consumer to stop reading the shared factory first.
+    ``hybrid`` is not a trigger HERE, and that is a statement about
+    this predicate rather than about hybrid. Since ba7e857 hybrid DOES
+    resolve a model — on the separate condition, in
+    ``_semantic_model_configured``, that an embeddings extra actually
+    imports. The two modes are split because they want opposite
+    treatment in the case where no extra is installed:
+
+    - ``semantic`` must attempt the load anyway. The handler raises
+      either way, but only the attempt reaches ``get_model``, and
+      ``get_model``'s per-provider WARNING is what puts the missing
+      extra in the log rather than leaving the caller holding a tool
+      error alone.
+    - ``hybrid`` must not attempt it. It degrades to keyword+bm25 by
+      design, so attempting would fire that same install-hint WARNING
+      on every DEFAULT install — a config that asked for nothing — to
+      benefit the minority who installed an extra.
+
+    So this predicate answers "does the mode BREAK without a model",
+    and ``_semantic_model_configured`` widens it to "…or would use one
+    it can actually get". Widening it here instead would collapse the
+    two answers onto the wrong one.
+
+    The dedup side effect that used to be the stated reason for
+    withholding hybrid is answered rather than ignored:
+    ``handlers.write._resolve_dedup_thresholds`` reads
+    ``semantic_dedup`` itself and asks the factory for nothing when it
+    is off, so a model resolved for SEARCH no longer reaches the write
+    path.
     """
     mode = (config.behavior.search_mode or "hybrid").strip().lower()
     return mode == "semantic"
 
 
 def _semantic_model_configured(config: Config) -> bool:
-    """True when SOME configured consumer wants the embedding model —
-    write-dedup (``semantic_dedup = true``) or retrieval
-    (``search_mode = "semantic"``, via ``_search_mode_needs_model``).
+    """True when SOME configured consumer wants the embedding model.
+    Three arms, and they are not the same kind of condition:
+
+    - write-dedup (``semantic_dedup = true``) — asked for, under any
+      search mode;
+    - retrieval that REQUIRES a model (``search_mode = "semantic"``,
+      via ``_search_mode_needs_model``) — asked for;
+    - retrieval that would USE one (``search_mode = "hybrid"``, the
+      package default) — asked for AND gated on an embeddings extra
+      importing. The long comment on that branch below is the why.
+
+    This is the one place the arms are enumerated; the docstrings that
+    used to restate them are the ones that went stale when the third
+    was added, so point here instead of copying.
 
     The gate ``_semantic_model_or_none`` opens on, lifted out so a
-    caller can ask the question WITHOUT triggering the load. The web
-    UI does exactly that: it never loads a model, and needs to know
+    caller can ask the question WITHOUT triggering the model load. The
+    web UI does exactly that: it never loads a model, and needs to know
     whether ``memory_search``'s ranking could be non-lexical while its
-    own is. Answering it by restating the two clauses at the call site
-    is how the two would drift, so there is one predicate and
+    own is. Answering it by restating the arms at the call site is how
+    the two would drift, so there is one predicate and
     ``_semantic_model_or_none`` calls it too.
 
     But this predicate is only HALF of that web question — reading it as
@@ -104,9 +129,19 @@ def _semantic_model_configured(config: Config) -> bool:
     caller asking whether a semantic leg RANKS must AND in the resolved
     search mode, as ``web._lexical_only_note`` does.
 
-    Says nothing about whether an embeddings extra is actually
-    installed — that answer costs a load attempt. ``True`` here means
-    "the config asks for a model", not "a model will be returned".
+    What ``True`` promises differs by arm, so read it per arm. The two
+    config arms probe nothing: ``True`` there means "the config asks
+    for a model", and one may still not be returned —
+    ``semantic_dedup = true`` with no extra installed opens this gate
+    and gets ``None`` out of the factory. The ``hybrid`` arm DOES
+    probe, returning ``_embeddings_extra_importable()``, so ``True``
+    there also means an extra imported (an import, cached per process,
+    not a model load). Even that is not a promise of a model: the OR in
+    that helper spans both providers while ``_semantic_model_or_none``
+    commits to the single one ``resolve_provider`` picks — see
+    ``_resolved_provider_importable`` for the config-typo case that
+    distinction is the whole of — and the load itself can fail. So no
+    arm promises a model; one arm costs an import.
     """
     if bool(config.behavior.semantic_dedup) or _search_mode_needs_model(config):
         return True
@@ -239,10 +274,11 @@ def _embeddings_extra_importable() -> bool:
 
 def _semantic_model_or_none(config: Config) -> Any:
     """Lazy load the embedding model when a configured consumer needs
-    it: write-dedup (``semantic_dedup = true``) or retrieval
-    (``search_mode = "semantic"`` — see ``_search_mode_needs_model``).
-    Returns ``None`` otherwise — callers treat ``None`` as the
-    Jaccard / keyword+bm25 fallback signal.
+    it. WHICH consumers those are is ``_semantic_model_configured``'s
+    question and it is enumerated there alone — this function is the
+    load, not a second copy of the policy. Returns ``None`` otherwise —
+    callers treat ``None`` as the Jaccard / keyword+bm25 fallback
+    signal.
 
     Gating on ``semantic_dedup`` alone (the pre-fix shape) conflated
     the dedup opt-in with search-mode model resolution: a user setting

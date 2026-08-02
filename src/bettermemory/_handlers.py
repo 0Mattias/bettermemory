@@ -785,10 +785,12 @@ class ToolHandlers:
 
 
 # A SemanticModelFactory is `(Config) -> Any | None` — the model object
-# (when a configured consumer needs it: `semantic_dedup = true` or
-# `search_mode = "semantic"`, with an extra installed — see
-# `semantic_setup._semantic_model_or_none`) or None for the
-# Jaccard / keyword+bm25 fallback. Kept as a callable rather than a
+# when a configured consumer needs one, or None for the
+# Jaccard / keyword+bm25 fallback. `semantic_setup._semantic_model_configured`
+# enumerates the consumers (write-dedup, `search_mode = "semantic"`, and
+# `hybrid` once an embeddings extra imports); this comment points at it
+# rather than restating it because the list has changed and the copy
+# that lived here is what stayed behind. Kept as a callable rather than a
 # hard import so `_handlers.py` doesn't pull in `semantic` (and
 # through it `sentence-transformers`) at import time when no consumer
 # is configured.

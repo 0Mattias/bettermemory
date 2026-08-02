@@ -79,7 +79,7 @@ from ._shared import Context, _advance_turn, _attach_use_tokens
 
 if TYPE_CHECKING:
     from .._handlers import ToolHandlers
-    from ..config import BehaviorConfig
+    from ..config import BehaviorConfig, Config
 
 
 DESC_MEMORY_SEARCH = (
@@ -664,6 +664,78 @@ def resolve_search_pool(
     )
 
 
+# The provider names `semantic.resolve_provider` returns, mapped to the
+# module a probe imports and the pyproject extra that ships it. Kept
+# beside the message builder because that is the only consumer here;
+# `semantic_setup._resolved_provider_importable` carries its own copy of
+# the first half for the same reason.
+_PROVIDER_MODULE = {"torch": "sentence_transformers", "fastembed": "fastembed"}
+_MODULE_EXTRA = {"sentence_transformers": "embeddings", "fastembed": "embeddings-fast"}
+
+
+def _semantic_mode_unavailable(config: "Config") -> str:
+    """The ``mode='semantic'`` hard error, told apart by WHICH of the
+    optional extra's three states the caller is actually in.
+
+    An optional extra is absent, working, or installed-but-broken (see
+    ``semantic.extra_importable``), and the three want different
+    instructions. This message used to know two states and offer one
+    instruction — ``pip install bettermemory[embeddings]`` — so the user
+    whose ``sentence_transformers`` was on disk and unimportable was told
+    to install what they already had. That is the exact advice
+    ``semantic.extra_import_failure`` was added to stop ``doctor`` from
+    giving during the 2026-08-01 outage; this surface is the one a caller
+    hits per request, and it kept giving it.
+
+    Asks about the RESOLVED provider rather than "either extra", for the
+    reason ``semantic_setup._resolved_provider_importable`` documents:
+    ``resolve_provider`` commits to one, so a healthy fastembed says
+    nothing about a run that was going to load torch.
+    """
+    from ..semantic import extra_import_failure, extra_importable
+    from ..semantic_setup import _resolve_semantic_provider_and_model
+
+    provider, _model_name = _resolve_semantic_provider_and_model(config)
+    module = _PROVIDER_MODULE.get(provider or "")
+    if module is not None:
+        reason = extra_import_failure(module)
+        if reason is not None:
+            # (c) installed-but-broken. The one state the old two-state
+            # message could not say, and the one where "install it" is
+            # actively misleading.
+            return (
+                "mode='semantic' needs a working embeddings extra: "
+                f"`{module}` IS installed but fails to import ({reason}). "
+                f"Reinstall it — `pip install --force-reinstall {module}`, "
+                f"or `pip install bettermemory[{_MODULE_EXTRA[module]}]` — "
+                "rather than install it; a damaged or partially-synced "
+                "install (a virtualenv inside iCloud Drive or Dropbox is "
+                "the common cause) is what this looks like. Or use "
+                "mode='hybrid' for graceful keyword+bm25 fallback."
+            )
+        if extra_importable(module):
+            # (b) working, so the extra is not what is missing. Named as
+            # two candidates rather than one because the factory returns
+            # None for both and this function cannot tell them apart.
+            return (
+                "mode='semantic' has an importable embeddings extra but "
+                "got no model back. Either this config resolves one for "
+                "nobody (`[behavior] search_mode` = 'keyword' / 'bm25' "
+                "with semantic_dedup off — set search_mode = 'hybrid' or "
+                "'semantic'), or the model itself failed to load, which "
+                "the server log's WARNING names. Or use mode='hybrid' "
+                "for graceful keyword+bm25 fallback."
+            )
+    # (a) absent — including the no-provider-resolved case, which is
+    # `resolve_provider` reporting that neither extra is on disk.
+    return (
+        "mode='semantic' requires the embeddings extra, and none is "
+        "installed. Install with `pip install bettermemory[embeddings]` "
+        "(or `[embeddings-fast]` for the smaller ONNX provider), or use "
+        "mode='hybrid' for graceful keyword+bm25 fallback."
+    )
+
+
 async def memory_search(
     deps: "ToolHandlers",
     query: str,
@@ -713,13 +785,7 @@ async def memory_search(
     if resolved_mode in ("semantic", "hybrid"):
         semantic_model = deps._semantic_model_factory(deps.config)
         if resolved_mode == "semantic" and semantic_model is None:
-            raise ValueError(
-                "mode='semantic' requires the embeddings extra and the "
-                "config-level opt-in ([behavior] search_mode = 'semantic' "
-                "or semantic_dedup = true). "
-                "Install with `pip install bettermemory[embeddings]` "
-                "or use mode='hybrid' for graceful keyword+bm25 fallback."
-            )
+            raise ValueError(_semantic_mode_unavailable(deps.config))
 
     if scopes:
         scopes = [validate_scope(s) for s in scopes]

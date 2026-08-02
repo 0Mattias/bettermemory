@@ -563,3 +563,209 @@ def test_doctor_stays_quiet_when_the_extra_is_merely_absent() -> None:
     cfg = Config(behavior=BehaviorConfig(search_mode="hybrid", semantic_dedup=False))
     diag = _check_embeddings_extra(cfg)
     assert diag.status == "ok", diag
+
+
+# ---------------------------------------------------------------------------
+# (a) vs (c) is a question of PRESENCE, not of exception type
+#
+# The tests above all break the extra with something that is NOT an
+# `ImportError` — which is the shape of the 2026-08-01 incident, and also
+# the only shape the first fix could tell apart from "absent". But (a) and
+# (c) share `ImportError`: a `[embeddings]` install whose `torch` has gone
+# raises `ModuleNotFoundError: No module named 'torch'`, and so does a
+# machine that never installed the extra at all. Classifying by exception
+# type filed the first as the second — no reason recorded, no WARNING, and
+# every diagnostic telling the user to install what they already had.
+#
+# `ModuleNotFoundError` is used deliberately below rather than a bare
+# `ImportError`: it is the subclass a real missing dependency raises, so
+# a fix that special-cased only the base class would not pass.
+# ---------------------------------------------------------------------------
+
+
+def test_installed_extra_missing_its_own_dependency_is_broken_not_absent(
+    broken_extra: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    """`sentence_transformers` on disk with `torch` gone is state (c).
+
+    The user-visible stake is the advice: (a) wants "install it" and (c)
+    wants "reinstall it", and `extra_import_failure` is how every
+    diagnostic downstream tells them apart. Filed as (a), it returned
+    None and the WARNING never fired.
+    """
+    broken_extra(ModuleNotFoundError("No module named 'torch'", name="torch"))
+
+    with caplog.at_level(logging.WARNING, logger="bettermemory.semantic"):
+        assert semantic.extra_importable("sentence_transformers") is False
+
+    reason = semantic.extra_import_failure("sentence_transformers")
+    assert reason is not None, "an ImportError from a PRESENT extra is state (c)"
+    assert "ModuleNotFoundError" in reason and "torch" in reason
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1, f"expected exactly one WARNING, got {len(warnings)}"
+    assert "installed but failed to import" in warnings[0].getMessage()
+
+
+def test_a_genuinely_absent_extra_is_still_absent(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The counterweight, and it is not decorative.
+
+    Deciding by presence is only better than deciding by exception type
+    if the presence probe can still say no. A `_spec_found` that answered
+    True for everything would satisfy the test above and turn every
+    default install's silent (a) into a WARNING plus a `doctor` failure.
+    """
+    semantic.reset_caches()
+    with caplog.at_level(logging.WARNING, logger="bettermemory.semantic"):
+        assert semantic.extra_importable("bettermemory_no_such_extra_xyz") is False
+    assert semantic.extra_import_failure("bettermemory_no_such_extra_xyz") is None
+    assert [r for r in caplog.records if r.levelno == logging.WARNING] == []
+
+
+def test_loader_warning_says_reinstall_when_the_extra_is_present_but_broken(
+    broken_extra: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The model loaders carried the same split, in a third copy.
+
+    `_load_torch_model` / `_load_fastembed_model` chose between "the
+    extra is not installed, install it" and "installed but broken,
+    reinstall it" by which `except` arm caught — so the whole
+    ImportError branch, including a present extra with a missing
+    dependency, got the install wording. The log is where a user who
+    never runs `doctor` finds out anything at all.
+    """
+    broken_extra(ModuleNotFoundError("No module named 'torch'", name="torch"))
+
+    with caplog.at_level(logging.WARNING, logger="bettermemory.semantic"):
+        assert semantic.get_model("all-MiniLM-L6-v2", provider="torch") is None
+
+    messages = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("Reinstall the extra" in m for m in messages), messages
+    assert not any("is not installed" in m for m in messages), messages
+
+
+def test_loader_warning_still_says_install_when_the_extra_is_absent(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The counterweight for the loader wording.
+
+    Simulated rather than inherited: on the `embeddings` CI leg the real
+    `sentence_transformers` imports fine, so an absent extra has to be
+    staged or this asserts against the machine. A meta-path finder that
+    raises for the name reproduces "not on disk" — `_spec_found` swallows
+    the raise and answers False, which is the state under test.
+    """
+
+    class _Absent(importlib.abc.MetaPathFinder):
+        def find_spec(
+            self, fullname: str, path: Any = None, target: Any = None
+        ) -> importlib.machinery.ModuleSpec | None:
+            if fullname == "sentence_transformers":
+                raise ModuleNotFoundError("No module named 'sentence_transformers'")
+            return None
+
+    monkeypatch.delitem(sys.modules, "sentence_transformers", raising=False)
+    monkeypatch.setattr(sys, "meta_path", [_Absent(), *sys.meta_path])
+    semantic.reset_caches()
+    try:
+        with caplog.at_level(logging.WARNING, logger="bettermemory.semantic"):
+            assert semantic.get_model("all-MiniLM-L6-v2", provider="torch") is None
+    finally:
+        semantic.reset_caches()
+
+    messages = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("is not installed" in m for m in messages), messages
+    assert not any("Reinstall" in m for m in messages), messages
+
+
+def test_doctor_says_reinstall_when_the_break_arrives_as_an_ImportError(
+    broken_extra: Any,
+) -> None:
+    """The payoff at the surface a user actually reads.
+
+    Same assertion as `test_doctor_names_the_broken_extra_under_the_default
+    _config`, with the breakage arriving as an `ImportError` instead. That
+    one passed while this one could not: doctor reads
+    `extra_import_failure`, which was empty for the whole ImportError
+    branch, so the check fell through to its ok-return.
+    """
+    from bettermemory.doctor import _check_embeddings_extra
+
+    cfg = Config(behavior=BehaviorConfig(search_mode="hybrid", semantic_dedup=False))
+    _break_every_provider(
+        broken_extra, ModuleNotFoundError("No module named 'torch'", name="torch")
+    )
+
+    diag = _check_embeddings_extra(cfg)
+    assert diag.status == "fail", diag
+    assert "INSTALLED but" in diag.message
+    assert diag.fix_hint is not None and "Reinstall" in diag.fix_hint
+
+
+# ---------------------------------------------------------------------------
+# `mode='semantic'` — the per-request surface, told apart by state
+#
+# `memory_search(mode='semantic')` hard-errors when no model resolves, and
+# that error is the only thing most callers will ever see about the extra.
+# It spoke two states and offered one instruction, so the broken-install
+# user was told to install what they had — the exact wrong turn
+# `extra_import_failure` was added to stop `doctor` from taking.
+# ---------------------------------------------------------------------------
+
+
+async def test_semantic_mode_error_says_REINSTALL_when_the_extra_is_broken(
+    broken_extra: Any, memory_dir: Path
+) -> None:
+    """A broken extra must not be answered with an install command."""
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(search_mode="hybrid"),
+    )
+    server = build_server(
+        config=cfg, store=Store(memory_dir), state=SessionState(), recorder=None
+    )
+    _break_every_provider(broken_extra, KeyError(frozenset()))
+
+    with pytest.raises(Exception) as caught:
+        await _mcp_call(server, "memory_search", {"query": "x", "mode": "semantic"})
+
+    message = str(caught.value)
+    assert "IS installed but fails to import" in message, message
+    assert "Reinstall it" in message, message
+    assert "KeyError" in message, "the reason belongs in the message, not just the log"
+    # The pre-fix wording, which is what this test exists to keep out.
+    assert "Install with" not in message, message
+
+
+async def test_semantic_mode_error_still_says_install_when_nothing_is_installed(
+    memory_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The counterweight: (a) must keep the install hint.
+
+    A message that said "reinstall" unconditionally would pass the test
+    above and send every no-extra user looking for a package they do not
+    have. The no-extra condition is simulated rather than inherited from
+    the environment — two of the three CI legs install a real extra, and
+    a test that reads its own machine measures nothing.
+    """
+    monkeypatch.setattr(semantic, "_torch_extra_installed", lambda: False)
+    monkeypatch.setattr(semantic, "_fastembed_extra_installed", lambda: False)
+    monkeypatch.setattr(
+        "bettermemory.semantic_setup._embeddings_extra_importable", lambda: False
+    )
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(search_mode="hybrid"),
+    )
+    server = build_server(
+        config=cfg, store=Store(memory_dir), state=SessionState(), recorder=None
+    )
+
+    with pytest.raises(Exception) as caught:
+        await _mcp_call(server, "memory_search", {"query": "x", "mode": "semantic"})
+
+    message = str(caught.value)
+    assert "embeddings extra" in message, message
+    assert "Install with" in message, message
+    assert "Reinstall" not in message, message

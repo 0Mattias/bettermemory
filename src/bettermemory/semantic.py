@@ -122,6 +122,34 @@ _EXTRA_BROKEN_LOGGED: set[str] = set()
 _EXTRA_BROKEN_REASON: dict[str, str] = {}
 
 
+def _record_broken_extra(module: str, exc: BaseException) -> None:
+    """File state (c): ``module`` is PRESENT and failed to import.
+
+    Two things happen for a broken extra and both belong together —
+    the reason string ``extra_import_failure`` reads back, and a
+    once-per-process WARNING. Shared by both ``except`` arms of
+    ``extra_importable`` because those arms differ only in HOW the
+    breakage announced itself (an ``ImportError`` from a missing
+    dependency of the extra, or anything else from its module-level
+    code); what it means for the caller, and what the user has to do
+    about it, is identical.
+    """
+    _EXTRA_BROKEN_REASON[module] = f"{type(exc).__name__}: {exc}"
+    if module in _EXTRA_BROKEN_LOGGED:
+        return
+    log.warning(
+        "optional extra %r is installed but failed to import "
+        "(%s: %s). Treating it as unavailable and falling back "
+        "to keyword/BM25 ranking (and Jaccard dedup). This is "
+        "usually a damaged or partially-upgraded install — "
+        "reinstall the extra to restore semantic ranking.",
+        module,
+        type(exc).__name__,
+        exc,
+    )
+    _EXTRA_BROKEN_LOGGED.add(module)
+
+
 def extra_importable(module: str) -> bool:
     """True when the optional extra ``module`` imports CLEANLY.
 
@@ -139,11 +167,25 @@ def extra_importable(module: str) -> bool:
         except ImportError:
             return False
 
-    which is correct right up until an installed package raises
-    something that is not ``ImportError`` while executing its own
-    ``__init__``. Then the exception propagates out of a capability
+    which fails in two different ways. It CRASHES when an installed
+    package raises something that is not ``ImportError`` while executing
+    its own ``__init__``: the exception propagates out of a capability
     PROBE — a function whose entire contract is to return a bool — and
-    through whatever required path asked the question.
+    through whatever required path asked the question. And it
+    MISCLASSIFIES when the package raises ``ImportError``, because (a)
+    and (c) both do: ``sentence_transformers`` present with ``torch``
+    uninstalled raises ``ModuleNotFoundError: No module named 'torch'``,
+    which by exception type alone is indistinguishable from
+    ``sentence_transformers`` never having been installed.
+
+    So the state is decided by PRESENCE, not by exception type. The
+    ``except`` arms both consult ``_spec_found`` — "is it on disk",
+    answered without importing — and the exception only supplies the
+    reason string. Reading the type instead is what sent a torch-less
+    ``[embeddings]`` install down the (a) path: no reason recorded for
+    ``extra_import_failure``, no WARNING, and ``doctor`` telling the
+    user to install what they already had. Distinguishing (a) from (c)
+    is the whole reason this function exists.
 
     That is not hypothetical. It is the 2026-08-01 outage: a
     ``transformers`` tree that iCloud had partially evicted (226 of
@@ -182,28 +224,28 @@ def extra_importable(module: str) -> bool:
 
     try:
         importlib.import_module(module)
-    except ImportError:
-        # (a) Not installed — the default install. Silent by design;
-        # `get_model` owns the install hint for callers that asked for
-        # a model explicitly.
+    except ImportError as exc:
+        # (a) OR (c) — an `ImportError` says only that some import in
+        # the chain failed, not whose. `_spec_found` is what separates
+        # them: spec on disk means the extra IS installed and its own
+        # dependency chain is what broke (c); no spec means it was never
+        # installed (a). (a) stays silent by design — it is the default
+        # install, and `get_model` owns the install hint for callers
+        # that asked for a model explicitly.
+        if _spec_found(module):
+            _record_broken_extra(module, exc)
         _EXTRA_PROBE[module] = False
         return False
     except Exception as exc:  # noqa: BLE001 — see the docstring: an
         # import executes arbitrary third-party module-level code and
-        # can raise anything. The probe's contract is a bool.
-        _EXTRA_BROKEN_REASON[module] = f"{type(exc).__name__}: {exc}"
-        if module not in _EXTRA_BROKEN_LOGGED:
-            log.warning(
-                "optional extra %r is installed but failed to import "
-                "(%s: %s). Treating it as unavailable and falling back "
-                "to keyword/BM25 ranking (and Jaccard dedup). This is "
-                "usually a damaged or partially-upgraded install — "
-                "reinstall the extra to restore semantic ranking.",
-                module,
-                type(exc).__name__,
-                exc,
-            )
-            _EXTRA_BROKEN_LOGGED.add(module)
+        # can raise anything. The probe's contract is a bool. Filed as
+        # (c) without a spec lookup: the only documented way to raise a
+        # non-ImportError from `import_module` is for the module's own
+        # code to run, and the 2026-08-01 incident is exactly that. If a
+        # damaged finder ever raises here from a genuinely absent
+        # module, the cost is one WARNING naming it — the wrong-way-round
+        # error of the two.
+        _record_broken_extra(module, exc)
         _EXTRA_PROBE[module] = False
         return False
 
@@ -277,6 +319,52 @@ class _FastembedAdapter:
         return vectors[0]
 
 
+def _log_provider_unavailable_once(
+    key: tuple[Provider, str], module: str, extra: str, exc: BaseException
+) -> None:
+    """One WARNING per ``(provider, model_name)`` for a provider that
+    would not import, worded for the state the extra is actually in.
+
+    The two loaders each used to pick the wording by EXCEPTION TYPE:
+    ``ImportError`` got "the extra is not installed, install it" and
+    anything else got "installed but broken, reinstall it". That split
+    is wrong in the same way ``extra_importable``'s was — an
+    ``ImportError`` is what an absent extra raises AND what a PRESENT
+    one raises when its own dependency chain is broken, e.g.
+    ``sentence_transformers`` on disk with ``torch`` uninstalled. So the
+    user with a half-gutted install read "not installed" and went to
+    install what they already had.
+
+    ``_spec_found`` decides instead, and it is the same question
+    ``extra_importable`` asks, deliberately: two surfaces describing one
+    machine state should not be able to disagree about which state it is.
+    """
+    if key in _LOAD_FAILED_LOGGED:
+        return
+    if _spec_found(module):
+        log.warning(
+            "the %s extra is installed but `%s` failed to import "
+            "(%s: %s). Falling back to Jaccard / keyword. Reinstall the "
+            "extra to restore semantic ranking.",
+            extra,
+            module,
+            type(exc).__name__,
+            exc,
+        )
+    else:
+        log.warning(
+            "semantic provider %r requested but the %s extra is not "
+            "installed. Install with `pip install bettermemory[%s]` (or "
+            '`uv pip install -e ".[%s]"`). Falling back to Jaccard / '
+            "keyword.",
+            key[0],
+            extra,
+            extra,
+            extra,
+        )
+    _LOAD_FAILED_LOGGED.add(key)
+
+
 def _load_torch_model(model_name: str) -> Any | None:
     """Best-effort load of a sentence-transformers model.
 
@@ -291,38 +379,19 @@ def _load_torch_model(model_name: str) -> Any | None:
         return None
 
     try:
-        # Lazy import: the module loads cleanly without the extra. The
-        # ImportError below is the user-friendly path.
+        # Lazy import: the module loads cleanly without the extra.
         from sentence_transformers import (  # pyright: ignore[reportMissingImports]
             SentenceTransformer,
         )
-    except ImportError:
-        if key not in _LOAD_FAILED_LOGGED:
-            log.warning(
-                "semantic provider 'torch' requested but the "
-                "embeddings extra is not installed. Install with "
-                "`pip install bettermemory[embeddings]` (or "
-                '`uv pip install -e ".[embeddings]"`). Falling back to '
-                "Jaccard / keyword."
-            )
-            _LOAD_FAILED_LOGGED.add(key)
-        _LOAD_FAILED.add(key)
-        return None
     except Exception as exc:  # noqa: BLE001 — an installed-but-broken
         # extra raises whatever its own module-level code raises. Same
         # three-state argument as `extra_importable`: this loader's
         # contract is "model or None", and a damaged optional package
-        # must not escape it into the required search path.
-        if key not in _LOAD_FAILED_LOGGED:
-            log.warning(
-                "the embeddings extra is installed but "
-                "`sentence_transformers` failed to import (%s: %s). "
-                "Falling back to Jaccard / keyword. Reinstall the "
-                "extra to restore semantic ranking.",
-                type(exc).__name__,
-                exc,
-            )
-            _LOAD_FAILED_LOGGED.add(key)
+        # must not escape it into the required search path. One arm, not
+        # an `ImportError` arm plus a catch-all, because the wording is
+        # chosen by whether the package is on disk rather than by which
+        # exception arrived — see `_log_provider_unavailable_once`.
+        _log_provider_unavailable_once(key, "sentence_transformers", "embeddings", exc)
         _LOAD_FAILED.add(key)
         return None
 
@@ -366,30 +435,9 @@ def _load_fastembed_model(model_name: str) -> Any | None:
 
     try:
         from fastembed import TextEmbedding  # pyright: ignore[reportMissingImports]
-    except ImportError:
-        if key not in _LOAD_FAILED_LOGGED:
-            log.warning(
-                "semantic provider 'fastembed' requested but the "
-                "embeddings-fast extra is not installed. Install with "
-                "`pip install bettermemory[embeddings-fast]` (or "
-                '`uv pip install -e ".[embeddings-fast]"`). Falling '
-                "back to Jaccard / keyword."
-            )
-            _LOAD_FAILED_LOGGED.add(key)
-        _LOAD_FAILED.add(key)
-        return None
-    except Exception as exc:  # noqa: BLE001 — installed-but-broken; see
-        # the matching branch in `_load_torch_model`.
-        if key not in _LOAD_FAILED_LOGGED:
-            log.warning(
-                "the embeddings-fast extra is installed but `fastembed` "
-                "failed to import (%s: %s). Falling back to Jaccard / "
-                "keyword. Reinstall the extra to restore semantic "
-                "ranking.",
-                type(exc).__name__,
-                exc,
-            )
-            _LOAD_FAILED_LOGGED.add(key)
+    except Exception as exc:  # noqa: BLE001 — absent or installed-but-
+        # broken; see the matching branch in `_load_torch_model`.
+        _log_provider_unavailable_once(key, "fastembed", "embeddings-fast", exc)
         _LOAD_FAILED.add(key)
         return None
 
