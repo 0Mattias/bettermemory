@@ -535,11 +535,23 @@ def test_doctor_names_the_broken_extra_under_the_default_config(
     `semantic_dedup` was false — which is the DEFAULT — even though the
     extra feeds ranking under the default `hybrid` mode. So during the
     outage the one check that names the embeddings extra reported ok.
+
+    BOTH providers are broken deliberately, so this test states its own
+    population instead of inheriting the machine's. `fail` asserts that
+    ranking is really degraded, and that is only true when NO provider
+    resolves — with a healthy sibling the check correctly de-escalates to
+    `warn`, which
+    ``test_doctor.py::test_embeddings_extra_warns_when_a_healthy_sibling_is_the_resolved_one``
+    pins from the other side. Breaking only
+    `sentence_transformers` made the verdict depend on whether fastembed
+    happened to be installed: green on a CI leg that has neither, red on a
+    developer box with both.
     """
     from bettermemory.doctor import _check_embeddings_extra
 
     cfg = Config(behavior=BehaviorConfig(search_mode="hybrid", semantic_dedup=False))
     broken_extra(KeyError(frozenset()))
+    broken_extra(KeyError(frozenset()), name="fastembed")
 
     diag = _check_embeddings_extra(cfg)
     assert diag.status == "fail", diag

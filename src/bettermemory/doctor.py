@@ -1547,8 +1547,8 @@ def _session_start_hook_config_candidates(cwd: Path | None = None) -> list[Path]
     return found
 
 
-def _session_start_hook_command(data: Any) -> str | None:
-    """The bound SessionStart command string, or None when none is bound.
+def _session_start_hook_commands(data: Any) -> list[str]:
+    """EVERY bound SessionStart command string, in file order.
 
     One structural reader for both file families because the shape is
     identical — Claude Code's settings files and a plugin's `hooks.json`
@@ -1557,18 +1557,29 @@ def _session_start_hook_command(data: Any) -> str | None:
     are FOREIGN files, frequently hand-edited, and a check that raises on
     someone else's unexpected shape is worse than no check.
 
-    Returns the command rather than a bool because "a hook is bound" and
+    Returns commands rather than a bool because "a hook is bound" and
     "that hook can run" are different questions, and only the string can
     answer the second — see `_session_start_hook_broken_path`.
+
+    ALL of them, not the first, and that is the load-bearing part. Claude
+    Code runs every matching SessionStart binding it finds, and one FILE
+    can hold several: `hooks.SessionStart` is a list of matcher groups
+    and each group's `hooks` is a list of commands, so a user who
+    hand-wired an absolute path and later installed the plugin's binding
+    into the same settings.json has two. Stopping at the first meant a
+    stale binding sitting above a runnable one hid it completely, and
+    the caller — which scans across files precisely so one good binding
+    anywhere wins — never got to see the good one.
     """
+    found: list[str] = []
     if not isinstance(data, dict):
-        return None
+        return found
     hooks = data.get("hooks")
     if not isinstance(hooks, dict):
-        return None
+        return found
     entries = hooks.get("SessionStart")
     if not isinstance(entries, list):
-        return None
+        return found
     for entry in entries:
         if not isinstance(entry, dict):
             continue
@@ -1580,13 +1591,25 @@ def _session_start_hook_command(data: Any) -> str | None:
                 continue
             command = hook.get("command")
             if isinstance(command, str) and _SESSION_START_HOOK_MARKER in command:
-                return command
-    return None
+                found.append(command)
+    return found
+
+
+def _session_start_hook_command(data: Any) -> str | None:
+    """The FIRST bound SessionStart command, or None when none is bound.
+
+    Kept as the one-binding convenience over
+    `_session_start_hook_commands`. Callers that judge runnability must
+    use the plural form — the first binding is not necessarily the one
+    that works.
+    """
+    commands = _session_start_hook_commands(data)
+    return commands[0] if commands else None
 
 
 def _declares_session_start_hook(data: Any) -> bool:
-    """Back-compat predicate over `_session_start_hook_command`."""
-    return _session_start_hook_command(data) is not None
+    """Back-compat predicate over `_session_start_hook_commands`."""
+    return bool(_session_start_hook_commands(data))
 
 
 def _session_start_hook_broken_path(
@@ -1707,18 +1730,25 @@ def _check_session_start_hook_wired(
     * no discoverable hook config at all — the user isn't running Claude
       Code, or hasn't configured it, and either way we have no evidence.
 
-    EVERY candidate is scanned, and one runnable binding anywhere wins
-    over any number of unrunnable ones. The candidate list is not a
+    EVERY binding in every READABLE candidate is judged, and one
+    runnable binding anywhere wins over any number of unrunnable ones.
+    Neither the candidate list nor the order within a file is a
     precedence order — Claude Code merges the SessionStart bindings it
     finds across settings files and plugin manifests and runs all of
     them (which is why `_session_start_hook_config_candidates` collects
-    both families instead of stopping at the first hit). So a user who
-    hand-wired an absolute path years ago and has since installed the
-    plugin carries two bindings, and the hint DOES reach the model; a
-    scan that stopped at the first match would report the whole hook
-    broken because one of its two spellings rotted. The stale one still
-    gets named — it is dead weight and its `|| true` hides it — but as
-    a detail on an `ok`, not as a warning about a hook that works.
+    both families instead of stopping at the first hit, and why
+    `_session_start_hook_commands` returns a LIST instead of the first
+    match). So a user who hand-wired an absolute path years ago and has
+    since installed the plugin carries two bindings — possibly both in
+    one settings.json — and the hint DOES reach the model; a scan that
+    stopped at the first match, at either level, would report the whole
+    hook broken because one of its two spellings rotted. The stale one
+    still gets named — it is dead weight and its `|| true` hides it —
+    but as a detail on an `ok`, not as a warning about a hook that works.
+
+    "Readable" is the honest limit and the messages below say so: a
+    candidate that would not parse was never judged, so nothing here
+    claims anything about what it holds.
 
     `config_paths` is injectable for tests only; production passes None
     and takes `_session_start_hook_config_candidates()`.
@@ -1759,25 +1789,25 @@ def _check_session_start_hook_wired(
             unreadable.append(f"{path}: {exc}")
             continue
         readable += 1
-        command = _session_start_hook_command(data)
-        if command is None:
-            continue
-        broken = _session_start_hook_broken_path(command)
-        if broken is None:
-            # First runnable-or-unjudgeable binding wins the `wired_in`
-            # slot, but the scan continues: the remaining candidates can
-            # still hold a stale binding worth naming, and the whole point
-            # of scanning past this one is that they all run.
-            if live is None:
-                live = (path, command)
-            continue
-        stale.append(
-            {
-                "wired_in": str(path),
-                "command": command,
-                "unrunnable_path": broken,
-            }
-        )
+        for command in _session_start_hook_commands(data):
+            broken = _session_start_hook_broken_path(command)
+            if broken is None:
+                # First runnable-or-unjudgeable binding wins the
+                # `wired_in` slot, but the scan continues — through the
+                # rest of THIS file as well as the remaining candidates.
+                # Every one of them still holds a binding Claude Code
+                # will run, so a stale sibling is worth naming, and a
+                # runnable sibling below a stale one must not be missed.
+                if live is None:
+                    live = (path, command)
+                continue
+            stale.append(
+                {
+                    "wired_in": str(path),
+                    "command": command,
+                    "unrunnable_path": broken,
+                }
+            )
 
     if live is not None:
         path, command = live
@@ -1808,14 +1838,24 @@ def _check_session_start_hook_wired(
         )
     if stale:
         first = stale[0]
+        # Counts the BINDINGS actually judged and the files they were
+        # actually read from. `len(paths)` would be neither: it includes
+        # candidates that failed to parse, and a claim about a file we
+        # could not read is a claim we have no standing to make — the
+        # unreadable ones are named separately instead.
+        scope = (
+            f"All {len(stale)} binding(s) found across the {readable} "
+            f"readable config file(s) name a binary that cannot run"
+        )
+        if unreadable:
+            scope += f" ({len(unreadable)} further file(s) could not be read)"
         return Diagnosis(
             name="session_start_hook",
             status="warn",
             message=(
                 f"SessionStart hint hook is wired ({first['wired_in']}) but "
                 f"the binary it names does not exist or is not executable: "
-                f"{first['unrunnable_path']}. Nothing in the {len(paths)} "
-                f"config file(s) scanned carries a binding that can run. "
+                f"{first['unrunnable_path']}. {scope}. "
                 f"The documented bindings all end in "
                 f"`|| true` and a hand-written one usually copies that, so "
                 f"the failure exits 0 — the hook is configured, contributes "
@@ -1838,6 +1878,8 @@ def _check_session_start_hook_wired(
                 **first,
                 "stale_bindings": stale,
                 "scanned": len(paths),
+                "readable": readable,
+                "unreadable": unreadable,
                 "active_memories": active,
             },
         )
@@ -3192,33 +3234,97 @@ def _check_embeddings_extra(cfg: Config) -> Diagnosis:
     extra is not a fault, and `retrieval_discrimination` already owns
     the "consider installing one" advice with the measurement to back
     it up.
-    """
-    from .semantic import extra_import_failure, extra_importable
 
-    for module, extra in (
-        ("sentence_transformers", "embeddings"),
-        ("fastembed", "embeddings-fast"),
-    ):
-        reason = extra_import_failure(module)
-        if reason is None:
-            continue
+    WHICH broken extra decides the severity, and the resolver is what
+    answers that. Two extras exist so one can cover for the other:
+    `semantic.resolve_provider` asks about HEALTH, not presence, so a
+    broken sentence-transformers beside a working fastembed resolves to
+    fastembed and the broken one is never consulted — a `hybrid` run on
+    that install has a semantic leg scoring its searches. Reporting
+    `fail` with "semantic ranking is silently degraded" over it states
+    as fact something the process is demonstrably not doing — the
+    green-over-the-wrong-input shape inverted. The broken sibling is
+    still dead weight worth naming, so it warns; only a breakage in the
+    provider that actually got RESOLVED (including "all installed
+    providers are broken", where the resolver names one anyway so its
+    loader can explain) costs the leg and earns the `fail`.
+    """
+    from .semantic import extra_import_failure, extra_importable, resolve_provider
+
+    # (import, extra name, provider the resolver calls it). The third
+    # column is what lets the severity split below compare like with
+    # like; `semantic.resolve_provider` speaks provider names and
+    # `extra_import_failure` speaks module names.
+    extras = (
+        ("sentence_transformers", "embeddings", "torch"),
+        ("fastembed", "embeddings-fast", "fastembed"),
+    )
+    broken = [
+        (module, extra, provider, reason)
+        for module, extra, provider in extras
+        if (reason := extra_import_failure(module)) is not None
+    ]
+    if broken:
+        # Resolved with the SAME preference production uses, so this
+        # cannot disagree with what `memory_search` actually loads.
+        resolved = resolve_provider(cfg.behavior.semantic_provider)
+        fatal = [row for row in broken if row[2] == resolved]
+        # `resolved is None` means nothing is installed to fall back to,
+        # so a broken extra there does cost the leg.
+        if fatal or resolved is None:
+            module, extra, _provider, reason = (fatal or broken)[0]
+            return Diagnosis(
+                name="embeddings_extra",
+                status="fail",
+                message=(
+                    f"the `{extra}` extra is INSTALLED but `{module}` fails "
+                    f"to import ({reason}), and it is the provider this "
+                    f"config resolves to. Semantic ranking and cosine dedup "
+                    "are silently degraded to keyword/BM25 and Jaccard."
+                ),
+                fix_hint=(
+                    f"Reinstall it: `uv pip install --force-reinstall "
+                    f"{module}` (or `uv pip install -e .[{extra}]`). This "
+                    "usually means a damaged or partially-synced install — "
+                    "a virtualenv inside a cloud-synced folder (iCloud "
+                    "Drive, Dropbox) is the common cause, and moving the "
+                    "venv outside it is the durable fix."
+                ),
+                details={
+                    "module": module,
+                    "extra": extra,
+                    "error": reason,
+                    "resolved_provider": resolved,
+                    "broken_modules": [row[0] for row in broken],
+                },
+            )
+        module, extra, _provider, reason = broken[0]
         return Diagnosis(
             name="embeddings_extra",
-            status="fail",
+            status="warn",
             message=(
                 f"the `{extra}` extra is INSTALLED but `{module}` fails to "
-                f"import ({reason}). Semantic ranking and cosine dedup are "
-                "silently degraded to keyword/BM25 and Jaccard."
+                f"import ({reason}). Ranking is NOT degraded by it — "
+                f"provider resolution reaches `{resolved}`, which imports "
+                "cleanly, so the broken one is never consulted. It is dead "
+                "weight: one import attempt and a WARNING per process, and "
+                "it is what resolution would fall back to if the working "
+                "provider ever went."
             ),
             fix_hint=(
                 f"Reinstall it: `uv pip install --force-reinstall {module}` "
-                f"(or `uv pip install -e .[{extra}]`). This usually means a "
-                "damaged or partially-synced install — a virtualenv inside "
-                "a cloud-synced folder (iCloud Drive, Dropbox) is the "
-                "common cause, and moving the venv outside it is the "
-                "durable fix."
+                f"(or `uv pip install -e .[{extra}]`), or uninstall it and "
+                f"stay on `{resolved}`. A damaged install usually means a "
+                "virtualenv inside a cloud-synced folder (iCloud Drive, "
+                "Dropbox); moving the venv outside it is the durable fix."
             ),
-            details={"module": module, "extra": extra, "error": reason},
+            details={
+                "module": module,
+                "extra": extra,
+                "error": reason,
+                "resolved_provider": resolved,
+                "broken_modules": [row[0] for row in broken],
+            },
         )
 
     if not cfg.behavior.semantic_dedup:

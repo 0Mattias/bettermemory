@@ -1519,6 +1519,172 @@ def test_embeddings_extra_fails_when_enabled_but_missing(
 
 
 # ---------------------------------------------------------------------------
+# embeddings_extra — WHICH extra is broken decides the severity
+#
+# Two extras exist so one can cover for the other: `resolve_provider`
+# asks about HEALTH, not presence, so a broken sentence-transformers
+# beside a working fastembed resolves to fastembed and the semantic leg
+# goes on ranking. The check used to return on the FIRST broken module
+# without asking what got resolved, so that install was told "Semantic
+# ranking and cosine dedup are silently degraded to keyword/BM25 and
+# Jaccard" while a semantic leg was demonstrably scoring its searches.
+#
+# The counterweights below matter as much as the downgrade: the `fail`
+# has to survive for every shape where the leg really IS lost, or this
+# repair trades a false alarm for a silent one.
+# ---------------------------------------------------------------------------
+
+
+def _pin_extra_state(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    torch: str | None,
+    fastembed: str | None,
+) -> None:
+    """Pin both embedding extras to a chosen state, hermetically.
+
+    `None` = absent, `"ok"` = installed and importable, any other string
+    = installed and BROKEN with that string as the recorded reason.
+
+    Seeds PRODUCTION state — `semantic`'s probe cache, its broken-reason
+    map and the two presence probes — rather than stubbing the check's
+    own helpers, so the assertions measure real resolution logic. It has
+    to: three CI legs install different extras (`[embeddings]`,
+    `[embeddings-fast]`, neither), and a test of "torch broken, fastembed
+    healthy" that read the real environment would measure a different
+    scenario on each of them. The dicts are REPLACED rather than
+    item-patched so nothing another test recorded can leak in.
+    """
+    probe: dict[str, bool] = {}
+    reason: dict[str, str] = {}
+    for module, state in (("sentence_transformers", torch), ("fastembed", fastembed)):
+        # Absent seeds False too — an unseeded module makes
+        # `extra_importable` attempt a real import, which succeeds on
+        # whichever leg happens to have it installed.
+        probe[module] = state == "ok"
+        if state is not None and state != "ok":
+            reason[module] = state
+    monkeypatch.setattr(semantic, "_EXTRA_PROBE", probe)
+    monkeypatch.setattr(semantic, "_EXTRA_BROKEN_REASON", reason)
+    monkeypatch.setattr(semantic, "_torch_extra_installed", lambda: torch is not None)
+    monkeypatch.setattr(
+        semantic, "_fastembed_extra_installed", lambda: fastembed is not None
+    )
+
+
+def test_embeddings_extra_warns_when_a_healthy_sibling_is_the_resolved_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A broken extra that is NOT the resolved provider costs nothing.
+
+    `resolve_provider("auto")` skips the broken torch and returns
+    fastembed, so ranking is intact — claiming "silently degraded to
+    keyword/BM25 and Jaccard" over this install states as fact something
+    the process is demonstrably not doing. It is still dead weight worth
+    naming, hence `warn` rather than `ok`.
+    """
+    _pin_extra_state(monkeypatch, torch="KeyError: frozenset()", fastembed="ok")
+    cfg = _config_for(tmp_path, search_mode="hybrid", semantic_dedup=False)
+
+    # The premise, measured rather than assumed.
+    assert semantic.resolve_provider(cfg.behavior.semantic_provider) == "fastembed"
+
+    diag = _check_embeddings_extra(cfg)
+
+    assert diag.status == "warn", diag
+    assert "INSTALLED but" in diag.message
+    assert "KeyError" in diag.message
+    assert "NOT degraded" in diag.message
+    assert diag.details["resolved_provider"] == "fastembed"
+    # The advice must be "reinstall", never "install" — the user has it.
+    assert "Reinstall" in (diag.fix_hint or "")
+
+
+def test_embeddings_extra_fails_when_the_broken_one_is_the_resolved_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Counterweight: an explicit preference for the broken provider.
+
+    `semantic_provider = "torch"` is an instruction, not a hint —
+    `resolve_provider` honours it and `get_model` then returns None. The
+    healthy fastembed sitting beside it is never consulted, so the leg
+    really is gone and the degradation claim is true. Without this, the
+    downgrade above could be widened to "any broken extra warns" and the
+    2026-08-01 outage shape would go quiet again.
+    """
+    _pin_extra_state(monkeypatch, torch="KeyError: frozenset()", fastembed="ok")
+    cfg = _config_for(
+        tmp_path,
+        search_mode="hybrid",
+        semantic_dedup=False,
+        semantic_provider="torch",
+    )
+
+    assert semantic.resolve_provider(cfg.behavior.semantic_provider) == "torch"
+
+    diag = _check_embeddings_extra(cfg)
+
+    assert diag.status == "fail", diag
+    assert "silently degraded" in diag.message
+    assert diag.details["resolved_provider"] == "torch"
+
+
+def test_embeddings_extra_fails_when_every_installed_extra_is_broken(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No sibling to cover: the resolver names a broken provider anyway
+    (so its loader can explain), and the leg is genuinely lost."""
+    _pin_extra_state(
+        monkeypatch,
+        torch="KeyError: frozenset()",
+        fastembed="RuntimeError: onnxruntime missing",
+    )
+    cfg = _config_for(tmp_path, search_mode="hybrid", semantic_dedup=False)
+
+    diag = _check_embeddings_extra(cfg)
+
+    assert diag.status == "fail", diag
+    assert "silently degraded" in diag.message
+    assert diag.details["broken_modules"] == ["sentence_transformers", "fastembed"]
+
+
+def test_embeddings_extra_fails_when_the_only_installed_extra_is_broken(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The mainline outage shape — one extra installed, and gutted.
+
+    Nothing to fail over to, so `resolve_provider` returns the broken
+    torch and the `fail` must stand.
+    """
+    _pin_extra_state(monkeypatch, torch="KeyError: frozenset()", fastembed=None)
+    cfg = _config_for(tmp_path, search_mode="hybrid", semantic_dedup=False)
+
+    assert semantic.resolve_provider(cfg.behavior.semantic_provider) == "torch"
+
+    diag = _check_embeddings_extra(cfg)
+
+    assert diag.status == "fail", diag
+    assert "silently degraded" in diag.message
+
+
+def test_embeddings_extra_ok_when_nothing_is_broken(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Anti-regression: a healthy install must not acquire a warn.
+
+    Without this, returning a constant `warn` from the new branch would
+    satisfy the downgrade test above — the shape this project has
+    published a postmortem about.
+    """
+    _pin_extra_state(monkeypatch, torch="ok", fastembed="ok")
+    cfg = _config_for(tmp_path, search_mode="hybrid", semantic_dedup=True)
+
+    diag = _check_embeddings_extra(cfg)
+
+    assert diag.status == "ok", diag
+
+
+# ---------------------------------------------------------------------------
 # retrieval_discrimination
 # ---------------------------------------------------------------------------
 
@@ -6115,6 +6281,156 @@ def test_session_start_hook_posix_probe_ignores_a_windows_path() -> None:
         )
         is None
     )
+
+
+def _hook_settings_with_commands(path: Path, *commands: str) -> Path:
+    """One settings file carrying SEVERAL bindings in one matcher group."""
+    body = {
+        "hooks": {
+            "SessionStart": [
+                {
+                    "hooks": [
+                        {"type": "command", "command": c, "timeout": 20}
+                        for c in commands
+                    ]
+                }
+            ]
+        }
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(body), encoding="utf-8")
+    return path
+
+
+def test_session_start_hook_scans_past_a_stale_binding_in_the_SAME_file(
+    tmp_path: Path,
+) -> None:
+    """The cross-FILE scan was only half the fix.
+
+    `_session_start_hook_commands` used to return the first
+    marker-matching command per file, so exactly one binding per file was
+    ever judged — and one settings.json can carry several: Claude Code
+    merges and runs every SessionStart binding it finds. A user who
+    hand-wired an absolute path and later pasted the plugin's `uvx` form
+    into the same file therefore got a `warn` saying the hook is broken
+    while it was demonstrably running, which is the false alarm the
+    cross-file scan was supposed to have closed.
+    """
+    root = _store_with_one_memory(tmp_path)
+    gone = tmp_path / "deleted-venv" / "bin" / "bettermemory"
+    settings = _hook_settings_with_commands(
+        tmp_path / "cfg" / "settings.json",
+        f"{gone} session-start || true",
+        "uvx bettermemory session-start || true",
+    )
+
+    diag = _check_session_start_hook_wired(root, [settings])
+
+    assert diag.status == "ok", diag.message
+    assert diag.details["command"] == "uvx bettermemory session-start || true"
+    # The stale one is dead weight and its `|| true` hides it, so it is
+    # still named — as a detail on the ok, not as a warning.
+    assert diag.details["stale_bindings"] == [
+        {
+            "wired_in": str(settings),
+            "command": f"{gone} session-start || true",
+            "unrunnable_path": str(gone),
+        }
+    ]
+
+
+def test_session_start_hook_scans_past_a_stale_binding_in_ANOTHER_GROUP(
+    tmp_path: Path,
+) -> None:
+    """`hooks.SessionStart` is a list of matcher groups, each holding a
+    list of commands. Both levels are lists and both run, so a scan that
+    stopped at the first group would miss a runnable binding just as a
+    per-command stop does.
+    """
+    root = _store_with_one_memory(tmp_path)
+    gone = tmp_path / "deleted-venv" / "bin" / "bettermemory"
+    stale = f"{gone} session-start || true"
+    live = "uvx bettermemory session-start || true"
+    settings = tmp_path / "cfg" / "settings.json"
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "SessionStart": [
+                        {"hooks": [{"type": "command", "command": stale}]},
+                        {"hooks": [{"type": "command", "command": live}]},
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    diag = _check_session_start_hook_wired(root, [settings])
+
+    assert diag.status == "ok", diag.message
+    assert len(diag.details["stale_bindings"]) == 1
+
+
+def test_session_start_hook_warn_counts_bindings_and_readable_files(
+    tmp_path: Path,
+) -> None:
+    """The warn must describe what was actually FOUND.
+
+    It claimed "Nothing in the {n} config file(s) scanned carries a
+    binding that can run" with `n` counting candidates — including ones
+    that never parsed, which this check has no standing to make any claim
+    about. It now reports the bindings it judged and the files it could
+    read, and names the unreadable remainder separately.
+    """
+    root = _store_with_one_memory(tmp_path)
+    a = tmp_path / "gone-a" / "bin" / "bettermemory"
+    b = tmp_path / "gone-b" / "bin" / "bettermemory"
+    settings = _hook_settings_with_commands(
+        tmp_path / "cfg" / "settings.json",
+        f"{a} session-start || true",
+        f"{b} session-start || true",
+    )
+    unreadable = tmp_path / "cfg" / "broken.json"
+    unreadable.write_text("{ this is not json", encoding="utf-8")
+
+    diag = _check_session_start_hook_wired(root, [settings, unreadable])
+
+    assert diag.status == "warn", diag.message
+    assert "All 2 binding(s) found across the 1 readable config file(s)" in (
+        diag.message
+    )
+    assert "1 further file(s) could not be read" in diag.message
+    # The old sentence must not come back in any spelling.
+    assert "Nothing in the" not in diag.message
+    assert diag.details["readable"] == 1
+    assert diag.details["scanned"] == 2
+    assert len(diag.details["stale_bindings"]) == 2
+
+
+def test_session_start_hook_warn_omits_the_unreadable_clause_when_there_are_none(
+    tmp_path: Path,
+) -> None:
+    """Counterweight: the caveat is conditional, not boilerplate.
+
+    Without this, always appending "(0 further file(s) could not be
+    read)" would satisfy the test above while making every warn read
+    like something was skipped.
+    """
+    root = _store_with_one_memory(tmp_path)
+    gone = tmp_path / "gone" / "bin" / "bettermemory"
+    settings = _hook_settings_with_command(
+        tmp_path / "cfg" / "settings.json", f"{gone} session-start || true"
+    )
+
+    diag = _check_session_start_hook_wired(root, [settings])
+
+    assert diag.status == "warn", diag.message
+    assert "All 1 binding(s) found across the 1 readable config file(s)" in (
+        diag.message
+    )
+    assert "could not be read" not in diag.message
 
 
 @pytest.mark.parametrize(

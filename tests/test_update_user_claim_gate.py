@@ -30,6 +30,23 @@ What they pin beyond "the gate fires":
 - Ordering behind the credential gate, for the reason the write chain
   orders them that way: the refusal event carries body-derived
   `claim_phrases`, so a secret must be refused first.
+- The OVERRIDE, `acknowledge_user_claim`, which shipped one commit after
+  the refusal did. Until it landed, the mirror was asymmetric in a way
+  that cost ordinary edits: `_find_user_claims` ORs in `_PREFERENCE_RE`,
+  whose `we (?:use|prefer|avoid|always|never)` branch is
+  case-insensitive, so "We use ruff for linting in this repo." — a
+  perfectly ordinary project memory — was refused here while
+  `memory_write(..., acknowledge_user_claim=True)` committed it. A body
+  you could create and then could not edit into an existing record by
+  any route. Worse, the flag passed to `memory_update` was dropped as an
+  unknown argument and the refusal came back anyway, so a caller that
+  guessed the parameter got no signal that it did nothing.
+
+  Two of the tests below are therefore about the WIRE, not the handler:
+  the served schema has to carry the parameter (it is built from the
+  `_handlers.py` facade signature, so a handler-only parameter is
+  silently dropped at call time), and the honoured path has to reach a
+  committed body on disk.
 """
 
 from __future__ import annotations
@@ -45,10 +62,16 @@ from bettermemory.server import build_server
 from bettermemory.session import SessionState
 from bettermemory.store import Store
 
-from ._mcp import call_tool as _mcp_call
+from ._mcp import call_tool as _mcp_call, input_schema as _input_schema
 
 _CLAIM = "Mattias prefers tabs over spaces."
 _CLEAN = "the deploy script lives in bin/deploy.sh"
+# An ordinary project memory that the detector reads as a user claim, via
+# `_PREFERENCE_RE`'s case-insensitive `we (?:use|prefer|avoid|always|never)`
+# branch. Not a corner case — this is the shape most "how we do things here"
+# memories take, and it is the body that made the missing override a
+# functional regression rather than a nicety.
+_TEAM_PRACTICE = "We use ruff for linting in this repo."
 
 
 @pytest.fixture
@@ -203,6 +226,183 @@ async def test_the_hint_names_a_route_that_exists(
     assert "memory_write" in hint
     assert "user-inference" in hint
     assert "acknowledge_user_claim" in hint
+    # And the second route is now on THIS call, not on a different tool.
+    # The hint used to send the acknowledged case to `memory_write`, which
+    # meant re-creating the record — a different id, a lost `created`, and
+    # for a body already stored, no route at all. `test_the_override_*`
+    # below is the proof the route the hint now names exists.
+    assert "re-issue this same memory_update with acknowledge_user_claim" in hint
+
+
+# ---------------------------------------------------------------------------
+# The override: acknowledge_user_claim, on the wire and honoured
+# ---------------------------------------------------------------------------
+
+
+async def test_the_override_is_served_on_the_wire_defaulting_to_off(
+    server_with_events: tuple[Any, Path],
+) -> None:
+    """The failure this pins is a SILENT one, and it is the one that
+    shipped: a parameter honoured by the handler but absent from the
+    `_handlers.py` facade never reaches the served schema, the SDK drops
+    it as an unknown argument, and the call refuses exactly as if the
+    caller had passed nothing. No error, no signal. So the assertion is
+    against the SCHEMA the client reads, not against the handler
+    signature — a handler-only parameter passes an `inspect.signature`
+    check and still does nothing at call time.
+
+    `default: False` is half the contract: a flag that defaulted to True
+    would silently disable the gate for every caller."""
+    server, _ = server_with_events
+    tools = {t.name: t for t in await server.list_tools()}
+    props = _input_schema(tools["memory_update"])["properties"]
+    assert "acknowledge_user_claim" in props, (
+        "memory_update does not serve `acknowledge_user_claim`, so a caller "
+        "passing it is silently ignored and gets the refusal anyway. Served: "
+        f"{sorted(props)}"
+    )
+    assert props["acknowledge_user_claim"].get("default") is False
+
+
+async def test_the_override_commits_the_body_the_write_path_accepts(
+    server_with_events: tuple[Any, Path],
+) -> None:
+    """The asymmetry, closed, asserted from both ends in one test.
+
+    `memory_write` takes this body with the same flag; before the
+    override landed here, `memory_update` refused it with no escape — so
+    an ordinary team-practice memory could be created and then never
+    edited. Decisive assertion is the body on disk, the same way the
+    refusal test's is: a `committed` status over an unchanged file would
+    close nothing."""
+    server, memory_dir = server_with_events
+    memory_id = await _seed_fact(server)
+
+    refused = await _call(server, "memory_update", id=memory_id, content=_TEAM_PRACTICE)
+    assert refused["status"] == "user_claim_warning"
+    assert refused["markers"][0]["phrase"] == "We use"
+
+    # The write surface first, on the SAME body, so the parity claim is
+    # about one body rather than two similar ones. It has to run first:
+    # `memory_write` carries a dedup gate and `memory_update` does not, so
+    # writing after the update would answer `duplicate` and prove nothing.
+    written = await _call(
+        server,
+        "memory_write",
+        content=_TEAM_PRACTICE,
+        scopes=["tools"],
+        acknowledge_user_claim=True,
+    )
+    updated = await _call(
+        server,
+        "memory_update",
+        id=memory_id,
+        content=_TEAM_PRACTICE,
+        acknowledge_user_claim=True,
+    )
+    assert updated["status"] == written["status"] == "committed"
+    assert Store(memory_dir).load_one(memory_id).body.strip() == _TEAM_PRACTICE
+
+
+async def test_the_override_is_off_by_default_at_the_handler_too(
+    server_with_events: tuple[Any, Path],
+) -> None:
+    """Passing the flag explicitly False is not the same code path as
+    omitting it, and a gate that only fires on the omitted path would
+    pass every other test in this module."""
+    server, memory_dir = server_with_events
+    memory_id = await _seed_fact(server)
+    res = await _call(
+        server,
+        "memory_update",
+        id=memory_id,
+        content=_CLAIM,
+        acknowledge_user_claim=False,
+    )
+    assert res["status"] == "user_claim_warning"
+    assert Store(memory_dir).load_one(memory_id).body.strip() == _CLEAN
+
+
+async def test_the_override_waves_through_one_gate_and_not_the_chain(
+    server_with_events: tuple[Any, Path],
+) -> None:
+    """`acknowledge_user_claim` is ONE gate's escape hatch, the same
+    contract `tests/test_server.py` pins for the write surface. A body
+    carrying a secret must still be refused with it set — otherwise the
+    flag a caller reaches for to file a teammate's preference also
+    smuggles a credential into a plain-text store."""
+    server, memory_dir = server_with_events
+    memory_id = await _seed_fact(server)
+    secret = "".join(("AKIA", "IOSFODNN7EXAMPLE"))
+    res = await _call(
+        server,
+        "memory_update",
+        id=memory_id,
+        content=f"Mattias prefers the key {secret} for the tutorial.",
+        acknowledge_user_claim=True,
+    )
+    assert res["status"] == "credential_warning"
+    assert Store(memory_dir).load_one(memory_id).body.strip() == _CLEAN
+
+
+async def test_the_override_does_not_license_the_user_inference_retag(
+    server_with_events: tuple[Any, Path],
+) -> None:
+    """The other thing the flag must not buy. `user-inference` is a
+    WRITE-time gate with no equivalent here, so acknowledging the claim
+    cannot become a back door into the category whose whole purpose is
+    the pending/veto handshake."""
+    server, _ = server_with_events
+    memory_id = await _seed_fact(server)
+    with pytest.raises(Exception, match="category must be one of"):
+        await _call(
+            server,
+            "memory_update",
+            id=memory_id,
+            category="user-inference",
+            acknowledge_user_claim=True,
+        )
+
+
+async def test_the_override_records_the_phrase_it_waved_through(
+    server_with_events: tuple[Any, Path],
+) -> None:
+    """Override-rate telemetry per marker is the entry ticket for
+    widening or narrowing the detector (`UserClaimGate`'s docstring), and
+    an override nobody counted is the case that matters most — a
+    detector is judged loose by how often it is overridden, not by how
+    often it refuses. Same field name the write path records
+    (`user_claims_acknowledged`), so one grep answers for both surfaces.
+
+    The field is present-and-empty on a clean edit, not absent: an
+    ABSENT field and a zero-override edit are indistinguishable to any
+    later tally, which is the same contract `credentials_acknowledged`
+    carries on this handler."""
+    server, memory_dir = server_with_events
+    memory_id = await _seed_fact(server)
+    await _call(
+        server,
+        "memory_update",
+        id=memory_id,
+        content=_TEAM_PRACTICE,
+        acknowledge_user_claim=True,
+    )
+    await _call(server, "memory_update", id=memory_id, content=_CLEAN)
+
+    commits = [
+        e
+        for e in iter_events(memory_dir)
+        if e["kind"] == "update" and e.get("status") is None
+    ]
+    assert len(commits) == 2, f"expected two committed update events, got {commits}"
+    assert commits[0]["user_claims_acknowledged"] == ["We use"]
+    assert commits[1]["user_claims_acknowledged"] == []
+    # The phrase, not the sentence — the acknowledged body is the caller's
+    # to store, and the event log is a marker tally either way.
+    raw = "".join(
+        p.read_text(encoding="utf-8") for p in sorted(memory_dir.glob(".events*.jsonl"))
+    )
+    assert _TEAM_PRACTICE not in raw
 
 
 # ---------------------------------------------------------------------------

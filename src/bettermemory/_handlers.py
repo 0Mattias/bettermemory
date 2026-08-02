@@ -617,6 +617,7 @@ class ToolHandlers:
         category: str | None = None,
         links: list[dict[str, Any]] | None = None,
         acknowledge_credential: bool = False,
+        acknowledge_user_claim: bool = False,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         return await _handlers_pkg.memory_update(
@@ -628,6 +629,7 @@ class ToolHandlers:
             category=category,
             links=links,
             acknowledge_credential=acknowledge_credential,
+            acknowledge_user_claim=acknowledge_user_claim,
             ctx=ctx,
         )
 

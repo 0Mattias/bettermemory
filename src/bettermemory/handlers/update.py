@@ -11,6 +11,16 @@ Description-edit history:
   `user_claim_warning` status and the one category it does not fire
   on. Status name only — the remedy stays in the gate's own hint,
   which is the split the description budget's slack is reserved for.
+- `acknowledge_user_claim` (this commit): the clause above gained the
+  override's name and the one condition that licenses it, because a
+  refusal whose only escape is a parameter the description never names
+  is one a caller cannot find. Paid for in the same edit by deleting
+  " Scope-only edits preserve `last_verified_at`." from the `scopes`
+  bullet — the leader paragraph's own first sentence already says
+  "scope-only edits preserve it", four lines above it in this same
+  string, so the bullet was teaching a rule the description had
+  already taught. Measured: 25,869 -> 25,890 of the 26,000 lean
+  ceiling, still under the 25,900 pressure line.
 """
 
 from __future__ import annotations
@@ -66,10 +76,10 @@ DESC_MEMORY_UPDATE = (
     "prior verification was for prose that no longer exists; "
     "call memory_verify again after). A body that reads as a claim "
     "ABOUT THE USER returns `user_claim_warning` unless the record "
-    "is already `user-inference`.\n"
+    "is already `user-inference`; pass `acknowledge_user_claim=True` "
+    "if the subject is someone else.\n"
     "- `scopes` / `links`: REPLACE semantics — pass the full new "
-    "list, or `[]` to clear. Scope-only edits preserve "
-    "`last_verified_at`.\n"
+    "list, or `[]` to clear.\n"
     "- `confidence`: low / medium / high.\n"
     "- `category`: accepts `fact` and `ambient`. "
     "`user-inference` is REJECTED here — that category exists "
@@ -89,6 +99,7 @@ async def memory_update(
     category: str | None = None,
     links: list[dict[str, Any]] | None = None,
     acknowledge_credential: bool = False,
+    acknowledge_user_claim: bool = False,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     state = deps.sessions.for_request(ctx)
@@ -177,6 +188,12 @@ async def memory_update(
     # override-rate signal and a forensic `grep credentials_acknowledged`
     # sweep both depend on the update surface logging it like write.py does.
     credentials_acknowledged: list[str] = []
+    # Same contract for the user-claim gate's override, for the same reason:
+    # the field is the only evidence a too-loose claim detector would ever be
+    # revisited on (`UserClaimGate`'s docstring makes override-rate telemetry
+    # the entry ticket), so the success event carries it on every path rather
+    # than only on the acknowledged one.
+    user_claims_acknowledged: list[str] = []
     if content is not None:
         new_body = content.strip() + "\n"
         # Credential gate — mirror CredentialGate on the write path so a
@@ -239,47 +256,78 @@ async def memory_update(
         # staged so the user gets the veto. A legacy `category=None` record is
         # gated, matching the runtime's fact-default reading of that field.
         #
-        # NOT mirrored yet: `acknowledge_user_claim`, the write path's escape
-        # for a body whose subject is someone or something else ("Black
-        # prefers double quotes"). The parameter is only reachable if it lands
-        # on the `ToolHandlers.memory_update` facade in `_handlers.py` and on
-        # the signature/footprint pins in `tests/` in the same commit —
-        # adding it here alone leaves it invisible on the MCP surface. Until
-        # then such a body goes in through
-        # `memory_write(..., acknowledge_user_claim=True)`, which the hint
-        # names, so the refusal is not escape-hatchless.
-        if new_category != Category.USER_INFERENCE:
-            claim_hits = _find_user_claims(new_body)
-            if claim_hits:
-                deps.recorder.record(
-                    "update",
-                    id=id,
-                    status="user_claim_warning",
-                    category=(new_category.value if new_category is not None else None),
-                    claim_phrases=[h.phrase for h in claim_hits],
-                )
-                return {
-                    "status": "user_claim_warning",
-                    "markers": [
-                        {"phrase": h.phrase, "sentence": h.sentence} for h in claim_hits
-                    ],
-                    "hint": (
-                        "The updated body reads as a claim ABOUT THE USER, "
-                        "but this memory is filed as "
-                        f"`{(new_category or Category.FACT).value}`, so the "
-                        "edit would commit without asking them. "
-                        "Misattribution sticks, so the user gets the veto: "
-                        "file the claim with memory_write and "
-                        "category='user-inference', which stages it and "
-                        "returns a pending_id so you can ask in plain "
-                        "language first. Retagging this record into "
-                        "`user-inference` is not available — that is the "
-                        "write-time gate. When the subject is someone or "
-                        "something else (a teammate, a tool that 'prefers' "
-                        "a setting), memory_write takes the same body with "
-                        "acknowledge_user_claim=True."
-                    ),
-                }
+        # `acknowledge_user_claim` mirrors the write path's escape for a body
+        # whose subject is someone or something else ("Black prefers double
+        # quotes"). It landed one commit late, and the gap was not cosmetic:
+        # `_find_user_claims` ORs in `_PREFERENCE_RE`, whose `we (?:use|prefer|
+        # avoid|always|never)` branch is case-insensitive, so an ordinary
+        # project memory ("We use ruff for linting in this repo.") tripped the
+        # refusal. That body is writable — `memory_write(...,
+        # acknowledge_user_claim=True)` commits it — so without this parameter
+        # there was a body you could CREATE and then could not EDIT into an
+        # existing record by any route, while `acknowledge_user_claim=True`
+        # passed to this tool was dropped as an unknown argument and the
+        # refusal came back anyway, with nothing saying the flag did nothing.
+        # The parameter has to reach the `ToolHandlers.memory_update` facade in
+        # `_handlers.py` to be on the wire at all — the served schema is built
+        # from THAT signature, so a handler-only parameter is silently dropped
+        # at call time. That is the same failure mode
+        # `tests/test_resident_footprint.py`'s landed-parameter check guards
+        # for the three parameters IT names; this one is guarded by
+        # `test_the_override_is_served_on_the_wire_defaulting_to_off` in
+        # `tests/test_update_user_claim_gate.py`, which asserts against the
+        # served schema rather than this signature.
+        #
+        # Scanned only when the record will NOT be `user-inference` — the
+        # empty list on that branch is what makes the rest of this block
+        # read the same either way, rather than leaving `claim_hits`
+        # conditionally undefined for the override accounting below.
+        claim_hits = (
+            _find_user_claims(new_body)
+            if new_category != Category.USER_INFERENCE
+            else []
+        )
+        if claim_hits and not acknowledge_user_claim:
+            deps.recorder.record(
+                "update",
+                id=id,
+                status="user_claim_warning",
+                category=(new_category.value if new_category is not None else None),
+                claim_phrases=[h.phrase for h in claim_hits],
+            )
+            return {
+                "status": "user_claim_warning",
+                "markers": [
+                    {"phrase": h.phrase, "sentence": h.sentence} for h in claim_hits
+                ],
+                "hint": (
+                    "The updated body reads as a claim ABOUT THE USER, "
+                    "but this memory is filed as "
+                    f"`{(new_category or Category.FACT).value}`, so the "
+                    "edit would commit without asking them. "
+                    "Misattribution sticks, so the user gets the veto: "
+                    "file the claim with memory_write and "
+                    "category='user-inference', which stages it and "
+                    "returns a pending_id so you can ask in plain "
+                    "language first. Retagging this record into "
+                    "`user-inference` is not available — that is the "
+                    "write-time gate. When the subject is someone or "
+                    "something else (a teammate, a tool that 'prefers' "
+                    "a setting), re-issue this same memory_update with "
+                    "acknowledge_user_claim=True."
+                ),
+            }
+        # Passed the gate on a body edit → the body reads clean OR the caller
+        # overrode. Which phrases the override waved through, on the same
+        # override-rate axis `credentials_acknowledged` rides above and under
+        # the field name the write path already uses for it
+        # (`user_claims_acknowledged`, handlers/write.py) — one grep has to
+        # find both surfaces or the telemetry is per-surface trivia.
+        user_claims_acknowledged = (
+            [h.phrase for h in claim_hits]
+            if claim_hits and acknowledge_user_claim
+            else []
+        )
 
     # `links` is REPLACE semantics — the caller passes the full new
     # list. Same shape as the `scopes` parameter: simpler than
@@ -412,6 +460,7 @@ async def memory_update(
         confidence=updated.confidence.value,
         category=updated.category.value if updated.category is not None else None,
         credentials_acknowledged=credentials_acknowledged,
+        user_claims_acknowledged=user_claims_acknowledged,
     )
     return deps.responses.committed(updated)
 

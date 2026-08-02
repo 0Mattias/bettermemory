@@ -178,14 +178,26 @@ def extra_importable(module: str) -> bool:
     which by exception type alone is indistinguishable from
     ``sentence_transformers`` never having been installed.
 
-    So the state is decided by PRESENCE, not by exception type. The
-    ``except`` arms both consult ``_spec_found`` — "is it on disk",
-    answered without importing — and the exception only supplies the
-    reason string. Reading the type instead is what sent a torch-less
+    So the state is decided by PRESENCE, not by exception type — and
+    the two ``except`` arms establish presence by different means. The
+    ``ImportError`` arm consults ``_spec_found`` — "is it on disk",
+    answered without importing — because that type leaves presence
+    genuinely open; the exception only supplies the reason string.
+    Reading the type instead is what sent a torch-less
     ``[embeddings]`` install down the (a) path: no reason recorded for
     ``extra_import_failure``, no WARNING, and ``doctor`` telling the
     user to install what they already had. Distinguishing (a) from (c)
     is the whole reason this function exists.
+
+    The ``except Exception`` arm does NOT consult ``_spec_found``, and
+    that is the same rule applied rather than an exception to it: a
+    non-``ImportError`` escaping ``import_module`` means the module was
+    found and its own module-level code ran and raised, so presence is
+    already established by EXECUTION and a spec lookup could at best
+    confirm it. That arm therefore files (c) unconditionally; the
+    comment on it records the one residual case — a damaged finder
+    raising for a genuinely absent module — and why erring that way
+    round is the cheaper mistake.
 
     That is not hypothetical. It is the 2026-08-01 outage: a
     ``transformers`` tree that iCloud had partially evicted (226 of
