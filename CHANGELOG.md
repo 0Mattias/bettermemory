@@ -9,6 +9,92 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+### Fixed — `ingest` checks `[scopes] allowed`, and only against scopes you typed
+
+`bettermemory ingest` builds its `Store.write` payload by hand and never reached
+`_validate_write_payload`, so the whitelist that governs every other write path
+did not exist on this one: with `allowed = ["tools"]`, an `--scope rogue` row
+committed anyway. The scope allowlist is enforced here now, per row and ahead of
+the gate chain, and an offending row takes the existing `skip_invalid` outcome
+rather than aborting the batch.
+
+Enforcing it naively broke the opposite way, and that half is worth stating
+plainly because it both shipped and was caught inside this window. Ingest stamps
+every row with `imported-from-claude-code` plus a tag derived from the row's own
+type, and the first cut checked *those* against the operator's allowlist. Nobody
+types them and nobody can opt out of them, so any allowlist that failed to name
+them refused every row of every import — while `--dry-run`, which ran no such
+check, cheerfully reported the writes that were about to be refused. Only the
+scopes ingest stamps itself are exempt now, derived per row from that row's
+type, so `--scope feedback` on a `project` row is still caller-supplied and
+still checked. `compute_ingest_plan` runs the same predicate in the same
+position, so the plan and the commit agree on the reason and not merely on the
+count.
+
+`config.toml`'s own `[scopes]` comment — written verbatim into every new install
+— still stated the unconditional rule, "writes with scopes outside this list
+fail". It names the exemption now, since that file is where someone decides what
+to put in the list.
+
+### Fixed — `doctor` reported a semantic leg it never probed
+
+`_check_embeddings_extra` learned to resolve the configured provider and probe
+it (`0bf7a49`, and again since) — but only on the branch where some extra was
+already installed-and-broken. `extra_import_failure` returns nothing both for
+"imports cleanly" and for "not installed at all", so an *absent* provider never
+put a row in that list, and the check fell through to code that asks the
+resolver nothing: it returned `ok` on `semantic_dedup = false`, or ORed
+importability across both extras and returned `ok` naming whichever happened to
+be present.
+
+So `semantic_provider = "torch"` with only `[embeddings-fast]` installed — the
+plain typo class, and the shape of one of this project's own CI legs — got a
+green light reading "semantic_dedup enabled and fastembed importable" over a
+process where `resolve_provider` returns `torch`, no model loads, hybrid ranking
+is lexical-only and cosine dedup has fallen back to Jaccard. The verdict was
+decided by an irrelevant fact: break the fastembed nobody resolved to, and the
+same install correctly reported `fail`. That is lesson 1 of the 2026-07-25
+incident — a check may skip only on the condition it measures — recurring on the
+branch the earlier repair did not cover.
+
+The resolver and the probe are hoisted above that split now, so every branch
+reports the resolved provider and whether it imports. The severity also stops
+overstating: the escalation and the "silently degraded" clause are gated on
+whether any consumer would load a model at all, so a broken extra under
+`search_mode = "keyword"` with `semantic_dedup = false` is a `warn` about dead
+weight rather than a `fail` — which had been exiting 2 on installs whose
+configured behaviour was entirely intact. And the hint stops recommending `auto`
+in the one branch where `auto` cannot help: when the named extra is absent and
+the other one is broken there is no working provider to resolve to, and it says
+so instead.
+
+### Fixed — `doctor` counted another project's plugin as this project's wiring
+
+`_installed_plugin_roots` read `installPath` out of every record in
+`installed_plugins.json` and ignored the `scope` and `projectPath` sitting
+beside it, so a plugin install scoped `local` to one project counted as live
+wiring in every other project `doctor` ran from. Such an install's `hooks.json`
+binds `uvx bettermemory session-start || true`, which the path probe
+deliberately declines to judge, so it won the "runnable" slot and the
+session-start check returned `ok` — "hook is wired" — for a project where the
+plugin is not enabled and the hook never fires. A genuinely stale binding in the
+user's own settings was demoted to a footnote on that `ok`.
+
+A record is skipped now only when it is explicitly `scope: "local"` for a
+project directory that is neither the current one nor an ancestor of it. Every
+uncertainty — no `scope`, an unfamiliar `scope`, a missing or unusable
+`projectPath` — keeps the record, because the failure to prefer here is a false
+alarm at someone who wired everything correctly, not a false green.
+
+The same function also treated the manifest as authoritative on its top-level
+shape alone and then returned nothing when no record inside it parsed, while its
+docstring promised the `cache/` fallback covers a manifest "shaped in a way this
+doesn't recognise". That file is version-stamped because its shape is not ours
+to fix, and on a shape whose records we cannot read the plugin arm went silent
+and the check told plugin users to install a plugin they already had. "Nothing
+is installed" and "nothing here parsed" are two different answers now, and only
+the first returns empty.
+
 ### Fixed — one unreadable subtree sank the whole health report
 
 `report_for_directory` called `EpisodeStore(root).volume()` unguarded, and
@@ -128,10 +214,14 @@ clones found the same exception-type split inside `_load_torch_model` and
 `_load_fastembed_model`; both pick their wording by presence through one shared
 helper.
 
-Two things change for the user. `doctor` reports `fail` and "reinstall it" where
-it reported `ok` — and that `ok` was not merely uninformative, it asserted "no
-extra is installed-and-broken" while the probe behind it could not see a broken
-one. And the `mode='semantic'` hard error no longer tells someone who already
+Two things change for the user. `doctor` stops reporting `ok` over an extra that
+is installed and cannot be imported — that `ok` was not merely uninformative, it
+asserted "no extra is installed-and-broken" while the probe behind it could not
+see a broken one. Whether the fault reads as `fail` or as a `warn` about dead
+weight depends on whether the config asks for a model at all; see "`doctor`
+reported a semantic leg it never probed" above, which settled that split and the
+"reinstall it" wording along with it. And the `mode='semantic'` hard error no
+longer tells someone who already
 has the extra to `pip install` it: it resolves the provider that will actually
 load, consults `extra_import_failure`, and branches three ways — reinstall,
 install, or no-model-resolved, naming both candidate causes without asserting
