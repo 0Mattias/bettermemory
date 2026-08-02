@@ -1526,8 +1526,17 @@ def _session_start_hook_broken_path(command: str) -> str | None:
     put something else first, and reading that as the binary is how a
     check invents failures that aren't there.
     """
+    # `posix=False` on Windows because POSIX tokenizing treats `\` as an
+    # ESCAPE character: `C:\Users\me\bin\bettermemory` comes back as
+    # `C:Usersmebinbettermemory`, which no longer contains a separator, so
+    # the path check below silently declines to judge a path that is
+    # perfectly judgeable — and the check then reports a stale hook as
+    # wired, which is the defect this function exists to close. Non-posix
+    # mode keeps backslashes but also keeps the quotes around a quoted
+    # token, hence the strip.
+    posix = os.name != "nt"
     try:
-        tokens = shlex.split(command)
+        tokens = shlex.split(command, posix=posix)
     except ValueError:
         # Unbalanced quotes in a foreign, hand-edited file. Not our
         # business to adjudicate.
@@ -1539,6 +1548,13 @@ def _session_start_hook_broken_path(command: str) -> str | None:
     if index == 0:
         return None
     candidate = tokens[index - 1]
+    if (
+        not posix
+        and len(candidate) >= 2
+        and candidate[0] == candidate[-1]
+        and candidate[0] in "\"'"
+    ):
+        candidate = candidate[1:-1]
     # Only an explicit path is judgeable. A bare name may be resolved by a
     # launcher that precedes it, or fetched on demand.
     if os.sep not in candidate and (os.altsep or os.sep) not in candidate:
@@ -1547,6 +1563,12 @@ def _session_start_hook_broken_path(command: str) -> str | None:
     if "$" in candidate or "%" in candidate:
         return None
     resolved = Path(candidate).expanduser()
+    # `os.X_OK` is meaningful only on POSIX. On Windows `os.access` reports
+    # X_OK for any existing file, so this reduces to an existence check
+    # there — which is the part that actually rots, and the part the
+    # missing-binary case turns on. The exec bit is simply not a state a
+    # Windows install can be in, which is why the not-executable test is
+    # POSIX-marked and the missing-path one is not.
     if resolved.is_file() and os.access(resolved, os.X_OK):
         return None
     return candidate

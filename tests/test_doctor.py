@@ -6006,6 +6006,7 @@ def test_session_start_hook_warns_when_its_binary_path_is_stale(
     assert "NOT hook commands" in diag.fix_hint
 
 
+@_needs_posix_modes
 def test_session_start_hook_warns_when_the_path_is_not_executable(
     tmp_path: Path,
 ) -> None:
@@ -6013,6 +6014,11 @@ def test_session_start_hook_warns_when_the_path_is_not_executable(
 
     A file left without the exec bit — a partial copy, a restored backup —
     fails the same way and just as silently.
+
+    POSIX-only, and not an oversight: on Windows `os.access` reports X_OK
+    for any existing file, so "present but not executable" is not a state
+    an install can be in there. The missing-path case above is the one
+    that carries this check on Windows, and it is unmarked.
     """
     root = _store_with_one_memory(tmp_path)
     binary = tmp_path / "bin" / "bettermemory"
@@ -6047,6 +6053,54 @@ def test_session_start_hook_ok_when_its_binary_path_resolves(tmp_path: Path) -> 
     diag = _check_session_start_hook_wired(root, [settings])
 
     assert diag.status == "ok", diag.message
+
+
+def test_session_start_hook_judges_a_windows_style_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Simulates Windows so the tokenizer choice is pinned everywhere.
+
+    POSIX `shlex` treats `\\` as an ESCAPE character, so
+    `C:\\Users\\me\\bin\\bettermemory` tokenizes to
+    `C:Usersmebinbettermemory` — no separator left, so the probe declines
+    to judge a path that is perfectly judgeable, and the check reports a
+    stale hook as wired. That is exactly how this shipped and how the
+    Windows CI leg caught it.
+
+    Running the real Windows path only on the Windows runner would make
+    that a slow feedback loop, and a future refactor dropping
+    `posix=False` would look green everywhere else. So the environment is
+    simulated here and the assertion runs on every leg.
+    """
+    from bettermemory.doctor import _session_start_hook_broken_path
+
+    monkeypatch.setattr(os, "name", "nt")
+    monkeypatch.setattr(os, "sep", "\\")
+    monkeypatch.setattr(os, "altsep", "/")
+
+    stale = r"C:\gone\bin\bettermemory"
+    assert _session_start_hook_broken_path(f"{stale} session-start || true") == stale, (
+        "a Windows-style path must survive tokenizing and be judged"
+    )
+
+
+def test_session_start_hook_strips_quotes_around_a_windows_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Non-posix tokenizing keeps the quotes; the probe must not.
+
+    `C:\\Program Files\\…` has to be quoted to survive the space, and a
+    candidate still wearing its quotes is not a path any filesystem call
+    will resolve — it would read as unjudgeable and silently pass.
+    """
+    from bettermemory.doctor import _session_start_hook_broken_path
+
+    monkeypatch.setattr(os, "name", "nt")
+    monkeypatch.setattr(os, "sep", "\\")
+    monkeypatch.setattr(os, "altsep", "/")
+
+    stale = r"C:\Program Files\bm\bettermemory"
+    assert _session_start_hook_broken_path(f'"{stale}" session-start || true') == stale
 
 
 @pytest.mark.parametrize(
