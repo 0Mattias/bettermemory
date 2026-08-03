@@ -1217,6 +1217,85 @@ async def test_memory_search_survives_file_gone_adversarial_after_indexing(
     assert await _search_ids(memory_dir, "alpha") == [good.id]
 
 
+def test_frontmatter_broken_in_place_is_silent_at_construction_and_doctors_job(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Pins the equal-count gate's documented silence, and the surface
+    that is supposed to break it instead.
+
+    An in-place frontmatter break adds and removes nothing: the file
+    keeps its name, so the raw `.md` count still equals the index row
+    count and `_warn_on_index_divergence` returns at the count
+    comparison without ever comparing identities. The memory is gone
+    from every reader — `load_all`, and therefore `memory_search` — with
+    its index row intact and not a word logged.
+
+    That silence is a deliberate cost split, not an oversight: the
+    identity leg parses every memory file — an order of magnitude more
+    than the bare count it would replace — at every Store construction,
+    which is server boot and every CLI command. `bettermemory doctor`
+    pays it instead: `_check_index_health` reconciles identities before
+    it will certify anything, and `_check_memory_parse_health` names the
+    file outright. Both are asserted here, because the silence is only
+    acceptable while they speak.
+
+    A change that makes construction warn here turns this test red on
+    purpose. It is a signal to move the cost deliberately, not a bug."""
+    from bettermemory import index as _index
+    from bettermemory import store as store_mod
+    from bettermemory.doctor import _check_index_health, _check_memory_parse_health
+
+    root = tmp_path / "broken-in-place"
+    store = Store(root)
+    kept = store.write(content="kept claim about ports\n", scopes=["tools"])
+    doomed = store.write(content="doomed claim about ports\n", scopes=["tools"])
+    resolved = root.expanduser().resolve()
+
+    doomed_path = store._find_path_for_id(doomed.id)
+    assert doomed_path is not None
+    # Break the YAML itself, in place: same file, same name, same count.
+    doomed_path.write_text(
+        doomed_path.read_text(encoding="utf-8").replace(
+            "scopes:", "scopes: [unterminated\nbogus:", 1
+        ),
+        encoding="utf-8",
+    )
+
+    # The gate's own two inputs are equal, which is what makes it return.
+    assert len(list(root.glob("*.md"))) == 2
+    assert len(_index.indexed_ids(resolved)) == 2
+
+    store_mod._DIVERGENCE_WARNED_ROOTS.discard(resolved)
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="bettermemory.store"):
+        Store(root)
+
+    logged = [
+        r.getMessage()
+        for r in caplog.records
+        if r.name == "bettermemory.store" and r.levelname == "WARNING"
+    ]
+    assert logged == [], (
+        "the equal-count gate returns before any identity comparison; a "
+        f"warning here means the cost split moved: {logged!r}"
+    )
+    assert resolved not in store_mod._DIVERGENCE_WARNED_ROOTS
+
+    # What that silence covers: one of the two memories is now invisible
+    # to every reader while the index still carries its row.
+    assert [m.id for m in store.load_all()] == [kept.id]
+    assert doomed.id in _index.indexed_ids(resolved)
+
+    # The compensating control: the surfaces that pay the parse. Both
+    # must keep reporting this state for the silence above to be safe.
+    index_health = _check_index_health(root)
+    assert index_health.status == "warn"
+    assert "no longer describes the store" in index_health.message
+    parse_health = _check_memory_parse_health(root)
+    assert parse_health.status == "warn"
+    assert doomed_path.name in parse_health.message
+
+
 # ---------------------------------------------------------------------------
 # Construction-time auto-rebuild failure backoff
 # ---------------------------------------------------------------------------
