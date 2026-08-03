@@ -4,7 +4,9 @@
 Two entry points, one rule set:
 
 * ``--message-file <path>`` — lint a single message. This is the
-  ``commit-msg`` hook's mode (``.githooks/commit-msg``).
+  ``commit-msg`` hook's mode (``.githooks/commit-msg``). Comment lines are
+  dropped only when git is about to drop them itself; see
+  ``_editor_will_run``.
 * ``--range <A>..<B>`` — lint every non-merge commit in a git range. This
   is the CI mode; the ``commit-lint`` job in ``.github/workflows/ci.yml``
   passes the push or pull-request range so only *new* commits are graded.
@@ -36,9 +38,11 @@ violation printed as ``<sha-or-file>: <rule>: <detail>``.
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 
@@ -245,12 +249,13 @@ _TRAILER_RE = re.compile(
 # of the line keeps its word boundaries.
 _QUOTED_RE = re.compile(r"`[^`]*`|\"[^\"]*\"|“[^”]*”")
 
-# A comment line in a message file. `git commit` with an editor runs
-# `--cleanup=default`, which strips these before the message is stored, so
-# the hook must strip them too or it grades text that will never be
-# committed. `git commit -m`/`-F` run `--cleanup=whitespace` instead and
-# keep them, which is why `--range` mode grades a stored message as-is —
-# see `lint_message`.
+# A comment line in a message file. `--cleanup=default` resolves to
+# `strip` when the message is to be edited and to `whitespace` otherwise
+# (git-commit(1)), so an editor buffer loses its `#` lines before the
+# message is stored and a `git commit -m`/`-F` message keeps them
+# verbatim. Both reach the `commit-msg` hook through the same argument;
+# `_editor_will_run` is how the hook tells them apart, and `--range` grades
+# an already-stored message as-is — see `lint_message`.
 _COMMENT_PREFIX = "#"
 
 # `git commit -v` appends the staged diff below this marker. Everything
@@ -270,16 +275,44 @@ class Violation:
         return f"{self.where}: {self.rule}: {self.detail}"
 
 
+def _editor_will_run(env: Mapping[str, str]) -> bool:
+    """True when the buffer the ``commit-msg`` hook was handed goes to an editor.
+
+    That is the whole question the hook has to answer before grading, and
+    git answers it: every ``git commit`` hook is invoked with
+    ``GIT_EDITOR=:`` when the command will not bring up an editor
+    (githooks(5)), which is exactly the condition ``--cleanup=default``
+    keys on — ``strip`` if the message is to be edited, ``whitespace``
+    otherwise (git-commit(1)). So an editor means git is about to discard
+    the ``#`` lines and the hook must not grade them, and no editor means
+    git will store them verbatim and the hook must grade them or report
+    green on text ``--range`` then fails on.
+
+    Absent means an editor: git pushes the variable into the hook's
+    environment only for the no-editor case, and an editor named by
+    ``core.editor`` or ``EDITOR`` leaves it unset. Only git's own ``:``
+    sentinel counts — a user's no-op editor is still an editor, because
+    the cleanup mode follows whether git was asked to edit rather than
+    what the editor does.
+
+    Two settings move the boundary out of the hook's view: an explicit
+    ``--cleanup=`` on the command line and a ``commit.cleanup`` config
+    override. Neither is visible here, so both grade on git's default.
+    """
+    return env.get("GIT_EDITOR") != ":"
+
+
 def strip_comments(raw: str) -> str:
     """Drop what ``git commit`` drops from an editor buffer.
 
-    Mirrors ``--cleanup=default`` so the ``commit-msg`` hook grades the
-    text that will be recorded rather than the scaffolding around it.
-    Without the scissors handling, ``git commit -v`` would feed the entire
-    staged diff into the body rules and fail on every long source line in
-    the patch. Applies to the hook only: ``--cleanup=whitespace``, which
-    is what ``git commit -m`` and ``-F`` use, keeps ``#`` lines, so a
-    stored message must be graded exactly as it was stored.
+    Mirrors ``--cleanup=default`` in its ``strip`` resolution so the
+    ``commit-msg`` hook grades the text that will be recorded rather than
+    the scaffolding around it. Without the scissors handling, ``git commit
+    -v`` would feed the entire staged diff into the body rules and fail on
+    every long source line in the patch. Applies only where git strips
+    them itself: ``--cleanup=whitespace``, which is what ``git commit
+    -m`` and ``-F`` get, keeps ``#`` lines, so a message stored that way is
+    graded exactly as it was stored — by the hook and by ``--range`` alike.
     """
     lines: list[str] = []
     for line in raw.splitlines():
@@ -456,12 +489,14 @@ def lint_message(raw: str, where: str, *, strip: bool = True) -> list[Violation]
     """Grade one commit message. Returns every violation it carries.
 
     ``strip`` drops ``#`` comment lines and the ``git commit -v`` scissors
-    block. That is right for the ``commit-msg`` hook, whose input is an
-    editor buffer git has not cleaned yet, and wrong for ``--range``,
-    whose input is a message git has already stored: ``git commit -m`` and
-    ``-F`` run ``--cleanup=whitespace``, which keeps ``#`` lines, so
-    stripping there would delete text the commit really carries and grade
-    a message nobody wrote.
+    block. It is right exactly when git is about to drop them too: an
+    editor buffer the hook sees before ``--cleanup=default`` has run over
+    it. It is wrong for ``--range``, whose input is a message git has
+    already stored, and wrong for the hook on a ``git commit -m``/``-F``
+    message, which git cleans with ``--cleanup=whitespace`` and stores
+    ``#`` lines and all — stripping either would delete text the commit
+    really carries and grade a message nobody wrote. ``_editor_will_run``
+    makes that call for the hook.
     """
     text = strip_comments(raw) if strip else raw.strip("\n")
     if not text.strip():
@@ -572,7 +607,11 @@ def main(argv: list[str] | None = None) -> int:
     violations: list[Violation] = []
     if args.message_file:
         with open(args.message_file, encoding="utf-8") as handle:
-            violations = lint_message(handle.read(), args.message_file)
+            violations = lint_message(
+                handle.read(),
+                args.message_file,
+                strip=_editor_will_run(os.environ),
+            )
     else:
         try:
             shas = _commits_in_range(args.rev_range)

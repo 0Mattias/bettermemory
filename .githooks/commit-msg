@@ -10,6 +10,11 @@
 # CI runs the same linter over the pushed range, so skipping the hook
 # only moves the failure later; it does not avoid it.
 #
+# The linter reads GIT_EDITOR out of the environment git hands the hook to
+# tell an editor buffer (where `#` lines are scaffolding git discards) from
+# a `git commit -m` message (where git stores them and CI grades them), so
+# the environment must reach it unaltered.
+#
 # Prefers the repo's own interpreters and falls back to whatever `python3`
 # is on PATH — the linter is stdlib-only, so any 3.11+ interpreter works.
 set -e

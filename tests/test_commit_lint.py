@@ -479,9 +479,90 @@ def test_a_stored_message_is_graded_with_the_lines_git_kept() -> None:
     assert {
         v.rule for v in commit_lint.lint_message(stored, "abc1234", strip=False)
     } == {"first-person", "filler", "session-narration", "editorial"}
-    # The hook still strips: its input is an editor buffer git has not
-    # cleaned yet, and grading the scaffolding would block a good commit.
+    # Stripping is what an editor buffer needs, and only an editor buffer:
+    # grading the scaffolding git wrote there would block a good commit.
     assert rules(stored) == set()
+
+
+_COMMENT_ONLY_VIOLATION = (
+    "fix(store): release the lock earlier\n"
+    "\n"
+    "# Honestly, the last round got this wrong.\n"
+)
+
+
+def test_the_hook_grades_a_comment_line_git_is_about_to_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The hook's whole job is to fail here, one push before CI does.
+
+    `git commit -m` never opens an editor, so git invokes the hook with
+    `GIT_EDITOR=:` (githooks(5)) and resolves `--cleanup=default` to
+    `whitespace`, which stores the `#` line verbatim. A hook that stripped
+    it would pass a message `--range` then rejects — the message is already
+    written by then, so the fix costs a rebase rather than an edit.
+    """
+    path = tmp_path / "COMMIT_EDITMSG"
+    path.write_text(_COMMENT_ONLY_VIOLATION, encoding="utf-8")
+    monkeypatch.setenv("GIT_EDITOR", ":")
+
+    assert commit_lint.main(["--message-file", str(path)]) == 1
+
+    reported = capsys.readouterr().out
+    graded_in_ci = {
+        v.rule
+        for v in commit_lint.lint_message(
+            _COMMENT_ONLY_VIOLATION, "abc1234", strip=False
+        )
+    }
+    assert graded_in_ci == {"filler", "session-narration"}
+    for rule in graded_in_ci:
+        assert f"{path}: {rule}:" in reported
+
+
+def test_the_hook_ignores_the_scaffolding_git_is_about_to_discard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Counterweight: an editor buffer is graded without git's own text.
+
+    Git leaves `GIT_EDITOR` alone when it is about to launch an editor, and
+    then resolves `--cleanup=default` to `strip`. Grading the template git
+    wrote into the buffer, or the `git commit -v` diff below the scissors,
+    would block a commit over lines that never enter history.
+    """
+    buffer = (
+        "fix(store): release the lock earlier\n"
+        "\n"
+        "# Please enter the commit message for your changes. Lines starting\n"
+        "# with '#' will be ignored, and an empty message aborts the commit.\n"
+        "#\n"
+        "# On branch main\n"
+        "# Changes to be committed:\n"
+        "#\tmodified:   tools/commit_lint.py\n"
+        f"{commit_lint._SCISSORS}\n"
+        "diff --git a/x b/x\n"
+        "+I rewrote this line myself, honestly\n"
+    )
+    path = tmp_path / "COMMIT_EDITMSG"
+    path.write_text(buffer, encoding="utf-8")
+
+    monkeypatch.delenv("GIT_EDITOR", raising=False)
+    assert commit_lint.main(["--message-file", str(path)]) == 0
+    monkeypatch.setenv("GIT_EDITOR", "vim")
+    assert commit_lint.main(["--message-file", str(path)]) == 0
+
+
+def test_only_gits_own_sentinel_means_no_editor() -> None:
+    """`:` is the value githooks(5) documents, and nothing else means it.
+
+    A no-op editor a user configured themselves — `true`, `/usr/bin/true` —
+    is still an editor to `--cleanup=default`, which follows whether git was
+    asked to edit rather than what the editor does.
+    """
+    assert commit_lint._editor_will_run({}) is True
+    assert commit_lint._editor_will_run({"GIT_EDITOR": "vim"}) is True
+    assert commit_lint._editor_will_run({"GIT_EDITOR": "true"}) is True
+    assert commit_lint._editor_will_run({"GIT_EDITOR": ":"}) is False
 
 
 def _stub_git(
