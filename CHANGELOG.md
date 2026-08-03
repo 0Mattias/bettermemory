@@ -9,26 +9,122 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+### Fixed — `doctor` reported an all-green install whose search was dead
+
+With `search_mode = "semantic"` and neither embeddings extra installed,
+`embeddings_extra` returned `ok` and the report exited 0, while `memory_search`
+raised on every call: `semantic` is the one mode that does not fall back to
+keyword/BM25. The verdict was decided by `semantic_dedup`, a different fact from
+the one the check names, because the early return for a disabled dedup sat above
+every probe of whether a consumer would load a model — the check had already
+computed `wants_model` into its own details and never read it again. That install
+now fails and says the mode does not degrade. The default `hybrid` install with
+no extra still passes quietly, since that mode degrades by design, and a test
+pins it so the gate cannot be widened into a false alarm.
+
+Fix hints across both embedding checks now render through one helper each and
+lead with the form that matches how bettermemory is running —
+`uv tool install --reinstall 'bettermemory[embeddings]'`, with pipx and quoted
+development-clone variants — instead of a `uv pip install -e .[embeddings]` that
+cannot repair a tool install and that zsh refuses to run unquoted.
+`retrieval_discrimination` no longer opens with "install an embeddings extra" on
+an install that already has one: it branches on the same probes `embeddings_extra`
+reads and names the repair this install actually needs.
+
+### Fixed — `doctor` counted a disabled plugin as live session-start wiring
+
+Claude Code records plugin enablement in an `enabledPlugins` map inside the
+settings files, separately from `installed_plugins.json`, and `claude plugin
+disable` leaves the install record and its `hooks/hooks.json` where they were.
+Nothing read that map, so a switched-off plugin's manifest won the "runnable
+binding" slot and the check reported a wired hook that Claude Code reads only to
+decline registering. A record is now dropped only on an explicit `false` for its
+`plugin@marketplace` key, read across the settings files in ascending precedence
+so a project can switch a plugin off for itself alone. Every other shape — absent
+key, list value, unparseable file, and an administrator's managed-policy disable,
+which lives in a file doctor never reads — keeps the record, because the failure
+to prefer here is a false alarm at someone who wired everything correctly. The
+function's stated contract was narrowed to what it now measures.
+
+### Fixed — the commit-message linter failed pushes over input its author cannot control
+
+Dependabot writes its subject and body from a template, and both subjects it has
+produced in this repo are shapes the `commit-lint` job rejects, so every weekly
+bump — including a security patch — turned CI red on something no reviewer could
+edit. `.github/dependabot.yml` now pins a Conventional-Commits prefix on both
+updaters, and a commit git attributes to a bot is not graded in `--range` mode at
+all, which covers the generated body line no configuration can reshape.
+
+The wording rules also stopped matching inside hyphenated compounds (`this
+round-trip`, `embarrassing-looking`), stopped skipping any body line that opened
+with a capitalised word and a colon — `Note:`, `Tests:` and `Gate:` were
+exempting every rule for the rest of the line — and now grade whole paragraphs,
+so a banned phrase split across the body wrap is still caught. `--range` mode
+grades a stored message exactly as git kept it, since `git commit -m` does not
+strip `#` lines and the linter no longer does either. For the residual case where
+a pattern cannot tell session narration from a real race window in the code, a
+message may waive one **named** wording rule with a `Lint-skip:` trailer; there is
+no wildcard, the envelope rules are not waivable, and the waiver stays in the
+permanent record.
+
+### Fixed — shipped comments, a docstring and an incident report described code that had moved
+
+The `semantic_provider = "auto"` bullet written verbatim into every user's
+`config.toml` documented presence-based resolution, which the resolver stopped
+doing when it began requiring the extra to import as well; a broken torch now
+loses to a working fastembed instead of taking the semantic leg down. The
+`[scopes]` comment stated the stamped-scope exemption as a property of the scopes
+themselves — it is a property of the ingest path, and `memory_update` replaces the
+scope list wholesale, so re-tagging an imported row resubmits ingest's own stamps
+and is refused unless `allowed` names them.
+
+`Store`'s boot-time divergence check described its equal-count gate as missing
+exactly one shape, an out-of-band swap of one memory for another. It compares
+index rows against a raw `.md` file count that includes unparseable files, so it
+is silent on any state whose row count equals its file count — including a memory
+whose frontmatter breaks in place while its index row survives, which drops the
+memory out of `memory_search` with nothing added or removed. The docstring names
+both families and points at `bettermemory doctor`, whose identity reconciliation
+runs with no count gate in front of it.
+
+`docs/incidents/2026-07-25-doctor-false-green-on-importable-extra.md` stated a
+superseded predicate in the present tense: its third condition, "an extra
+imports", was narrowed in 3.35.0 to "the resolved provider imports", so a reader
+sent there by the code or a commit message took away a form the repo's own tests
+label a bug. Condition 3 is marked as the shape it shipped as, a Superseded
+paragraph gives the current predicate, and the historical account is unchanged.
+
+### Added — `ingest` regression coverage for the commit half of its config wiring
+
+Only the `compute_ingest_plan` side of the plan/commit pair was guarded, so the
+`config` argument on the `apply_ingest_plan` call could be dropped with the whole
+suite still green — a loss that would score `--dry-run` under the user's
+`[behavior] semantic_dedup` and thresholds while the commit fell back to lexical
+Jaccard defaults, turning a promised `would write 1` into `wrote 0 / skip invalid
+1`. A CLI test now drives a corpus the two scorers disagree on and asserts the dry
+run and the commit report the same per-row action and reason.
+
 ### Changed — the commit-message register is narrower, and three more rules are enforced
 
 The "Register" rules in `CONTRIBUTING.md` said to describe the change rather than
 the session that produced it, and left everything past first-person narration and
-conversational filler to review. Review did not hold the line: across the last 600
-commits, 28 bodies name the sitting that produced them ("this window", "the last
-round", "an adversarial pass over the previous six commits"), 4 grade a defect
-instead of describing it ("worth stating plainly", "cheerfully reported", "for the
-third time"), and 18 release subjects carry a parenthetical thesis beside the
-version. None of it is actionable for the reader the log is written for, who is
-bisecting a regression and has no access to anyone's calendar.
+conversational filler to review. Review did not hold the line: over the 600
+non-merge commits ending at `5dededd~1`, 31 bodies name the sitting that produced
+them ("this window", "the last round", "an adversarial pass over the previous six
+commits"), 4 grade a defect instead of describing it ("worth stating plainly",
+"cheerfully reported", "for the third time"), and 49 of the 50 release subjects
+carry a parenthetical thesis beside the version. None of it is actionable for the
+reader the log is written for, who is bisecting a regression and has no access to
+anyone's calendar.
 
-`tools/commit_lint.py` encodes the decidable part as three new rules —
-`session-narration`, `editorial`, and `release-subject`. Graded against 600 commits
-of real history, they fire 50 times and every hit is a genuine instance; the
-determiners in the session rule are enumerated rather than open (`the current
-window` is absent) so that this project's real domain windows — demotion,
-verification, tag ranges — do not trip it, and the editorial rule leaves the facts
-that make a recurrence actionable alone: incident paths, defect classes, cited
-shas. A `release:` subject is now the version alone, since the release's argument
+`tools/commit_lint.py` encodes the decidable part as three new rules that reject
+session references and editorialising: `session-narration`, `editorial`, and
+`release-subject`. Over that same frozen range they fire 88 times and every hit is
+a genuine instance; the determiners in the session rule are enumerated rather than
+open (`the current window` is absent) so that this project's real domain windows —
+demotion, verification, tag ranges — do not trip it when they are named plainly,
+and the editorial rule leaves the facts that make a recurrence actionable alone:
+incident paths, defect classes, cited shas. A `release:` subject is now the version alone, since the release's argument
 belongs in the CHANGELOG entry the tag points at. History is not re-graded; CI
 lints only the commits a push introduces.
 
@@ -49,18 +145,21 @@ The 3.36.0 entry above lost its aphorism lede and four phrases that graded the
 release instead of describing it. Four source comments went the same way
 (`sync.py`, `store.py`, `origin.py`, `handlers/scope_overview.py`).
 
-A sweep of every tracked markdown file except this one, using the linter's three
-wording regexes, found 34 hits. Six are fixed: the shipped plugin skill told the
+Six passages were repaired in the same pass: the shipped plugin skill told the
 model to "record honestly" and credited a ranker with learning, where the
 mechanism is `endorsement_boost` and `outcome_demotion` reading a table;
 `docs/eval-results.md`, which README links, introduced its published figures
 under "reading it honestly"; and four passages in the incident and planning
-documents now state a fact rather than commenting on it. The 28 that stay are
-deliberate — 13 in the bench preregistrations and READMEs, which grade their own
-pre-committed predictions as their method; 8 uses of the MCP *session* concept
-the tools are named for; 3 naming the audit sweep that found an incident, in the
-field that records exactly that; and 4 one-offs, among them `CONTRIBUTING.md`'s
-own rule quoting the word it bans, and vendored third-party material.
+documents now state a fact rather than commenting on it.
+
+Sweeping every tracked markdown file except this one with
+`commit_lint._WORDING_RULES` still reports 68 hits, and that residue is
+deliberate rather than a backlog: the bench preregistrations grade their own
+pre-committed predictions as their method, the MCP *session* concept is what
+several tools are named for, the incident records have a field whose job is to
+name the sweep that found them, and `CONTRIBUTING.md` cannot state a rule without
+quoting the words it bans. The figure is a measurement of prose, not a budget —
+re-run the rules over the corpus rather than trusting this sentence.
 
 ### Fixed — `CONTRIBUTING.md` described a setup that no longer exists
 
@@ -68,10 +167,15 @@ The "Local setup" section still told a contributor to `source venv/bin/activate`
 and explained the `venv/` rename as the whole story, which stopped being true when
 `.envrc` began resolving a checkout under `~/Documents` or `~/Desktop` to
 `$HOME/.venvs/<checkout-dir-name>` — so the documented command activates nothing
-on exactly the machine the workaround exists for. It now documents both branches
-and the `.venv` symlink that `[tool.pyright]` needs. The "Project values" section
-also pointed at a "Limitations" section of the README; that section is in
-`docs/internals.md`.
+on exactly the machine the workaround exists for. The prose was corrected first,
+but only the comment above the command branched: the runnable line still read
+`export UV_PROJECT_ENVIRONMENT=venv`, so pasting the block on a checkout under
+`~/Documents` created the in-repo virtualenv inside the synced tree that
+`docs/incidents/2026-08-01-broken-optional-extra-killed-retrieval.md` is about.
+The block now sources `.envrc` instead of restating its rule, so the branch has
+one definition, and it carries the `direnv allow` step and the `.venv` symlink
+`[tool.pyright]` needs. The "Project values" section also pointed at a
+"Limitations" section of the README; that section is in `docs/internals.md`.
 
 ## 3.36.0 - 2026-08-02
 
