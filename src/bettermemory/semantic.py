@@ -365,9 +365,16 @@ def _log_provider_unavailable_once(
         )
     else:
         log.warning(
+            # Spelled as `doctor._install_extra_command` spells it: the
+            # extras spec is quoted because `[` globs (zsh refuses an
+            # unquoted `bettermemory[embeddings]`), and the tool install
+            # leads because `uv pip` writes to the active virtualenv
+            # rather than to the tool environment the documented install
+            # runs from.
             "semantic provider %r requested but the %s extra is not "
-            "installed. Install with `pip install bettermemory[%s]` (or "
-            '`uv pip install -e ".[%s]"`). Falling back to Jaccard / '
+            "installed. Install with `uv tool install --reinstall "
+            "'bettermemory[%s]'` (from a development clone: `uv pip "
+            'install -e ".[%s]"`). Falling back to Jaccard / '
             "keyword.",
             key[0],
             extra,

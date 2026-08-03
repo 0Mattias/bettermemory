@@ -16,7 +16,8 @@ def add_subparser(
     help_text = (
         "Run the local web UI (FastAPI). Read-mostly: browse "
         "memories, run memory_verify, see memory_health rollups. "
-        "Requires the `[ui]` extra: pip install bettermemory[ui]."
+        "Requires the `[ui]` extra: uv tool install --reinstall "
+        "'bettermemory[ui]'."
     )
     parser = sub.add_parser("ui", help=help_text, description=help_text)
     parser.add_argument(

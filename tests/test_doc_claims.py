@@ -2462,3 +2462,74 @@ def test_the_exclusion_reason_check_fires_on_an_unreasoned_entry() -> None:
     bare = reasoned.replace("        # The reason this one is out of the corpus.\n", "")
     assert _unreasoned_entries_in(reasoned) == []
     assert _unreasoned_entries_in(bare) == [3]
+
+
+# ---------------------------------------------------------------------------
+# install-command claims
+# ---------------------------------------------------------------------------
+
+# An extras spec is a glob: `[` and `]` are pattern characters. zsh — the
+# default shell on macOS since Catalina — refuses to run a command whose
+# unquoted argument matches nothing, so `pip install bettermemory[ui]`
+# exits 1 with "no matches found" instead of installing anything. A repair
+# instruction that does not run is a false claim in the same sense as the
+# rest of this module, and it has now been fixed three times in three
+# separate surfaces (doctor, then the `mode='semantic'` error and the
+# provider WARNING, then the web/CLI/llm import errors) because each fix
+# closed an instance rather than the class.
+#
+# The rule matches a COMMAND — `install` followed by the spec — so prose
+# that merely names `bettermemory[embeddings]` is untouched, as is any
+# already-quoted form. Verified against the corpus at HEAD: zero hits.
+_UNQUOTED_EXTRAS_COMMAND = re.compile(r"install(?:\s+--\S+)*\s+bettermemory\[")
+
+
+def _tracked_python_sources() -> list[str]:
+    """Repo-relative paths of tracked Python sources under `src/`.
+
+    Uses `git ls-files` rather than `rglob` so an untracked scratch file
+    left in the tree cannot fail the suite.
+    """
+    out = subprocess.run(
+        ["git", "-C", str(_REPO_ROOT), "ls-files", "--", "src/*.py", "src/**/*.py"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    return sorted({line for line in out.splitlines() if line.strip()})
+
+
+def test_shipped_install_commands_quote_the_extras_spec() -> None:
+    """Every `install` command in shipped source quotes its extras spec.
+
+    Failing here means a user was handed a command their shell will
+    refuse. Quote the spec — `'bettermemory[ui]'` — and prefer
+    `uv tool install --reinstall`, which repairs the tool environment
+    `docs/installation.md` prescribes rather than whichever virtualenv
+    happens to be active.
+    """
+    offenders: list[str] = []
+    for rel in _tracked_python_sources():
+        text = (_REPO_ROOT / rel).read_text(encoding="utf-8")
+        for lineno, line in enumerate(text.splitlines(), 1):
+            if _UNQUOTED_EXTRAS_COMMAND.search(line):
+                offenders.append(f"{rel}:{lineno}: {line.strip()}")
+    assert offenders == [], (
+        "unquoted extras spec in an install command — zsh will refuse it:\n"
+        + "\n".join(offenders)
+    )
+
+
+def test_the_install_command_rule_catches_the_shape_it_names() -> None:
+    """The rule fires on the real pre-fix strings and not on prose."""
+    assert _UNQUOTED_EXTRAS_COMMAND.search("`pip install bettermemory[ui]`.")
+    assert _UNQUOTED_EXTRAS_COMMAND.search(
+        "Install with `pip install bettermemory[embeddings]`"
+    )
+    assert not _UNQUOTED_EXTRAS_COMMAND.search(
+        "uv tool install --reinstall 'bettermemory[ui]'"
+    )
+    assert not _UNQUOTED_EXTRAS_COMMAND.search(
+        "`bettermemory[embeddings]` is the torch one"
+    )
+    assert not _UNQUOTED_EXTRAS_COMMAND.search('uv pip install -e ".[embeddings]"')

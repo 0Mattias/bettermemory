@@ -403,7 +403,7 @@ class OllamaProvider:
         except ImportError as exc:
             raise RuntimeError(
                 "OllamaProvider requires httpx. Install with "
-                "`pip install bettermemory[dev]` or "
+                "`uv tool install --reinstall 'bettermemory[dev]'` or "
                 "`pip install httpx`."
             ) from exc
 

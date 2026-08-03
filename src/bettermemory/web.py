@@ -1603,7 +1603,7 @@ def build_app(
     except ImportError as exc:
         raise ImportError(
             "FastAPI is required for the web UI. Install with "
-            "`pip install bettermemory[ui]`."
+            "`uv tool install --reinstall 'bettermemory[ui]'`."
         ) from exc
 
     store = store or Store(config.resolved_directory())
@@ -2301,7 +2301,7 @@ def serve(
     except ImportError as exc:
         raise ImportError(
             "uvicorn is required for the web UI. Install with "
-            "`pip install bettermemory[ui]`."
+            "`uv tool install --reinstall 'bettermemory[ui]'`."
         ) from exc
 
     tunnel_proc: subprocess.Popen[bytes] | None = None
