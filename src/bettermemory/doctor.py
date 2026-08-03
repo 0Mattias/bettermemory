@@ -59,7 +59,7 @@ from .eval import is_admin_recorded_event
 from .events import EVENT_LOG_FILENAME, iter_all_events
 from .init import KNOWN_CLIENTS, command_launches_bettermemory, find_binary
 from .models import Memory, looks_truncated
-from .semantic_setup import _semantic_rank_leg_active
+from .semantic_setup import _search_mode_needs_model, _semantic_rank_leg_active
 from .store import (
     Store,
     count_active_memory_files,
@@ -1504,8 +1504,10 @@ _SESSION_START_HOOK_MARKER = "bettermemory session-start"
 _PLUGIN_HOOK_SCAN_CAP = 200
 
 
-def _installed_plugin_roots(plugins_root: Path, *, cwd: Path) -> list[Path]:
-    """Directories of the plugins INSTALLED here and enabled for `cwd`.
+def _installed_plugin_roots(
+    plugins_root: Path, *, cwd: Path, disabled: frozenset[str] = frozenset()
+) -> list[Path]:
+    """Directories of the plugins INSTALLED here, scoped to `cwd`, not turned off.
 
     `~/.claude/plugins` is not one tree, it is two with opposite
     meanings, and only one of them is evidence of wiring:
@@ -1529,7 +1531,7 @@ def _installed_plugin_roots(plugins_root: Path, *, cwd: Path) -> list[Path]:
     `hooks.json` files under `~/.claude/plugins` were catalogue copies
     of plugins that were not installed.
 
-    An install is also not necessarily enabled HERE. Each record carries
+    An install is also not necessarily scoped HERE. Each record carries
     a `scope`, and a `"local"` one names the `projectPath` it was
     installed for; Claude Code runs that plugin's hooks in that project
     only. Counting one from another project is the same false green as
@@ -1537,6 +1539,28 @@ def _installed_plugin_roots(plugins_root: Path, *, cwd: Path) -> list[Path]:
     installed, so nothing about the directory looks wrong. Hence `cwd`:
     the project being judged, against which project-scoped records are
     filtered by `_install_is_for_another_project`.
+
+    Nor is an install necessarily switched ON. Installation and
+    enablement are two separate records: `installed_plugins.json` says
+    what is on disk, and the settings files say what runs, under an
+    `enabledPlugins` map keyed by the same `plugin@marketplace` string.
+    A disabled plugin stays installed — `claude plugin disable` is a
+    different command from `uninstall`, and `--all` puts every install
+    into that state at once — and Claude Code reads its
+    `hooks/hooks.json` off disk only to decline registering it. That is
+    the catalogue's false green again, on a directory with nothing wrong
+    with it at all. Hence `disabled`: the keys `_disabled_plugin_keys`
+    reads out of those settings files.
+
+    `disabled` is narrower than "not enabled", deliberately: only an
+    EXPLICIT `false` drops a record. An absent key normally means
+    enabled (the plugin's own `defaultEnabled` decides, and it defaults
+    to true), a value in some other shape is not this function's to
+    adjudicate, and an administrator's managed-policy disable lives in a
+    file this never reads — every one of those keeps the record, the
+    same asymmetry `_install_is_for_another_project` documents. So the
+    check can still certify a hook that will not run; what it can no
+    longer do is certify one the user themselves switched off.
 
     So the manifest is the authority. When it parses and names installs,
     those paths are the whole answer — a plugin the user uninstalled
@@ -1580,29 +1604,69 @@ def _installed_plugin_roots(plugins_root: Path, *, cwd: Path) -> list[Path]:
         # Everything is defensively type-checked: this is a FOREIGN file
         # whose shape is Claude Code's to change, and a check that raises
         # on someone else's unexpected JSON is worse than no check.
-        for installs in by_plugin.values():
+        for key, installs in by_plugin.items():
             if not isinstance(installs, list):
                 continue
+            switched_off = isinstance(key, str) and key in disabled
             for install in installs:
                 if not isinstance(install, dict):
                     continue
                 install_path = install.get("installPath")
                 if not (isinstance(install_path, str) and install_path):
                     continue
-                # Counted BEFORE the scope filter, not after: a record we
-                # read and deliberately dropped is still a record we
-                # understood. Counting only survivors would send a
-                # manifest holding nothing but other projects' installs
-                # into the `cache/` fallback, whose rglob would sweep
-                # those very installs straight back in.
+                # Counted BEFORE the scope and enablement filters, not
+                # after: a record we read and deliberately dropped is
+                # still a record we understood. Counting only survivors
+                # would send a manifest holding nothing but other
+                # projects' or switched-off installs into the `cache/`
+                # fallback, whose rglob would sweep those very installs
+                # straight back in.
                 understood += 1
-                if _install_is_for_another_project(install, cwd):
+                if switched_off or _install_is_for_another_project(install, cwd):
                     continue
                 roots.append(Path(install_path))
         if understood or not by_plugin:
             return [p for p in roots if _is_dir_quiet(p)]
     cache = plugins_root / "cache"
     return [cache] if _is_dir_quiet(cache) else []
+
+
+def _disabled_plugin_keys(settings_paths: list[Path]) -> frozenset[str]:
+    """The `plugin@marketplace` keys a settings file switches OFF.
+
+    Claude Code keeps enablement in an `enabledPlugins` object inside the
+    same settings files this check already reads for hand-wired bindings,
+    keyed exactly as `installed_plugins.json` keys its per-plugin lists.
+
+    `settings_paths` is read in the order given, and a later verdict
+    replaces an earlier one, because that order is ascending precedence:
+    user scope before this project's, each `.local` override after the
+    file it overrides. That ordering is what makes the result per-`cwd`
+    rather than global — a project-scope `false` switches a plugin off
+    here while leaving it on everywhere else.
+
+    A literal `false` is the only verdict read. `true`, the list form,
+    an unrecognised shape, an absent key, a file that will not parse or
+    is not an object at all — every one of those leaves the plugin out of
+    the returned set, since the failure to prefer here is the false "not
+    wired" warn at a user whose plugin is working.
+    """
+    verdicts: dict[str, bool] = {}
+    for path in settings_paths:
+        try:
+            text = path.read_text(encoding="utf-8")
+            data = json.loads(text) if text.strip() else {}
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        entries = data.get("enabledPlugins")
+        if not isinstance(entries, dict):
+            continue
+        for key, value in entries.items():
+            if isinstance(key, str):
+                verdicts[key] = value is False
+    return frozenset(key for key, off in verdicts.items() if off)
 
 
 def _install_is_for_another_project(install: dict[Any, Any], cwd: Path) -> bool:
@@ -1672,21 +1736,27 @@ def _session_start_hook_config_candidates(cwd: Path | None = None) -> list[Path]
 
     * Claude Code settings files (user- and project-scope, plus the
       `.local` overrides) — where a manual wiring lands.
-    * `hooks.json` manifests inside plugins INSTALLED and enabled for
-      `cwd` — where a *plugin* install's hooks live. This is the
-      load-bearing half: a plugin user never edits settings.json, so
+    * `hooks.json` manifests inside plugins INSTALLED for `cwd` and not
+      switched off there — where a *plugin* install's hooks live. This is
+      the load-bearing half: a plugin user never edits settings.json, so
       scanning settings alone would warn at exactly the users who did
       the recommended thing.
 
     The second family is deliberately not "every `hooks.json` under
     `~/.claude/plugins`". That sweeps in the marketplace catalogue, whose
     manifests belong to plugins that were never installed and whose hooks
-    therefore never run, and it sweeps in plugins installed into somebody
-    else's project, whose hooks do not run here;
-    `_installed_plugin_roots` documents both splits and why counting
-    either as wiring flips this check's verdict. `cwd` decides the second
-    one, which is why it is passed on rather than only used for the
-    project-scope settings files above.
+    therefore never run, it sweeps in plugins installed into somebody
+    else's project, whose hooks do not run here, and it sweeps in plugins
+    the user disabled, whose manifests Claude Code reads and then
+    declines to register; `_installed_plugin_roots` documents all three
+    splits and why counting any of them as wiring flips this check's
+    verdict. `cwd` decides the second and third, which is why it is
+    passed on rather than only used for the project-scope settings files
+    above.
+
+    The first family therefore feeds the second: the settings files are
+    where `enabledPlugins` lives, so they are collected first and handed
+    to `_disabled_plugin_keys` before the plugin walk begins.
 
     Only paths that exist are returned, which doubles as the "is this
     even a Claude Code install?" probe — an empty list means we have
@@ -1704,12 +1774,18 @@ def _session_start_hook_config_candidates(cwd: Path | None = None) -> list[Path]
 
     plugins_root = home / ".claude" / "plugins"
     if plugins_root.is_dir():
+        # `found` holds the settings files and nothing else at this point
+        # — the plugin manifests are appended below — so it is exactly the
+        # set Claude Code merges `enabledPlugins` across.
+        disabled = _disabled_plugin_keys(found)
         # The cap counts matches across ALL installed plugins, not per
         # plugin: it bounds how many files this check opens and parses,
         # and that budget is one budget.
         matches = 0
         try:
-            for root in _installed_plugin_roots(plugins_root, cwd=base):
+            for root in _installed_plugin_roots(
+                plugins_root, cwd=base, disabled=disabled
+            ):
                 for path in root.rglob("hooks.json"):
                     if matches >= _PLUGIN_HOOK_SCAN_CAP:
                         break
@@ -3234,6 +3310,169 @@ def _read_text_or_none(path: Path) -> str | None:
         return None
 
 
+def _install_extra_command(extra: str) -> str:
+    """The command that adds an embeddings extra to the environment
+    bettermemory RUNS from.
+
+    `docs/installation.md` documents `uv tool install
+    'bettermemory[<extra>]'` as the install path, and `uv pip` writes to
+    the active virtualenv rather than to a tool environment — so the
+    `uv pip` spelling repairs nothing for a `uv tool install` or `pipx`
+    user, which is most of the population a diagnostic that also
+    inspects MCP client configs and plugin installs is talking to. The
+    development-clone form stays as the parenthetical variant, quoted:
+    `[` is a glob character, so an unquoted `.[embeddings]` is not
+    pasteable into zsh.
+    """
+    return (
+        f"`uv tool install --reinstall 'bettermemory[{extra}]'` "
+        f"(pipx: `pipx install --force 'bettermemory[{extra}]'`; from a "
+        f'development clone: `uv pip install -e ".[{extra}]"`)'
+    )
+
+
+def _reinstall_extra_command(module: str, extra: str) -> str:
+    """The command that REPAIRS an installed-but-broken embeddings extra.
+
+    Same environment argument as `_install_extra_command`: the damaged
+    module is a dependency of the environment bettermemory runs from, so
+    a tool install is repaired by reinstalling the tool. `uv pip install
+    --force-reinstall` reaches the module only when the virtualenv that
+    runs bettermemory is also the active one, so it follows as the
+    variant rather than leading.
+    """
+    return (
+        f"`uv tool install --reinstall 'bettermemory[{extra}]'` "
+        f"(pipx: `pipx install --force 'bettermemory[{extra}]'`; inside "
+        f"the virtualenv that runs bettermemory: `uv pip install "
+        f"--force-reinstall {module}`)"
+    )
+
+
+#: What a semantic ranking leg buys, beside the artifact that measured
+#: it. One constant because every branch of `_lexical_only_fix_hint`
+#: closes with it, and a rate restated per branch is a rate that goes
+#: stale per branch.
+_DISCRIMINATION_LIFT_NOTE = (
+    "Measured: recall@1 35% -> 60% on questions as asked, "
+    "80% -> 90% on re-queried ones "
+    "(bench/retrieval/results/v2-unpadded-2026-07-26.json — 180 "
+    "synthetic documents, easier than a real store, so the deltas "
+    "carry and the absolute rates do not). Weigh the install "
+    "size; this is reported, never auto-applied."
+)
+
+
+def _lexical_only_fix_hint(cfg: Config) -> str:
+    """What actually restores a semantic ranking leg under `cfg`.
+
+    `_semantic_rank_leg_active` is false for three independent reasons
+    and they take three different repairs, so one fixed "install an
+    embeddings extra" sentence is a false claim on two of them. It is
+    printed to an operator whose extra is installed and GUTTED — while
+    `embeddings_extra` says "reinstall it" in the same report; to one
+    whose `semantic_provider` names an extra this machine does not have
+    while a healthy sibling sits beside it; and to one with two working
+    extras whose only fault is `search_mode = "keyword"`, where it also
+    denies that a config flag is involved when the flag is the entire
+    fix. `fix_hint` is a claim and rots like one
+    (`docs/incidents/2026-07-25-doctor-false-green-on-importable-extra.md`,
+    lesson 4), so each reason states its own repair, read off the same
+    probes `_check_embeddings_extra` uses so that one report cannot
+    print two answers.
+
+    The provider clause and the mode clause are independent and can
+    both apply: the predicate ANDs them, so an install with a missing
+    extra AND a non-routing mode needs both repairs to get a leg.
+    """
+    from .semantic import extra_import_failure, extra_importable, resolve_provider
+
+    by_provider = {
+        "torch": ("sentence_transformers", "embeddings"),
+        "fastembed": ("fastembed", "embeddings-fast"),
+    }
+    resolved = resolve_provider(cfg.behavior.semantic_provider)
+    module, extra = by_provider.get(resolved or "", (None, None))
+
+    if module is not None and extra is not None:
+        if extra_import_failure(module) is not None:
+            lever = (
+                f"An embeddings extra is already installed and BROKEN: "
+                f"this config resolves to `{resolved}` and `{module}` "
+                f"fails to import, so no model loads. Repair it rather "
+                f"than install another — "
+                f"{_reinstall_extra_command(module, extra)}. The "
+                f"`embeddings_extra` check in this report names the "
+                f"import error."
+            )
+        elif not extra_importable(module):
+            sibling = [
+                name
+                for name in ("sentence_transformers", "fastembed")
+                if name != module and extra_importable(name)
+            ]
+            if sibling:
+                lever = (
+                    f"An embeddings extra is installed, but not the one "
+                    f"this config asks for: `[behavior] "
+                    f"semantic_provider` resolves to `{resolved}`, whose "
+                    f"`{extra}` extra is absent, while `{sibling[0]}` "
+                    f"imports cleanly beside it. Repoint `[behavior] "
+                    f"semantic_provider` at the one this machine has — "
+                    f"`auto` probes for health and would pick it — or "
+                    f"install what this config names: "
+                    f"{_install_extra_command(extra)}."
+                )
+            else:
+                lever = (
+                    f"No embeddings extra imports here, and this config "
+                    f"names `{resolved}`, so install that one: "
+                    f"{_install_extra_command(extra)}."
+                )
+        else:
+            # The resolved provider imports, so the extra is not what is
+            # missing. Reachable only with a non-routing `search_mode`:
+            # with both conditions met `_semantic_rank_leg_active` would
+            # have skipped this check entirely.
+            lever = (
+                f"An embeddings extra is already installed and working — "
+                f"`{resolved}` resolves and `{module}` imports cleanly. "
+                f"Installing another one changes nothing."
+            )
+    else:
+        lever = (
+            "Install an embeddings extra — no provider is installed. "
+            f"{_install_extra_command('embeddings-fast')} is the lighter "
+            "ONNX path; `bettermemory[embeddings]` is the torch one, and "
+            "the choice is install weight, not capability."
+        )
+
+    # Condition 2 of `_semantic_rank_leg_active`, and the same
+    # unnormalised comparison: `handlers.search` does not normalise
+    # either, so a mis-cased `"Hybrid"` gets no model there and must
+    # read as "does not route" here.
+    if (cfg.behavior.search_mode or "hybrid") not in ("semantic", "hybrid"):
+        lever += (
+            f" That alone will not help until the mode changes: "
+            f"`[behavior] search_mode = {cfg.behavior.search_mode!r}` is "
+            "one `handlers.search.memory_search` hands no model to, so "
+            "ranking stays lexical whatever is installed. Set "
+            '`search_mode = "hybrid"`.'
+        )
+    else:
+        lever += (
+            ' The default `search_mode = "hybrid"` picks the model up on '
+            "its own and fuses it as a third leg beside the two lexical "
+            "ones rather than replacing them — the rare-term rate this "
+            "check reports per scope is theirs and stays theirs. No "
+            "further config flag is required: pairing this with "
+            "`semantic_dedup = true` used to be needed and is not, and "
+            "that flag only ever controlled WRITE-time dedup (Jaccard vs "
+            "cosine) — leave it alone unless you want that."
+        )
+    return f"{lever} {_DISCRIMINATION_LIFT_NOTE}"
+
+
 def _check_retrieval_discrimination(directory: Path, cfg: Config) -> Diagnosis:
     """Can this store still be found by the questions a model asks?
 
@@ -3259,8 +3498,9 @@ def _check_retrieval_discrimination(directory: Path, cfg: Config) -> Diagnosis:
     Reported, never auto-fixed. The lever is a ranking signal that is not
     term-frequency based — an embeddings extra AND a config that actually
     routes it into ranking — and that is an install-weight decision for
-    the operator, not something a diagnostic should make. `fix_hint`
-    names it; nothing acts on it.
+    the operator, not something a diagnostic should make.
+    `_lexical_only_fix_hint` names whichever of the two this install is
+    missing; nothing acts on it.
 
     The skip condition is `_semantic_rank_leg_active`, which is stricter
     than "an extra imports" ON PURPOSE — read that predicate for the three
@@ -3359,25 +3599,7 @@ def _check_retrieval_discrimination(directory: Path, cfg: Config) -> Diagnosis:
             "working — the shared vocabulary in a coherent scope carries too "
             "little signal for a lexical query to single a memory out."
         ),
-        fix_hint=(
-            "Install an embeddings extra — that is now the whole fix. "
-            "`bettermemory[embeddings-fast]` is the lighter ONNX path; "
-            "`bettermemory[embeddings]` is the torch one, and the choice is "
-            "install weight, not capability. The default "
-            '`search_mode = "hybrid"` picks the model up on its own and '
-            "fuses it as a third leg beside the two lexical ones rather than "
-            "replacing them — the rare-term rate this check reports per "
-            "scope is theirs and stays theirs. No config flag is required: "
-            "pairing this with `semantic_dedup = true` used to be needed and "
-            "is not, and that flag only ever controlled WRITE-time dedup "
-            "(Jaccard vs cosine) — leave it alone unless you want that. "
-            "Measured: recall@1 35% -> 60% on questions as asked, "
-            "80% -> 90% on re-queried ones "
-            "(bench/retrieval/results/v2-unpadded-2026-07-26.json — 180 "
-            "synthetic documents, easier than a real store, so the deltas "
-            "carry and the absolute rates do not). Weigh the install "
-            "size; this is reported, never auto-applied."
-        ),
+        fix_hint=_lexical_only_fix_hint(cfg),
         details=details,
     )
 
@@ -3412,11 +3634,17 @@ def _check_embeddings_extra(cfg: Config) -> Diagnosis:
     extra is not a fault, and `retrieval_discrimination` already owns
     the "consider installing one" advice with the measurement to back
     it up. "Absent" there means the config asked for nothing in
-    particular: `semantic_provider = "auto"` on a machine with no extra.
-    An EXPLICIT `semantic_provider` naming an extra this machine does
-    not have is a different proposition — the config asked for something
-    the install cannot supply — and the resolved-provider probe below
-    reports it whatever the gate says.
+    particular: `semantic_provider = "auto"` on a machine with no extra,
+    under a mode that DEGRADES without a model. An EXPLICIT
+    `semantic_provider` naming an extra this machine does not have is a
+    different proposition — the config asked for something the install
+    cannot supply — and the resolved-provider probe below reports it
+    whatever the gate says. So is `search_mode = "semantic"`, which
+    names a mode that does not degrade at all: `handlers.search` raises
+    on a None model, so nothing-installed there is a dead
+    `memory_search` rather than a lexical one, and the arm above the
+    gate reports it via `_search_mode_needs_model` — the predicate the
+    handler's own model factory routes on.
 
     WHICH broken extra decides the severity, and the resolver is what
     answers that. Two extras exist so one can cover for the other:
@@ -3555,8 +3783,8 @@ def _check_embeddings_extra(cfg: Config) -> Diagnosis:
         if fatal or not resolved_usable:
             module, extra, broken_provider, reason = (fatal or broken)[0]
             reinstall = (
-                f"Reinstall it: `uv pip install --force-reinstall {module}` "
-                f"(or `uv pip install -e .[{extra}]`). This usually means a "
+                f"Reinstall it: {_reinstall_extra_command(module, extra)}. "
+                "This usually means a "
                 "damaged or partially-synced install — a virtualenv inside "
                 "a cloud-synced folder (iCloud Drive, Dropbox) is the "
                 "common cause, and moving the venv outside it is the "
@@ -3592,9 +3820,10 @@ def _check_embeddings_extra(cfg: Config) -> Diagnosis:
                 fix_hint = (
                     f"Two independent problems, and between them this "
                     f"install has no working provider. Install the extra "
-                    f"this config asks for (`uv pip install -e "
-                    f".[{resolved_extra}]`), or repair the one you do have "
-                    f"(`uv pip install --force-reinstall {module}`) and "
+                    f"this config asks for: "
+                    f"{_install_extra_command(resolved_extra)}. Or "
+                    f"repair the one you do have — "
+                    f"{_reinstall_extra_command(module, extra)} — and "
                     f"point `[behavior] semantic_provider` at "
                     f"`{broken_provider}`. `auto` is not a third option "
                     f"here: with `{resolved_extra}` absent it resolves to "
@@ -3629,8 +3858,8 @@ def _check_embeddings_extra(cfg: Config) -> Diagnosis:
                 "WARNING per process."
             ),
             fix_hint=(
-                f"Reinstall it: `uv pip install --force-reinstall {module}` "
-                f"(or `uv pip install -e .[{extra}]`), or uninstall it and "
+                f"Reinstall it: {_reinstall_extra_command(module, extra)}, "
+                f"or uninstall it and "
                 f"stay on `{resolved}`. A damaged install usually means a "
                 "virtualenv inside a cloud-synced folder (iCloud Drive, "
                 "Dropbox); moving the venv outside it is the durable fix."
@@ -3681,8 +3910,9 @@ def _check_embeddings_extra(cfg: Config) -> Diagnosis:
                 "resolution commits to ONE provider and it is not that one."
             )
             fix_hint = (
-                f"Install what this config asks for (`uv pip install -e "
-                f".[{resolved_extra}]`), or point `[behavior] "
+                f"Install what this config asks for: "
+                f"{_install_extra_command(resolved_extra)}. Or point "
+                f"`[behavior] "
                 f"semantic_provider` at `{alternative}`, which this machine "
                 f"actually has — or at `auto`, which probes for health and "
                 f"would pick it. Unlike the branch where the sibling is "
@@ -3691,7 +3921,7 @@ def _check_embeddings_extra(cfg: Config) -> Diagnosis:
         else:
             beside = " No embeddings extra is installed at all."
             fix_hint = (
-                f"Install it: `uv pip install -e .[{resolved_extra}]`. "
+                f"Install it: {_install_extra_command(resolved_extra)}. "
                 "Repointing `[behavior] semantic_provider` cannot help and "
                 "neither can `auto` — with no extra installed at all there "
                 "is nothing for either to resolve to."
@@ -3706,6 +3936,45 @@ def _check_embeddings_extra(cfg: Config) -> Diagnosis:
                 f"{unusable_note}"
             ),
             fix_hint=fix_hint,
+            details=details,
+        )
+
+    # `resolved is None` is the nothing-installed case — `resolve_provider`
+    # returns None only there — and the dedup gate below answers it `ok`,
+    # which is right for `hybrid`: that mode degrades to keyword+bm25 and a
+    # default install with no extra is not a fault. `semantic` does not
+    # degrade. `handlers.search.memory_search` raises `ValueError` on a
+    # None model, so EVERY `memory_search` call fails while a verdict
+    # decided by `semantic_dedup` alone reports the install green — the
+    # dedup flag is not the condition this check measures (lesson 1 of
+    # `docs/incidents/2026-07-25-doctor-false-green-on-importable-extra.md`
+    # once more, on the branch left when the resolver names nothing).
+    #
+    # Gated on `_search_mode_needs_model` and not on `wants_model`: that
+    # detail is true under `hybrid` too, so escalating on it would turn
+    # the documented-ok default install red. The predicate here is the one
+    # that separates "raises" from "degrades", and it is the arm
+    # `semantic_setup._semantic_model_configured` opens for `semantic` —
+    # the gate the handler's model factory runs on — so doctor and the
+    # handler read one rule rather than two copies of it.
+    if resolved is None and _search_mode_needs_model(cfg):
+        return Diagnosis(
+            name="embeddings_extra",
+            status="fail",
+            message=(
+                f"`search_mode = {cfg.behavior.search_mode!r}` requires an "
+                "embedding model and neither the `embeddings` nor the "
+                "`embeddings-fast` extra is installed. This mode does not "
+                "degrade: `memory_search` raises on every call rather than "
+                "falling back to keyword/BM25."
+            ),
+            fix_hint=(
+                f"Install one: {_install_extra_command('embeddings')} for "
+                "PyTorch, or `bettermemory[embeddings-fast]` for the "
+                'smaller ONNX provider. Or set `search_mode = "hybrid"` '
+                "in config.toml, which ranks keyword+BM25 when no model is "
+                "available and fuses a semantic leg in once one is."
+            ),
             details=details,
         )
 
@@ -3741,9 +4010,10 @@ def _check_embeddings_extra(cfg: Config) -> Diagnosis:
                 "with a logged WARNING."
             ),
             fix_hint=(
-                "Install one: `uv pip install -e .[embeddings]` (PyTorch) "
-                "or `uv pip install -e .[embeddings-fast]` (ONNX), or set "
-                "`semantic_dedup = false` in config.toml."
+                f"Install one: {_install_extra_command('embeddings')} for "
+                "PyTorch, or `bettermemory[embeddings-fast]` for the "
+                "smaller ONNX provider. Or set `semantic_dedup = false` "
+                "in config.toml."
             ),
             details=details,
         )

@@ -1486,36 +1486,58 @@ def test_audit_turn_cadence_only_old_events_skips_warn(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_embeddings_extra_skipped_when_disabled(tmp_path: Path) -> None:
-    cfg = _config_for(tmp_path, semantic_dedup=False)
+def test_embeddings_extra_skipped_when_disabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The documented-ok default install: no extra, nothing asked for.
+
+    Also the counterweight to
+    `test_embeddings_extra_fails_when_semantic_mode_cannot_degrade`
+    below. `wants_model` is True here — `hybrid` would use a model —
+    but `hybrid` DEGRADES to keyword+bm25 without one, so escalating on
+    that detail would turn the most common install there is red. Only
+    the mode that cannot degrade earns the `fail`.
+    """
+    _pin_extra_state(monkeypatch, torch=None, fastembed=None)
+    cfg = _config_for(tmp_path, search_mode="hybrid", semantic_dedup=False)
+
     diag = _check_embeddings_extra(cfg)
-    assert diag.status == "ok"
-    assert "disabled" in diag.message
+
+    assert diag.status == "ok", diag
+    assert "no embeddings extra is installed" in diag.message
+    assert diag.details["resolved_provider"] is None
+    # The detail that must NOT be the gate, stated so a widening of the
+    # gate to it fails here rather than in the field.
+    assert diag.details["wants_model"] is True
 
 
 def test_embeddings_extra_fails_when_enabled_but_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    cfg = _config_for(tmp_path, semantic_dedup=True)
-    # Force BOTH extras to read as unavailable regardless of what this
-    # test environment has installed. Seeding `semantic._EXTRA_PROBE` is
-    # the seam because the check now asks `semantic.extra_importable`,
-    # which goes through `importlib.import_module` — the older
-    # `builtins.__import__` patch stopped intercepting, and because
-    # `sentence_transformers` IS installed on the embeddings CI leg the
-    # test would have silently measured the ok path instead of the one
-    # it names. `_EXTRA_PROBE` is production state, not a stub, and the
-    # probe's own behaviour is covered in
-    # `tests/test_broken_optional_extra.py`.
-    #
-    # Both modules must be seeded: either extra satisfies semantic dedup,
-    # so leaving `fastembed` unseeded would make this pass or fail on
-    # whether the runner happens to have `[embeddings-fast]` installed.
-    monkeypatch.setitem(semantic._EXTRA_PROBE, "sentence_transformers", False)
-    monkeypatch.setitem(semantic._EXTRA_PROBE, "fastembed", False)
+    """`semantic_dedup = true` on a genuinely bare install.
+
+    Seeding `semantic._EXTRA_PROBE` alone left `_torch_extra_installed`
+    reading the real filesystem, so `resolve_provider("auto")` returned
+    `torch` on every leg that has sentence-transformers on disk and the
+    check answered from the resolved-provider branch instead — a
+    different branch with a different message, and both satisfy a bare
+    `status == "fail"` with `"embeddings"` in the hint. `_pin_extra_state`
+    seeds the presence probes too, so the branch this test is named for
+    is the one it measures on all three CI legs.
+    """
+    _pin_extra_state(monkeypatch, torch=None, fastembed=None)
+    cfg = _config_for(tmp_path, search_mode="hybrid", semantic_dedup=True)
+
+    # The premise, measured: nothing resolves, so this is the bare
+    # install and not the resolved-provider branch above it.
+    assert semantic.resolve_provider(cfg.behavior.semantic_provider) is None
+
     diag = _check_embeddings_extra(cfg)
+
     assert diag.status == "fail"
+    assert "`semantic_dedup = true` in config but neither the" in diag.message
     assert "embeddings" in (diag.fix_hint or "")
 
 
@@ -1810,6 +1832,48 @@ def test_embeddings_extra_probe_survives_the_dedup_gate_too(
     assert diag.details["resolved_provider_importable"] is False
 
 
+def test_embeddings_extra_fails_when_semantic_mode_cannot_degrade(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The dedup gate's last uncovered branch: nothing installed at all.
+
+    With no extra anywhere `resolve_provider` returns None, so the
+    resolved-provider branch above is skipped and control reached the
+    `semantic_dedup` early return, which published `ok` — a verdict
+    decided by the dedup flag, which is not the condition this check
+    measures. Under `search_mode = "semantic"` that install is not
+    degraded but DEAD: `handlers.search.memory_search` raises on a None
+    model instead of falling back, so every `memory_search` call failed
+    while `bettermemory doctor` printed all-green and exited 0.
+
+    The gate is `_search_mode_needs_model`, the same predicate the
+    handler's model factory routes on, and not `wants_model` — which is
+    also true under `hybrid`, where the absent extra is not a fault at
+    all (`test_embeddings_extra_skipped_when_disabled`).
+    """
+    from bettermemory import semantic_setup
+
+    _pin_extra_state(monkeypatch, torch=None, fastembed=None)
+    cfg = _config_for(tmp_path, search_mode="semantic", semantic_dedup=False)
+
+    # The premise, measured: no provider resolves, and this mode is one
+    # the search handler hard-errors under rather than degrading.
+    assert semantic.resolve_provider(cfg.behavior.semantic_provider) is None
+    assert semantic_setup._search_mode_needs_model(cfg) is True
+
+    diag = _check_embeddings_extra(cfg)
+
+    assert diag.status == "fail", diag
+    assert _EXIT_CODE_BY_STATUS[diag.status] == 2
+    assert "does not degrade" in diag.message
+    assert "semantic" in diag.message
+    # The green message that used to be published here, in its spelling.
+    assert "semantic_dedup disabled" not in diag.message
+    # Both repairs named: install an extra, or pick a mode that degrades.
+    assert "embeddings" in (diag.fix_hint or "")
+    assert "hybrid" in (diag.fix_hint or "")
+
+
 def test_embeddings_extra_hint_points_at_the_provider_this_machine_has(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1947,6 +2011,157 @@ def test_embeddings_extra_still_fails_when_some_consumer_wants_a_model(
 
 
 @pytest.mark.parametrize(
+    ("torch", "fastembed", "provider", "search_mode", "semantic_dedup"),
+    [
+        ("KeyError: frozenset()", None, None, "hybrid", False),
+        ("KeyError: frozenset()", "ok", None, "hybrid", False),
+        (None, "RuntimeError: onnx missing", "torch", "hybrid", False),
+        (None, "ok", "torch", "hybrid", False),
+        (None, None, "torch", "hybrid", False),
+        (None, None, None, "hybrid", True),
+        (None, None, None, "semantic", False),
+    ],
+    ids=[
+        "only-extra-broken",
+        "broken-sibling-is-dead-weight",
+        "named-absent-and-sibling-broken",
+        "named-absent-sibling-healthy",
+        "named-absent-nothing-installed",
+        "bare-install-wants-cosine-dedup",
+        "bare-install-under-semantic-mode",
+    ],
+)
+def test_embeddings_extra_hints_name_the_package_not_the_working_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    torch: str | None,
+    fastembed: str | None,
+    provider: str | None,
+    search_mode: str,
+    semantic_dedup: bool,
+) -> None:
+    """A fix_hint the reader cannot run is not a fix.
+
+    Every branch prescribed `uv pip install -e .[<extra>]` and
+    `uv pip install --force-reinstall <module>`. Both write to the
+    ACTIVE virtualenv, so neither repairs the `uv tool install` / `pipx`
+    install `docs/installation.md` documents and that doctor's own
+    binary-path and plugin checks assume — from an arbitrary directory
+    the first either errors or installs the reader's own project. The
+    unquoted `.[` is a second, independent breakage: `[` globs, so the
+    command is not pasteable into zsh even from a development clone.
+
+    Every row is a branch that offers an install or a reinstall, so the
+    package spelling has to appear in all of them.
+    """
+    _pin_extra_state(monkeypatch, torch=torch, fastembed=fastembed)
+    kwargs: dict[str, Any] = {
+        "search_mode": search_mode,
+        "semantic_dedup": semantic_dedup,
+    }
+    if provider is not None:
+        kwargs["semantic_provider"] = provider
+    cfg = _config_for(tmp_path, **kwargs)
+
+    diag = _check_embeddings_extra(cfg)
+    hint = diag.fix_hint or ""
+
+    assert diag.status in ("warn", "fail"), diag
+    assert "bettermemory[" in hint, hint
+    assert "uv tool install" in hint, hint
+    # The spelling that cannot repair a tool install, and the unquoted
+    # glob that zsh refuses, in the forms they had.
+    assert "install -e .[" not in hint, hint
+    assert "uv pip install --force-reinstall" not in hint.split("(")[0], hint
+
+
+@pytest.mark.parametrize(
+    ("search_mode", "semantic_dedup"),
+    [("keyword", False), ("bm25", False)],
+    ids=["keyword", "bm25"],
+)
+def test_embeddings_extra_absent_provider_warns_when_no_consumer_loads(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    search_mode: str,
+    semantic_dedup: bool,
+) -> None:
+    """The `wants_model` gate's SECOND consumer.
+
+    `unusable_status` is read at two sites: the `if broken:` arm, and
+    the branch for a resolved provider whose extra is simply absent. The
+    pair above holds the extras state at "torch installed and broken",
+    so every row of it enters the first site — replacing the second
+    site's `status=unusable_status` with a literal `"fail"` left the
+    whole suite green, and that mutation flips `bettermemory doctor` to
+    exit 2 over an install whose configured behaviour is intact.
+
+    Nothing is installed-and-broken here: the config names an extra this
+    machine does not have, which is the config-typo class, and under
+    `keyword`/`bm25` with dedup off no consumer would have loaded a
+    model anyway.
+    """
+    _pin_extra_state(monkeypatch, torch=None, fastembed="ok")
+    cfg = _config_for(
+        tmp_path,
+        search_mode=search_mode,
+        semantic_dedup=semantic_dedup,
+        semantic_provider="torch",
+    )
+
+    # The premise, measured: the second call site, not the first.
+    assert semantic.extra_import_failure("fastembed") is None
+    assert semantic.resolve_provider(cfg.behavior.semantic_provider) == "torch"
+
+    diag = _check_embeddings_extra(cfg)
+
+    assert diag.status == "warn", diag
+    assert _EXIT_CODE_BY_STATUS[diag.status] == 1
+    assert diag.details["broken_modules"] == []
+    assert diag.details["wants_model"] is False
+    # The claim no consumer supports, gone; the misconfiguration itself
+    # still named, with when it will start to bite.
+    assert "silently degraded" not in diag.message
+    assert "Nothing is degraded today" in diag.message
+    assert "NOT installed" in diag.message
+
+
+@pytest.mark.parametrize(
+    ("search_mode", "semantic_dedup"),
+    [("hybrid", False), ("semantic", False), ("keyword", True)],
+    ids=["hybrid-ranks", "semantic-ranks", "keyword-but-dedup-wants-cosine"],
+)
+def test_embeddings_extra_absent_provider_still_fails_when_a_consumer_wants_a_model(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    search_mode: str,
+    semantic_dedup: bool,
+) -> None:
+    """Counterweight on the same call site as the test above.
+
+    Same install — an explicit `semantic_provider` naming the extra this
+    machine lacks — and the only thing that moves is whether a consumer
+    would have loaded a model. Without this, the de-escalation could be
+    widened to "an absent resolved provider always warns" and a config
+    whose ranker really is lexical would stop failing.
+    """
+    _pin_extra_state(monkeypatch, torch=None, fastembed="ok")
+    cfg = _config_for(
+        tmp_path,
+        search_mode=search_mode,
+        semantic_dedup=semantic_dedup,
+        semantic_provider="torch",
+    )
+
+    diag = _check_embeddings_extra(cfg)
+
+    assert diag.status == "fail", diag
+    assert _EXIT_CODE_BY_STATUS[diag.status] == 2
+    assert "silently degraded" in diag.message
+    assert diag.details["wants_model"] is True
+
+
+@pytest.mark.parametrize(
     ("torch", "fastembed", "provider"),
     [
         ("KeyError: frozenset()", "ok", None),
@@ -2035,14 +2250,16 @@ def test_embeddings_extra_severity_tracks_the_resolved_provider_probe(
 
 
 def _force_no_embeddings(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Pin the probe's "is there a non-lexical signal?" short-circuit to
-    False, so these tests measure the lexical path on every machine —
-    including one where an extra happens to be installed AND routed into
-    ranking."""
-    monkeypatch.setattr(
-        "bettermemory.doctor._semantic_rank_leg_active",
-        lambda _cfg: False,
-    )
+    """Pin the machine to "no embeddings extra", so these tests measure
+    the lexical path on every CI leg.
+
+    Seeds the extras state rather than stubbing
+    `_semantic_rank_leg_active` itself: the check's `fix_hint` reads the
+    same probes to decide WHICH repair to name, so a stubbed predicate
+    would leave the hint describing whatever the runner happens to have
+    installed while the verdict described something else.
+    """
+    _pin_extra_state(monkeypatch, torch=None, fastembed=None)
 
 
 def _seed_scope(store: Store, scope: str, bodies: list[str]) -> None:
@@ -2078,6 +2295,125 @@ def test_retrieval_discrimination_warns_on_a_homogeneous_scope(
     assert row["rare_term_recall_at_1"] >= 0.9
     assert row["topical_recall_at_1"] <= _DISCRIMINATION_WARN_AT
     assert "embeddings" in (diag.fix_hint or "")
+
+
+def _seed_homogeneous_scope(tmp_path: Path) -> None:
+    """The corpus the warn branch needs: one shared topical vocabulary
+    across every member, plus a rare token each. Same shape as
+    `test_retrieval_discrimination_warns_on_a_homogeneous_scope` seeds —
+    the tests below are about the hint the warn carries, so they need the
+    warn to happen and nothing else from it."""
+    from bettermemory.store import Store
+
+    shared = (
+        "deployment pipeline release rollout staging cluster service "
+        "container registry manifest revision"
+    )
+    _seed_scope(
+        Store(tmp_path),
+        "ops",
+        [f"{shared} sentinel{i:02d}kryptonite zzq{i:02d}plutonium" for i in range(20)],
+    )
+
+
+@pytest.mark.parametrize(
+    ("torch", "fastembed", "provider", "search_mode", "expected", "forbidden"),
+    [
+        (
+            "KeyError: frozenset()",
+            None,
+            None,
+            "hybrid",
+            "Repair it rather than install another",
+            "Install an embeddings extra",
+        ),
+        (
+            None,
+            "ok",
+            "torch",
+            "hybrid",
+            "Repoint `[behavior] semantic_provider`",
+            "Install an embeddings extra",
+        ),
+        (
+            "ok",
+            "ok",
+            None,
+            "keyword",
+            'Set `search_mode = "hybrid"`',
+            "Install an embeddings extra",
+        ),
+        (
+            None,
+            None,
+            None,
+            "hybrid",
+            "Install an embeddings extra",
+            "already installed",
+        ),
+    ],
+    ids=[
+        "installed-and-broken-wants-a-reinstall",
+        "config-names-the-absent-one-wants-repointing",
+        "two-healthy-extras-want-a-routing-search_mode",
+        "nothing-installed-wants-an-install",
+    ],
+)
+def test_retrieval_discrimination_hint_names_the_repair_this_install_needs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    torch: str | None,
+    fastembed: str | None,
+    provider: str | None,
+    search_mode: str,
+    expected: str,
+    forbidden: str,
+) -> None:
+    """`fix_hint` is a claim and rots like one.
+
+    `_semantic_rank_leg_active` is false for three independent reasons,
+    and the hint used to open "Install an embeddings extra — that is now
+    the whole fix" on all of them. Row one is the 2026-08-01 shape: the
+    extra is installed and gutted, and `embeddings_extra` says "reinstall
+    it" three lines below in the same report — the wrong advice printed
+    first. Row two names an extra this machine does not have while a
+    healthy sibling sits beside it. Row three is the sharpest, because no
+    neighbouring check contradicts it: two working extras, `search_mode =
+    "keyword"`, and the only actionable line in a green report telling the
+    operator to install a several-hundred-megabyte package they already
+    have twice — while denying that the config flag which IS the fix is
+    involved.
+
+    Lesson 4 of
+    `docs/incidents/2026-07-25-doctor-false-green-on-importable-extra.md`.
+    Row four is the counterweight: where "install one" is the truth, it
+    must still be what the hint says.
+    """
+    from bettermemory import semantic_setup
+
+    _pin_extra_state(monkeypatch, torch=torch, fastembed=fastembed)
+    _seed_homogeneous_scope(tmp_path)
+    kwargs: dict[str, Any] = {"search_mode": search_mode, "semantic_dedup": False}
+    if provider is not None:
+        kwargs["semantic_provider"] = provider
+    cfg = _config_for(tmp_path, **kwargs)
+
+    # The premise: every row must reach the warn branch, i.e. no semantic
+    # leg ranks — otherwise the check skips and there is no hint at all.
+    assert semantic_setup._semantic_rank_leg_active(cfg) is False
+
+    diag = _check_retrieval_discrimination(tmp_path, cfg)
+    hint = diag.fix_hint or ""
+
+    assert diag.status == "warn", diag
+    assert expected in hint, hint
+    assert forbidden not in hint, hint
+    # The measurement that makes the advice worth acting on rides along
+    # on every branch; it is the reason this check reports at all.
+    assert "recall@1 35% -> 60%" in hint
+    # Same runnability bar as `embeddings_extra`'s hints: the package,
+    # not the working directory, and no unquoted `[` for zsh to reject.
+    assert "install -e .[" not in hint, hint
 
 
 def test_retrieval_discrimination_ok_on_a_heterogeneous_scope(
@@ -2187,22 +2523,15 @@ def test_retrieval_discrimination_does_not_skip_on_a_merely_installed_extra(
     semantic leg actually SCORES A SEARCH, never on whether a model
     exists somewhere in the process.
     """
-    monkeypatch.setattr(
-        "bettermemory.semantic_setup._embeddings_extra_importable",
-        lambda: True,
-    )
-    from bettermemory.store import Store
+    from bettermemory import semantic_setup
 
-    store = Store(tmp_path)
-    shared = (
-        "deployment pipeline release rollout staging cluster service "
-        "container registry manifest revision"
-    )
-    _seed_scope(
-        store,
-        "ops",
-        [f"{shared} sentinel{i:02d}kryptonite zzq{i:02d}plutonium" for i in range(20)],
-    )
+    # Pinned rather than stubbed, and pinned rather than inherited: the
+    # premise is an extra that really imports, and on the base CI leg
+    # there is none while on the others there are two.
+    _pin_extra_state(monkeypatch, torch="ok", fastembed=None)
+    assert semantic_setup._embeddings_extra_importable() is True
+
+    _seed_homogeneous_scope(tmp_path)
     cfg = _config_for(tmp_path, search_mode="keyword", semantic_dedup=True)
     diag = _check_retrieval_discrimination(tmp_path, cfg)
     assert diag.status == "warn", (
@@ -7182,6 +7511,291 @@ def test_hook_candidates_keep_installs_whose_scope_they_cannot_judge(
     found = _session_start_hook_config_candidates(cwd=tmp_path / "proj")
 
     assert installed in found
+
+
+@pytest.mark.parametrize("suffix", ["", "src"], ids=["at-root", "nested"])
+def test_hook_candidates_keep_a_plugin_whose_projectPath_is_A_LINK_to_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, suffix: str
+) -> None:
+    """One directory under two spellings is one project, not two.
+
+    The two sides of the comparison are written by different hands:
+    `projectPath` is whatever Claude Code recorded at install time, and
+    `cwd` is what the process is standing in. A project reached through
+    a symlink — a linked home, a `/tmp` that is really `/private/tmp` —
+    therefore arrives spelled two ways, and compared as text those read
+    as two projects. The filter would then drop a plugin installed into
+    the very project doctor is judging, which is the false "not wired"
+    warn the whole asymmetry exists to prevent. The record carries the
+    LINK spelling and the process the physical one because `Path.cwd()`
+    returns a resolved path, so that is the direction a real install
+    produces.
+    """
+    if sys.platform == "win32":
+        pytest.skip("symlink semantics differ on Windows; POSIX-only test")
+    home = _claude_home(tmp_path, monkeypatch)
+    plugins, installed, _catalogue = _plugin_trees(home)
+    real = tmp_path / "real"
+    real.mkdir()
+    (tmp_path / "link").symlink_to(real, target_is_directory=True)
+    _write_project_scoped_install(
+        plugins, installed.parent.parent, tmp_path / "link" / "proj"
+    )
+    here = real / "proj"
+
+    found = _session_start_hook_config_candidates(cwd=here / suffix if suffix else here)
+
+    assert installed in found
+
+
+def test_hook_candidates_keep_a_plugin_whose_projectPath_is_TILDE_spelled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other half of the same job, reachable without a symlink.
+
+    A `projectPath` recorded relative to home never equals an absolute
+    `cwd` as text, so expansion is as load-bearing as resolution and
+    fails the same way — a plugin installed here read as somebody
+    else's. `HOME`/`USERPROFILE` are set rather than `Path.home` patched
+    because `Path.expanduser` reads the environment, and reads the
+    second name on Windows.
+    """
+    home = _claude_home(tmp_path, monkeypatch)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    plugins, installed, _catalogue = _plugin_trees(home)
+    _write_project_scoped_install(
+        plugins,
+        installed.parent.parent,
+        tmp_path / "unused",
+        projectPath="~/proj",
+    )
+
+    found = _session_start_hook_config_candidates(cwd=home / "proj")
+
+    assert installed in found
+
+
+# ---------------------------------------------------------------------------
+# session_start_hook — an install can be real, scoped here, and still off
+#
+# Installation and enablement are two records. `installed_plugins.json`
+# says what is on disk; `enabledPlugins` inside the settings files says
+# what runs. `claude plugin disable` leaves the install record and the
+# cached directory exactly as they were — `--all` does it to every
+# plugin at once — and the loader reads a disabled plugin's
+# `hooks/hooks.json` only to decline registering it. Counting that
+# manifest as wiring is the catalogue's false green on a directory with
+# nothing wrong with it.
+# ---------------------------------------------------------------------------
+
+
+def _write_enabled_plugins(path: Path, entries: object, **extra: object) -> Path:
+    """A settings file carrying an `enabledPlugins` map.
+
+    `extra` merges further top-level keys, so one file can both switch a
+    plugin off and carry a hand-wired binding.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body: dict[str, object] = {"enabledPlugins": entries, **extra}
+    path.write_text(json.dumps(body), encoding="utf-8")
+    return path
+
+
+def test_hook_candidates_skip_a_plugin_the_user_SWITCHED_OFF(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A disabled plugin's manifest is not evidence of a live binding.
+
+    Nothing about the install looks wrong — the record stands, the cache
+    directory stands, the `hooks.json` stands — so this is the sharpest
+    of the three false greens the candidate list has to exclude.
+    """
+    home = _claude_home(tmp_path, monkeypatch)
+    plugins, installed, _catalogue = _plugin_trees(home)
+    _write_installed_plugins(plugins, installed.parent.parent)
+    settings = _write_enabled_plugins(
+        home / ".claude" / "settings.json", {"p0@mkt": False}
+    )
+
+    found = _session_start_hook_config_candidates(cwd=tmp_path / "proj")
+
+    assert installed not in found
+    # The settings file and nothing else: a record read and deliberately
+    # dropped is still a record understood, so this must not tip into the
+    # `cache/` fallback — whose rglob would sweep the install just
+    # excluded straight back in.
+    assert found == [settings]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        None,
+        "{}",
+        '{"enabledPlugins": {"p0@mkt": true}}',
+        '{"enabledPlugins": {"p0@mkt": ["SessionStart"]}}',
+        '{"enabledPlugins": {"p0@mkt": null}}',
+        '{"enabledPlugins": {"other@mkt": false}}',
+        '{"enabledPlugins": []}',
+        '{"enabledPlugins": "off"}',
+        "{ not json",
+    ],
+    ids=[
+        "no-settings-file",
+        "no-enabledPlugins-key",
+        "enabled",
+        "enabled-as-a-list",
+        "null-value",
+        "a-DIFFERENT-plugin-disabled",
+        "enabledPlugins-not-an-object",
+        "enabledPlugins-not-a-map",
+        "unparseable-settings",
+    ],
+)
+def test_hook_candidates_keep_a_plugin_without_an_EXPLICIT_false(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str | None
+) -> None:
+    """Only a literal `false` drops a record; every other shape keeps it.
+
+    Nine shapes, none of which may read as "switched off". A plugin's own
+    `defaultEnabled` decides what an absent key means and it defaults to
+    true, the list form is an enablement rather than a disable, and the
+    rest are drift in a foreign file this has no standing to adjudicate.
+    Reading any of them as a disable would produce the false "not wired"
+    warn at a plugin user, the same asymmetry that puts a `cache/`
+    fallback behind the manifest.
+    """
+    home = _claude_home(tmp_path, monkeypatch)
+    plugins, installed, _catalogue = _plugin_trees(home)
+    _write_installed_plugins(plugins, installed.parent.parent)
+    if body is not None:
+        (home / ".claude" / "settings.json").write_text(body, encoding="utf-8")
+
+    found = _session_start_hook_config_candidates(cwd=tmp_path / "proj")
+
+    assert installed in found
+
+
+@pytest.mark.parametrize(
+    ("user_value", "project_value", "kept"),
+    [(True, False, False), (False, True, True)],
+    ids=["project-switches-it-off", "project-switches-it-back-on"],
+)
+def test_hook_candidates_let_THIS_projects_settings_decide_enablement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    user_value: bool,
+    project_value: bool,
+    kept: bool,
+) -> None:
+    """Enablement is per-project, and the project settings have the last word.
+
+    Both rows in one test because either alone is satisfiable by the
+    wrong rule: "any `false` anywhere disables" passes the first and
+    fails the second, "any `true` anywhere enables" does the reverse.
+    Precedence ascends across the candidate list, which is what makes
+    this a `cwd` question at all rather than a global one.
+    """
+    home = _claude_home(tmp_path, monkeypatch)
+    plugins, installed, _catalogue = _plugin_trees(home)
+    _write_installed_plugins(plugins, installed.parent.parent)
+    project = tmp_path / "proj"
+    _write_enabled_plugins(home / ".claude" / "settings.json", {"p0@mkt": user_value})
+    _write_enabled_plugins(
+        project / ".claude" / "settings.json", {"p0@mkt": project_value}
+    )
+
+    found = _session_start_hook_config_candidates(cwd=project)
+
+    assert (installed in found) is kept
+
+
+def test_session_start_hook_warns_when_the_only_plugin_is_SWITCHED_OFF(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The verdict flip, end to end through the production collector.
+
+    A user who disabled the plugin and still carries one stale hand-wired
+    binding has no session-start hint reaching the model at all, and must
+    be told so — instead the disabled plugin's manifest filled the live
+    slot and demoted the stale binding to a footnote on an `ok`, in the
+    exact situation ("why did my hint stop appearing?") that sends
+    someone to `bettermemory doctor`.
+    """
+    root = _store_with_one_memory(tmp_path)
+    home = _claude_home(tmp_path, monkeypatch)
+    here = tmp_path / "here"
+    here.mkdir()
+    monkeypatch.chdir(here)  # so the project-scope candidates are ours
+    plugins, installed, _catalogue = _plugin_trees(home)
+    _write_installed_plugins(plugins, installed.parent.parent)
+    gone = tmp_path / "deleted-venv" / "bin" / "bettermemory"
+    _write_enabled_plugins(
+        home / ".claude" / "settings.json",
+        {"p0@mkt": False},
+        hooks={
+            "SessionStart": [
+                {
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": f"{gone} session-start || true",
+                        }
+                    ]
+                }
+            ]
+        },
+    )
+
+    diag = _check_session_start_hook_wired(root)
+
+    assert diag.status == "warn", diag.message
+    assert diag.details["unrunnable_path"] == str(gone)
+    assert str(installed) not in diag.message
+
+
+def test_session_start_hook_warns_when_EVERY_plugin_is_switched_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`claude plugin disable --all` reaches every install at once.
+
+    The manifest then yields nothing at all, which is the shape that must
+    not tip into the `cache/` fallback: rglobbing that tree would sweep
+    all three disabled installs back in and restore the `ok`.
+    """
+    root = _store_with_one_memory(tmp_path)
+    home = _claude_home(tmp_path, monkeypatch)
+    monkeypatch.chdir(tmp_path)  # so the project-scope candidates are ours
+    plugins, installed, _catalogue = _plugin_trees(home)
+    others = []
+    for name in ("second", "third"):
+        directory = plugins / "cache" / "mkt" / name / "1.0.0"
+        _write_hooks_manifest(directory / "hooks", _LIVE_HOOK_COMMAND)
+        others.append(directory)
+    _write_installed_plugins(plugins, installed.parent.parent, *others)
+    gone = tmp_path / "deleted-venv" / "bin" / "bettermemory"
+    _write_enabled_plugins(
+        home / ".claude" / "settings.json",
+        {"p0@mkt": False, "p1@mkt": False, "p2@mkt": False},
+        hooks={
+            "SessionStart": [
+                {
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": f"{gone} session-start || true",
+                        }
+                    ]
+                }
+            ]
+        },
+    )
+
+    diag = _check_session_start_hook_wired(root)
+
+    assert diag.status == "warn", diag.message
+    assert diag.details["unrunnable_path"] == str(gone)
 
 
 def test_session_start_hook_warns_when_only_ANOTHER_PROJECTS_plugin_is_runnable(
