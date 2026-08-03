@@ -208,6 +208,165 @@ def test_session_narration_is_rejected() -> None:
     )
 
 
+def test_a_hyphenated_compound_is_not_the_banned_phrase() -> None:
+    """`round-trip`, `window-relative`, `session-scoped` name code.
+
+    A hyphen is not a word character, so a bare `(?!\\w)` boundary matches
+    inside the compound and turns this project's own vocabulary into a
+    violation: `this round-trip` is a serialization property and
+    `embarrassing-looking` is an adjective about column widths.
+    `_FIRST_PERSON_RE` already excludes the hyphen so that `I/O` survives;
+    the three phrase rules bound the same way.
+    """
+    for body in (
+        "Without this round-trip, the audit cannot replay which claim applied.",
+        "This round-trips one event through the recorder.",
+        "The last round-trip through the provider was dropped.",
+        "The counter is this session-scoped one, not the global one.",
+        "A demotion window and this window-relative count disagree.",
+        "The previous sweep-and-prune pass left the tombstone behind.",
+        "The embarrassing-looking column widths come from the table writer.",
+        "The cheerfully-named flag actually disables the cache.",
+        "A not-obviously-wrong default kept the parser quiet.",
+    ):
+        assert rules(f"fix(store): rework the recorder\n\n{body}\n") == set(), body
+
+
+def test_the_phrase_is_still_rejected_when_it_stands_alone() -> None:
+    """Counterweight: the boundary excuses the compound, not the phrase."""
+    assert "session-narration" in rules(
+        "fix(store): rework the recorder\n\nThe last round overstated four claims.\n"
+    )
+    assert "session-narration" in rules(
+        "fix(store): rework the recorder\n\nOne of this session's episodes was lost.\n"
+    )
+    assert "editorial" in rules(
+        "fix(store): rework the recorder\n\nEmbarrassingly, the index was stale.\n"
+    )
+
+
+def test_a_banned_phrase_split_across_a_wrap_is_still_caught() -> None:
+    """Three of the four rules are multi-word, and a body is hard-wrapped.
+
+    A gate whose verdict depends on where a line happened to break is not
+    measuring the thing it claims to: `worth stating plainly` is the same
+    phrase whether or not the author's wrap point fell inside it.
+    """
+    message = (
+        "docs(changelog): describe the recorder change\n"
+        "\n"
+        "The helper was rewritten during the\n"
+        "last session, and the old behaviour was\n"
+        "worth\n"
+        "stating plainly, because it turns\n"
+        "out the tuple carried no order.\n"
+    )
+    assert rules(message) == {"filler", "session-narration", "editorial"}
+
+
+def test_a_blank_line_is_a_break_rather_than_a_wrap() -> None:
+    """Joining is wrap repair, not flattening the whole message.
+
+    Two paragraphs are two sentences by construction, so gluing the tail
+    of one onto the head of the next would invent a phrase nobody wrote.
+    """
+    message = (
+        "docs(changelog): describe the recorder change\n"
+        "\n"
+        "The behaviour is unchanged for the last\n"
+        "\n"
+        "session counts, which were already correct.\n"
+    )
+    assert rules(message) == set()
+
+
+def test_a_labelled_body_line_is_not_a_trailer() -> None:
+    """`Note:`, `Tests:`, `Gate:` are labels this project writes in bodies.
+
+    Exempting everything shaped like `<capitalised word>: <text>` turns
+    all four wording rules off for the rest of the line, so the exemption
+    enumerates the trailer keys instead.
+    """
+    assert rules(
+        "fix(store): release the lock before re-reading the index\n"
+        "\n"
+        "Note: obviously my first hypothesis was wrong.\n"
+    ) == {"first-person", "filler"}
+    assert "session-narration" in rules(
+        "test(store): pin the CAS loser count\n"
+        "\n"
+        "Tests: re-ran the adversarial pass over the previous six commits.\n"
+    )
+
+
+def test_a_real_trailer_is_still_exempt() -> None:
+    """A `Co-Authored-By:` value is a name, not prose anyone chose."""
+    message = (
+        "fix(store): release the lock before re-reading the index\n"
+        "\n"
+        "The read-modify-write lost its tail.\n"
+        "\n"
+        "Co-Authored-By: I. M. Author <author@example.com>\n"
+    )
+    assert rules(message) == set()
+
+
+def test_a_named_wording_rule_can_be_waived() -> None:
+    """`this window` is session narration in one body and a race window in
+    the next, and no pattern separates them. The escape is explicit, per
+    rule, and permanent — a reviewer reads the waiver in the log.
+    """
+    message = (
+        "fix(store): set the mode on the fd, not after the rename\n"
+        "\n"
+        "The canonical write calls `os.fchmod` BEFORE the rename precisely\n"
+        "to close this window (see store.py:1176-1185).\n"
+        "\n"
+        "Lint-skip: session-narration\n"
+    )
+    assert rules(message) == set()
+    assert "session-narration" in rules(
+        message.replace("\n\nLint-skip: session-narration\n", "")
+    )
+
+
+def test_a_waiver_silences_only_the_rule_it_names() -> None:
+    message = (
+        "fix(store): set the mode on the fd, not after the rename\n"
+        "\n"
+        "Honestly, the canonical write sets the mode before the rename to\n"
+        "close this window (see store.py:1176-1185).\n"
+        "\n"
+        "Lint-skip: session-narration\n"
+    )
+    assert rules(message) == {"filler"}
+
+
+def test_a_waiver_cannot_name_an_envelope_rule_or_a_wildcard() -> None:
+    """The envelope is mechanical, so there is no judgement to escape.
+
+    An unwaivable name fails closed: whatever the rules caught still
+    stands, and the waiver itself is reported.
+    """
+    envelope = (
+        "fix(store): set the mode on the fd, not after the rename\n"
+        "\n"
+        "The write closes this window (see store.py:1176-1185).\n"
+        "\n"
+        "Lint-skip: subject-length\n"
+    )
+    assert rules(envelope) == {"lint-skip", "session-narration"}
+
+    wildcard = (
+        "fix(store): set the mode on the fd, not after the rename\n"
+        "\n"
+        "Honestly, the write closes this window.\n"
+        "\n"
+        "Lint-skip: all\n"
+    )
+    assert rules(wildcard) == {"lint-skip", "filler", "session-narration"}
+
+
 def test_a_domain_window_is_not_session_narration() -> None:
     """This project has real windows — demotion, verification, tag ranges.
 
@@ -299,6 +458,200 @@ def test_message_file_mode_returns_nonzero_on_a_violation(tmp_path: Path) -> Non
 
     path.write_text("fix(store): release the lock earlier", encoding="utf-8")
     assert commit_lint.main(["--message-file", str(path)]) == 0
+
+
+def test_a_stored_message_is_graded_with_the_lines_git_kept() -> None:
+    """`--range` grades history, and history keeps `#` body lines.
+
+    `git commit -m` and `-F` run `--cleanup=whitespace`, which strips
+    trailing whitespace and collapses blank lines but does NOT remove
+    comment lines; only an editor buffer gets `--cleanup=default`.
+    Stripping a stored message before grading it therefore deletes text
+    the commit really carries and reports green over prose nobody can see
+    the linter skip.
+    """
+    stored = (
+        "fix(store): release the lock earlier\n"
+        "\n"
+        "# I found this embarrassing bug in the last round, and honestly\n"
+        "# it was worth stating plainly.\n"
+    )
+    assert {
+        v.rule for v in commit_lint.lint_message(stored, "abc1234", strip=False)
+    } == {"first-person", "filler", "session-narration", "editorial"}
+    # The hook still strips: its input is an editor buffer git has not
+    # cleaned yet, and grading the scaffolding would block a good commit.
+    assert rules(stored) == set()
+
+
+def _stub_git(
+    monkeypatch: pytest.MonkeyPatch, commits: dict[str, tuple[str, str]]
+) -> list[list[str]]:
+    """Serve `git rev-list` / `git log` for `--range` mode from a table.
+
+    Range mode's whole job is to walk a range and grade what it finds, so
+    the test has to enumerate that range itself: the ambient repository
+    differs per clone, per CI leg and per push, and a test that read it
+    would measure a different population every run. `commits` maps sha to
+    `(author, message)` in range order; the returned list records every
+    argv the linter handed to git.
+    """
+    calls: list[list[str]] = []
+
+    class _Completed:
+        def __init__(self, stdout: str) -> None:
+            self.stdout = stdout
+
+    def fake_run(argv: list[str], **kwargs: object) -> _Completed:
+        calls.append(argv)
+        assert kwargs["check"] is True
+        if argv[1] == "rev-list":
+            return _Completed("".join(f"{sha}\n" for sha in commits))
+        assert argv[1] == "log" and argv[2] == "-1"
+        author, message = commits[argv[4]]
+        return _Completed(f"{author}\n" if argv[3] == "--format=%an" else message)
+
+    monkeypatch.setattr(commit_lint.subprocess, "run", fake_run)
+    return calls
+
+
+def test_range_mode_reports_a_violating_commit(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The only mode CI runs, on the only outcome that blocks a push."""
+    calls = _stub_git(
+        monkeypatch,
+        {
+            "1111111111111111": ("A Maintainer", "fix(store): release the lock\n"),
+            "2222222222222222": ("A Maintainer", "made the store faster, honestly\n"),
+            "3333333333333333": (
+                "A Maintainer",
+                "fix(store): drop the stale entry\n\n# I have not reproduced it.\n",
+            ),
+        },
+    )
+    assert commit_lint.main(["--range", "base..head"]) == 1
+
+    out = capsys.readouterr().out
+    assert "22222222: subject-format" in out
+    assert "22222222: filler" in out
+    # A stored `#` line is body text git kept, not editor scaffolding.
+    assert "33333333: first-person" in out
+    assert "11111111" not in out
+    # Merges carry generated subjects and are graded through their parents.
+    assert calls[0] == ["git", "rev-list", "--no-merges", "base..head"]
+    assert ["git", "log", "-1", "--format=%B", "1111111111111111"] in calls
+
+
+def test_range_mode_passes_a_conforming_range(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Counterweight: the range walk has to actually read every commit.
+
+    Without this, a range mode that returned no shas at all would look
+    identical to one that graded them and found nothing.
+    """
+    calls = _stub_git(
+        monkeypatch,
+        {
+            "1111111111111111": ("A Maintainer", "fix(store): release the lock\n"),
+            "2222222222222222": ("A Maintainer", "docs(api): document the filter\n"),
+        },
+    )
+    assert commit_lint.main(["--range", "base..head"]) == 0
+    assert [call[4] for call in calls if "--format=%B" in call] == [
+        "1111111111111111",
+        "2222222222222222",
+    ]
+
+
+# Verbatim from this repository's history. Dependabot composes both from a
+# template; the second is the squash subject GitHub built from the PR
+# title. Neither can be edited into shape by the account that authored it.
+_DEPENDABOT_GROUPED = (
+    "chore(deps): Bump the actions group with 3 updates\n"
+    "\n"
+    "Bumps the actions group with 3 updates in the / directory: "
+    "[actions/checkout](https://github.com/actions/checkout), "
+    "[astral-sh/setup-uv](https://github.com/astral-sh/setup-uv) and "
+    "[actions/setup-python](https://github.com/actions/setup-python).\n"
+)
+
+_DEPENDABOT_SQUASH = "Bump the actions group across 1 directory with 2 updates (#2)\n"
+
+
+def test_the_real_dependabot_messages_do_break_the_envelope() -> None:
+    """The exemption exists because these fail, not because they pass."""
+    assert "subject-case" in rules(_DEPENDABOT_GROUPED)
+    assert "body-length" in rules(_DEPENDABOT_GROUPED)
+    assert "subject-format" in rules(_DEPENDABOT_SQUASH)
+
+
+def test_a_bot_authored_commit_is_not_graded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A guard must not judge input the author cannot control.
+
+    Both messages sit inside the pushed range of a merged Dependabot PR,
+    so grading them turns `commit-lint` red on every weekly bump —
+    including security patches — over a subject and a body the bot wrote
+    from a template.
+    """
+    _stub_git(
+        monkeypatch,
+        {
+            "3f25dde5aaaaaaaa": ("dependabot[bot]", _DEPENDABOT_GROUPED),
+            "82f4b931bbbbbbbb": ("dependabot[bot]", _DEPENDABOT_SQUASH),
+        },
+    )
+    assert commit_lint.main(["--range", "base..head"]) == 0
+
+
+def test_the_same_messages_from_a_person_are_graded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Counterweight: the exemption keys on authorship, not on the text."""
+    _stub_git(
+        monkeypatch,
+        {
+            "3f25dde5aaaaaaaa": ("A Maintainer", _DEPENDABOT_GROUPED),
+            "82f4b931bbbbbbbb": ("A Maintainer", _DEPENDABOT_SQUASH),
+        },
+    )
+    assert commit_lint.main(["--range", "base..head"]) == 1
+
+
+def test_a_bot_name_written_into_a_message_waives_nothing(tmp_path: Path) -> None:
+    """The hook has no author to read, so the message cannot claim one."""
+    path = tmp_path / "COMMIT_EDITMSG"
+    path.write_text(f"{_DEPENDABOT_SQUASH}\ndependabot[bot]\n", encoding="utf-8")
+    assert commit_lint.main(["--message-file", str(path)]) == 1
+
+
+def test_dependabot_prefixes_conform_to_the_house_envelope() -> None:
+    """Left to infer, Dependabot writes subjects this linter rejects.
+
+    It reads the prefix and the capitalisation off recent history, which
+    produced both forms above. Pinning `commit-message.prefix` is what
+    keeps the bot inside the envelope; the author exemption is the
+    backstop for the generated body it cannot reshape.
+    """
+    import yaml
+
+    config_path = Path(__file__).resolve().parents[1] / ".github" / "dependabot.yml"
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    updaters = config["updates"]
+    assert updaters, "dependabot.yml declares no updaters"
+    for updater in updaters:
+        ecosystem = updater["package-ecosystem"]
+        message = updater.get("commit-message")
+        assert message is not None, f"{ecosystem} updater pins no commit-message"
+        prefixes = [message["prefix"]]
+        if "prefix-development" in message:
+            prefixes.append(message["prefix-development"])
+        for prefix in prefixes:
+            subject = f"{prefix}: bump the actions group with 2 updates"
+            assert rules(subject) == set(), subject
 
 
 def test_unresolvable_range_does_not_fail_the_build(

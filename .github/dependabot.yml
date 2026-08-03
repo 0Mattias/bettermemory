@@ -1,6 +1,18 @@
 # Keep CI actions and Python deps current. Both updaters are weekly to
 # avoid a noisy daily PR stream; the package is small enough that monthly
 # would let easy security patches sit too long.
+#
+# Every updater pins `commit-message.prefix`. Without one Dependabot
+# infers the prefix and the capitalisation from recent history, which has
+# produced both `Bump the actions group across 1 directory with 2 updates`
+# and `chore(deps): Bump the actions group with 3 updates` in this repo —
+# subjects the `commit-lint` CI job rejects for a shape the bot's own
+# template chose. Pinning the prefix keeps the bot inside the house
+# envelope; `commit_lint._is_bot_author` is the backstop for the parts of
+# a Dependabot message (the generated `Bumps the … group with N updates:
+# [a](url), [b](url)` body line) that no configuration can reshape.
+# Prefixes must be a type from `commit_lint.TYPES`, which
+# `tests/test_commit_lint.py` pins by grading a subject built from each.
 
 version: 2
 updates:
@@ -8,6 +20,8 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    commit-message:
+      prefix: "ci(deps)"
     groups:
       actions:
         patterns: ["*"]
@@ -16,6 +30,9 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    commit-message:
+      prefix: "build(deps)"
+      prefix-development: "chore(deps)"
     groups:
       runtime:
         dependency-type: "production"

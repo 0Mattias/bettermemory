@@ -22,6 +22,13 @@ project's permanent record — first-person narration, conversational
 filler, references to the authoring session, and editorialising about the
 project's own past mistakes.
 
+Two escapes exist, both narrow. A commit git attributes to a bot is not
+graded in ``--range`` mode at all (``_is_bot_author``): its subject and
+body come from a template, so grading them fails a push on rules the
+author cannot satisfy. And a message may waive one NAMED wording rule
+with a ``Lint-skip:`` trailer (``_waived_rules``), which stays in the
+permanent record where review sees it.
+
 Exit status is 0 when every message passes and 1 otherwise, with each
 violation printed as ``<sha-or-file>: <rule>: <detail>``.
 """
@@ -92,15 +99,25 @@ _FIRST_PERSON_RE = re.compile(
 # here is a phrase that carries no information about the change. Anything
 # arguable (a metaphor, a wry aside) is left to review rather than
 # encoded, because a false positive here blocks a push.
+#
+# The three phrase rules below all bound with `(?<![\w\-])` / `(?![\w\-])`
+# rather than a bare `(?<!\w)` / `(?!\w)`. A hyphen is not a word
+# character, so the bare form matches inside a compound: `this round-trip`
+# is a serialization property, `this window-local cache` and `the previous
+# sweep-and-prune pass` name code, and `embarrassing-looking` is a
+# hyphenated adjective — none of them is the phrase the rule bans. The
+# apostrophe is deliberately NOT excluded here, unlike in
+# `_FIRST_PERSON_RE`: `this session's episodes` is the possessive form of
+# exactly the narration `_SESSION_RE` exists to catch.
 _FILLER_RE = re.compile(
-    r"(?<!\w)(?:"
+    r"(?<![\w\-])(?:"
     r"turns out|as it turns out|it turns out"
     r"|honestly|frankly|admittedly|obviously|clearly enough"
     r"|sadly|happily|thankfully|unfortunately for us"
     r"|oops|whoops|ugh|yay|hooray|alas|phew"
     r"|nobody reads|no one reads"
     r"|as promised|as threatened|finally!"
-    r")(?!\w)",
+    r")(?![\w\-])",
     re.IGNORECASE,
 )
 
@@ -112,14 +129,17 @@ _FILLER_RE = re.compile(
 # are all citable by sha, and the rule is that they must be. The
 # determiners are enumerated rather than left open (`the current window`
 # is not here) because this project has real time windows in its domain:
-# demotion windows, verification windows, tag windows.
+# demotion windows, verification windows, tag windows. The enumeration is
+# not sufficient on its own — a body that closes a file-mode race writes
+# `to close this window` about a window in the code — so `Lint-skip:
+# session-narration` below is the escape for the residual ambiguity.
 _SESSION_RE = re.compile(
-    r"(?<!\w)(?:"
+    r"(?<![\w\-])(?:"
     r"(?:this|the last|the previous|the preceding)\s+(?:session|round|sweep|window)"
     r"|(?:last|previous)\s+(?:session|round)"
     r"|adversarial pass|audit pass"
     r"|earlier (?:today|in this session)|as of this writing"
-    r")(?!\w)",
+    r")(?![\w\-])",
     re.IGNORECASE,
 )
 
@@ -133,7 +153,7 @@ _SESSION_RE = re.compile(
 # defect class, a lesson cited from docs/incidents/ — because those are
 # facts, not gradings.
 _EDITORIAL_RE = re.compile(
-    r"(?<!\w)(?:"
+    r"(?<![\w\-])(?:"
     r"to be honest|being honest|in all honesty|if we(?:'re| are) honest"
     r"|worth (?:stating|saying|admitting|confessing)(?:\s+(?:plainly|outright|here))?"
     r"|needless to say|it (?:should|must|has to) be said|let it be said"
@@ -141,9 +161,39 @@ _EDITORIAL_RE = re.compile(
     r"|cheerfully|blithely|merrily|gleefully|smugly"
     r"|for the (?:second|third|fourth|fifth|umpteenth) time"
     r"|which was the whole point|that is the whole point"
-    r")(?!\w)",
+    r")(?![\w\-])",
     re.IGNORECASE,
 )
+
+# The four wording rules, in report order: `(rule name, pattern, advice)`.
+_WORDING_RULES: tuple[tuple[str, re.Pattern[str], str], ...] = (
+    ("first-person", _FIRST_PERSON_RE, "describe the change, not the author"),
+    ("filler", _FILLER_RE, "carries no information about the change"),
+    (
+        "session-narration",
+        _SESSION_RE,
+        "the reader has no access to the authoring session; cite the commit by sha",
+    ),
+    (
+        "editorial",
+        _EDITORIAL_RE,
+        "grade the defect by describing it, not by commenting on it",
+    ),
+)
+
+# The wording rules are the judgement-adjacent half of this linter, and a
+# judgement can be wrong: `this window` is session narration in one body
+# and the name of a real race window in the next, and no pattern can tell
+# those apart. A message may therefore waive a NAMED wording rule with a
+# `Lint-skip:` trailer. Only the four rules above are waivable and only by
+# name — there is no wildcard, and naming an envelope rule (subject shape,
+# length, the blank line, body wrapping) is itself a violation, because
+# those are mechanical and carry no ambiguity to escape. The waiver stays
+# in the permanent record, where review sees it.
+_LINT_SKIP_RE = re.compile(
+    r"^Lint-skip:[ \t]*(?P<rules>.+?)[ \t]*$", re.IGNORECASE | re.MULTILINE
+)
+_WAIVABLE_RULES = frozenset(rule for rule, _, _ in _WORDING_RULES)
 
 # A `release:` subject carries the version and nothing else. The version
 # is the index entry a reader scans for; a parenthetical thesis beside it
@@ -160,10 +210,32 @@ _EMOJI_RE = re.compile(
     "[\U0001f000-\U0001faff\U00002600-\U000027bf\U0001f1e6-\U0001f1ff]"
 )
 
-# Trailers and machine-read lines are exempt from the wording rules: a
-# `Co-Authored-By:` line naming a person is not first-person narration,
-# and a URL is not filler.
-_TRAILER_RE = re.compile(r"^[A-Z][A-Za-z-]+: .+$")
+# Trailers are exempt from the wording rules: a `Co-Authored-By:` line
+# naming a person is not first-person narration, and its value is a name
+# and an address rather than prose anyone chose. The keys are enumerated
+# rather than matched by shape, because `<capitalised word>: <anything>`
+# also describes an ordinary labelled body line — `Note:`, `Tests:`,
+# `Gate:` — and exempting those turns the wording rules off for the rest
+# of the line. `Lint-skip` is here so the waiver line is not itself graded.
+# Keys are matched case-insensitively, as git matches them.
+_TRAILER_KEYS = (
+    "Acked-by",
+    "Cc",
+    "Closes",
+    "Co-Authored-By",
+    "Fixes",
+    "Lint-skip",
+    "Refs",
+    "Reported-by",
+    "Reviewed-by",
+    "Signed-off-by",
+    "Suggested-by",
+    "Tested-by",
+)
+_TRAILER_RE = re.compile(
+    r"^(?:" + "|".join(re.escape(key) for key in _TRAILER_KEYS) + r"): .+$",
+    re.IGNORECASE,
+)
 
 # Quoted material is exempt from the wording rules. A commit that records
 # what a user asked for, or the literal query a search was run with, has
@@ -173,9 +245,12 @@ _TRAILER_RE = re.compile(r"^[A-Z][A-Za-z-]+: .+$")
 # of the line keeps its word boundaries.
 _QUOTED_RE = re.compile(r"`[^`]*`|\"[^\"]*\"|“[^”]*”")
 
-# A comment line in a message file. `git commit` strips these before the
-# message is stored, so the hook must strip them too or it grades text
-# that will never be committed.
+# A comment line in a message file. `git commit` with an editor runs
+# `--cleanup=default`, which strips these before the message is stored, so
+# the hook must strip them too or it grades text that will never be
+# committed. `git commit -m`/`-F` run `--cleanup=whitespace` instead and
+# keep them, which is why `--range` mode grades a stored message as-is —
+# see `lint_message`.
 _COMMENT_PREFIX = "#"
 
 # `git commit -v` appends the staged diff below this marker. Everything
@@ -196,12 +271,15 @@ class Violation:
 
 
 def strip_comments(raw: str) -> str:
-    """Drop what ``git commit`` drops: comments and the verbose diff.
+    """Drop what ``git commit`` drops from an editor buffer.
 
-    Mirrors git's own handling so the hook grades exactly the text that
-    will be recorded. Without the scissors handling, ``git commit -v``
-    would feed the entire staged diff into the body rules and fail on
-    every long source line in the patch.
+    Mirrors ``--cleanup=default`` so the ``commit-msg`` hook grades the
+    text that will be recorded rather than the scaffolding around it.
+    Without the scissors handling, ``git commit -v`` would feed the entire
+    staged diff into the body rules and fail on every long source line in
+    the patch. Applies to the hook only: ``--cleanup=whitespace``, which
+    is what ``git commit -m`` and ``-F`` use, keeps ``#`` lines, so a
+    stored message must be graded exactly as it was stored.
     """
     lines: list[str] = []
     for line in raw.splitlines():
@@ -290,61 +368,102 @@ def _check_subject(subject: str, where: str) -> list[Violation]:
     return out
 
 
-def _check_wording(text: str, where: str) -> list[Violation]:
-    out: list[Violation] = []
+def _wording_paragraphs(text: str) -> list[str]:
+    """The units the wording rules grade: runs of gradeable lines.
+
+    A paragraph ends at a blank line or a trailer. Grading a paragraph
+    rather than a line is what lets a banned phrase be caught when the
+    author's wrap point falls inside it — ``the last\\nwindow`` is the
+    same phrase as ``the last window``, and every rule but
+    ``first-person`` carries multi-word phrases, so a gate that graded
+    physical lines would let one through on where a line happened to
+    break. A blank line is a real break rather than a wrap, so paragraphs
+    are not joined across one.
+    """
+    paragraphs: list[str] = []
+    run: list[str] = []
     for line in text.splitlines():
-        if _TRAILER_RE.match(line):
+        if not line.strip() or _TRAILER_RE.match(line):
+            if run:
+                paragraphs.append("\n".join(run))
+                run = []
             continue
-        # Blank out quoted spans rather than dropping them, so a word that
-        # abuts a quote keeps its boundary and the reported line still
-        # reads as the author wrote it.
-        graded = _QUOTED_RE.sub(lambda m: " " * len(m.group(0)), line)
-        first_person = _FIRST_PERSON_RE.search(graded)
-        if first_person is not None:
+        run.append(line)
+    if run:
+        paragraphs.append("\n".join(run))
+    return paragraphs
+
+
+def _check_wording(text: str, where: str, waived: frozenset[str]) -> list[Violation]:
+    out: list[Violation] = []
+    for paragraph in _wording_paragraphs(text):
+        # Newline to space, and quoted spans blanked rather than dropped:
+        # both substitutions preserve length, so every offset in `graded`
+        # still indexes `paragraph` and a match can be attributed back to
+        # the physical lines it spans.
+        graded = _QUOTED_RE.sub(
+            lambda m: " " * len(m.group(0)), paragraph.replace("\n", " ")
+        )
+        lines = paragraph.split("\n")
+        for rule, pattern, advice in _WORDING_RULES:
+            if rule in waived:
+                continue
+            match = pattern.search(graded)
+            if match is None:
+                continue
+            first = paragraph.count("\n", 0, match.start())
+            last = paragraph.count("\n", 0, match.end())
+            source = " ".join(line.strip() for line in lines[first : last + 1])
             out.append(
                 Violation(
                     where,
-                    "first-person",
-                    f"{first_person.group(0)!r} in {line.strip()!r} — describe "
-                    "the change, not the author",
-                )
-            )
-        filler = _FILLER_RE.search(graded)
-        if filler is not None:
-            out.append(
-                Violation(
-                    where,
-                    "filler",
-                    f"{filler.group(0)!r} in {line.strip()!r} — carries no "
-                    "information about the change",
-                )
-            )
-        session = _SESSION_RE.search(graded)
-        if session is not None:
-            out.append(
-                Violation(
-                    where,
-                    "session-narration",
-                    f"{session.group(0)!r} in {line.strip()!r} — the reader has "
-                    "no access to the authoring session; cite the commit by sha",
-                )
-            )
-        editorial = _EDITORIAL_RE.search(graded)
-        if editorial is not None:
-            out.append(
-                Violation(
-                    where,
-                    "editorial",
-                    f"{editorial.group(0)!r} in {line.strip()!r} — grade the "
-                    "defect by describing it, not by commenting on it",
+                    rule,
+                    f"{match.group(0)!r} in {source!r} — {advice}",
                 )
             )
     return out
 
 
-def lint_message(raw: str, where: str) -> list[Violation]:
-    """Grade one commit message. Returns every violation it carries."""
-    text = strip_comments(raw)
+def _waived_rules(text: str, where: str) -> tuple[frozenset[str], list[Violation]]:
+    """Wording rules a ``Lint-skip:`` trailer waives, and its own faults.
+
+    A name outside `_WAIVABLE_RULES` is reported rather than ignored, so a
+    typo or an attempt to waive the envelope fails closed: the message
+    still carries whatever the named rule would have caught, plus a
+    violation for the waiver itself.
+    """
+    waived: set[str] = set()
+    out: list[Violation] = []
+    for match in _LINT_SKIP_RE.finditer(text):
+        for name in re.split(r"[,\s]+", match.group("rules")):
+            if not name:
+                continue
+            if name in _WAIVABLE_RULES:
+                waived.add(name)
+            else:
+                out.append(
+                    Violation(
+                        where,
+                        "lint-skip",
+                        f"{name!r} is not a waivable rule — one of "
+                        f"{', '.join(sorted(_WAIVABLE_RULES))}",
+                    )
+                )
+    return frozenset(waived), out
+
+
+def lint_message(raw: str, where: str, *, strip: bool = True) -> list[Violation]:
+    """Grade one commit message. Returns every violation it carries.
+
+    ``strip`` drops ``#`` comment lines and the ``git commit -v`` scissors
+    block. That is right for the ``commit-msg`` hook, whose input is an
+    editor buffer git has not cleaned yet, and wrong for ``--range``,
+    whose input is a message git has already stored: ``git commit -m`` and
+    ``-F`` run ``--cleanup=whitespace``, which keeps ``#`` lines, so
+    stripping there would delete text the commit really carries and grade
+    a message nobody wrote.
+    """
+    text = strip_comments(raw) if strip else raw.strip("\n")
     if not text.strip():
         return [Violation(where, "empty", "commit message is empty")]
 
@@ -375,7 +494,9 @@ def lint_message(raw: str, where: str) -> list[Violation]:
                 )
             )
 
-    out.extend(_check_wording(text, where))
+    waived, waiver_faults = _waived_rules(text, where)
+    out.extend(waiver_faults)
+    out.extend(_check_wording(text, where, waived))
     return out
 
 
@@ -402,6 +523,36 @@ def _message_for(sha: str) -> str:
         check=True,
     )
     return result.stdout
+
+
+def _author_for(sha: str) -> str:
+    result = subprocess.run(
+        ["git", "log", "-1", "--format=%an", sha],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout.strip()
+
+
+def _is_bot_author(name: str) -> bool:
+    """True for a commit GitHub attributes to an app rather than a person.
+
+    GitHub names an app's commits ``<app>[bot]`` — ``dependabot[bot]``,
+    ``github-actions[bot]``, ``renovate[bot]``. A bot composes its subject
+    and body from a template, so grading them fails a push on rules the
+    commit's author cannot satisfy by editing anything: Dependabot's
+    generated ``Bumps the <group> group with N updates: [a](url), [b](url)
+    …`` body line is past the wrap limit and is not configurable at all.
+
+    The identity comes from git's author field, which only ``--range``
+    mode has; the ``commit-msg`` hook grades a message with no author
+    attached, so nothing written inside a message can reach this
+    exemption. Reaching it as a person means setting ``user.name`` to
+    ``…[bot]``, which mislabels the commit's authorship in permanent
+    history rather than quietly bypassing a lint.
+    """
+    return name.strip().endswith("[bot]")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -437,7 +588,9 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 0
         for sha in shas:
-            violations.extend(lint_message(_message_for(sha), sha[:8]))
+            if _is_bot_author(_author_for(sha)):
+                continue
+            violations.extend(lint_message(_message_for(sha), sha[:8], strip=False))
 
     for violation in violations:
         print(violation.render())
