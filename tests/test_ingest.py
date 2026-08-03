@@ -1504,6 +1504,23 @@ class _FixedVectorModel:
         return [1.0, 0.0]
 
 
+class _MarkerVectorModel:
+    """Stub embedding model with the OPPOSITE bias to `_FixedVectorModel`:
+    two bodies score cosine 1.0 when they agree on the presence of the
+    `alpha` marker token and 0.0 when they do not, so a pair that is
+    near-identical apart from that one token scores cosine 0.0 while
+    scoring lexical Jaccard above `HIGH_SIMILARITY`.
+
+    That inversion is what makes the two scorers DISAGREE in the direction
+    where semantic dedup is the permissive one — the direction in which a
+    commit run under the lexical fallback refuses a row the plan admitted.
+    Same `.encode` contract as its sibling, so no embeddings extra is
+    involved on any leg."""
+
+    def encode(self, text: str, normalize_embeddings: bool = True) -> list[float]:
+        return [1.0, 0.0] if "alpha" in text.lower() else [0.0, 1.0]
+
+
 class TestDedupPolicyAlignment:
     """The plan phase and the apply phase must judge a row the same way.
 
@@ -2318,8 +2335,15 @@ class TestCLI:
         Nothing below the CLI can catch this: `compute_ingest_plan` and
         `apply_ingest_plan` each enforce the list correctly in isolation
         (both are covered directly elsewhere in this file) — the wiring
-        that puts ONE config on both legs is the thing under test, and the
+        that hands the plan leg a config is the thing under test, and the
         CLI is its only caller.
+
+        The APPLY leg of that wiring is out of this lane's reach and is
+        pinned separately by
+        `test_cli_dry_run_predicts_the_semantic_dedup_verdict`: the apply
+        loop skips every row the plan did not mark `write`, so no
+        allowlist scenario can distinguish an apply that was handed the
+        config from one that was not.
         """
         import argparse
 
@@ -2394,3 +2418,109 @@ class TestCLI:
             "scope(s) not in allowed list: ['projects:other']" in line
             for line in _detail(dry)
         ), dry
+
+    def test_cli_dry_run_predicts_the_semantic_dedup_verdict(
+        self, tmp_path: Path, capsys: Any, monkeypatch: Any
+    ) -> None:
+        """The APPLY leg of the same one-config wiring, on the CLI.
+
+        The allowlist lanes above pin the PLAN leg only, and cannot reach
+        this one by construction: `apply_ingest_plan`'s loop opens with
+        `if row.action != "write": continue`, so a row the plan already
+        refused never reaches the apply-side allowlist re-check, and a row
+        the plan admitted is one the allowlist permits on both sides.
+        This lane is what makes the apply-side `config=ctx.config` in
+        `cli/ingest.py` mutation-guarded; before it, dropping that
+        argument left every other test in the suite green.
+
+        Dedup is the axis where the apply leg IS observable. Without the
+        config, `_gate_deps` falls back to `Config()` — `semantic_dedup`
+        off, lexical Jaccard at `HIGH_SIMILARITY` — while the plan is
+        still scored under the user's `[behavior] semantic_dedup` via
+        `resolve_dedup_policy`. The corpus below is chosen so the two
+        scorers disagree: one marker token apart, so cosine says "not a
+        duplicate" and Jaccard says it is. Under that split the dry run
+        prints `would write 1` and the commit refuses the row
+        `skip_invalid` — verbatim the plan-vs-commit divergence
+        `resolve_dedup_policy` exists to end, arriving through the other
+        argument.
+        """
+        import argparse
+
+        from bettermemory.cli.ingest import _cli_ingest
+        from bettermemory.config import BehaviorConfig, Config, StorageConfig
+        from bettermemory.search import find_similar
+
+        store_dir = tmp_path / "store"
+        store_dir.mkdir()
+        cfg = Config(
+            storage=StorageConfig(directory=str(store_dir)),
+            behavior=BehaviorConfig(semantic_dedup=True),
+        )
+        monkeypatch.setattr("bettermemory.cli._common.load_config", lambda: cfg)
+        monkeypatch.setattr(
+            "bettermemory.semantic_setup._semantic_model_or_none",
+            lambda _config: _MarkerVectorModel(),
+        )
+
+        description = "the ingest parser classifies auto memory files"
+        seeded = (
+            "The alpha parser resolves ingest source roots and classifies "
+            "auto memory markdown files before writing them into the store."
+        )
+        incoming = seeded.replace("alpha", "beta")
+        store = Store(store_dir)
+        store.write(content=f"{description}\n\n{seeded}", scopes=["tools"])
+
+        source = tmp_path / "source"
+        _write_auto_memory(
+            source, "near-duplicate", description=description, body=incoming
+        )
+
+        # In-band proof that this lane is not vacuous: under the DEFAULT
+        # (lexical) policy — the one a config-less apply falls back to —
+        # the incoming body is a high-overlap duplicate of the seeded
+        # memory. The row therefore survives the commit only because the
+        # apply side was handed the user's config, which is the claim.
+        ingested_body = f"{description}\n\n{incoming}"
+        assert [h.relevance for h in find_similar(ingested_body, store.load_all())] == [
+            "high"
+        ]
+
+        def _run(dry_run: bool) -> str:
+            _cli_ingest(
+                source=str(source),
+                dry_run=dry_run,
+                extra_scopes=[],
+                force=False,
+                json_out=False,
+                parser=argparse.ArgumentParser(),
+            )
+            return capsys.readouterr().out
+
+        def _detail(out: str) -> list[str]:
+            """Per-row lines of `render_ingest_text`, minus the one span
+            that is SUPPOSED to differ between the legs: the commit stamps
+            `→ <written id>` where the dry run prints `(would write)`."""
+            return [
+                re.sub(r"\s{2}(?:→ \S+|\(would write\))$", "", line)
+                for line in out.splitlines()
+                if line.startswith("  [") or line.startswith("      ")
+            ]
+
+        dry = _run(True)
+        assert re.search(r"^\s+would write\s+1$", dry, re.MULTILINE), dry
+        assert "skip invalid" not in dry
+        assert len(store.load_all()) == 1  # a dry run wrote nothing
+
+        # The headline claim. Under the mutation this line reads `wrote 0`
+        # and a `skip invalid 1` line appears beside it.
+        live = _run(False)
+        assert re.search(r"^\s+wrote\s+1$", live, re.MULTILINE), live
+        assert "skip invalid" not in live
+        assert len(store.load_all()) == 2  # the seeded one plus the import
+
+        # Same action and same reason on both legs, not merely the same
+        # counts — the sibling above pins the refusing direction of this
+        # identical comparison.
+        assert _detail(dry) == _detail(live), (dry, live)
