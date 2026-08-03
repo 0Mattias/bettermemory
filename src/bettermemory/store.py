@@ -2446,15 +2446,27 @@ def _warn_on_index_divergence(root: Path) -> None:
     The raw count comparison is the cheap TRIGGER for the refine path,
     and it is ALSO the gate: equal counts return here without looking at
     identities at all. That asymmetry is deliberate and it has a cost.
-    The count is the verdict for exactly one shape — an out-of-band swap
-    that removes one memory and adds
-    another. Counts N and N, identities different, this check silent.
-    Reconciling every construction would put a full parse walk plus a
-    lock dance on the server's boot path and on every cheap `Store()`,
-    which is the cost this gate exists to avoid; the shape it misses is
-    `bettermemory doctor`'s to catch, and `_check_index_health`
-    reconciles ids and content on every certification precisely because
-    this one cannot afford to. See
+    The two counts are not even counts of the same population — index
+    ROWS against raw `.md` FILES, unparseable ones included, because
+    `count_active_memory_files` never parses — so any state whose row
+    count happens to equal its file count is certified in silence,
+    whatever the ids on the two sides are. Two families of out-of-band
+    edit reach that balance: an equal-sized swap that removes k
+    memories and adds k others, and an in-place edit that moves a file
+    from the parseable population to the unparseable one while its row
+    survives (frontmatter broken by an external editor, or a
+    `schema_version` this reader will not read). The second adds and
+    removes nothing at all: the file merely stops parsing, so every
+    reader skips it on the shared `PARSE_SKIP_EXCEPTIONS` width and the
+    memory drops out of `memory_search` while the index still carries
+    its row, both counts unmoved. Reconciling every construction would
+    put a full parse walk plus a lock dance on the server's boot path
+    and on every cheap `Store()`, which is the cost this gate exists to
+    avoid; the shapes it misses are `bettermemory doctor`'s to catch —
+    `_reconcile_index_against_disk` runs the identity leg with no count
+    gate in front of it, and `_check_index_health` reconciles ids and
+    content on every certification precisely because this one cannot
+    afford to. See
     `docs/incidents/2026-07-31-index-health-certified-a-stale-index.md`.
 
     Past the gate the count is not the verdict. Counts alone cannot
@@ -2467,12 +2479,12 @@ def _warn_on_index_divergence(root: Path) -> None:
     budget, or the first false positive would silence the real desync
     that follows it.
 
-    The check is also parse-aware: `index.rebuild` consumes
-    `iter_active()`, which skips unparseable files, so a memory a
-    rebuild could never parse is not a hole the index can fill. That
-    gap gets a fix-the-files warning instead — recommending reindex
-    there would send the user to a repair that can never clear the
-    warning.
+    Past the gate the check is also parse-aware: `index.rebuild`
+    consumes `iter_active()`, which skips unparseable files, so a
+    memory a rebuild could never parse is not a hole the index can
+    fill. When no genuine id gap remains, that shortfall gets a
+    fix-the-files warning instead — recommending reindex there would
+    send the user to a repair that can never clear the warning.
 
     Degraded paths do not all get the same answer:
 
