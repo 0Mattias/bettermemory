@@ -129,18 +129,24 @@ corroboration_boost = false
 semantic_dedup = false
 
 # Which embedding provider to use. One of:
-#   "auto"      — pick torch when [embeddings] is installed, else
-#                 fastembed when [embeddings-fast] is installed, else
-#                 fall back to Jaccard. Default.
+#   "auto"      — pick torch when [embeddings] is installed AND imports,
+#                 else fastembed when [embeddings-fast] is installed AND
+#                 imports, else fall back to Jaccard. Health, not just
+#                 presence: a broken torch loses to a working fastembed
+#                 instead of taking the semantic leg down with it. When
+#                 every installed extra is broken, the broken one is
+#                 picked anyway, so its loader's WARNING names the actual
+#                 import failure rather than reading as "nothing
+#                 installed". Default.
 #   "torch"     — sentence-transformers + PyTorch. Heavier install
 #                 (~500MB) but the well-trodden path.
 #   "fastembed" — fastembed + ONNX Runtime. ~50MB total. Same retrieval
 #                 surface, smaller footprint. Wheels lag the newest
 #                 Python by a release; use the torch extra on 3.14.
-# An explicit value is honoured even when the extra isn't installed —
-# you'll see a per-provider WARNING and the Jaccard fallback. Auto +
-# both installed prefers torch so existing `.embeddings.<model>.npz`
-# caches stay byte-stable.
+# An explicit value is honoured even when the extra isn't installed or
+# is broken — you'll see a per-provider WARNING and the Jaccard
+# fallback. Auto prefers torch when both extras import cleanly, so
+# existing `.embeddings.<model>.npz` caches stay byte-stable.
 semantic_provider = "auto"
 
 # Embedding model for the torch provider. `all-MiniLM-L6-v2` is the
@@ -270,9 +276,13 @@ full_tool_surface = false
 
 [scopes]
 # If non-empty, writes with caller-supplied scopes outside this list fail.
-# Empty = anything. Scopes bettermemory stamps on a row itself (ingest's
-# provenance + type tags) are exempt — you never typed them, so an
-# allowlist that doesn't name them can't silently refuse a whole import.
+# Empty = anything. The exemption is ingest's: the scopes it stamps on a
+# row itself (its provenance scope + the type tag) are exempt there — you
+# never typed them, so an allowlist that doesn't name them can't silently
+# refuse a whole import. Every other surface checks the whole list it is
+# handed, stamps included, and `memory_update` REPLACES `scopes` — so
+# re-tagging an imported row resubmits those stamps and is refused unless
+# this list names them too.
 allowed = []
 
 [telemetry]
@@ -381,7 +391,8 @@ class BehaviorConfig:
     # Provider selection — "auto" (default), "torch", or "fastembed".
     # The resolver in `semantic.resolve_provider` honours an explicit
     # value even when the corresponding extra isn't installed; auto-
-    # detection prefers torch when both extras are present so legacy
+    # detection asks about health rather than presence and prefers torch
+    # when both extras import cleanly, so legacy
     # `.embeddings.<model>.npz` caches stay byte-stable.
     semantic_provider: str = "auto"
     # Torch-provider model. Read when the resolved provider is "torch".

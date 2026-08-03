@@ -11,6 +11,11 @@ Two gaps the integration coverage doesn't close:
    `[storage] directory` → project-scoped `./.claude-memory/` → global
    `~/.claude-memory/`. The integration tests pass `StorageConfig(directory=...)`
    directly, which short-circuits past the interesting branches.
+3. **Shipped-prose parity.** `DEFAULT_CONFIG`'s comments are written verbatim
+   into every user's `config.toml`, so each claim in them is published
+   documentation rather than an internal note. The prose tests assert a claim
+   and the behaviour it describes in the same test — pinning either alone is
+   what let the pair drift apart before.
 
 Tests use `tmp_path` for hermeticity and `monkeypatch` to scope env-var and
 `Path.cwd()` overrides without leaking to other tests.
@@ -23,6 +28,7 @@ from pathlib import Path
 import pytest
 import tomllib
 
+from bettermemory import semantic
 from bettermemory.config import (
     DEFAULT_CONFIG,
     ENV_DIR_OVERRIDE,
@@ -92,6 +98,10 @@ def test_default_config_scopes_prose_matches_the_ingest_exemption() -> None:
     someone removes the carve-out from `_scope_allowlist_reason`; the prose
     half fails if someone restores the old absolute. Pinning either alone
     would let the pair drift apart again, which is the whole defect.
+
+    This test owns the ingest half of the pair only.
+    `test_default_config_scopes_prose_matches_the_update_surface` owns the
+    other half — the exemption stops at ingest, and the comment says so.
     """
     from bettermemory.ingest import (
         DEFAULT_PROVENANCE_SCOPE,
@@ -115,6 +125,156 @@ def test_default_config_scopes_prose_matches_the_ingest_exemption() -> None:
     block = DEFAULT_CONFIG.split("[scopes]")[1].split("[telemetry]")[0]
     assert "caller-supplied" in block, block
     assert "exempt" in block, block
+
+
+async def test_default_config_scopes_prose_matches_the_update_surface(
+    tmp_path: Path,
+) -> None:
+    """The stamped-scope exemption is ingest's, and the comment scopes it there.
+
+    The carve-out lives in exactly one place — `_scope_allowlist_reason`,
+    reached from `compute_ingest_plan` and `apply_ingest_plan`.
+    `memory_update` checks every scope it is handed against `allowed` with
+    no `stamped` term (handlers/update.py), and its `scopes` argument has
+    REPLACE semantics, so re-tagging an imported row resubmits the
+    provenance scope and the type tag and the update is refused by name.
+    A comment that states the exemption as a property of the scopes rather
+    than of the ingest path is therefore false on a first-class MCP entry
+    point, which is what the operator meets when they curate an import.
+
+    Both halves again: the behavioural half fails if `memory_update` grows
+    a stamped carve-out (at which point the comment may state the absolute
+    again), the prose half fails if the ingest-only scoping is dropped.
+    """
+    from bettermemory.config import ScopesConfig
+    from bettermemory.ingest import _tool_stamped_scopes
+    from bettermemory.server import build_server
+    from bettermemory.session import SessionState
+    from bettermemory.store import Store
+
+    from ._mcp import call_tool
+
+    stamped = sorted(_tool_stamped_scopes("project"))
+    memory = Store(tmp_path).write(
+        content="the demo project pins its formatter version in CI",
+        scopes=[*stamped, "projects:demo"],
+    )
+    config = Config(
+        storage=StorageConfig(directory=str(tmp_path)),
+        scopes=ScopesConfig(allowed=["projects:demo", "tools"]),
+    )
+    server = build_server(config=config, store=Store(tmp_path), state=SessionState())
+
+    # Adding an ALLOWLISTED scope to an imported row: the full list goes
+    # back, stamps and all, and the stamps are what the refusal names.
+    with pytest.raises(Exception, match="not in allowed list") as excinfo:
+        await call_tool(
+            server,
+            "memory_update",
+            {"id": memory.id, "scopes": [*stamped, "projects:demo", "tools"]},
+        )
+    for stamp in stamped:
+        assert stamp in str(excinfo.value), excinfo.value
+
+    block = DEFAULT_CONFIG.split("[scopes]")[1].split("[telemetry]")[0]
+    assert "ingest's" in block, block
+    assert "memory_update" in block, block
+    assert "REPLACES" in block, block
+
+
+def _pin_extra_state(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    torch: str | None,
+    fastembed: str | None,
+) -> None:
+    """Pin both embedding extras to a chosen state, hermetically.
+
+    `None` = absent, `"ok"` = installed and importable, any other string =
+    installed and BROKEN with that string as the recorded reason.
+
+    Seeds PRODUCTION state — `semantic`'s probe cache, its broken-reason
+    map and the two presence probes — rather than stubbing `resolve_provider`
+    itself, so the assertions measure the real resolution rule. Pinning is
+    mandatory rather than tidy: the three CI legs install different extras
+    (`[embeddings]`, `[embeddings-fast]`, neither), so a "torch broken,
+    fastembed healthy" row that read the real environment would measure a
+    different scenario on each leg and none of them on a developer machine
+    carrying both. The dicts are REPLACED rather than item-patched so
+    nothing another test recorded can leak in.
+    """
+    probe: dict[str, bool] = {}
+    reason: dict[str, str] = {}
+    for module, state in (("sentence_transformers", torch), ("fastembed", fastembed)):
+        # Absent seeds False too — an unseeded module makes
+        # `extra_importable` attempt a real import, which succeeds on
+        # whichever leg happens to have it installed.
+        probe[module] = state == "ok"
+        if state is not None and state != "ok":
+            reason[module] = state
+    monkeypatch.setattr(semantic, "_EXTRA_PROBE", probe)
+    monkeypatch.setattr(semantic, "_EXTRA_BROKEN_REASON", reason)
+    monkeypatch.setattr(semantic, "_torch_extra_installed", lambda: torch is not None)
+    monkeypatch.setattr(
+        semantic, "_fastembed_extra_installed", lambda: fastembed is not None
+    )
+
+
+@pytest.mark.parametrize(
+    ("torch", "fastembed", "expected"),
+    [
+        # Both healthy: torch wins, which is the byte-stable-cache claim.
+        ("ok", "ok", "torch"),
+        # The row the presence-only prose got wrong: a broken torch does
+        # not take the semantic leg down with it.
+        ("KeyError: frozenset()", "ok", "fastembed"),
+        ("ok", "ImportError: onnxruntime", "torch"),
+        (None, "ok", "fastembed"),
+        # Everything installed is broken: the broken one is returned
+        # anyway so its loader's WARNING names the import failure.
+        ("KeyError: frozenset()", None, "torch"),
+        ("KeyError: frozenset()", "ImportError: onnxruntime", "torch"),
+        # Nothing installed at all — the Jaccard fallback.
+        (None, None, None),
+    ],
+)
+def test_default_config_semantic_provider_prose_matches_the_resolver(
+    monkeypatch: pytest.MonkeyPatch,
+    torch: str | None,
+    fastembed: str | None,
+    expected: str | None,
+) -> None:
+    """The shipped `auto` bullet must describe HEALTH-based resolution.
+
+    This text is written verbatim into every user's `config.toml` on first
+    run and `docs/internals.md` points at the file's own comments as the
+    knob reference, so a drift here is a published false claim. It drifted
+    once already: `resolve_provider` moved from presence to health —
+    presence alone picked a broken torch over a working fastembed and then
+    returned no model, losing the semantic leg on a machine with a
+    perfectly good provider installed — and the comment kept describing
+    the rule that defect replaced.
+
+    Both halves are asserted. The behavioural half fails if the resolver
+    goes back to reading presence alone; the prose half fails if the
+    comment does. Pinning either alone lets the pair drift apart again.
+    """
+    _pin_extra_state(monkeypatch, torch=torch, fastembed=fastembed)
+
+    shipped = tomllib.loads(DEFAULT_CONFIG)["behavior"]["semantic_provider"]
+    assert shipped == "auto"
+    assert semantic.resolve_provider(shipped) == expected
+
+    block = DEFAULT_CONFIG.split("# Which embedding provider")[1].split(
+        "semantic_model_name"
+    )[0]
+    # Comment markers and line wrapping carry none of the claim, and a
+    # re-wrap is a routine edit — assert against the flowed text so only a
+    # change of meaning can fail this half.
+    prose = " ".join(block.replace("#", " ").split())
+    assert "installed AND imports" in prose, prose
+    assert "Health, not just presence" in prose, prose
+    assert "prefers torch when both extras import cleanly" in prose, prose
 
 
 def test_default_config_round_trips_through_load_config(tmp_path: Path) -> None:
