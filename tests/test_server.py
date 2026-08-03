@@ -6650,6 +6650,7 @@ async def test_search_desc_tells_the_caller_how_to_word_a_query(
 
 def test_already_recorded_pending_ids_early_exits_on_old_events(
     memory_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The dedup scan walks the active log backward and bails as soon
     as event timestamps fall behind the oldest pending token's
@@ -6663,16 +6664,18 @@ def test_already_recorded_pending_ids_early_exits_on_old_events(
        use-events are timestamped at or after the corresponding token's
        `issued_at`. The 2.6.7 timestamp-guard semantics must survive
        the optimisation.
-    2. Performance — a log of 10k old (pre-token) events plus a few
-       recent use-events resolves in well under 100ms. Generous
-       threshold so the test isn't flaky on slow CI; the early-exit
-       brings the realistic wall-clock down by orders of magnitude
-       relative to the full forward scan.
+    2. The early-exit itself — the backward scan examines a handful of
+       recent events rather than all 10k. Asserted by counting the
+       events the loop touches, not by wall clock: the O(N) log parse
+       ahead of the loop is not short-circuited and dominates the
+       elapsed time, so a clock threshold measures the runner rather
+       than the optimisation. See the comment at the assertion.
     """
     import time as _time
 
     from bettermemory._handlers import _already_recorded_pending_ids
     from bettermemory.events import Recorder
+    from bettermemory.handlers import _shared
     from bettermemory.session import PendingUseToken, SessionState
 
     memory_dir.mkdir(parents=True, exist_ok=True)
@@ -6703,26 +6706,40 @@ def test_already_recorded_pending_ids_early_exits_on_old_events(
             "use", ids=[mid], outcome="applied", auto=False, attribution="model"
         )
 
-    # Correctness: every minted token should be reported as
-    # "already recorded" — the 5 use events all match.
-    start = _time.perf_counter()
+    # The early-exit is asserted STRUCTURALLY — by how many events the
+    # backward scan examines — not by wall clock.
+    #
+    # A clock assertion here measured the wrong thing and flaked on it.
+    # The early-exit bounds the MATCHING loop only: `_already_recorded_
+    # pending_ids` first does `list(iter_events(root))` and then
+    # `_stop_hook_session_ids(events)`, both O(N) over the whole active
+    # log and neither short-circuited. Parsing 10k events is therefore
+    # the dominant cost whether or not the optimisation works — measured
+    # locally at 14ms of a 15.6ms call, with the backward loop examining
+    # exactly one event. So the old `elapsed < 0.5` was reading the
+    # runner's parse throughput, and when a shared ubuntu-latest slot
+    # returned 0.538s during the 3.37.0 release run it reported "early-
+    # exit appears not to be triggering" about an early-exit that was
+    # working perfectly.
+    #
+    # Counting `_event_ts_epoch` calls measures the loop directly: it is
+    # called once per event the backward scan examines and nowhere else
+    # in this path. Delete the `break` and this count becomes 10_000+.
+    examined = 0
+    real_event_ts_epoch = _shared._event_ts_epoch
+
+    def _counting_event_ts_epoch(raw: object) -> float | None:
+        nonlocal examined
+        examined += 1
+        return real_event_ts_epoch(raw)
+
+    monkeypatch.setattr(_shared, "_event_ts_epoch", _counting_event_ts_epoch)
     result = _already_recorded_pending_ids(state, recorder)
-    elapsed = _time.perf_counter() - start
 
     assert result == set(pending_mids), f"expected all pending ids back, got {result}"
-
-    # Performance: with the backward early-exit, the scan touches a
-    # handful of recent events (the 5 use events + the trailing
-    # turn_audited barrier) before bailing — typically <10ms on a
-    # warm runner. Threshold set at 500ms to absorb shared-CI noise
-    # (observed 151ms on a slow ubuntu-latest slot during the 3.0.1
-    # release run, well within optimisation-working territory).
-    # Without the optimisation, the full forward scan over 10k+
-    # events comfortably exceeds even this generous bound — the
-    # gap stays large enough to detect regression.
-    assert elapsed < 0.5, (
-        f"_already_recorded_pending_ids took {elapsed:.3f}s for 10k-event "
-        f"log; backward early-exit appears not to be triggering"
+    assert examined < 50, (
+        f"backward scan examined {examined} of 10_000 events; the early-exit "
+        "is not bailing at the oldest pending token's issued_at"
     )
 
 
