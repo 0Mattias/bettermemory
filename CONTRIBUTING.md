@@ -10,12 +10,14 @@ See [`docs/installation.md`](docs/installation.md) for the install side. For a d
 git clone https://github.com/0Mattias/bettermemory.git
 cd bettermemory
 
-# direnv reads .envrc and sets UV_PROJECT_ENVIRONMENT; otherwise export it
-# by hand — `venv` outside a cloud-synced folder, a path outside the
-# synced tree inside one (see below).
-export UV_PROJECT_ENVIRONMENT=venv
+# `.envrc` chooses the environment path: an in-repo `venv`, or a path
+# outside the synced tree for a checkout under ~/Documents or ~/Desktop
+# (see below). With direnv, `direnv allow` once per clone and it exports
+# on every cd; without it, source the same rule rather than restating it.
+. ./.envrc
 
 uv sync --extra dev
+ln -sfn "$UV_PROJECT_ENVIRONMENT" .venv   # `[tool.pyright]` reads an in-repo `.venv`
 source "$UV_PROJECT_ENVIRONMENT/bin/activate"
 ```
 
@@ -73,7 +75,7 @@ Body: what changed and why, in plain declarative prose, wrapped at 100.
 
 - **No first person.** No "I", "my", "myself". A quoted user utterance or a literal query is a citation and is exempt — `memory_search("how do I cut a release")` is fine.
 - **No narration of the process.** "turns out", "finally!", "oops", "as promised" tell the reader nothing about the code. If a wrong first hypothesis is worth recording, record the *conclusion* it produced and the evidence, not the journey.
-- **No references to the sitting that produced the commit.** "this session", "the last round", "an adversarial pass over the previous six commits" name a boundary that exists only in the author's calendar. The reader is bisecting; give them the sha. Domain windows — a demotion window, a tag range — are unaffected.
+- **No references to the sitting that produced the commit.** "this session", "the last round", "an adversarial pass over the previous six commits" name a boundary that exists only in the author's calendar. The reader is bisecting; give them the sha. A domain window named plainly — "a demotion window", "the tag range" — is unaffected, but the rule matches the demonstratives regardless of what they point at, so "this window" about a race window in the code trips it. Waive that case by name with a `Lint-skip:` trailer rather than rephrasing around the linter.
 - **No editorialising about the project's own record.** State what the code did and what it does now. That a defect was embarrassing, is the third of its kind, or is "worth stating plainly" grades the defect instead of describing it, and none of it is actionable. What *is* actionable survives: name the incident file, the defect class, the earlier commit.
 - **No aphorisms, jokes, or slogans in the subject.** The subject is an index entry. `perf(footprint): stop paying for prose and titles nobody reads` is a slogan; `perf(builder): drop pydantic schema titles from the served tool surface` is an index entry. A `release:` subject is the version alone — the release's argument goes in the CHANGELOG entry the tag points at, which has room to cite.
 - **No anthropomorphism.** Guards do not have patience and ratchets cannot be taught. Say what the code now does.
@@ -82,7 +84,9 @@ Body: what changed and why, in plain declarative prose, wrapped at 100.
 
 Length follows from that and from nothing else. A body earns each paragraph by carrying a fact the reader cannot get from the diff — a reproduction, a measurement, a rejected alternative, a consequence. Bodies here run long because the changes are usually load-bearing, not because length is the house style; a one-line body over a one-line fix is correct, and a long body that restates the diff in prose is not.
 
-**Enforcement.** [`tools/commit_lint.py`](tools/commit_lint.py) encodes the mechanical rules — envelope, subject shape and length, blank line before the body, body wrapping, first person, filler, session references, editorialising, and the bare `release:` subject. The rest of tone is not machine-checkable and is left to review. The `commit messages` CI job lints exactly the commits a push or pull request introduces; history written before the rules landed is not re-graded. To catch a violation before it is recorded rather than after, install the hook once per clone:
+**Enforcement.** [`tools/commit_lint.py`](tools/commit_lint.py) encodes the mechanical rules — envelope, subject shape and length, blank line before the body, body wrapping, first person, filler, session references, editorialising, and the bare `release:` subject. The rest of tone is not machine-checkable and is left to review. The `commit messages` CI job lints exactly the commits a push or pull request introduces; history written before the rules landed is not re-graded.
+
+Two escapes exist, both narrow. A message may waive one **named** wording rule with a `Lint-skip: <rule>` trailer — `Lint-skip: session-narration` — for the residual case where a pattern cannot tell a real ambiguity apart. There is no wildcard, the envelope rules are not waivable, and the waiver stays in the permanent record where review sees it. Separately, a commit git attributes to a bot (`dependabot[bot]` and friends) is not graded in `--range` mode, because its subject and body come from a template the author cannot edit; `.github/dependabot.yml` pins a conforming `commit-message.prefix` so the exemption carries as little as possible. To catch a violation before it is recorded rather than after, install the hook once per clone:
 
 ```bash
 git config core.hooksPath .githooks
