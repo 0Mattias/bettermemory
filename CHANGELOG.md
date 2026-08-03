@@ -7,7 +7,55 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
-## Unreleased
+## 3.37.0 - 2026-08-03
+
+### Fixed — shipped install commands that the default macOS shell refuses
+
+`[` and `]` are glob characters, and zsh — the default shell on macOS since
+Catalina — refuses a command whose unquoted argument matches nothing. So
+`pip install bettermemory[ui]` exited 1 with "no matches found" and installed
+nothing. Six surfaces printed such a command: both branches of the
+`mode='semantic'` error from `memory_search`, the provider-unavailable server
+WARNING, both web-UI import errors, the Ollama provider's httpx error, and the
+`ui` subcommand's help text.
+
+Each now quotes the spec and leads with `uv tool install --reinstall`, matching
+what `bettermemory doctor` emits and what `docs/installation.md` documents —
+`uv pip` writes to whichever virtualenv is active rather than to the tool
+environment the documented install actually runs from. The rule is pinned over
+every tracked source under `src/`, matching an `install` command rather than a
+bare mention, so prose that merely names an extra is untouched. This shape had
+been repaired in three separate rounds, each closing an instance; the pin closes
+the class.
+
+### Fixed — `memory_update` refused a re-tag over scopes it was only carrying
+
+`scopes` REPLACES the stored list, so keeping a scope means resubmitting it, and
+`[scopes] allowed` was checked over everything submitted. A row written by
+`bettermemory ingest` carries the provenance scope and type tag ingest stamps
+itself — which the allowlist deliberately exempts at write time — so re-tagging
+an imported row was refused for those stamps, and the only way to add a
+sanctioned scope was to drop the provenance stamp the exemption exists to
+preserve.
+
+The check now runs over what an edit ADDS. A scope already on the record passes
+because it was already accepted; one that is not is still checked by name, so
+the exemption cannot be borrowed to plant an unallowed scope. Being a delta rule
+rather than a stamp-name carve-out, it needs no list of ingest's tags to stay
+correct. The `[scopes]` comment written into every user's `config.toml` is
+corrected with it.
+
+### Fixed — the commit hook and CI disagreed about comment lines
+
+A message whose only violation sat on a `#` line passed `.githooks/commit-msg`
+and then failed the `commit messages` job, turning a one-line edit into a
+rebase. The two modes are genuinely asymmetric: when git opens an editor it
+writes a comment preamble and discards those lines before storing, so grading
+them would report violations about text that never enters history, while `-m`
+and `-F` store `#` lines verbatim. The hook now tells them apart by the
+environment git hands it — `GIT_EDITOR` is `:` for `-m` and `-F`, and the real
+editor command otherwise, verified against git 2.50.1 by recording what a hook
+observes on all three paths.
 
 ### Fixed — `doctor` reported an all-green install whose search was dead
 
