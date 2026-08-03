@@ -276,13 +276,15 @@ full_tool_surface = false
 
 [scopes]
 # If non-empty, writes with caller-supplied scopes outside this list fail.
-# Empty = anything. The exemption is ingest's: the scopes it stamps on a
-# row itself (its provenance scope + the type tag) are exempt there — you
-# never typed them, so an allowlist that doesn't name them can't silently
-# refuse a whole import. Every other surface checks the whole list it is
-# handed, stamps included, and `memory_update` REPLACES `scopes` — so
-# re-tagging an imported row resubmits those stamps and is refused unless
-# this list names them too.
+# Empty = anything. Two narrow exemptions, and neither is a property of
+# the scopes themselves. One is ingest's: the scopes it stamps on a row
+# (its provenance scope + the type tag) are exempt there — you never typed
+# them, so an allowlist that doesn't name them can't silently refuse a
+# whole import. And `memory_update`, whose `scopes` argument REPLACES the
+# stored list: keeping a scope means resubmitting it, so the check runs
+# over what an edit ADDS. A scope already on the record passes because it
+# was already accepted; one that is not is still checked by name, so
+# neither exemption can be borrowed to plant an unallowed scope.
 allowed = []
 
 [telemetry]

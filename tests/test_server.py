@@ -4091,6 +4091,78 @@ async def test_update_replaces_scopes_when_given(server: Any) -> None:
     assert set(res["scopes"]) == {"tools", "learning-style"}
 
 
+async def test_update_checks_allowed_scopes_against_the_delta_only(
+    memory_dir: Path,
+) -> None:
+    """`[scopes] allowed` governs what an update INTRODUCES, not what it keeps.
+
+    `scopes` has REPLACE semantics, so keeping a scope means resubmitting
+    it. Enforcing the allowlist over the whole submitted list therefore
+    froze every row carrying a scope the tool stamped itself: ingest exempts
+    its provenance scope and type tag from the same allowlist
+    (`_scope_allowlist_reason`, ingest.py) because the user never typed
+    them, and the update that resubmitted them was refused by name — the
+    only way to re-tag an imported row was to drop the provenance stamp.
+
+    Third assertion is the one that keeps this from being a blanket
+    exemption: a stamp-looking scope that is NOT already on the record is
+    still refused, so no caller can borrow ingest's carve-out to plant a
+    false provenance tag on a hand-written memory.
+    """
+    from bettermemory.config import ScopesConfig
+    from bettermemory.ingest import DEFAULT_PROVENANCE_SCOPE, _tool_stamped_scopes
+
+    stamped = sorted(_tool_stamped_scopes("project"))
+    imported = Store(memory_dir).write(
+        content="the demo project pins its formatter version in CI",
+        scopes=[*stamped, "projects:demo"],
+    )
+    home_grown = Store(memory_dir).write(
+        content="the demo project runs its type checker in strict mode",
+        scopes=["projects:demo"],
+    )
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        scopes=ScopesConfig(allowed=["projects:demo", "tools"]),
+    )
+    server = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+
+    # Adding an allowlisted scope to the imported row: the stamps ride along
+    # unchanged and the edit commits.
+    res = await _call(
+        server,
+        "memory_update",
+        id=imported.id,
+        scopes=[*stamped, "projects:demo", "tools"],
+    )
+    assert res["status"] == "committed"
+    assert set(res["scopes"]) == {*stamped, "projects:demo", "tools"}
+
+    # A genuinely new scope outside the list is still refused, and the
+    # refusal names only it — the preserved stamps are not in the message.
+    with pytest.raises(Exception, match="not in allowed list") as excinfo:
+        await _call(
+            server,
+            "memory_update",
+            id=imported.id,
+            scopes=[*stamped, "projects:demo", "career"],
+        )
+    assert "career" in str(excinfo.value)
+    for stamp in stamped:
+        assert stamp not in str(excinfo.value), excinfo.value
+
+    # The exemption is keyed on the record's own scopes, not on the stamp
+    # names: the same string is refused on a memory that never carried it.
+    with pytest.raises(Exception, match="not in allowed list") as excinfo:
+        await _call(
+            server,
+            "memory_update",
+            id=home_grown.id,
+            scopes=["projects:demo", DEFAULT_PROVENANCE_SCOPE],
+        )
+    assert DEFAULT_PROVENANCE_SCOPE in str(excinfo.value)
+
+
 async def test_update_changes_confidence(server: Any) -> None:
     written = await _call(
         server,

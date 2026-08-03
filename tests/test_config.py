@@ -130,21 +130,22 @@ def test_default_config_scopes_prose_matches_the_ingest_exemption() -> None:
 async def test_default_config_scopes_prose_matches_the_update_surface(
     tmp_path: Path,
 ) -> None:
-    """The stamped-scope exemption is ingest's, and the comment scopes it there.
+    """`memory_update` checks what an edit ADDS, and the comment says so.
 
-    The carve-out lives in exactly one place — `_scope_allowlist_reason`,
-    reached from `compute_ingest_plan` and `apply_ingest_plan`.
-    `memory_update` checks every scope it is handed against `allowed` with
-    no `stamped` term (handlers/update.py), and its `scopes` argument has
-    REPLACE semantics, so re-tagging an imported row resubmits the
-    provenance scope and the type tag and the update is refused by name.
-    A comment that states the exemption as a property of the scopes rather
-    than of the ingest path is therefore false on a first-class MCP entry
-    point, which is what the operator meets when they curate an import.
+    Its `scopes` argument REPLACES the stored list, so keeping a scope
+    means resubmitting it. Checking the whole submitted list against
+    `allowed` therefore refused a re-tag of any row carrying a scope the
+    operator never typed — an ingested row resubmits ingest's provenance
+    scope and type tag — and left no way to add a sanctioned scope without
+    dropping the provenance stamp. The check now runs over the delta
+    (handlers/update.py), which needs no list of ingest's tag names to
+    stay correct.
 
-    Both halves again: the behavioural half fails if `memory_update` grows
-    a stamped carve-out (at which point the comment may state the absolute
-    again), the prose half fails if the ingest-only scoping is dropped.
+    Three halves, so neither the rule nor the comment can drift alone:
+    the permissive half fails if the delta rule is reverted to a
+    whole-list check, the restrictive half fails if the exemption is
+    widened into "anything on a re-tag passes", and the prose half fails
+    if the comment stops scoping the exemption to what an edit adds.
     """
     from bettermemory.config import ScopesConfig
     from bettermemory.ingest import _tool_stamped_scopes
@@ -165,21 +166,35 @@ async def test_default_config_scopes_prose_matches_the_update_surface(
     )
     server = build_server(config=config, store=Store(tmp_path), state=SessionState())
 
-    # Adding an ALLOWLISTED scope to an imported row: the full list goes
-    # back, stamps and all, and the stamps are what the refusal names.
+    # PERMISSIVE HALF. Adding an ALLOWLISTED scope to an imported row: the
+    # full list goes back, stamps and all. The stamps are carried, not
+    # added, so they are not re-checked and the edit lands.
+    await call_tool(
+        server,
+        "memory_update",
+        {"id": memory.id, "scopes": [*stamped, "projects:demo", "tools"]},
+    )
+    assert sorted(Store(tmp_path).load_one(memory.id).scopes) == sorted(
+        [*stamped, "projects:demo", "tools"]
+    )
+
+    # RESTRICTIVE HALF. A scope that is NOT already on the record is still
+    # checked by name, so the exemption cannot be borrowed to plant one.
     with pytest.raises(Exception, match="not in allowed list") as excinfo:
         await call_tool(
             server,
             "memory_update",
-            {"id": memory.id, "scopes": [*stamped, "projects:demo", "tools"]},
+            {"id": memory.id, "scopes": [*stamped, "projects:demo", "smuggled"]},
         )
+    assert "smuggled" in str(excinfo.value), excinfo.value
     for stamp in stamped:
-        assert stamp in str(excinfo.value), excinfo.value
+        assert stamp not in str(excinfo.value), excinfo.value
 
     block = DEFAULT_CONFIG.split("[scopes]")[1].split("[telemetry]")[0]
     assert "ingest's" in block, block
     assert "memory_update" in block, block
     assert "REPLACES" in block, block
+    assert "ADDS" in block, block
 
 
 def _pin_extra_state(

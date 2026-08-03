@@ -142,7 +142,30 @@ async def memory_update(
         new_scopes = [validate_scope(s) for s in scopes]
         if deps.config.scopes.allowed:
             allowed = set(deps.config.scopes.allowed)
-            unknown = [s for s in new_scopes if s not in allowed]
+            # Enforced against what this edit INTRODUCES, not the whole list.
+            # `scopes` is REPLACE semantics, so keeping a scope the record
+            # already carries means resubmitting it — and `[scopes] allowed`
+            # is a policy about what a caller may scope a memory to, never a
+            # retroactive sweep of what is already stored (nothing rescans the
+            # store when the list is tightened; `memory_rename_scope` checks
+            # `new_scope` alone, and on `memory_write` the whole list IS the
+            # delta — this was the one surface where the two differed).
+            # Checking the whole list froze every row whose scopes a tool
+            # stamped itself: ingest exempts its own provenance scope and type
+            # tag (`_scope_allowlist_reason`, ingest.py) because the user never
+            # typed them, and an update that resubmitted them was then refused
+            # — so the only way to re-tag an imported row was to drop the
+            # provenance stamp the exemption exists to preserve.
+            #
+            # Keyed on the delta rather than on ingest's stamp names so the
+            # exemption can't be borrowed: `imported-from-claude-code` is
+            # still refused when ADDED to a memory that was never imported,
+            # because a scope absent from the record is a scope this caller
+            # is introducing.
+            already_present = set(existing.scopes)
+            unknown = [
+                s for s in new_scopes if s not in allowed and s not in already_present
+            ]
             if unknown:
                 raise ValueError(
                     f"scope(s) not in allowed list: {unknown}. "
