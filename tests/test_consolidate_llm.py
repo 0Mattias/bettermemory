@@ -1222,3 +1222,160 @@ def test_openai_provider_disables_sdk_retries(
 
     OpenAIProvider(api_key="sk-test").propose(_one_member_cluster(), today="2026-05-20")
     assert captured_ctor.get("max_retries") == 0
+
+
+# ---------------------------------------------------------------------------
+# The hand-rolled gates nothing executed
+# ---------------------------------------------------------------------------
+#
+# `docs/ROADMAP.md` and the `_WRITE_GATES` header comment
+# (`src/bettermemory/handlers/write.py`) both defend these gates as a
+# DELIBERATE divergence from the shared `apply_write_gates` chain: they judge
+# the LLM-authored claim (`proposal.body`), not the stamped body that
+# persists, and rerouting them would silently change which text each rule
+# reads. `tests/test_proposals_gate_parity.py` exists to stop anyone
+# converting them.
+#
+# That whole argument rests on the gates working, and an audit on 2026-08-04
+# found three of the five refusal arms were unexecuted code — deleting the
+# transient gate outright passed all 4,541 tests, and the parity test that
+# names itself their guardian asserts on `consolidate.py`'s SOURCE TEXT, so
+# it passes over a gate that could not fire. The credential and scope-
+# allowlist arms were already covered above; these three close the rest.
+#
+# Each is written so the mutation it catches is the deletion of the arm it
+# names, not merely "a RuntimeError happened": every one asserts on the
+# specific reason string AND on the store being unchanged, because a gate
+# that refuses after writing would be the worse bug.
+
+
+def test_propose_new_rejects_a_body_carrying_transient_markers(
+    tmp_path: Path,
+) -> None:
+    """The durability gate, scoped to `proposal.body`.
+
+    `memory_write` answers a transient body with `transient_warning` and an
+    `acknowledge_transient` escape. This path has no one to ask — the
+    comment in `_apply_llm_proposal` says so — so the only correct move is
+    to refuse. Note the SOURCE EXCERPT is deliberately transient-heavy too:
+    it is a verbatim conversational turn, and scanning the stamped body
+    would bounce almost every genuine proposal on a marker in the citation
+    rather than in the claim. If someone reroutes this gate onto
+    `body_with_provenance`, the positive controls elsewhere in this module
+    go red, not this test.
+    """
+    store = _make_store_with_existing(tmp_path)
+    transcript = tmp_path / "session.md"
+    transcript.write_text(
+        "[user] right now the deploy is broken\n[assistant] Noted.",
+        encoding="utf-8",
+    )
+    proposal = ProposeNewProposal(
+        scope="infrastructure",
+        category="fact",
+        body="Currently the deploy is broken and we are fixing it today.",
+        source_excerpt="[user] right now the deploy is broken",
+        rationale="user-reported state",
+    )
+    provider = FakeProvider(proposals=[proposal])
+
+    applied = consolidate_llm(
+        store,
+        provider,
+        apply=True,
+        accept=True,
+        from_transcript=str(transcript),
+    )
+
+    assert not any(a.kind == "llm_propose_new" for a in applied.actions_taken)
+    assert applied.failures
+    assert "transient markers" in applied.failures[0].reason
+    assert len(store.load_all()) == 1
+
+
+def test_propose_new_rejects_a_body_over_max_content_bytes(tmp_path: Path) -> None:
+    """The size cap, and the one gate deliberately measured on the STAMPED
+    body rather than the claim — the provenance line persists, so it counts
+    against the cap. The body below is under the cap on its own and over it
+    once stamped, which is the only way to tell the two readings apart."""
+    store = _make_store_with_existing(tmp_path)
+    transcript = tmp_path / "session.md"
+    excerpt = "[user] " + "the postgres tuning notes are long. " * 12
+    transcript.write_text(excerpt + "\n[assistant] Saved.", encoding="utf-8")
+    body = "Postgres runs with shared_buffers at 4GB. " * 6
+    proposal = ProposeNewProposal(
+        scope="infrastructure",
+        category="fact",
+        body=body,
+        source_excerpt=excerpt,
+        rationale="user-stated infrastructure fact",
+    )
+    provider = FakeProvider(proposals=[proposal])
+    cap = len(body.encode("utf-8")) + 10
+    assert cap < len((body + excerpt).encode("utf-8")), (
+        "fixture no longer distinguishes the stamped body from the claim"
+    )
+
+    applied = consolidate_llm(
+        store,
+        provider,
+        apply=True,
+        accept=True,
+        from_transcript=str(transcript),
+        max_content_bytes=cap,
+    )
+
+    assert not any(a.kind == "llm_propose_new" for a in applied.actions_taken)
+    assert applied.failures
+    assert "exceeds max_content_bytes" in applied.failures[0].reason
+    assert len(store.load_all()) == 1
+
+
+def test_propose_new_rejects_a_body_that_reopens_a_tombstone(tmp_path: Path) -> None:
+    """The tombstone twin.
+
+    The LLM sees ~8 cluster members as "don't duplicate these" and never
+    sees the tombstone set at all, so without this arm `--llm
+    --from-transcript` re-creates memories the user deliberately REMOVED —
+    the one refusal on this path that protects a decision rather than a
+    rule. The tombstone stands until an explicit `memory_restore`.
+    """
+    store = _make_store_with_existing(tmp_path)
+    removed_body = (
+        "The staging cluster is decommissioned and its DNS records were "
+        "deleted in the 2026 migration."
+    )
+    removed = store.write(
+        content=removed_body,
+        scopes=["infrastructure"],
+        confidence=Confidence.MEDIUM,
+        source=Source.EXPLICIT,
+    )
+    store.tombstone(removed.id, reason="superseded by the migration runbook")
+    assert store.load_tombstones(), "fixture did not produce a tombstone"
+
+    transcript = tmp_path / "session.md"
+    transcript.write_text(
+        "[user] remind me the staging cluster is gone\n[assistant] Noted.",
+        encoding="utf-8",
+    )
+    proposal = ProposeNewProposal(
+        scope="infrastructure",
+        category="fact",
+        body=removed_body,
+        source_excerpt="[user] remind me the staging cluster is gone",
+        rationale="user-stated infrastructure fact",
+    )
+    provider = FakeProvider(proposals=[proposal])
+
+    applied = consolidate_llm(
+        store,
+        provider,
+        apply=True,
+        accept=True,
+        from_transcript=str(transcript),
+    )
+
+    assert not any(a.kind == "llm_propose_new" for a in applied.actions_taken)
+    assert applied.failures
+    assert "previously-removed" in applied.failures[0].reason
