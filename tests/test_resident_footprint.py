@@ -209,10 +209,19 @@ class Footprint(NamedTuple):
 # and a stale row never fails. Re-measuring one of two tables is the same
 # defect as re-measuring neither: when a leg moves, grep for every table that
 # records it.
+# RE-MEASURED 2026-08-04 for the truncation write-gate, and this time BOTH
+# tables moved in the same commit — descriptions 25,890 -> 25,419 (-471) and
+# input_schemas 5,293 -> 5,353 (+60). The -471 is a -658 and a +187 netted:
+# `DESC_MEMORY_LINKS_TAIL` collapsed to a four-name type index (its mechanics
+# were already verbatim in docs/api.md), funding the gate's clause and its
+# `acknowledge_truncation` escape. The +60 is that escape on the served schema
+# — the same 60 a post-scrub boolean flag costs in the table below, which is
+# the fourth independent confirmation that the price list there is still
+# accurate rather than inherited.
 _FOOTPRINT_BASELINE = Footprint(
     instructions=1_608,
-    descriptions=25_890,
-    input_schemas=5_293,
+    descriptions=25_419,
+    input_schemas=5_353,
     output_schemas=1_077,
     skill_frontmatter=759,
     tool_count=18,
@@ -300,6 +309,17 @@ _LANDED_PARAMS: tuple[tuple[str, str], ...] = (
     ("memory_write", "acknowledge_user_claim"),
     ("episode_search", "include_bodies"),
     ("episode_search", "ids"),
+    # Landed 2026-08-04 with the truncation write-gate. Measured 60 on the
+    # served schema — identical to `acknowledge_user_claim`, which is what a
+    # post-scrub boolean flag costs when the name is the same length (both
+    # are 22 characters). This one was NOT drawn from the reserve: the
+    # reserve is 0 and has been since the last phase closed, so the 60 came
+    # out of the ceiling's standing headroom, leaving 311 under
+    # `_REMAINDER_CEILING`. Named here for the facade check the table
+    # doubles as — `acknowledge_truncation` has to reach
+    # `ToolHandlers.memory_update` in `_handlers.py` or it costs nothing
+    # here, because it would not be on the wire at all.
+    ("memory_update", "acknowledge_truncation"),
 )
 # Re-derived post-scrub: the three measure 203 together (60 + 51 + 92),
 # down from 275, because pydantic's generated `title` was between a third
@@ -309,7 +329,16 @@ _LANDED_PARAMS: tuple[tuple[str, str], ...] = (
 # original carried slack: a parameter's cost tracks its NAME, so a rename
 # is a re-measurement, and a guard that fails on a two-character rename is
 # noise rather than signal.
-_LANDED_PARAM_BUDGET = 210
+#
+# RE-DERIVED 2026-08-04, 210 -> 270, because the SET grew rather than the
+# prices: `memory_update.acknowledge_truncation` landed and measured 60, so
+# the four now cost 263 (60 + 51 + 92 + 60). This is the one way this budget
+# is allowed to move, and the distinction matters because the assertion's own
+# failure message asserts the opposite cause ("Nobody typed anything: the SDK
+# got more expensive"). Somebody did type something here. A rise with
+# `_LANDED_PARAMS` unchanged still means what that message says it means.
+# Rounded up by the same ~3% the original carried, for the same rename reason.
+_LANDED_PARAM_BUDGET = 270
 # Soft line: crossing it warns instead of failing, so the pressure is
 # visible to whoever caused it. Set one `ids`-shaped parameter (the widest
 # measured) below the ceiling — crossing it means the next parameter does

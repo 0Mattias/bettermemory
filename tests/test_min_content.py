@@ -431,8 +431,22 @@ async def test_memory_update_can_take_a_body_below_the_floor(
         await _call(server, "memory_write", content=_LONG_BODY, scopes=["tools"])
     )
 
+    # `acknowledge_truncation` because `_SHORT_BODY` is a single bare word
+    # replacing a 56-character one, which is exactly the shape the truncation
+    # gate on this surface refuses: shorter, and ending on a non-terminal
+    # character. The two rules are not in tension — the floor exemption says a
+    # deliberate shortening is ALLOWED, and the truncation gate says a
+    # shortening has to be deliberate. This call is where both are exercised
+    # at once, so it is the right place to pin the interaction. Dropping the
+    # flag here fails with `truncation_warning`, which is the gate working.
     updated = _unwrap(
-        await _call(server, "memory_update", id=written["id"], content=_SHORT_BODY)
+        await _call(
+            server,
+            "memory_update",
+            id=written["id"],
+            content=_SHORT_BODY,
+            acknowledge_truncation=True,
+        )
     )
 
     # `memory_update` returns the shared `responses.committed` envelope, so

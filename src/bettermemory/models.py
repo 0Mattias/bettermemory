@@ -900,10 +900,21 @@ def looks_truncated(body: str) -> bool:
     20.4% recall, which is the wrong trade for a report the operator
     reads rather than a gate that blocks a write.
 
-    Not used as a write-time gate. Making it one costs a new parameter
-    and a description sentence on `memory_update`, and the always-
-    resident tool surface has 127 characters of margin before it warns;
-    see the roadmap entry for the deferred decision and its numbers.
+    Also used as a write-time gate: `memory_update` returns
+    `truncation_warning` when an edit both SHRINKS the body and leaves it
+    ending here, with `acknowledge_truncation=True` as the override. The
+    shrink conjunct is what makes the 0.4% false-positive rate tolerable
+    on a gate — without it this predicate would refuse every edit to a
+    body that legitimately ends on a bare identifier, including edits
+    that only grew it.
+
+    That gate was deferred for two releases on description budget, and
+    the reason is worth keeping: the always-resident surface had 10
+    characters of margin before it warns, against the ~141 the parameter
+    and its description sentence cost. It shipped by reclaiming 658 from
+    `DESC_MEMORY_LINKS_TAIL` in the same commit. Do not read a margin
+    figure out of this docstring — re-measure `_DESC_BASELINE` in
+    `tests/test_server.py`, which is the surface that governs it.
     """
     text = body.strip()
     if not text:

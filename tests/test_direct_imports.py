@@ -299,6 +299,7 @@ def test_handlers_update_direct_import() -> None:
         ("links", None),
         ("acknowledge_credential", False),
         ("acknowledge_user_claim", False),
+        ("acknowledge_truncation", False),
         ("ctx", None),
     ]
 

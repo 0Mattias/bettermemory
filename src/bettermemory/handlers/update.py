@@ -29,7 +29,13 @@ from typing import TYPE_CHECKING, Any
 
 from .._response import isoformat
 from ..credentials import find_credential_markers
-from ..models import Category, Confidence, _PROPOSABLE_CATEGORIES, validate_scope
+from ..models import (
+    Category,
+    Confidence,
+    _PROPOSABLE_CATEGORIES,
+    looks_truncated,
+    validate_scope,
+)
 from ..store import ConcurrentUpdateError, MemoryNotFoundError, TombstonedError
 from ._shared import (
     Context,
@@ -43,23 +49,20 @@ if TYPE_CHECKING:
     from .._handlers import ToolHandlers
 
 
+# Deliberately a type INDEX, not a manual. Picking the right edge type is
+# the only part a model cannot infer from the schema, so the four glosses
+# stay; the mechanics it used to restate (REPLACE semantics — already on
+# the `scopes` / `links` bullet above, verbatim — self-link rejection, and
+# how links surface at retrieval) moved to docs/api.md's "Inter-memory
+# links" section. That reclaimed 658 characters of the always-resident
+# description budget, which is what let the truncation gate below ship at
+# all; see docs/ROADMAP.md. Re-measure `_DESC_BASELINE` before trimming
+# further — this tail is no longer the cheap reclamation it was.
 DESC_MEMORY_LINKS_TAIL = (
-    " Optional `links` parameter sets the typed inter-memory edge "
-    "list. Each entry is a dict with `type` (one of `supersedes`, "
-    "`contradicts`, `extends`, `depends_on`), `target_id` (a valid "
-    "ULID — the other memory this one relates to), and an optional "
-    "`note` (free-form, why the link exists). REPLACE semantics: "
-    "pass the full new list, not a delta; pass `links=[]` to clear "
-    "all links atomically. Self-links are rejected. Links surface "
-    "bidirectionally at retrieval: memory_show on the source "
-    "carries `links`; memory_show on the target carries "
-    "`reverse_links`. Use `supersedes` when this memory replaces "
-    "the target (the retrieval consumer should prefer this one "
-    "and demote the target); `contradicts` when both can't be "
-    "true (consumer should reconcile via memory_verify); "
-    "`extends` when this memory adds nuance to the target; "
-    "`depends_on` when this memory only makes sense in the "
-    "target's context."
+    " Each `links` entry is `{type, target_id (a ULID), note?}`. The types: "
+    "`supersedes` (prefer this over the target), `contradicts` (both cannot "
+    "be true), `extends` (adds nuance to it), `depends_on` (only makes sense "
+    "in its context). docs/api.md carries the rest."
 )
 
 
@@ -77,7 +80,9 @@ DESC_MEMORY_UPDATE = (
     "call memory_verify again after). A body that reads as a claim "
     "ABOUT THE USER returns `user_claim_warning` unless the record "
     "is already `user-inference`; pass `acknowledge_user_claim=True` "
-    "if the subject is someone else.\n"
+    "if the subject is someone else. An edit that SHRINKS the body and "
+    "leaves it ending mid-sentence returns `truncation_warning`; pass "
+    "`acknowledge_truncation=True` when the cut is deliberate.\n"
     "- `scopes` / `links`: REPLACE semantics — pass the full new "
     "list, or `[]` to clear.\n"
     "- `confidence`: low / medium / high.\n"
@@ -100,6 +105,7 @@ async def memory_update(
     links: list[dict[str, Any]] | None = None,
     acknowledge_credential: bool = False,
     acknowledge_user_claim: bool = False,
+    acknowledge_truncation: bool = False,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     state = deps.sessions.for_request(ctx)
@@ -217,6 +223,12 @@ async def memory_update(
     # the entry ticket), so the success event carries it on every path rather
     # than only on the acknowledged one.
     user_claims_acknowledged: list[str] = []
+    # Third gate on the same axis, and the field is present on every path for
+    # the same reason: the override rate is the only evidence that would ever
+    # reopen the shrink-and-mid-sentence predicate. A bool rather than a list
+    # because, unlike the other two, there is nothing to enumerate — the body
+    # either reads cut off or it does not.
+    truncation_acknowledged = False
     if content is not None:
         new_body = content.strip() + "\n"
         # Credential gate — mirror CredentialGate on the write path so a
@@ -351,6 +363,60 @@ async def memory_update(
             if claim_hits and acknowledge_user_claim
             else []
         )
+        # Truncation gate. `looks_truncated` has shipped as DETECTION since
+        # 3.x — `doctor`'s `memory_body_completeness` reports bodies that end
+        # mid-sentence — but detection runs after the tail is already gone and
+        # the store has no older copy, so the report names a loss it cannot
+        # undo. This is the same predicate moved to the one moment both bodies
+        # are in hand.
+        #
+        # The SHRINK conjunct is what makes it a gate rather than a nuisance.
+        # `looks_truncated` alone is 0.4% false positive on the maintainer's
+        # 234-record store — cheap for a report, but it would fire on every
+        # edit to a body that legitimately ends on a bare identifier or list
+        # item, forever, including edits that only GREW it. Requiring the edit
+        # to also make the record shorter narrows it to the shape the incident
+        # actually had: a rewrite that arrived cut off. A deliberate condensing
+        # edit that lands on a terminal character never sees this.
+        #
+        # Rejected alternative, recorded so it is not re-derived: "new body is
+        # a strict prefix of the old" is 0% false positive but misses the
+        # motivating incident (a rewrite that got cut, not a prefix), and
+        # ">30% shorter" false-positives on condensing edits, the single most
+        # common update shape on the dogfood store.
+        if (
+            len(new_body.strip()) < len(existing.body.strip())
+            and looks_truncated(new_body)
+            and not acknowledge_truncation
+        ):
+            # Lengths only, never body text — same redaction discipline the
+            # credential gate above keeps, since a truncated body is exactly
+            # as likely to carry a secret as any other.
+            deps.recorder.record(
+                "update",
+                id=id,
+                status="truncation_warning",
+                previous_length=len(existing.body.strip()),
+                new_length=len(new_body.strip()),
+            )
+            return {
+                "status": "truncation_warning",
+                "previous_length": len(existing.body.strip()),
+                "new_length": len(new_body.strip()),
+                "ends_with": new_body.strip()[-60:],
+                "hint": (
+                    "This edit makes the body shorter AND leaves it ending "
+                    "mid-sentence, which is what a body truncated in transit "
+                    "looks like. The store keeps no older copy, so if the tail "
+                    "was lost it is unrecoverable once this commits. Re-send "
+                    "the complete body, or pass acknowledge_truncation=True if "
+                    "the record genuinely ends there (a list item or a bare "
+                    "identifier is a legitimate ending)."
+                ),
+            }
+        truncation_acknowledged = bool(acknowledge_truncation) and looks_truncated(
+            new_body
+        )
 
     # `links` is REPLACE semantics — the caller passes the full new
     # list. Same shape as the `scopes` parameter: simpler than
@@ -484,6 +550,7 @@ async def memory_update(
         category=updated.category.value if updated.category is not None else None,
         credentials_acknowledged=credentials_acknowledged,
         user_claims_acknowledged=user_claims_acknowledged,
+        truncation_acknowledged=truncation_acknowledged,
     )
     return deps.responses.committed(updated)
 

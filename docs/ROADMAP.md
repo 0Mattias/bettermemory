@@ -5,32 +5,56 @@ Planned work, in rough priority order. Plans change; the
 
 ## Planned
 
-- **Truncation as a write-time gate, deferred on budget.** `doctor`'s
-  `memory_body_completeness` check reports bodies that end mid-sentence,
-  which is detection after the fact. The gate that would prevent the loss
-  belongs on `memory_update`, where both the old and the new body are in
-  hand: return `status="truncation_warning"` when a body edit shrinks the
-  record and ends mid-sentence, with `acknowledge_truncation=True` as the
-  override, mirroring `credential_warning`.
-  **What blocks it is measured, not doubt about the value.** The predicate
-  is 0.4% false positive and 93.9% recall on a 234-record store, and a
-  false positive costs one round-trip. But the parameter plus a
-  description sentence on `memory_update` runs ~112–150 characters against
-  **10 characters** of margin before `_DESC_BUDGET_PRESSURE` warns
-  (25,890 live against a 26,000 ceiling, so 110 before it fails). It no
-  longer fits at either end of that range — at this measurement the low
-  end no longer clears even the hard ceiling. `memory_update`'s own
-  description is where the margin went, in two edits: the user-claim
-  gate's one-clause status mention spent 120 (`DESC_MEMORY_UPDATE`
-  1,892 -> 2,012), and naming that gate's `acknowledge_user_claim` escape
-  spent 21 more (2,012 -> 2,033). Ship it in a cycle that also frees DESC
-  budget, or alongside a ratchet-down; do not spend the last of the
-  margin on it.
+- ~~**Truncation as a write-time gate, deferred on budget.**~~ **SHIPPED
+  2026-08-04.** `memory_update` returns `status="truncation_warning"` when
+  a body edit both shrinks the record and leaves it ending mid-sentence,
+  with `acknowledge_truncation=True` as the override. The predicate is
+  `models.looks_truncated`, unchanged — the same one `doctor`'s
+  `memory_body_completeness` reports on.
+  The entry is kept because HOW it shipped is the reusable part. It was
+  deferred for two releases on description budget, and that blocker was
+  real: 25,890 live against a 26,000 ceiling and a 25,900 warning, i.e.
+  10 characters of margin. It was also UNDER-stated. This entry priced the
+  edit at ~112–150; the only measured instance of the same shape — the
+  user-claim gate's status clause (+120) and its `acknowledge_user_claim`
+  escape (+21) — says 141, so even the low end overran the HARD ceiling
+  rather than merely the warning.
+  The unblock was reclamation, not a ratchet: `DESC_MEMORY_LINKS_TAIL`
+  collapsed from 888 characters to a four-name type index, because
+  everything else it said (REPLACE semantics — already verbatim on the
+  bullet six lines above it — self-link rejection, and how links surface at
+  retrieval) was already in `docs/api.md`. Net −471; the surface now sits
+  481 under the warning. The schema half was never the constraint:
+  `acknowledge_truncation` cost 60 against 371 of remainder headroom.
+  Two things worth keeping for the next field-pin. **Look for a duplicated
+  paragraph before proposing a ceiling bump** — the 888 had been sitting
+  there through every previous budget squeeze. And **the shrink conjunct is
+  what makes a 0.4%-false-positive predicate tolerable as a gate**: alone it
+  would refuse every edit to a body that legitimately ends on a bare
+  identifier, forever, including edits that only grew it.
   Rejected alternatives, recorded so they are not re-derived: a
   "new body is a strict prefix of the old" guard is 0% false positive but
   misses the incident that motivated this (it was a rewrite that got cut,
   not a prefix); "new body is >30% shorter" false-positives on condensing
   edits, the single most common update shape on the dogfood store.
+  **One honest caveat on the 0.4%, found by landing it.** That figure was
+  measured over stored bodies AT REST, and the gate judges a different
+  population: shrinking EDITS. Nothing in the store measures that
+  population, so the false-positive rate on it is unmeasured. The first
+  evidence arrived immediately — three existing tests went red on the new
+  gate, all of them terse unpunctuated fixture bodies that shrink
+  (`"zsh"`, `"rewritten body"`, `"kubernetes ingress nginx tls
+  termination"`). Two were fixture noise and took a full stop; the third
+  (`test_memory_update_can_take_a_body_below_the_floor`) now passes
+  `acknowledge_truncation=True` and is the better pin for it, since the
+  floor exemption and this gate are the same claim from two sides — a
+  deliberate shortening is allowed, and a shortening has to be deliberate.
+  Real bodies end on punctuation 233 times in 234, so the production
+  surface is expected to be small; it is not zero, and "0.4%" should not
+  be quoted about this gate without that qualification. This is the
+  verifier-defines-its-own-input-population shape from
+  `docs/incidents/`, caught early enough to be a caveat rather than
+  an entry there.
 - **Write-path hardening, remaining items.** `apply_write_gates` is the
   shared gate chain and `memory_verify` refuses unverifiable path
   attestations (both shipped in 3.31.0). Remaining:

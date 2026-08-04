@@ -5113,7 +5113,10 @@ async def test_memory_update_unaffected_by_dedup(server: Any) -> None:
         server,
         "memory_update",
         id=b["id"],
-        content="kubernetes ingress nginx tls termination",
+        # Trailing period so the shrink does not also read as a mid-sentence
+        # cut and trip `memory_update`'s truncation gate — this test is about
+        # dedup, and an unpunctuated shortening would refuse before it got there.
+        content="kubernetes ingress nginx tls termination.",
     )
     assert updated["status"] == "committed"
     assert updated["id"] == b["id"]
@@ -5187,7 +5190,7 @@ async def test_memory_update_content_resets_last_verified_at(server: Any) -> Non
     pre = await _call(server, "memory_show", id=written["id"])
     assert pre["last_verified_at"] is not None
 
-    await _call(server, "memory_update", id=written["id"], content="rewritten body")
+    await _call(server, "memory_update", id=written["id"], content="rewritten body.")
     post = await _call(server, "memory_show", id=written["id"])
     assert post["last_verified_at"] is None
 
@@ -5281,7 +5284,7 @@ async def test_memory_update_content_clears_verified_attestation(
     assert pre["verified_versions"] == ["1.2.3"]
     assert pre["verified_absent_paths"] == ["/data/remote-only"]
 
-    await _call(server, "memory_update", id=written["id"], content="rewritten body")
+    await _call(server, "memory_update", id=written["id"], content="rewritten body.")
     post = await _call(server, "memory_show", id=written["id"])
     assert post["last_verified_at"] is None
     assert post["verified_paths"] == []
@@ -6346,6 +6349,27 @@ _DESC_BUDGET_PRESSURE = _DESC_BUDGET_CEILING - 100
 # commit message and still left the row behind it stale, which is the split
 # the rule is about: the total is what fails the build, the row is the only
 # map from that failure to the string you typed.
+#
+# Re-measured 2026-08-04 for the truncation write-gate, which had been deferred
+# for two releases on this exact budget. Live total 25,890 -> 25,419, and one
+# row moved: memory_update 2,033 -> 1,562 (-471). That is a -658 and a +187 in
+# the same edit. The -658 collapsed `DESC_MEMORY_LINKS_TAIL` to a four-name type
+# index: the mechanics it restated (REPLACE semantics — already verbatim on the
+# `scopes` / `links` bullet six lines above it — self-link rejection, and how
+# links surface at retrieval) now live only in docs/api.md's "Inter-memory
+# links" section, which already carried every one of them. The four type
+# GLOSSES stayed, because picking the right edge is the one thing a caller
+# cannot infer from the schema. The +187 is the gate: one clause on the
+# `content` bullet and the `acknowledge_truncation` escape.
+#
+# Two numbers worth writing down for whoever budgets the next field-pin. The
+# precedent said this shape costs ~141 (ba6360e +120, 0bf7a49 +21) against 110
+# of headroom, i.e. it overran the HARD ceiling, not merely the warning — the
+# roadmap's "~112-150" low end was already too optimistic. And the schema half
+# was never the constraint: `acknowledge_truncation` cost 60 characters against
+# 371 of remainder headroom under `_REMAINDER_CEILING`. Description prose was
+# the whole blocker, which is why reclamation and not a ceiling bump was the
+# right unblock. 481 under `_DESC_BUDGET_PRESSURE` now.
 _DESC_BASELINE = {
     "episode_handoff": 1560,
     # Re-measured 2026-07-31: 1597 -> 1700 (+103) for the state-channel
@@ -6386,7 +6410,10 @@ _DESC_BASELINE = {
     "memory_scope_overview": 2820,
     "memory_search": 3575,
     "memory_show": 851,
-    "memory_update": 2033,
+    # Re-measured 2026-08-04: 2033 -> 1562 (-471). See the reclamation note
+    # above — DESC_MEMORY_LINKS_TAIL collapsed to a type index (-658), the
+    # truncation gate's clause and escape added back (+187).
+    "memory_update": 1562,
     "memory_verify": 1649,
     "memory_write": 2753,
     "memory_write_cancel": 216,
