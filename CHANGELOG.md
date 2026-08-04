@@ -7,6 +7,62 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.38.0 - 2026-08-04
+
+### Added — `memory_update` refuses a body edit that shrinks and ends mid-sentence
+
+`looks_truncated` had been detection-only: `doctor`'s `memory_body_completeness`
+names bodies whose last non-whitespace character is not sentence- or
+structure-terminal, after the tail is already gone and with no older copy to
+recover it from. One body sat cut mid-word for ten days with every check green.
+`memory_update` is the only surface holding both the old body and the new one,
+so it now returns `status="truncation_warning"` when an edit both shortens the
+record and leaves it ending mid-sentence, with `acknowledge_truncation=True` as
+the override. Nothing persists on the refusal; the event log records the two
+lengths and never the body text, since a truncated body is as likely to carry a
+secret as any other.
+
+The shrink conjunct is what makes a 0.4%-false-positive predicate usable as a
+gate rather than a report: alone it would refuse every edit to a body that
+legitimately ends on a bare identifier or a list item, including edits that only
+grew it. Both directions are pinned by tests that fail under deletion of the
+clause they name. One caveat travels with the rate, recorded in
+`docs/ROADMAP.md`: 0.4% was measured over stored bodies at rest, and the gate
+judges shrinking edits — a population nothing has measured. Three existing tests
+went red on the gate the hour it landed, all terse unpunctuated fixture bodies.
+
+The gate had been deferred two releases on description budget, and the blocker
+was dissolved by reclamation rather than a ceiling bump. `DESC_MEMORY_LINKS_TAIL`
+spent 888 always-resident characters restating what `docs/api.md` already
+carried — REPLACE semantics appeared verbatim six lines above it in the same
+description — and collapses to a four-name type index that keeps only the
+glosses deciding which edge type to use. Net −471 on the lean surface (25,890 →
+25,419 against the 25,900 warning line); the `acknowledge_truncation` parameter
+itself cost 60 of 371 remainder headroom, so prose was the entire constraint.
+`_DESC_BASELINE`, `_FOOTPRINT_BASELINE`, and `_LANDED_PARAM_BUDGET` were
+re-measured in the same commit that moved them.
+
+Measured before tagging: the blind-authored retrieval gold set produces
+byte-identical results on this tree and on v3.37.0 in the same environment —
+every arm, every metric — so the release changes what `memory_update` refuses
+and nothing about what `memory_search` returns.
+
+### Added — tests that execute the consolidate refusal arms nothing ran
+
+`_apply_llm_proposal`'s hand-rolled gates are a deliberate divergence from the
+shared write-gate chain — they judge the LLM-authored claim rather than the
+stamped body that persists — and `tests/test_proposals_gate_parity.py` exists to
+stop anyone rerouting them. Three of the five refusal arms turned out to be
+unexecuted code: deleting the transient-marker gate outright passed the full
+suite, because the parity test asserts on `consolidate.py`'s source text and so
+passes over a gate that cannot fire. The transient-marker, `max_content_bytes`,
+and previously-removed-twin arms now each have a test asserting the specific
+refusal reason and an unchanged store, and each fails when the arm it names is
+disabled. The size-cap fixture is built so the body is under the cap alone and
+over it once the provenance stamp lands, which is the only input that tells that
+gate's deliberate reading of the stamped body apart from the other gates'
+reading of the claim.
+
 ## 3.37.0 - 2026-08-03
 
 ### Fixed — shipped install commands that the default macOS shell refuses
