@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from .._response import isoformat, isoformat_optional
 from ..claims import check_claim, load_claims
+from ..origin import repos_match
 from ..store import ConcurrentUpdateError, MemoryNotFoundError, TombstonedError
 from ..symbols import check_symbol_citations
 from ..verify import unverifiable_attestations
@@ -188,6 +189,33 @@ async def memory_verify(
     # existence — which is also why this is the handler's job and not
     # `Store.mark_verified`'s.
     origin_root = snapshot.origin.worktree_root if snapshot.origin else None
+    if (
+        origin_root is None
+        and snapshot.origin is not None
+        and snapshot.origin.repo is not None
+    ):
+        # Legacy record: `origin.repo` was captured before
+        # `worktree_root` existed as a field, so the record names its
+        # repo but not its tree. When the CALLER is sitting in a
+        # checkout of that same repo, that checkout speaks for the
+        # memory's tree — the exact trust rule the commit-drift leg
+        # applies via `repos_match` before counting the caller's
+        # commits against the memory. Without this fallback a
+        # pre-worktree memory can never carry claims at all (the 3.40.0
+        # backfill measured the population: 8 of 128 repo-matched
+        # records), and its attestation existence check stays blind for
+        # the same reason. Fallback is read-only derivation — nothing
+        # rewrites the stored origin.
+        from .. import _handlers as _h
+
+        caller = _h.capture_origin()
+        if (
+            caller is not None
+            and caller.repo is not None
+            and caller.worktree_root is not None
+            and repos_match(snapshot.origin.repo, caller.repo)
+        ):
+            origin_root = caller.worktree_root
     if verified_paths:
         unseen = unverifiable_attestations(
             verified_paths,

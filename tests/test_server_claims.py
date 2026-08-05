@@ -215,6 +215,57 @@ async def test_write_refuses_claims_without_worktree(
         )
 
 
+async def test_verify_claims_fallback_for_legacy_origin_without_worktree(
+    memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pre-worktree_root record (`origin.repo` only) can still take
+    claims at verify time when the caller sits in a matching checkout —
+    the caller's tree speaks for the memory's, under the same
+    `repos_match` rule the commit leg applies. The 3.40.0 backfill
+    measured the population this unblocks: 8 of 128 repo-matched
+    records refused solely for the missing worktree field."""
+    repo = _make_repo(tmp_path)
+    state = SessionState()
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    import bettermemory._handlers as handlers_module
+    import bettermemory.server as server_module
+
+    server = build_server(
+        config=cfg,
+        store=Store(memory_dir),
+        state=state,
+        recorder=Recorder(root=memory_dir, session_id=state.session_id),
+    )
+
+    legacy = Origin(cwd=str(repo), repo=_REMOTE, branch="main", worktree_root=None)
+
+    def capture_legacy(cwd: Path | None = None) -> Origin:
+        return legacy
+
+    monkeypatch.setattr(handlers_module, "capture_origin", capture_legacy)
+    monkeypatch.setattr(server_module, "capture_origin", capture_legacy)
+    written = await _call(
+        server,
+        "memory_write",
+        content="Legacy-era record citing pkg/mod.py from before worktree capture.",
+        scopes=["tools"],
+    )
+    assert written["status"] == "committed"
+
+    modern = Origin(cwd=str(repo), repo=_REMOTE, branch="main", worktree_root=str(repo))
+
+    def capture_modern(cwd: Path | None = None) -> Origin:
+        return modern
+
+    monkeypatch.setattr(handlers_module, "capture_origin", capture_modern)
+    monkeypatch.setattr(server_module, "capture_origin", capture_modern)
+    verified = await _call(
+        server, "memory_verify", id=written["id"], claims=["pkg/mod.py::handler"]
+    )
+    assert verified["claims"] == ["pkg/mod.py::handler"]
+
+
 # ---------------------------------------------------------------------------
 # Verify-side: stored-claim re-check, REPLACE semantics
 # ---------------------------------------------------------------------------
