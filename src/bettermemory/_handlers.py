@@ -429,6 +429,7 @@ class ToolHandlers:
         category: str = "fact",
         groundedness_check: bool = False,
         source_transcript: str | None = None,
+        claims: list[str] | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         return await _handlers_pkg.memory_write(
@@ -446,6 +447,7 @@ class ToolHandlers:
             category=category,
             groundedness_check=groundedness_check,
             source_transcript=source_transcript,
+            claims=claims,
             ctx=ctx,
         )
 
@@ -712,6 +714,7 @@ class ToolHandlers:
         verified_commits: list[str] | None = None,
         verified_versions: list[str] | None = None,
         verified_absent_paths: list[str] | None = None,
+        claims: list[str] | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         return await _handlers_pkg.memory_verify(
@@ -722,6 +725,7 @@ class ToolHandlers:
             verified_commits=verified_commits,
             verified_versions=verified_versions,
             verified_absent_paths=verified_absent_paths,
+            claims=claims,
             ctx=ctx,
         )
 

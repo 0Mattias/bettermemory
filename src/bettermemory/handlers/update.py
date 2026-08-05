@@ -75,9 +75,9 @@ DESC_MEMORY_UPDATE = (
     "Parameters (pass at least one):\n"
     "- `id`: required.\n"
     "- `content`: new body. Replacing the body clears "
-    "`last_verified_at` and the verified-* attestations (the "
-    "prior verification was for prose that no longer exists; "
-    "call memory_verify again after). A body that reads as a claim "
+    "`last_verified_at`, the verified-* attestations, and `claims` "
+    "(the prior verification was for prose that no longer exists; "
+    "call memory_verify again after, re-declaring claims). A body that reads as a claim "
     "ABOUT THE USER returns `user_claim_warning` unless the record "
     "is already `user-inference`; pass `acknowledge_user_claim=True` "
     "if the subject is someone else. An edit that SHRINKS the body and "
@@ -482,6 +482,12 @@ async def memory_update(
         update_fields["verified_commits"] = []
         update_fields["verified_versions"] = []
         update_fields["verified_absent_paths"] = []
+        # `claims` clear on the same trigger and for the same reason: a
+        # claim declares what the BODY asserts, and this is a different
+        # body. The declare-time oracle only ever checked them against
+        # the prose that existed then; re-declare via memory_verify
+        # (claims=[...]) once the new body's assertions are known.
+        update_fields["claims"] = []
 
     merged = existing.model_copy(update=update_fields)
     try:

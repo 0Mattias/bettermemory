@@ -287,17 +287,41 @@ def label_claim(claim: Claim, tree_root: Path) -> str:
 # arguments (`foo(TIMEOUT=30)`) and dict entries (`"TIMEOUT": 30`) — that
 # discipline is the entire difference between this and a name-grep.
 
-# Record separator for the `git log` streams. A control character rather
-# than a text marker so it can never collide with source content — note
-# this makes the stream binary to `grep` and friends when debugging.
-_COMMIT_MARK = "\x01"
-
-_DEF_RE = re.compile(r"^(?:async[ \t]+)?(?:def|class)[ \t]+([A-Za-z_]\w*)[ \t]*[(\[:]")
-_ASSIGN_RE = re.compile(
-    r"^([A-Za-z_]\w*)[ \t]*(?::[^=\n]+)?"
-    r"(?:\+|-|\*|/|//|%|\*\*|>>|<<|&|\^|\|)?=(?!=)"
+# THE DETECTOR NOW LIVES IN THE PRODUCT. `build_binding_index`,
+# `claim_level_drift` and their helpers were authored here, measured on
+# the 30-repository corpus, and then PROMOTED to
+# `src/bettermemory/claims.py` when claims-at-write shipped — the same
+# promote-don't-reimplement rule the t1 verdict section below has always
+# followed ("the shipped function, not a reimplementation"). The bench
+# imports the shipped functions, underscore names included: what this
+# file measures from now on is the exact code production runs, and a
+# product-side change that moves the numbers shows up HERE rather than
+# in a silently diverging copy. `Citation` is the product's `Claim`
+# under the name this file has always used — field-for-field the same
+# four slots, so `parse_claim_citation` below constructs the shipped
+# class directly.
+from bettermemory.claims import (  # noqa: E402
+    COMMIT_MARK as _COMMIT_MARK,
 )
-_HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+from bettermemory.claims import (  # noqa: E402
+    Claim as Citation,
+)
+from bettermemory.claims import (  # noqa: E402
+    anchors_from_value,
+    build_binding_index,
+    claim_level_drift,
+)
+
+# Re-exported for the test suite: `tests/test_bench_rot.py` exercises
+# the detector's helpers through THIS module (`rot._binding_token`,
+# `rot.string_fragment`, …) — the module the measurements were
+# published under — so the promoted names stay reachable here.
+from bettermemory.claims import (  # noqa: E402, F401
+    _MIN_ANCHOR_CHARS,
+    _binding_token,
+    _rhs_repr,
+    string_fragment,
+)
 
 # Claim-body templates, parsed back out of the rendered string. This is the
 # firewall: whatever the detector knows about a claim, it learned here, from
@@ -305,21 +329,6 @@ _HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 _CITE_PATH = re.compile(r"^The module `([^`]+)` is part of this package\.$")
 _CITE_SYMBOL = re.compile(r"^`([^`]+)` is defined at the top level of `([^`]+)`\.$")
 _CITE_LITERAL = re.compile(r"^`([^`]+)` in `([^`]+)` is set to `(.+)`\.$", re.DOTALL)
-
-# An anchor line must carry this many non-whitespace characters to be treated
-# as a content address. Short interior lines (`}`, `],`, `"name",`) recur all
-# over a file and would attribute unrelated edits to the literal.
-_MIN_ANCHOR_CHARS = 12
-
-
-@dataclass(frozen=True)
-class Citation:
-    """What the detector is allowed to know about a claim."""
-
-    kind: str
-    rel_path: str
-    name: str
-    value: str
 
 
 def parse_claim_citation(body: str, repo_root: Path | None = None) -> Citation | None:
@@ -353,319 +362,6 @@ def parse_claim_citation(body: str, repo_root: Path | None = None) -> Citation |
     if match:
         return Citation("literal", _rel(match.group(2)), match.group(1), match.group(3))
     return None
-
-
-def _binding_token(content: str) -> tuple[str, str] | None:
-    """Map a changed line to at most one column-0 binding, or None.
-
-    No `lstrip`. An indented `def` is a method or a nested function and is
-    not what a top-level-symbol claim asserts — `label_claim` only walks
-    `parsed.body`, and `test_nested_definitions_are_not_top_level_claims`
-    pins that. Matching indented lines here would flag every method edit
-    in a class as drift on the class's own claim.
-    """
-    match = _DEF_RE.match(content)
-    if match:
-        return ("def", match.group(1))
-    match = _ASSIGN_RE.match(content)
-    if match:
-        return ("assign", match.group(1))
-    return None
-
-
-def _rhs_repr(content: str) -> str | None:
-    """The assignment's right-hand side, normalised to `repr()` form.
-
-    Matching `Claim.value`, which is itself `repr(ast.literal_eval(...))`,
-    is what makes the comparison type-sensitive: `30` and `30.0` must not
-    compare equal, because `test_changed_literal_is_drift` treats that
-    change as genuine drift.
-    """
-    _, sep, rhs = content.partition("=")
-    if not sep:
-        return None
-    try:
-        return repr(ast.literal_eval(rhs.strip()))
-    except Exception:
-        return None
-
-
-def string_fragment(content: str) -> str | None:
-    """The decoded text of a source line that is a bare string literal.
-
-    THE DIRECTION OF THE TEST IS THE WHOLE TRICK, and getting it backwards
-    is what a first implementation does. The obvious move is to split the
-    claimed value into lines and look for those lines in the diff. It
-    finds almost nothing, and the reason is structural: Python's implicit
-    concatenation means a long constant is written as
-
-        DESC = (
-            "one clause of the sentence "
-            "and the next clause\\n"
-        )
-
-    so the value's LOGICAL lines and the file's PHYSICAL lines are
-    different objects. A logical line routinely spans several physical
-    ones, and a value with no `\\n` at all still occupies twelve lines of
-    source. Measured on this corpus, whole-line anchors missed 12 of the
-    20 literal claims that actually went false — every one of them a
-    multi-line tool description.
-
-    So invert it: decode each CHANGED PHYSICAL LINE back to the text it
-    contributes, and ask whether that text appears ANYWHERE in the claimed
-    value. `ast.literal_eval` rather than string surgery because the
-    source carries escapes (`\\"`, `\\n`) the value does not — comparing
-    raw source text against a decoded value fails on precisely the lines
-    that contain interesting content.
-
-    Returns None for a line that is not a self-contained string literal.
-    """
-    stripped = content.strip().rstrip(",")
-    # A trailing `)` closes the enclosing parenthesised concatenation, not
-    # the string; leading `(` opens it. Neither belongs to the literal.
-    stripped = stripped.removesuffix(")").removeprefix("(").strip()
-    if not stripped or stripped[0] not in "\"'":
-        return None
-    try:
-        decoded = ast.literal_eval(stripped)
-    except Exception:
-        return None
-    return decoded if isinstance(decoded, str) else None
-
-
-def anchors_from_value(value: str) -> tuple[str, ...]:
-    """Whole-line content addresses for a multi-line literal.
-
-    Kept alongside `string_fragment` because it catches the case that one
-    misses: a value whose physical and logical lines DO coincide (a
-    triple-quoted block), where the changed line is not a self-contained
-    string literal and so decodes to nothing.
-
-    Derived from the claimed VALUE rather than from the t0 tree, which is
-    what keeps the firewall intact: the value is in the memory body, so a
-    production implementation has the same material. Lines shorter than
-    `_MIN_ANCHOR_CHARS` are dropped as non-distinctive.
-    """
-    try:
-        literal = ast.literal_eval(value)
-    except Exception:
-        return ()
-    if not isinstance(literal, str) or "\n" not in literal:
-        return ()
-    seen: dict[str, None] = {}
-    for line in literal.split("\n"):
-        stripped = line.strip()
-        if len(stripped) >= _MIN_ANCHOR_CHARS:
-            seen[stripped] = None
-    return tuple(seen)
-
-
-def build_binding_index(diff_text: str) -> dict[str, Any]:
-    """Parse one `git log -p -U0` stream into a claim-agnostic index.
-
-    THE SIGNATURE IS THE GUARANTEE: one argument, the diff text. This
-    function cannot see a claim, so it cannot be accused of looking one
-    up. Every claim-specific decision happens later, against this index.
-
-    At `-U0` a hunk contains exactly `b` removed and `d` added lines and
-    no context, so consumption is exact rather than greedy, and the
-    `minus == b and plus == d` check turns a malformed parse into a loud
-    failure instead of a quietly under-counting detector. That matters
-    because file content can itself contain `diff --git` and `@@` lines.
-    """
-    bindings: dict[tuple[str, str, str], dict[str, Any]] = {}
-    changed_text: dict[str, dict[str, set[str]]] = {}
-    changed_fragments: dict[str, dict[str, set[str]]] = {}
-    deleted: set[str] = set()
-    files: set[str] = set()
-    commits: set[str] = set()
-    hunks = 0
-    mismatches = 0
-
-    sha = ""
-    path = ""
-    lines = diff_text.split("\n")
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        i += 1
-        if line.startswith(_COMMIT_MARK):
-            sha = line[1:].strip()
-            commits.add(sha)
-            path = ""
-            continue
-        if line.startswith("diff --git "):
-            path = ""
-            continue
-        if line.startswith("--- ") and not line.startswith("--- a/"):
-            continue
-        if line.startswith("+++ "):
-            target = line[4:].strip()
-            if target == "/dev/null":
-                # Deletion: the authoritative path is the a/ side, which
-                # we already recorded when we saw it.
-                if path:
-                    deleted.add(path)
-            else:
-                path = target[2:] if target.startswith("b/") else target
-                files.add(path)
-            continue
-        if line.startswith("--- a/"):
-            path = line[6:].strip()
-            files.add(path)
-            continue
-        if not line.startswith("@@"):
-            continue
-        match = _HUNK_RE.match(line)
-        if not match or not path:
-            continue
-        hunks += 1
-        removed = int(match.group(2) or 1)
-        added = int(match.group(4) or 1)
-        minus = plus = 0
-        for _ in range(removed + added):
-            if i >= len(lines):
-                break
-            body_line = lines[i]
-            i += 1
-            if body_line.startswith("\\"):
-                continue
-            if body_line.startswith("-"):
-                minus += 1
-                side = "removed"
-            elif body_line.startswith("+"):
-                plus += 1
-                side = "added"
-            else:
-                # Not a hunk body line at -U0 — the stream is not shaped
-                # the way this parser assumes. Back up and let the outer
-                # loop resynchronise on the next header.
-                i -= 1
-                break
-            content = body_line[1:]
-            stripped = content.strip()
-            if len(stripped) >= _MIN_ANCHOR_CHARS:
-                changed_text.setdefault(path, {}).setdefault(stripped, set()).add(sha)
-            fragment = string_fragment(content)
-            if fragment is not None and len(fragment.strip()) >= _MIN_ANCHOR_CHARS:
-                changed_fragments.setdefault(path, {}).setdefault(fragment, set()).add(
-                    sha
-                )
-            token = _binding_token(content)
-            if token is None:
-                continue
-            key = (path, token[0], token[1])
-            entry = bindings.setdefault(
-                key,
-                {
-                    "commits": set(),
-                    "adds": 0,
-                    "removes": 0,
-                    "edit_lines": 0,
-                    "rhs_added": set(),
-                    "rhs_removed": set(),
-                },
-            )
-            entry["commits"].add(sha)
-            entry["edit_lines"] += 1
-            if side == "added":
-                entry["adds"] += 1
-            else:
-                entry["removes"] += 1
-            if token[0] == "assign":
-                rhs = _rhs_repr(content)
-                if rhs is not None:
-                    entry[f"rhs_{side}"].add(rhs)
-        if minus != removed or plus != added:
-            mismatches += 1
-
-    return {
-        "bindings": bindings,
-        "changed_text": changed_text,
-        "changed_fragments": changed_fragments,
-        "deleted": deleted,
-        "files": files,
-        "commits": len(commits),
-        "hunks": hunks,
-        "parse_mismatches": mismatches,
-    }
-
-
-def claim_level_drift(cite: Citation, index: dict[str, Any]) -> dict[str, Any]:
-    """Score one claim against the index. Two tiers, both reported.
-
-    STRICT is the verdict channel: the binding NET-DISAPPEARED (more
-    removals than re-additions), the asserted value was removed and not
-    put back, a content anchor moved, or the file is gone. Every route by
-    which `label_claim` can return "false" — rename, delete, de-top-level
-    by indentation, move-and-re-export — puts the `def`/`class` line
-    itself into a hunk, so narrowing this far costs no recall.
-
-    WEAK is "the binding was touched at all". It is reported because the
-    gap between the tiers IS the measurement: weak fires on signature
-    reflows and in-file relocations that leave the claim true, and those
-    are precisely the false alarms the file-level signal cannot tell
-    apart from real drift.
-
-    A BODY-ONLY EDIT IS DELIBERATELY NOT DRIFT. `label_claim` matches a
-    definition by `.name` and never inspects its contents, so a body edit
-    leaves the label `still_true` BY CONSTRUCTION — pinned by
-    `test_pure_reformat_is_not_drift`. Counting body churn could
-    therefore only manufacture false positives, never a catch.
-    """
-    path_gone = cite.rel_path in index["deleted"]
-    empty: dict[str, Any] = {
-        "commits": set(),
-        "adds": 0,
-        "removes": 0,
-        "edit_lines": 0,
-        "rhs_added": set(),
-        "rhs_removed": set(),
-    }
-    anchor_commits = 0
-    value_gone = False
-
-    if cite.kind == "path":
-        entry = empty
-        strict = path_gone
-        weak = path_gone
-    elif cite.kind == "symbol":
-        entry = index["bindings"].get((cite.rel_path, "def", cite.name), empty)
-        strict = path_gone or (entry["removes"] - entry["adds"]) > 0
-        weak = path_gone or bool(entry["commits"])
-    else:
-        entry = index["bindings"].get((cite.rel_path, "assign", cite.name), empty)
-        value_gone = (
-            cite.value in entry["rhs_removed"] and cite.value not in entry["rhs_added"]
-        )
-        per_file = index["changed_text"].get(cite.rel_path, {})
-        hit: set[str] = set()
-        for anchor in anchors_from_value(cite.value):
-            hit |= per_file.get(anchor, set())
-        # Substring containment, the direction that survives implicit
-        # concatenation — see `string_fragment`.
-        try:
-            claimed = ast.literal_eval(cite.value)
-        except Exception:
-            claimed = None
-        if isinstance(claimed, str):
-            for fragment, shas in (
-                index["changed_fragments"].get(cite.rel_path, {}).items()
-            ):
-                if fragment in claimed:
-                    hit |= shas
-        anchor_commits = len(hit)
-        strict = path_gone or value_gone or anchor_commits > 0
-        weak = path_gone or bool(entry["commits"]) or anchor_commits > 0
-
-    return {
-        "cite_commits": len(entry["commits"]) + anchor_commits,
-        "cite_edit_lines": entry["edit_lines"],
-        "anchor_commits": anchor_commits,
-        "value_gone": value_gone,
-        "strict": strict,
-        "weak": weak,
-    }
 
 
 # ---------------------------------------------------------------------------

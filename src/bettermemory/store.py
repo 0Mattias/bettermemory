@@ -419,6 +419,7 @@ class Store:
         source: Source = Source.EXPLICIT,
         origin: Origin | None = None,
         category: Category | None = None,
+        claims: list[str] | None = None,
     ) -> Memory:
         """Create a new memory. Generates ID, slug, filename.
 
@@ -426,6 +427,11 @@ class Store:
         pass it land with `category=None`, which the runtime treats as
         the fact-default — same behavior as memories written before the
         field existed.
+
+        `claims` are persisted verbatim — parsing, the declare-time
+        oracle check, and normalization are the memory_write HANDLER's
+        job (they need the origin worktree, which this primitive only
+        carries, never resolves). Mirrors the `mark_verified` split.
         """
         now = utcnow()
         memory = Memory(
@@ -438,6 +444,7 @@ class Store:
             body=content.strip() + "\n",
             origin=origin,
             category=category,
+            claims=list(claims) if claims else [],
         )
         path = self._path_for(memory)
         with _locked(path):
@@ -599,6 +606,7 @@ class Store:
                         "verified_commits": list(current.verified_commits),
                         "verified_versions": list(current.verified_versions),
                         "verified_absent_paths": list(current.verified_absent_paths),
+                        "claims": list(current.claims),
                     }
                 )
             new_memory = new_memory.model_copy(update=carried_over)
@@ -615,6 +623,7 @@ class Store:
         verified_commits: list[str] | None = None,
         verified_versions: list[str] | None = None,
         verified_absent_paths: list[str] | None = None,
+        claims: list[str] | None = None,
         expected_last_verified_at: datetime | None = None,
         check_expected: bool = False,
     ) -> Memory:
@@ -765,6 +774,8 @@ class Store:
                 update["verified_versions"] = list(verified_versions)
             if verified_absent_paths is not None:
                 update["verified_absent_paths"] = list(verified_absent_paths)
+            if claims is not None:
+                update["claims"] = list(claims)
             new_memory = existing.model_copy(update=update)
             # Lifecycle re-dump of an already-admitted, already-readable record.
             # `mark_verified` GROWS the record: the caller-controlled verified_*
@@ -1262,6 +1273,7 @@ class Store:
                 verified_commits=_load_str_list(meta.get("verified_commits")),
                 verified_versions=_load_str_list(meta.get("verified_versions")),
                 verified_absent_paths=_load_str_list(meta.get("verified_absent_paths")),
+                claims=_load_str_list(meta.get("claims")),
                 removed=_as_dt(meta["removed"]),
                 removed_reason=str(meta["removed_reason"]),
                 removed_session=(
@@ -2212,6 +2224,7 @@ def _parse_memory_file(path: Path) -> Memory:
             verified_commits=_load_str_list(meta.get("verified_commits")),
             verified_versions=_load_str_list(meta.get("verified_versions")),
             verified_absent_paths=_load_str_list(meta.get("verified_absent_paths")),
+            claims=_load_str_list(meta.get("claims")),
             links=links,
             corroborations=corroborations,
             last_corroborated=last_corroborated,
@@ -3054,6 +3067,10 @@ def _memory_metadata(memory: Memory) -> dict[str, object]:
         meta["verified_versions"] = list(memory.verified_versions)
     if memory.verified_absent_paths:
         meta["verified_absent_paths"] = list(memory.verified_absent_paths)
+    # Same unit: `claims` are declared at write or re-declared at verify,
+    # and an empty list stays off disk like the other four.
+    if memory.claims:
+        meta["claims"] = list(memory.claims)
     # `links` is omitted when empty — same noise-floor rationale as
     # `verified_paths`. Each link is serialized as a plain dict
     # (`type` is the enum value, not the Python name) so a hand-

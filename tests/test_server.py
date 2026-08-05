@@ -6413,9 +6413,22 @@ _DESC_BASELINE = {
     # Re-measured 2026-08-04: 2033 -> 1562 (-471). See the reclamation note
     # above — DESC_MEMORY_LINKS_TAIL collapsed to a type index (-658), the
     # truncation gate's clause and escape added back (+187).
-    "memory_update": 1562,
-    "memory_verify": 1649,
-    "memory_write": 2753,
+    #
+    # Re-measured 2026-08-04 again for claims-at-write: exactly the three
+    # rows that commit edits moved. memory_write +245 and memory_verify
+    # +161 are the `claims` parameter bullets — deliberately terse
+    # (existence, the three-shape syntax, the false ⇒ refused contract)
+    # because the declare-time gate's refusal teaches the full syntax
+    # with per-defect messages at the only moment it is actionable, the
+    # same hint-carries-the-remedy split the E1 cuts established.
+    # memory_update +32 adds `claims` to the body-edit clearing clause —
+    # that rule bites on a SUCCESSFUL edit, so no reject can teach it.
+    # Total lands at 25,857: 43 under the pressure line, no reclamation
+    # spent — the slack the 2026-08-04 links-tail collapse bought is
+    # what absorbed the feature.
+    "memory_update": 1594,
+    "memory_verify": 1810,
+    "memory_write": 2998,
     "memory_write_cancel": 216,
     "memory_write_confirm": 515,
 }

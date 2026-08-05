@@ -39,12 +39,13 @@ from .origin import (
 from .time_utils import isoformat_utc as _isoformat_utc
 from .time_utils import isoformat_utc_optional as _isoformat_utc_optional
 from .time_utils import parse_event_ts
+from .claims import load_claims
 from .verify import (
     commit_drift_anchor_paths,
     compute_staleness_verdict,
     compute_verification_status,
     detect_path_drift,
-    resolve_commit_drift_count,
+    resolve_commit_drift,
     verdict_from_signals,
 )
 
@@ -603,16 +604,31 @@ class ResponseBuilder:
             # caught-up memory, and keep an unmoved repo reading "clean" rather
             # than routing through the phantom/not-applicable path.
             if count > 0:
-                resolved = resolve_commit_drift_count(
+                # The claim-aware entry point over the same shared core
+                # `memory_show` uses (`resolve_commit_drift_count` is its
+                # count-only projection) — a claim-carrying memory gets
+                # the weak-tier narrowing here too, or this surface would
+                # nag `spot_check_recommended` on a memory `memory_show`
+                # reads as fresh.
+                resolved = resolve_commit_drift(
                     cwd=cwd_path,
                     since=since,
                     unfiltered=count,
                     anchors=anchors,
+                    claims=load_claims(record.claims),
                     toplevel=toplevel,
                 )
                 if resolved is None:
                     continue
-                count = resolved
+                count = resolved.count
+                # Additive, claim-carrying hits only — mirrors
+                # `CommitDriftStatus.to_dict`'s claim_drift block so both
+                # display surfaces speak the same sub-dict.
+                if resolved.claims_checked:
+                    hit_dict["claim_drift"] = {
+                        "checked": resolved.claims_checked,
+                        "drifted": list(resolved.claims_drifted),
+                    }
             hit_dict["commit_drift_count"] = count
             # Recompute the verdict now that we have the commit-drift
             # contribution. `hit_to_dict` initialised it without that

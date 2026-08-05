@@ -1125,6 +1125,130 @@ def commit_author_timestamps_touching_pathspecs(
     return out
 
 
+def commit_author_sha_pairs_touching_pathspecs(
+    cwd: Path | None,
+    pathspecs: list[str],
+    *,
+    toplevel: Path | None = None,
+) -> list[tuple[datetime, str]] | None:
+    """`(author_instant, sha)` pairs for the commits touching `pathspecs`.
+
+    The sibling of `commit_author_timestamps_touching_pathspecs` that
+    keeps the commit identity beside each timestamp — the claim-level
+    drift narrowing needs the POST-`since` SHAs by name (to fetch their
+    patches and to union implicated commits into an exact distinct
+    count), not just how many there are. Same three-valued contract and
+    the same author-date space as the timestamps sibling: ``None`` when
+    git could not answer, ``[]`` for the clean phantom (no commit ever
+    touched any spec), pairs sorted ASCENDING on the instant otherwise —
+    so a `bisect` against a `since` instant lands on the same boundary
+    the count surfaces use.
+
+    A separate function rather than a flag on the sibling because the
+    return types differ and every existing caller of the sibling wants
+    bare timestamps; threading a mode flag through the three-valued
+    contract is how the None/[]-collapse bug gets reintroduced.
+    """
+    if cwd is None or not pathspecs:
+        return None
+    if toplevel is None:
+        toplevel = repo_toplevel(cwd)
+        if toplevel is None:
+            return None
+    raw = _git(
+        toplevel, "log", "--format=%aI %H", "HEAD", "--", *pathspecs, empty_ok=True
+    )
+    if raw is None:
+        return None
+    if not raw:
+        return []
+    out: list[tuple[datetime, str]] = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        stamp, _, sha = line.partition(" ")
+        sha = sha.strip()
+        if not sha:
+            continue
+        try:
+            ts = datetime.fromisoformat(stamp)
+        except ValueError:
+            continue
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        out.append((ts, sha))
+    if not out:
+        # Mirrors the timestamps sibling: non-empty stdout that parsed to
+        # nothing is a git oddity, not a clean phantom.
+        return None
+    out.sort(key=lambda pair: _instant(pair[0]))
+    return out
+
+
+# Ceiling on how many named commits `commit_patch_stream` will fetch
+# patches for. Past this, the claim-level narrowing falls back to the
+# incumbent per-file count rather than pulling megabytes of patch text
+# onto a read path — a memory whose claimed files saw hundreds of
+# commits since its last verify is loudly drifted under EITHER signal,
+# so the expensive precision buys nothing there.
+MAX_PATCH_STREAM_COMMITS = 256
+
+
+def commit_patch_stream(
+    cwd: Path | None,
+    shas: list[str],
+    pathspecs: list[str],
+    *,
+    toplevel: Path | None = None,
+) -> str | None:
+    """The `-U0` patch stream for exactly `shas`, filtered to `pathspecs`.
+
+    The input `claims.build_binding_index` parses. ``--no-walk=unsorted``
+    diffs each NAMED commit against its parent without walking history —
+    the caller has already decided which commits are in the window (the
+    post-`since` slice of `commit_author_sha_pairs_touching_pathspecs`,
+    author-date space), so a rev-range walk here would re-answer that
+    question in commit-graph space and disagree under rebases.
+
+    ``--format=<COMMIT_MARK>%H`` writes the same control-character
+    record separator the bench streams carry; source content cannot
+    collide with it. Returns the raw stream ("" is a real value: the
+    named commits touched the specs only in merge diffs, which `-p`
+    skips), or None on any git failure — the caller falls back to the
+    incumbent count, never under-counting on infrastructure failure.
+
+    The timeout is 5s rather than `_git`'s 1s default: a patch log over
+    a bounded SHA list is more work than a `%aI` format log, and this
+    call sits behind two gates (drift already measured positive, SHA
+    count under `MAX_PATCH_STREAM_COMMITS`) so it is rare by
+    construction.
+    """
+    if cwd is None or not shas or not pathspecs:
+        return None
+    if len(shas) > MAX_PATCH_STREAM_COMMITS:
+        return None
+    if toplevel is None:
+        toplevel = repo_toplevel(cwd)
+        if toplevel is None:
+            return None
+    from .claims import COMMIT_MARK
+
+    return _git(
+        toplevel,
+        "log",
+        "--no-walk=unsorted",
+        "-p",
+        "-U0",
+        f"--format={COMMIT_MARK}%H",
+        *shas,
+        "--",
+        *pathspecs,
+        timeout=5.0,
+        empty_ok=True,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Remote URL parsing
 # ---------------------------------------------------------------------------
@@ -1305,10 +1429,13 @@ def _canonicalize_azure(
 
 
 __all__ = [
+    "MAX_PATCH_STREAM_COMMITS",
     "Origin",
     "capture",
+    "commit_author_sha_pairs_touching_pathspecs",
     "commit_author_timestamps",
     "commit_author_timestamps_touching_pathspecs",
+    "commit_patch_stream",
     "commits_since",
     "commits_since_touching_paths",
     "commits_touching_pathspecs",

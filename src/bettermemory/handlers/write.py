@@ -65,6 +65,7 @@ from ._shared import (
     _AMBIENT_LONG_BODY_WORDS,
     _advance_turn,
     _maybe_attach_curation_hint,
+    _validate_declared_claims,
     _validate_write_payload,
 )
 
@@ -107,6 +108,10 @@ DESC_MEMORY_WRITE = (
     "non-blocking `ambient_body_long` warning.\n"
     "- `confidence` ('low' / 'medium' / 'high'), `source` "
     "('explicit-statement' / 'inferred').\n"
+    "- `claims` (optional): claims the body makes about this repo — "
+    "`path`, `path::symbol`, `path::NAME=literal`. Checked against "
+    "the worktree NOW (false ⇒ refused); drift then watches the "
+    "claimed bindings, not whole files. Declare when citing code.\n"
     "- `groundedness_check=True` + `source_transcript`: optional "
     "gate. Sentences with <30% token overlap to the transcript "
     "return {status:'ungrounded', claims:[…]}. Override via "
@@ -1012,6 +1017,7 @@ async def memory_write(
     category: str = "fact",
     groundedness_check: bool = False,
     source_transcript: str | None = None,
+    claims: list[str] | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Validate the payload, run the gate chain, and either commit or
@@ -1039,6 +1045,22 @@ async def memory_write(
     # We never persist origin for a rejection — the early return
     # below short-circuits before any disk I/O.
     payload["origin"] = _h.capture_origin()
+
+    # Declared claims are oracle-checked HERE, against the origin just
+    # captured — before the gate chain, because a false claim has no
+    # acknowledge_* escape by design (the entire value of the field is
+    # that a stored claim was true at declaration; an override would
+    # mint the one thing the read side is promised cannot exist). The
+    # canonical rendered forms land in the payload so the pending
+    # confirm path (`store.write(**pending.payload)`) carries them
+    # without re-checking.
+    if claims:
+        origin = payload["origin"]
+        payload["claims"] = _validate_declared_claims(
+            claims,
+            worktree_root=origin.worktree_root if origin else None,
+            surface="memory_write",
+        )
 
     gc = GateContext(
         payload=payload,
@@ -1240,6 +1262,11 @@ def _commit_write(
         credentials_acknowledged=credentials_acknowledged,
         user_claims_acknowledged=user_claims_acknowledged,
         warnings=warnings,
+        # Conditional so the default write event keeps its exact shape —
+        # a populated field in the log means claims were actually
+        # declared, which is the only telemetry the backfill pass and a
+        # future coverage measurement can be built from.
+        **({"claims": list(memory.claims)} if memory.claims else {}),
     )
     return deps.responses.committed(
         memory,

@@ -7,6 +7,65 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.40.0 - 2026-08-04
+
+### Added — claims-at-write: declared claims, checked at declaration, watched by the drift leg
+
+A `claims` list on `memory_write` and `memory_verify` — `path`,
+`path::symbol`, or `path::NAME=literal` strings, the three kinds the rot
+benchmark measured. The premise from `docs/ROADMAP.md`, unchanged by
+contact with implementation: a real-prose claim extractor is an open
+problem only because extraction is post-hoc, and the author of a memory
+knows what it claims at the moment of writing. So the product asks, and
+the extractor is nobody's problem.
+
+Declaration is verification. `claims.check_claim` — the bench oracle
+`label_claim`, promoted verbatim: existence, a top-level AST lookup, a
+`repr`-space literal comparison, never an inference — runs at declare
+time and REFUSES a claim that is false right now, naming what the tree
+actually says. No `acknowledge_*` escape exists, deliberately: the read
+side's trust in claims is that every stored claim held at declaration.
+`memory_verify` re-runs the oracle over STORED claims before stamping,
+so a stored claim the tree now contradicts blocks the stamp
+(`claims=[]` is the audited clear-and-stamp escape; body edits clear
+claims alongside `last_verified_at`, and `memory_verify(id,
+claims=[...])` is the backfill surface for pre-3.40 memories).
+
+The payoff is on the read side. For a memory that declares claims, the
+commit-drift leg splits its anchors: claim-governed files escalate the
+staleness verdict only for commits the claim-level `weak` tier
+implicates (`claims.build_binding_index` over a `--no-walk -U0` patch
+stream of the post-verify window, column-0 binding match), while
+unclaimed cited files keep the incumbent any-touch rule; the halves
+union on commit identity, and a measured zero still demotes a
+calendar-stale verdict. Method-body churn in a claimed file now reads
+`clean` with `claim_drift: {checked, drifted: []}` attached — the
+commit-drift block and drifting search hits both carry the new
+sub-dict, and a fired claim is named in the recommendation. On the
+30-repository corpus the weak tier costs 1.1 alerts per genuine catch
+at 94% precision against the per-file incumbent's 3.4
+(`bench/rot/results/multirepo-anchored-2026-07-30.json`) — the
+"replacement measured first" that the `_COMMIT_DRIFT_ESCALATES`
+retraction demanded, landed as upstream narrowing with the switch
+untouched. Those figures grade the detector on extracted corpus claims;
+the live population (author-declared, oracle-gated) is cleaner by
+construction and unmeasured until the dogfood backfill mints a
+denominator — recorded in the roadmap entry before the first telemetry,
+not after.
+
+`bench/rot/run.py` now imports the promoted detector from
+`bettermemory.claims` — the bench measures the shipped functions, per
+its own "the shipped function, not a reimplementation" rule, and its 42
+tests pass unchanged against the promoted copies. All four commit-drift
+surfaces (`memory_show`, the `memory_search` fold, both `memory_health`
+rollups) route claims through the one shared core; `claims` sits on
+`resolve_commit_drift_count`'s own signature so a count-only surface
+cannot compute a different policy than the display surfaces. Tool
+descriptions grew a deliberately terse bullet each (+438 total,
+25,857 against the 26,000 ceiling): the declare-time gate's refusal
+teaches the full syntax per-defect at the only moment it is
+actionable, the same hint-carries-the-remedy split as the E1 cuts.
+
 ## 3.39.0 - 2026-08-04
 
 ### Fixed — the three `[behavior]` write caps now bind the ingest path

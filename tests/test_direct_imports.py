@@ -317,6 +317,7 @@ def test_handlers_verify_direct_import() -> None:
         ("verified_commits", None),
         ("verified_versions", None),
         ("verified_absent_paths", None),
+        ("claims", None),
         ("ctx", None),
     ]
 
@@ -374,6 +375,7 @@ def test_handlers_write_direct_import() -> None:
         ("category", "fact"),
         ("groundedness_check", False),
         ("source_transcript", None),
+        ("claims", None),
         ("ctx", None),
     ]
     confirm_cancel_expected = [

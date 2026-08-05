@@ -23,6 +23,7 @@ from typing import Any, TypeAlias
 
 from mcp.server.mcpserver import Context as _SDKContext
 
+from ..claims import check_claim, parse_claims
 from ..events import Recorder, iter_events
 from ..models import Category, Confidence, Source, validate_scope
 from ..session import PendingUseToken, SessionState
@@ -263,6 +264,68 @@ def _validate_write_payload(
         "source": src_enum,
         "category": cat_enum,
     }
+
+
+def _validate_declared_claims(
+    claims: list[str],
+    *,
+    worktree_root: str | None,
+    surface: str,
+) -> list[str]:
+    """Type-check, parse, and oracle-check a declared `claims` list.
+
+    Returns the canonical rendered forms (deduplicated, values
+    `repr`-normalized) — what gets persisted. Raises ValueError naming
+    the exact defect, because the refusal is where a caller learns the
+    contract: claims are declared true-right-now against the worktree,
+    or not at all. Shared by `memory_write` (fresh origin capture) and
+    `memory_verify` (the memory's recorded origin) so the two surfaces
+    cannot drift on what a valid claim is — the same lockstep argument
+    as the four commit-drift surfaces.
+
+    `surface` names the caller in the refusal ("memory_write" /
+    "memory_verify"); the remedies differ only in where the worktree
+    root comes from, and the message says which one was missing.
+    """
+    from pathlib import Path
+
+    if not isinstance(claims, list) or not all(isinstance(s, str) for s in claims):
+        raise ValueError("claims must be a list of strings if provided")
+    parsed = parse_claims(claims)
+    if not parsed:
+        return []
+    if worktree_root is None:
+        raise ValueError(
+            f"claims are checked against a worktree at declaration, and "
+            f"{surface} has none to check against"
+            + (
+                " (the caller is not inside a git worktree). Write from "
+                "the repo the claims are about, or drop the claims."
+                if surface == "memory_write"
+                else " (the memory records no origin worktree). Re-write "
+                "the memory from its repo, or drop the claims."
+            )
+        )
+    root = Path(worktree_root)
+    if not root.is_dir():
+        raise ValueError(
+            f"claims cannot be checked: the origin worktree "
+            f"{worktree_root!r} is not visible from this machine. "
+            "Declare claims from a machine that can see the tree."
+        )
+    failures = [
+        (claim.render(), reason)
+        for claim in parsed
+        if (reason := check_claim(claim, root)) is not None
+    ]
+    if failures:
+        detail = "; ".join(f"{rendered}: {reason}" for rendered, reason in failures)
+        raise ValueError(
+            f"{len(failures)} claim(s) do not hold against the worktree — "
+            f"{detail}. Claims are declared true-right-now; fix the claim "
+            "(or the tree) before declaring it."
+        )
+    return [claim.render() for claim in parsed]
 
 
 def _drain_pending_expired(state: SessionState, recorder: Recorder) -> None:
@@ -820,6 +883,7 @@ __all__ = [
     "_maybe_attach_curation_hint",
     "_validate_content_floor",
     "_validate_content_size",
+    "_validate_declared_claims",
     "_validate_scope_count",
     "_validate_write_payload",
 ]

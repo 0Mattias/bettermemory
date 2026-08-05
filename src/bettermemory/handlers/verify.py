@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .._response import isoformat, isoformat_optional
+from ..claims import check_claim, load_claims
 from ..store import ConcurrentUpdateError, MemoryNotFoundError, TombstonedError
 from ..symbols import check_symbol_citations
 from ..verify import unverifiable_attestations
-from ._shared import Context, _NOTE_MAX_LEN, _advance_turn
+from ._shared import (
+    Context,
+    _NOTE_MAX_LEN,
+    _advance_turn,
+    _validate_declared_claims,
+)
 
 if TYPE_CHECKING:
     from .._handlers import ToolHandlers
@@ -25,6 +32,39 @@ if TYPE_CHECKING:
 # frontmatter overflow, but a clear per-field error here is friendlier.
 _MAX_VERIFIED_ENTRIES = 64
 _MAX_VERIFIED_ITEM_LEN = 1024
+
+
+def _refuse_stale_stored_claims(stored: list[str], origin_root: str | None) -> None:
+    """Refuse the verify when a STORED claim no longer holds.
+
+    Runs only when the origin worktree is visible; an invisible tree
+    skips the check (the commit-drift leg on the origin machine keeps
+    watching) rather than blocking verifies from a synced replica.
+    Unparseable stored entries are skipped by `load_claims` — doctor's
+    job, not this gate's.
+    """
+    if origin_root is None:
+        return
+    try:
+        root = Path(origin_root).resolve(strict=False)
+    except (OSError, ValueError):
+        return
+    if not root.is_dir():
+        return
+    failures = [
+        (claim.render(), reason)
+        for claim in load_claims(stored)
+        if (reason := check_claim(claim, root)) is not None
+    ]
+    if failures:
+        detail = "; ".join(f"{rendered}: {reason}" for rendered, reason in failures)
+        raise ValueError(
+            f"cannot verify: {len(failures)} stored claim(s) no longer "
+            f"hold — {detail}. A verify stamps the whole record fresh, "
+            "and its claims are part of the record. memory_update the "
+            "body first (body edits clear claims), or re-declare "
+            "corrected claims by passing claims=[...] on this call."
+        )
 
 
 DESC_MEMORY_VERIFY = (
@@ -50,7 +90,10 @@ DESC_MEMORY_VERIFY = (
     "INTENTIONALLY absent here (remote host, other platform, "
     "not-the-location) — reported under `expected_absent`, not "
     "`missing`. Never for real drift.\n"
-    "All four `verified_*` lists are REPLACE, not append — `None` "
+    "- `claims` (optional): memory_write's claim syntax; checked NOW, "
+    "false ⇒ refused. Stored claims re-check on every verify — a "
+    "false one blocks the stamp; memory_update first.\n"
+    "All five lists are REPLACE, not append — `None` "
     "preserves the prior attestation, `[]` clears it, a populated "
     "list supersedes it. Attest the full set each time.\n\n"
     "After memory_update on a memory you later spot-check, verify "
@@ -71,6 +114,7 @@ async def memory_verify(
     verified_commits: list[str] | None = None,
     verified_versions: list[str] | None = None,
     verified_absent_paths: list[str] | None = None,
+    claims: list[str] | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     state = deps.sessions.for_request(ctx)
@@ -157,6 +201,35 @@ async def memory_verify(
                 "verified_absent_paths instead."
             )
 
+    # Claims are the one attestation the tool can CHECK, so it does — in
+    # both directions. A newly-passed list goes through the same
+    # declare-time oracle memory_write runs (false ⇒ refused; `[]` is
+    # the explicit clear and needs no check). A verify that DOESN'T
+    # re-declare, on a memory that stores claims, re-runs the oracle
+    # over the stored list first: stamping `last_verified_at` asserts
+    # the whole record still matches reality, and a stored claim the
+    # tree now contradicts is a recorded counterexample. Refusing here
+    # is what makes the read side's trust in claims transitive — every
+    # `last_verified_at` on a claim-carrying memory was stamped over
+    # claims that held at that instant. The stored re-check is skipped
+    # only when the origin worktree isn't visible from this machine
+    # (same read-side leniency as attestations: a synced store may
+    # legitimately verify prose aspects it cannot stat), never when the
+    # tree is present and disagrees.
+    normalized_claims: list[str] | None = None
+    if claims is not None:
+        normalized_claims = (
+            _validate_declared_claims(
+                claims,
+                worktree_root=origin_root,
+                surface="memory_verify",
+            )
+            if claims
+            else []
+        )
+    elif snapshot.claims:
+        _refuse_stale_stored_claims(snapshot.claims, origin_root)
+
     # Symbol citations in the body, AST-checked against the memory's own
     # recorded worktree. ADVISORY, and structurally so: the result is
     # attached to this response and read by nothing else. No staleness
@@ -184,6 +257,7 @@ async def memory_verify(
             verified_commits=verified_commits,
             verified_versions=verified_versions,
             verified_absent_paths=verified_absent_paths,
+            claims=normalized_claims,
             expected_last_verified_at=snapshot.last_verified_at,
             check_expected=True,
         )
@@ -240,6 +314,7 @@ async def memory_verify(
         verified_commits=list(memory.verified_commits),
         verified_versions=list(memory.verified_versions),
         verified_absent_paths=list(memory.verified_absent_paths),
+        **({"claims": list(memory.claims)} if memory.claims else {}),
         **({"symbol_drift_missing": len(missing)} if missing else {}),
     )
     response: dict[str, Any] = {
@@ -250,6 +325,7 @@ async def memory_verify(
         "verified_commits": list(memory.verified_commits),
         "verified_versions": list(memory.verified_versions),
         "verified_absent_paths": list(memory.verified_absent_paths),
+        "claims": list(memory.claims),
     }
     # Emitted only when the body actually carried a citation this check
     # could parse. Silence is the normal case and is the honest one: an

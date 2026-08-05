@@ -5,9 +5,11 @@ production ever resolved one against a file. The path leg stats files;
 the commit leg counts commits; a memory asserting that some function is
 defined in a module it names could go on saying so for a year after the
 function was deleted, and every freshness signal the server emits would
-keep agreeing with it. The claim-level machinery that scores well on the
-rot benchmark is bench-only, and its parser reads a corpus template, not
-prose.
+keep agreeing with it. The claim-level machinery that scores well on
+the rot benchmark now ships (`claims.py`, since 3.40.0) — but it runs
+on claims the AUTHOR declared, not on prose: its input problem was
+solved by asking, not by parsing, and this module remains the only
+thing that reads symbols out of sentences.
 
 What this module does, in one sentence: parse the two-token citation
 shape out of a body, resolve the cited module underneath the memory's

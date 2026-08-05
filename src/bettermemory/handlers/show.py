@@ -105,6 +105,7 @@ async def memory_show(
         caller_origin=_h.capture_origin(),
         verified_paths=memory.verified_paths,
         body=memory.body,
+        claims=memory.claims,
     )
     commit_drift_count_for_verdict: int | None = (
         commit_drift.commits_since_verify if commit_drift is not None else None
@@ -170,6 +171,7 @@ async def memory_show(
         "verified_commits": list(memory.verified_commits),
         "verified_versions": list(memory.verified_versions),
         "verified_absent_paths": list(memory.verified_absent_paths),
+        "claims": list(memory.claims),
         **_links_payload(deps, memory),
     }
 

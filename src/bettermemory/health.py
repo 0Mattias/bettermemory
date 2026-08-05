@@ -54,6 +54,7 @@ from .origin import (
     repo_toplevel,
     repos_match,
 )
+from .claims import load_claims
 from .verify import (
     commit_drift_anchor_paths,
     resolve_commit_drift_count,
@@ -1780,6 +1781,7 @@ def compute_health(
     # memory_search (see _compute_commit_drift_debt).
     origin_repo_by_id: dict[str, str | None] = {}
     anchor_paths_by_id: dict[str, tuple[str, ...]] = {}
+    claims_by_id: dict[str, tuple[str, ...]] = {}
     for m in memories:
         by_id[m.id] = MemoryStats(
             id=m.id,
@@ -1793,6 +1795,7 @@ def compute_health(
         )
         origin_repo_by_id[m.id] = m.origin.repo if m.origin else None
         anchor_paths_by_id[m.id] = commit_drift_anchor_paths(m.body, m.verified_paths)
+        claims_by_id[m.id] = tuple(m.claims)
 
     accumulator = _StatsAccumulator(by_id=by_id, tombstoned_ids=tombstoned_ids)
     for ev in events:
@@ -2009,6 +2012,7 @@ def compute_health(
         by_id=by_id,
         origin_repo_by_id=origin_repo_by_id,
         anchor_paths_by_id=anchor_paths_by_id,
+        claims_by_id=claims_by_id,
         caller_origin=caller_origin,
     )
 
@@ -2229,6 +2233,7 @@ def _compute_commit_drift_debt(
     by_id: dict[str, MemoryStats],
     origin_repo_by_id: dict[str, str | None],
     anchor_paths_by_id: dict[str, tuple[str, ...]],
+    claims_by_id: dict[str, tuple[str, ...]] | None = None,
     caller_origin: Origin | None,
 ) -> CommitDriftDebt | None:
     """Build the optional commit-drift rollup, or None when not applicable.
@@ -2281,7 +2286,9 @@ def _compute_commit_drift_debt(
             continue
         if stats.last_verified_at is None:
             continue
-        if not anchor_paths_by_id.get(stats.id):
+        if not anchor_paths_by_id.get(stats.id) and not (
+            claims_by_id and claims_by_id.get(stats.id)
+        ):
             continue
         candidates.append(stats)
     if not candidates:
@@ -2310,11 +2317,13 @@ def _compute_commit_drift_debt(
         # answer the filtered query. Guarded on count > 0 so a caught-up
         # memory never pays the extra git call.
         if count > 0:
+            stored_claims = claims_by_id.get(stats.id, ()) if claims_by_id else ()
             resolved = resolve_commit_drift_count(
                 cwd=cwd_path,
                 since=since,
                 unfiltered=count,
                 anchors=anchor_paths_by_id.get(stats.id, ()),
+                claims=load_claims(list(stored_claims)) if stored_claims else (),
                 toplevel=toplevel,
             )
             if resolved is None:
@@ -3206,7 +3215,8 @@ def curation_counts(
                 # is pure CPU; git work stays behind the count > 0 guard
                 # so a caught-up memory pays no git call.
                 anchors = commit_drift_anchor_paths(m.body, m.verified_paths)
-                if not anchors:
+                parsed_claims = load_claims(m.claims) if m.claims else []
+                if not anchors and not parsed_claims:
                     continue
                 idx = bisect.bisect_right(timestamps, verified_at)
                 count = len(timestamps) - idx
@@ -3216,6 +3226,7 @@ def curation_counts(
                         since=verified_at,
                         unfiltered=count,
                         anchors=anchors,
+                        claims=parsed_claims,
                         toplevel=toplevel,
                     )
                     if resolved is None:

@@ -120,19 +120,52 @@ Planned work, in rough priority order. Plans change; the
   3. `sync pull` trust boundary. `sync.py` pulls and re-indexes with no
      content validation, and `SECURITY.md` does not name sync as
      attacker-reachable. The one genuinely remote path.
-- **Claims-at-write.** Promoted above "Standing tier" and "Event-time"
-  on 2026-07-31: it is the only measured route to a drift signal cheaper
-  than the one shipped, and the shipped one is expensive. A real-prose
-  claim extractor is an open problem only because extraction is post-hoc;
-  the author of a memory knows what it is claiming at write time.
-  Structured claims on the write/verify surface (the shape
-  `verified_paths` already has) would give `build_binding_index` real
-  input — which the claim-level `weak` drift tier needs before it can
-  ship. On the 30-repository corpus
+- ~~**Claims-at-write.**~~ **SHIPPED 2026-08-04 (3.40.0).** The thesis
+  held as stated: a real-prose claim extractor was an open problem only
+  because extraction is post-hoc — the author knows what a memory
+  claims at write time, so the input problem was solved by asking. The
+  surface is a `claims` list on `memory_write` / `memory_verify` (the
+  `verified_paths` string-list shape), three shapes matching the three
+  corpus kinds: `path`, `path::symbol`, `path::NAME=literal`. The
+  bench's oracle (`label_claim`) became the DECLARE-TIME gate
+  (`claims.check_claim`): a claim false at declaration is refused with
+  what the tree says, no `acknowledge_*` escape, and `memory_verify`
+  re-runs it over STORED claims before stamping — so every
+  `last_verified_at` on a claim-carrying memory was stamped over claims
+  that held. The bench's detector (`build_binding_index` /
+  `claim_level_drift`) promoted to `claims.py` and `bench/rot/run.py`
+  now imports the shipped copies, closing the "bench-only" gap its own
+  README named. Read-side: `verify._resolve_with_claims` splits the
+  anchor set — claim-governed files escalate only commits the `weak`
+  tier implicates, unclaimed cited files keep the any-touch incumbent,
+  the halves union on commit identity, and the measured zero still
+  demotes a calendar-stale verdict. All four commit-drift surfaces
+  route through the one core (`claims` lives on
+  `resolve_commit_drift_count`'s own signature precisely so the health
+  rollups cannot compute a different policy than show/search). Body
+  edits clear claims with `last_verified_at`; `claims=[]` on verify is
+  the audited clear-and-stamp escape, deliberately noisier downstream
+  than fixing the claim.
+  On the 30-repository corpus
   (`bench/rot/results/multirepo-anchored-2026-07-30.json`, 37,635 claims)
   `weak` costs **1.1 alerts per catch at 94% precision** against the
   shipped verdict's **3.4**. Quote those corpus figures, not the
-  superseded single-repo pilot's 25.1 → 2.0.
+  superseded single-repo pilot's 25.1 → 2.0 — and quote them as the
+  DETECTOR'S cost on extracted corpus claims, which is what was
+  measured. The shipped surface runs that detector on author-declared,
+  oracle-gated claims: a cleaner population by construction, and an
+  unmeasured one until the dogfood store carries enough declared claims
+  to read — the backfill below is what mints that denominator. (Same
+  verifier-defines-its-own-input-population caveat the truncation entry
+  recorded; named here before the first telemetry rather than after.)
+  Three deliberate narrownesses, recorded so they are not re-litigated:
+  symbol/literal claims are Python-AST-shaped (non-Python repos get
+  path claims only); merge-only touches to governed files never
+  escalate (`git log -p` skips merge diffs — the same
+  body-edit-is-not-drift direction the bench pinned); and a window past
+  `MAX_PATCH_STREAM_COMMITS` (256) falls back to incumbent any-touch
+  counting rather than paying unbounded patch fetches on a read path —
+  a memory that stale is loudly drifted under either signal.
   What makes it the priority is the incumbent's own measurement on that
   corpus: J = 0.2875, 77.8% of claims flagged, 29.5% precision, 3.4
   alerts per catch, against `always_flag`'s J = 0.000, 22.9% precision

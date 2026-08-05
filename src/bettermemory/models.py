@@ -344,6 +344,20 @@ class Memory(BaseModel):
     NOT the real one). Path-drift excludes them from `missing` into an
     `expected_absent` bucket instead of raising a phantom drift signal.
 
+    `claims` are the STRUCTURED claims declared at write time (or added
+    by a later `memory_verify`) — `path`, `path::symbol`, or
+    `path::NAME=literal` strings, checked against the origin worktree at
+    the moment of declaration (`claims.check_claim`) so a false claim
+    can never be stored. They upgrade the commit-drift leg for the
+    files they name: a claim-governed file escalates the staleness
+    verdict only when the touched lines implicate a claimed binding
+    (`claims.claim_level_drift`'s `weak` tier — 1.1 alerts per catch at
+    94% precision on the 30-repo corpus, vs 3.4 for the per-file
+    incumbent), while unclaimed cited files keep the incumbent
+    any-touch rule. Cleared on body edits alongside `last_verified_at`
+    — a rewritten body may no longer assert what the old one claimed.
+    Empty by default; legacy memories load as empty lists.
+
     `corroborations` / `last_corroborated` are the recurrence rollup:
     bumped by `Store.record_corroboration` when a `memory_write` is
     dedup-rejected against this memory — the stored claim re-entered a
@@ -371,6 +385,7 @@ class Memory(BaseModel):
     verified_commits: list[str] = Field(default_factory=list)
     verified_versions: list[str] = Field(default_factory=list)
     verified_absent_paths: list[str] = Field(default_factory=list)
+    claims: list[str] = Field(default_factory=list)
     links: list[MemoryLink] = Field(default_factory=list)
     corroborations: int = Field(default=0, ge=0)
     last_corroborated: datetime | None = None
@@ -392,6 +407,7 @@ class Memory(BaseModel):
         "verified_commits",
         "verified_versions",
         "verified_absent_paths",
+        "claims",
     )
     @classmethod
     def _cap_verified_list(cls, v: list[str]) -> list[str]:
@@ -561,6 +577,7 @@ class TombstonedMemory(BaseModel):
     verified_commits: list[str] = Field(default_factory=list)
     verified_versions: list[str] = Field(default_factory=list)
     verified_absent_paths: list[str] = Field(default_factory=list)
+    claims: list[str] = Field(default_factory=list)
 
     # Removal metadata. `removed` and `removed_reason` are required —
     # a tombstone without them is malformed and won't load.
@@ -585,6 +602,7 @@ class TombstonedMemory(BaseModel):
         "verified_commits",
         "verified_versions",
         "verified_absent_paths",
+        "claims",
     )
     @classmethod
     def _cap_verified_list(cls, v: list[str]) -> list[str]:

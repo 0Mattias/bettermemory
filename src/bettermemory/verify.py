@@ -91,10 +91,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .claims import (
+    Claim,
+    build_binding_index,
+    claim_level_drift,
+    claim_paths,
+    load_claims,
+)
 from .origin import (
+    MAX_PATCH_STREAM_COMMITS,
     Origin,
+    commit_author_sha_pairs_touching_pathspecs,
     commit_author_timestamps,
     commit_author_timestamps_touching_pathspecs,
+    commit_patch_stream,
     repo_toplevel,
     repos_match,
     resolve_repo_pathspecs,
@@ -2053,18 +2063,34 @@ class CommitDriftStatus:
     `commits_since_verify` is the integer count (always 0 for ``"clean"``,
     positive for ``"drift"``). `recommendation` is a short actionable
     string for the model on ``"drift"``, None on ``"clean"``.
+
+    `claims_checked` / `claims_drifted` carry the claim-level detail
+    when the memory declares claims AND the narrowing actually ran
+    (`unfiltered > 0` — a repo with no post-verify commits never pays
+    the claim evaluation, so a clean status from the zero-commit path
+    reports no claim block). `to_dict` folds them into a `claim_drift`
+    sub-dict only when `claims_checked > 0`, so claim-less memories
+    keep their exact wire shape.
     """
 
     status: str
     commits_since_verify: int
     recommendation: str | None
+    claims_checked: int = 0
+    claims_drifted: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "status": self.status,
             "commits_since_verify": self.commits_since_verify,
             "recommendation": self.recommendation,
         }
+        if self.claims_checked:
+            out["claim_drift"] = {
+                "checked": self.claims_checked,
+                "drifted": list(self.claims_drifted),
+            }
+        return out
 
 
 def _drift_recommendation(count: int) -> str:
@@ -2076,6 +2102,19 @@ def _drift_recommendation(count: int) -> str:
         "least one verifiable claim against the current HEAD; call "
         "memory_verify(id, note=...) if it still holds, or memory_update "
         "first if it has drifted."
+    )
+
+
+def _claim_drift_recommendation(count: int, drifted: Sequence[str]) -> str:
+    plural = "" if count == 1 else "s"
+    cplural = "" if len(drifted) == 1 else "s"
+    head = ", ".join(drifted[:3]) + ("…" if len(drifted) > 3 else "")
+    return (
+        f"{count} commit{plural} since the last memory_verify implicate "
+        f"{len(drifted)} declared claim{cplural} ({head}) — the claimed "
+        "binding itself was touched, not merely its file. Spot-check "
+        "those claims at HEAD; memory_verify if they hold, memory_update "
+        "(body and claims together) if not."
     )
 
 
@@ -2139,12 +2178,214 @@ def commit_drift_anchor_paths(
     return tuple(anchors)
 
 
+@dataclass(frozen=True)
+class ResolvedCommitDrift:
+    """A resolved commit-drift measurement, claim-narrowing included.
+
+    `count` keeps `resolve_commit_drift_count`'s integer contract (the
+    exact number of post-`since` commits that ESCALATE for this memory).
+    `claims_checked` / `claims_drifted` carry the claim-level detail the
+    display surfaces attach as `claim_drift` — zero/empty whenever the
+    memory declares no claims, in which case the count is the incumbent
+    per-file measurement unchanged.
+    """
+
+    count: int
+    claims_checked: int = 0
+    claims_drifted: tuple[str, ...] = ()
+
+
+def _weak_tier_evaluation(
+    cwd: Path,
+    shas: list[str],
+    specs: list[str],
+    claims: Sequence[Claim],
+    toplevel: Path | None,
+) -> tuple[list[str], set[str] | None]:
+    """Run the claim-level `weak` tier over one patch window.
+
+    Returns `(drifted_renders, implicated_shas)`, or `(…, None)` when
+    the patch stream could not be fetched or the window exceeds
+    `MAX_PATCH_STREAM_COMMITS` — the caller falls back to incumbent
+    per-file counting for the governed half (never under-count on
+    infrastructure failure; a hundreds-of-commits window is loudly
+    drifted under either signal, so precision there buys nothing).
+
+    Implication is per-claim: a weak-fired symbol/literal claim
+    implicates the commits that touched its binding (plus content-anchor
+    hits for literals); a weak-fired path claim implicates every
+    post-`since` commit whose diff carried lines for that path (the
+    deletion's own sha never entered the index, so per-line attribution
+    is the closest exact stand-in). A fired claim that implicates
+    nothing at all — a deleted binary, an all-blank-line file —
+    attributes the whole window rather than silently contributing zero
+    to a count whose `weak` verdict just said "drifted".
+    """
+    if len(shas) > MAX_PATCH_STREAM_COMMITS:
+        return [], None
+    stream = commit_patch_stream(cwd, shas, specs, toplevel=toplevel)
+    if stream is None:
+        return [], None
+    index = build_binding_index(stream)
+    window = set(shas)
+    drifted: list[str] = []
+    implicated: set[str] = set()
+    for claim in claims:
+        result = claim_level_drift(claim, index)
+        if not result["weak"]:
+            continue
+        drifted.append(claim.render())
+        claim_shas: set[str] = set(result["binding_shas"])
+        claim_shas |= set(result["anchor_shas"])
+        if claim.kind == "path":
+            for sha_set in index["changed_text"].get(claim.rel_path, {}).values():
+                claim_shas |= sha_set
+        implicated |= claim_shas
+    if drifted and not implicated:
+        implicated = set(window)
+    return drifted, implicated & window
+
+
+def resolve_commit_drift(
+    *,
+    cwd: Path,
+    since: datetime,
+    unfiltered: int,
+    anchors: Sequence[str],
+    claims: Sequence[Claim] = (),
+    toplevel: Path | None = None,
+) -> ResolvedCommitDrift | None:
+    """The claim-aware core behind `resolve_commit_drift_count`.
+
+    With no `claims` this is exactly the incumbent per-file narrowing
+    (same git calls, same three-valued semantics), wrapped in a
+    `ResolvedCommitDrift`. With claims, the anchor set splits into a
+    GOVERNED half (files named by at least one claim — toplevel-relative
+    by construction, since the declare-time oracle resolved them against
+    the origin worktree root) and an UNGOVERNED half (every other
+    cited/attested anchor). The ungoverned half keeps the incumbent
+    any-touch rule; the governed half escalates only the commits the
+    claim-level `weak` tier implicates (1.1 alerts per catch at 94%
+    precision on the 30-repo corpus, vs 3.4 for any-touch —
+    `bench/rot/results/multirepo-anchored-2026-07-30.json`). The two
+    halves union on COMMIT IDENTITY, so a commit touching both an
+    unclaimed anchor and a claimed binding counts once, the total stays
+    a strict subset of the post-`since` commits, and a measured zero
+    still stands the calendar leg down (`verdict_from_signals`'s
+    stale-plus-zero demotion) — now on a stronger zero: nothing touched
+    the unclaimed anchors AND nothing implicated a claimed binding.
+
+    Declaring a claim on a file is therefore what STOPS that file's
+    method-body churn from nagging; a file the memory cites but never
+    claims keeps the conservative default. Fallbacks all point the same
+    direction as the incumbent's: git failure on either half degrades to
+    the unfiltered/any-touch count, never to silence.
+    """
+    if claims:
+        return _resolve_with_claims(
+            cwd=cwd,
+            since=since,
+            unfiltered=unfiltered,
+            anchors=anchors,
+            claims=claims,
+            toplevel=toplevel,
+        )
+    count = resolve_commit_drift_count(
+        cwd=cwd,
+        since=since,
+        unfiltered=unfiltered,
+        anchors=anchors,
+        claims=(),
+        toplevel=toplevel,
+    )
+    if count is None:
+        return None
+    return ResolvedCommitDrift(count)
+
+
+def _resolve_with_claims(
+    *,
+    cwd: Path,
+    since: datetime,
+    unfiltered: int,
+    anchors: Sequence[str],
+    claims: Sequence[Claim],
+    toplevel: Path | None,
+) -> ResolvedCommitDrift | None:
+    """Two-leg resolution for a claim-carrying memory.
+
+    Mirrors `resolve_commit_drift_count`'s three-valued discipline
+    exactly: conservative unfiltered fallback when git cannot answer,
+    None when EVERY spec on both legs is phantom or escapes the repo
+    (commit drift not applicable), an exact escalating-commit count
+    otherwise. The one asymmetry is deliberate: a memory whose ONLY
+    anchors are its claims (`anchors` empty or all-escaping) is still
+    fully governed — the claims are the anchor, which is the entire
+    point of declaring them.
+    """
+    checked = len(claims)
+    conservative = ResolvedCommitDrift(unfiltered, checked, ())
+    governed = claim_paths(list(claims))
+    governed_set = set(governed)
+    ungoverned: list[str] = []
+    if anchors:
+        specs = resolve_repo_pathspecs(cwd, list(anchors), toplevel=toplevel)
+        if specs is None:
+            # Git itself couldn't answer for the ungoverned half; the
+            # governed half would fare no better. Conservative.
+            return conservative
+        ungoverned = [s for s in specs if s not in governed_set]
+    if since.tzinfo is None:
+        since = since.replace(tzinfo=timezone.utc)
+
+    escalating: set[str] = set()
+    every_leg_phantom = True
+
+    if ungoverned:
+        pairs = commit_author_sha_pairs_touching_pathspecs(
+            cwd, ungoverned, toplevel=toplevel
+        )
+        if pairs is None:
+            return conservative
+        if pairs:
+            every_leg_phantom = False
+            escalating.update(sha for ts, sha in pairs if ts > since)
+
+    drifted: list[str] = []
+    gpairs = commit_author_sha_pairs_touching_pathspecs(
+        cwd, governed, toplevel=toplevel
+    )
+    if gpairs is None:
+        return conservative
+    if gpairs:
+        every_leg_phantom = False
+        post = [sha for ts, sha in gpairs if ts > since]
+        if post:
+            drifted, implicated = _weak_tier_evaluation(
+                cwd, post, governed, claims, toplevel
+            )
+            if implicated is None:
+                # Patch stream unavailable or window too large —
+                # incumbent any-touch semantics for the governed half.
+                escalating.update(post)
+            else:
+                escalating.update(implicated)
+
+    if every_leg_phantom:
+        # No commit in this repo's history ever touched any spec on
+        # either leg — every anchor is phantom (a claim on a file git
+        # never tracked lands here too). Not clean; not applicable.
+        return None
+    return ResolvedCommitDrift(len(escalating), checked, tuple(drifted))
+
+
 def resolve_commit_drift_count(
     *,
     cwd: Path,
     since: datetime,
     unfiltered: int,
     anchors: Sequence[str],
+    claims: Sequence[Claim] = (),
     toplevel: Path | None = None,
 ) -> int | None:
     """Map a positive repo-wide commit count to the claim-anchored count.
@@ -2154,7 +2395,14 @@ def resolve_commit_drift_count(
     fold in `_response.attach_commit_drift_counts`, and the two
     memory_health rollups). Keeping the decision in one function is what
     keeps the surfaces in lockstep — the historical failure mode here is
-    one surface learning a policy refinement the others didn't.
+    one surface learning a policy refinement the others didn't. That is
+    why `claims` lives on THIS signature too: a count-only surface (the
+    health rollups) passes the memory's claims and gets the same
+    claim-narrowed number the display surfaces show, just without the
+    per-claim detail (`resolve_commit_drift` is the richer entry point
+    over the same core). A count computed without the memory's claims
+    is a DIFFERENT policy, and the moment one surface computes it, the
+    loudest freshness signal disagrees with the quietest.
 
     Returns:
 
@@ -2193,6 +2441,16 @@ def resolve_commit_drift_count(
     existence probe is gone. A since-deleted cited file still resolves as
     real, since its removal commit keeps it in the log.
     """
+    if claims:
+        resolved = _resolve_with_claims(
+            cwd=cwd,
+            since=since,
+            unfiltered=unfiltered,
+            anchors=anchors,
+            claims=claims,
+            toplevel=toplevel,
+        )
+        return None if resolved is None else resolved.count
     if not anchors:
         return None
     specs = resolve_repo_pathspecs(cwd, list(anchors), toplevel=toplevel)
@@ -2246,6 +2504,7 @@ def compute_commit_drift(
     caller_origin: Origin | None,
     verified_paths: list[str] | tuple[str, ...] = (),
     body: str = "",
+    claims: list[str] | tuple[str, ...] = (),
 ) -> CommitDriftStatus | None:
     """Return a commit-drift verdict, or None when the signal isn't useful.
 
@@ -2344,8 +2603,15 @@ def compute_commit_drift(
     # above, so it is a strict subset of `count` — no clamp, and no
     # committer-date boundary to fall back from.
     anchors = commit_drift_anchor_paths(body, verified_paths)
-    if not anchors:
+    # Stored claim strings parse leniently — a hand-edited bad entry
+    # contributes nothing rather than crashing the hottest read path.
+    # A memory whose ONLY anchors are its claims is fully governed: the
+    # declaration is the anchor.
+    parsed_claims = load_claims(list(claims)) if claims else []
+    if not anchors and not parsed_claims:
         return None
+    claims_checked = 0
+    claims_drifted: tuple[str, ...] = ()
     if count > 0:
         # Resolve the repo root ONCE for this call and thread it through —
         # anchor resolution (`resolve_repo_pathspecs`) and the path-filtered
@@ -2359,26 +2625,38 @@ def compute_commit_drift(
         # `commit_author_timestamps` having just answered, git is
         # demonstrably reachable here.
         toplevel = repo_toplevel(cwd_path)
-        resolved = resolve_commit_drift_count(
+        resolved = resolve_commit_drift(
             cwd=cwd_path,
             since=last_verified_at,
             unfiltered=count,
             anchors=anchors,
+            claims=parsed_claims,
             toplevel=toplevel,
         )
         if resolved is None:
             return None
-        count = resolved
+        count = resolved.count
+        claims_checked = resolved.claims_checked
+        claims_drifted = resolved.claims_drifted
     if count == 0:
         return CommitDriftStatus(
             status="clean",
             commits_since_verify=0,
             recommendation=None,
+            claims_checked=claims_checked,
+            claims_drifted=(),
         )
+    recommendation = (
+        _claim_drift_recommendation(count, claims_drifted)
+        if claims_drifted
+        else _drift_recommendation(count)
+    )
     return CommitDriftStatus(
         status="drift",
         commits_since_verify=count,
-        recommendation=_drift_recommendation(count),
+        recommendation=recommendation,
+        claims_checked=claims_checked,
+        claims_drifted=claims_drifted,
     )
 
 
@@ -2494,6 +2772,17 @@ _VERDICT_RAISE_STATUSES: frozenset[str] = frozenset({"never", "stale"})
 # tier costs 1.1 alerts per catch at 94% precision on the same corpus,
 # which is why "Claims-at-write" sits where it does in
 # `docs/ROADMAP.md`. Write-up: `bench/rot/README.md`.
+#
+# THE REPLACEMENT HAS SINCE LANDED — WITHOUT TOUCHING THIS SWITCH. For a
+# memory that DECLARES claims, `_resolve_with_claims` narrows the count
+# this leg escalates on to the commits the `weak` tier implicates, per
+# claim-governed file; unclaimed anchors keep the any-touch rule this
+# comment defends. The switch still governs whether a positive count
+# escalates at all, so subtracting the leg would still zero the verdict
+# for claim-less memories — everything above remains the reason it
+# stays True. The narrowing is upstream, per-memory, and opt-in via
+# declaration, which is exactly the "replacement measured first" shape
+# the retraction demanded.
 #
 # One constraint survives for whoever reopens it: a flip is NOT complete
 # on its own. `DESC_MEMORY_SEARCH` / `DESC_MEMORY_SHOW` describe
@@ -2683,12 +2972,14 @@ __all__ = [
     "DEFAULT_VERIFICATION_STALE_DAYS",
     "CommitDriftStatus",
     "PathDriftReport",
+    "ResolvedCommitDrift",
     "VerificationStatus",
     "commit_drift_anchor_paths",
     "compute_commit_drift",
     "compute_staleness_verdict",
     "compute_verification_status",
     "detect_path_drift",
+    "resolve_commit_drift",
     "resolve_commit_drift_count",
     "verdict_from_signals",
 ]
