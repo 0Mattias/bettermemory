@@ -7,6 +7,36 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.39.0 - 2026-08-04
+
+### Fixed — the three `[behavior]` write caps now bind the ingest path
+
+`max_content_bytes`, `min_content_tokens`, and `max_scopes_per_write` were
+unenforced at BOTH ingest phases: `compute_ingest_plan` never checked them and
+`apply_ingest_plan` builds its `Store.write` payload by hand, so the plan and
+the commit agreed exactly — on landing rows `memory_write` refuses. Measured
+2026-08-02 with all three set tight (200 bytes / 50 tokens / 1 scope): a
+3,098-byte body and a 3-token body, two caller scopes on each, every row
+planned as `write` and every row committed. Unlike the `[scopes] allowed` gap
+this closes alongside, there was no `--dry-run` over-promise window to repeat,
+which is why the fix is one predicate added to both sides at once
+(`_write_caps_reason`) rather than a reconciliation.
+
+The predicate calls the shared validators from `handlers/_shared.py` in
+`_validate_write_payload`'s own order — floor, size, count, ahead of the
+allowlist, ahead of the gates — so a row that breaks several caps reports the
+same sentence `memory_write` would have raised first, and the message cannot
+drift from `memory_write`'s because it is `memory_write`'s. Two decisions
+travel with it. The scope-count cap counts caller-supplied scopes only: ingest
+stamps a provenance scope plus a type tag on every row, so counting them would
+let `max_scopes_per_write = 1` refuse every import including one with no
+`--scope` at all — the same broke-every-allowlist-user regression, re-armed as
+arithmetic. And `config=None` means the SHIPPED cap defaults, not caps-off:
+the allowlist's unset value is a no-op, the byte and scope caps' unset values
+are not, so treating absence as absence would enforce different caps on the
+plan and the commit. Refusals stay per-row (`skip_invalid`), never a batch
+abort, and surface in `render_ingest_text` beside every other skip reason.
+
 ## 3.38.0 - 2026-08-04
 
 ### Added — `memory_update` refuses a body edit that shrinks and ends mid-sentence

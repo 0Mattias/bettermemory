@@ -1341,6 +1341,267 @@ class TestApplyIngestPlanScopeAllowlist:
         )
 
 
+class TestIngestWriteCaps:
+    """The three `[behavior]` write caps bind the ingest path — at the plan
+    AND the apply, against what the CALLER supplied.
+
+    Unlike the allowlist regressions above, there was never a plan/apply
+    divergence to reconcile: `min_content_tokens`, `max_content_bytes` and
+    `max_scopes_per_write` were unenforced at BOTH phases, so the plan and
+    the commit agreed exactly — on landing rows `memory_write` refuses.
+    Measured 2026-08-02 with all three set tight (200 bytes / 50 tokens /
+    1 scope): a 3,098-byte body and a 3-token body, two caller scopes on
+    each, every row planned as `write` and every row committed. That
+    measured shape is pinned verbatim below.
+
+    Two decisions carried over from the allowlist work, deliberately:
+    the scope-count cap counts caller-supplied scopes only (ingest's own
+    stamps would otherwise consume the whole budget of any tight cap —
+    the same broke-every-allowlist-user shape, with a count instead of a
+    list), and the refusal is per ROW via `skip_invalid`, never a batch
+    abort. One decision is new: `config=None` means the SHIPPED cap
+    defaults, not "caps off" — the allowlist's unset value is a no-op,
+    the byte and scope caps' unset values are not, so treating absence
+    as absence would enforce different caps on the plan and the commit.
+    """
+
+    _TIGHT = BehaviorConfig(
+        max_content_bytes=200, min_content_tokens=50, max_scopes_per_write=1
+    )
+
+    @staticmethod
+    def _run(
+        source_root: Path,
+        store: Store,
+        *,
+        behavior: BehaviorConfig | None,
+        extra_scopes: list[str] | None = None,
+        expect_plan_actions: set[str] | None = None,
+    ) -> dict[str, Any]:
+        """Plan + apply under `behavior`, keyed by source filename.
+
+        `behavior=None` passes `config=None` to BOTH phases — the
+        library caller whose caps must come out as the shipped defaults
+        on each side. Mirrors the allowlist class's `_apply`, including
+        the plan-action assertion that makes every test state whether
+        the plan and the apply agreed.
+        """
+        config = None if behavior is None else Config(behavior=behavior)
+        plan = compute_ingest_plan(
+            source_root,
+            existing_memories=store.load_all(),
+            existing_tombstones=store.load_tombstones(),
+            extra_scopes=extra_scopes or [],
+            config=config,
+        )
+        assert {r.action for r in plan.rows} == (expect_plan_actions or {"write"})
+        apply_ingest_plan(plan, store, config=config)
+        return {r.source_path.name: r for r in plan.rows}
+
+    def test_the_measured_repro_now_refuses_every_row(
+        self, source_root: Path, store: Store
+    ) -> None:
+        """The 2026-08-02 measurement, re-run against the fix: the
+        3,098-byte body trips the byte cap, the 3-token body trips the
+        floor, both are `skip_invalid` in the PLAN (no `--dry-run`
+        over-promise), nothing reaches disk, and each reason is
+        `memory_write`'s own sentence — by construction, since the shared
+        validators produce it. The reasons also survive to
+        `render_ingest_text`, the surface the operator reads."""
+        # description "d" + "\n\n" + 3,095-byte body composes to exactly
+        # the measured 3,098 bytes, with ~770 tokens so the floor passes
+        # and the SIZE arm is the one that fires.
+        _write_auto_memory(
+            source_root,
+            "oversize",
+            description="d",
+            body=("tok " * 773 + "end")[:3095],
+        )
+        _write_auto_memory(
+            source_root,
+            "fragment",
+            description="",
+            body="kubernetes ingress tls",
+        )
+        config = Config(behavior=self._TIGHT)
+        plan = compute_ingest_plan(
+            source_root,
+            existing_memories=store.load_all(),
+            existing_tombstones=store.load_tombstones(),
+            extra_scopes=["projects:demo", "second"],
+            config=config,
+        )
+        assert {r.action for r in plan.rows} == {"skip_invalid"}
+        apply_ingest_plan(plan, store, config=config)
+        rows = {r.source_path.name: r for r in plan.rows}
+        assert "content exceeds max_content_bytes (3098 bytes > 200 bytes)" in (
+            rows["oversize.md"].reason or ""
+        )
+        assert "content is below min_content_tokens (3 tokens < 50 tokens)" in (
+            rows["fragment.md"].reason or ""
+        )
+        assert store.load_all() == []
+        rendered = render_ingest_text(plan, dry_run=False)
+        assert (rows["oversize.md"].reason or "") in rendered
+        assert (rows["fragment.md"].reason or "") in rendered
+
+    def test_two_caller_scopes_refused_under_cap_one(
+        self, source_root: Path, store: Store
+    ) -> None:
+        """The count arm of the measured repro, isolated: the other two
+        rows above never reach it because the floor and size fire first,
+        in `_validate_write_payload`'s order. A compliant body with two
+        `--scope` extras under `max_scopes_per_write = 1` is refused, and
+        the reason names the exemption so "2 entries > 1" is legible
+        against a row visibly carrying four scopes."""
+        _write_auto_memory(
+            source_root,
+            "crowded",
+            description="the parser lives in ingest.py",
+            body="Auto-memory files are read from the project memory dir.",
+        )
+        rows = self._run(
+            source_root,
+            store,
+            behavior=BehaviorConfig(max_scopes_per_write=1),
+            extra_scopes=["projects:demo", "second"],
+            expect_plan_actions={"skip_invalid"},
+        )
+        reason = rows["crowded.md"].reason or ""
+        assert "scopes exceeds max_scopes_per_write (2 entries > 1 entries)" in reason
+        assert "exempt" in reason
+        assert DEFAULT_PROVENANCE_SCOPE in reason
+        assert store.load_all() == []
+
+    def test_stamps_dont_count_against_the_cap(
+        self, source_root: Path, store: Store
+    ) -> None:
+        """`max_scopes_per_write = 1` with ONE caller scope lands, even
+        though the row's full list is three entries — provenance stamp,
+        type tag, caller scope. Counting the stamps would refuse every
+        import on any store with a tight cap, including one with no
+        `--scope` at all: the broke-every-allowlist-user regression,
+        re-armed as arithmetic."""
+        _write_auto_memory(
+            source_root,
+            "ordinary",
+            description="the parser lives in ingest.py",
+            body="Auto-memory files are read from the project memory dir.",
+        )
+        rows = self._run(
+            source_root,
+            store,
+            behavior=BehaviorConfig(max_scopes_per_write=1),
+            extra_scopes=["projects:demo"],
+        )
+        assert rows["ordinary.md"].written_id is not None
+        [stored] = store.load_all()
+        assert len(stored.scopes) == 3
+        assert stored.scopes[0] == DEFAULT_PROVENANCE_SCOPE
+
+    def test_caps_run_ahead_of_the_allowlist(
+        self, source_root: Path, store: Store
+    ) -> None:
+        """A row that breaks a cap AND the allowlist reports the cap —
+        the order `_validate_write_payload` checks them, so the plan's
+        reason is the sentence `memory_write` would have raised first.
+        Ordering is the parity being claimed, so it gets its own pin."""
+        _write_auto_memory(
+            source_root,
+            "fragment",
+            description="",
+            body="kubernetes ingress tls",
+        )
+        config = Config(
+            behavior=BehaviorConfig(min_content_tokens=50),
+            scopes=ScopesConfig(allowed=["tools"]),
+        )
+        plan = compute_ingest_plan(
+            source_root,
+            existing_memories=store.load_all(),
+            existing_tombstones=store.load_tombstones(),
+            extra_scopes=["rogue"],
+            config=config,
+        )
+        [row] = plan.rows
+        assert row.action == "skip_invalid"
+        assert "min_content_tokens" in (row.reason or "")
+        assert "allowed list" not in (row.reason or "")
+
+    def test_apply_is_the_enforcement_boundary_for_an_edited_row(
+        self, source_root: Path, store: Store
+    ) -> None:
+        """Same shape as the allowlist's edited-row test: a caller that
+        mutates `row.body` after planning meets the caps again at apply
+        time, because only that side writes. The conforming sibling
+        still lands — per-row containment, not batch abort."""
+        # Each body needs >= 50 tokens for the configured floor AND a
+        # vocabulary disjoint from its sibling's, or the batch dedup
+        # (`planned` fold-in) marks the second row `skip_duplicate`
+        # before the caps are ever the question.
+        _write_auto_memory(
+            source_root,
+            "keeper",
+            auto_type="feedback",
+            description="summary for keeper",
+            body=" ".join(f"alpha{i} bravo{i}" for i in range(30)),
+        )
+        _write_auto_memory(
+            source_root,
+            "victim",
+            auto_type="project",
+            description="summary for victim",
+            body=" ".join(f"gamma{i} delta{i}" for i in range(30)),
+        )
+        config = Config(behavior=BehaviorConfig(min_content_tokens=50))
+        plan = compute_ingest_plan(
+            source_root,
+            existing_memories=store.load_all(),
+            existing_tombstones=store.load_tombstones(),
+            config=config,
+        )
+        assert {r.action for r in plan.rows} == {"write"}
+        rows = {r.source_path.name: r for r in plan.rows}
+        rows["victim.md"].body = "now a fragment"
+        apply_ingest_plan(plan, store, config=config)
+        assert rows["keeper.md"].written_id is not None
+        assert rows["victim.md"].action == "skip_invalid"
+        assert "min_content_tokens" in (rows["victim.md"].reason or "")
+        assert len(store.load_all()) == 1
+
+    def test_absent_config_enforces_the_shipped_defaults(
+        self, source_root: Path, store: Store
+    ) -> None:
+        """`config=None` on both phases judges rows under `Config()`'s
+        caps, which are live (byte cap 1 MB), not absent. A source FILE
+        can't demonstrate that at plan time — `_frontmatter`'s read
+        ceiling rejects it first — so the probe is the edited-row shape:
+        plan a normal row, inflate `row.body` past the default cap, and
+        the apply refuses under a config nobody passed. Treating `None`
+        as "caps off" makes this land 1.2 MB on disk."""
+        _write_auto_memory(
+            source_root,
+            "ordinary",
+            description="the parser lives in ingest.py",
+            body="Auto-memory files are read from the project memory dir.",
+        )
+        plan = compute_ingest_plan(
+            source_root,
+            existing_memories=store.load_all(),
+            existing_tombstones=store.load_tombstones(),
+        )
+        [row] = plan.rows
+        assert row.action == "write"
+        row.body = "word " * 240_000
+        apply_ingest_plan(plan, store)
+        # Re-fetch: `apply_ingest_plan` mutates the row in place, which
+        # mypy's narrowing on `row.action` above can't see.
+        [row_after] = plan.rows
+        assert row_after.action == "skip_invalid"
+        assert "max_content_bytes" in (row_after.reason or "")
+        assert store.load_all() == []
+
+
 class TestScopeAllowlistPlanMatchesApply:
     """A `--dry-run` under `[scopes] allowed` must predict the commit.
 

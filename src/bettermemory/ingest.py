@@ -35,7 +35,11 @@ Design notes:
   the allowlist will refuse is already `skip_invalid` in the plan.
   It was apply-time-only for one commit, and in that window a
   `--dry-run` reporting "would write N" was followed by a commit
-  that wrote none of them.
+  that wrote none of them. The three `[behavior]` write caps (see
+  `_write_caps_reason`) got the both-sides treatment from the start:
+  they were unenforced at BOTH phases until 3.39.0, so there was no
+  over-promise window to repeat — the plan and the commit agreed on
+  landing rows `memory_write` refuses.
 
 - **Tombstone-aware.** Source files that match a tombstoned memory
   surface as skipped with the reason ``previously_removed`` — the same
@@ -73,7 +77,12 @@ from typing import Any, Literal
 from . import _frontmatter as fm
 from ._decorators import best_effort
 from ._fsutil import atomic_write_bytes
-from .config import Config
+from .config import BehaviorConfig, Config
+from .handlers._shared import (
+    _validate_content_floor,
+    _validate_content_size,
+    _validate_scope_count,
+)
 from .handlers.write import CONTENT_GATES, apply_write_gates
 from .models import (
     Category,
@@ -247,14 +256,25 @@ def _classify_one(
     extra_scopes: list[str],
     high_threshold: float,
     allowed_scopes: list[str] | None = None,
+    behavior: BehaviorConfig | None = None,
     semantic_model: Any | None = None,
     force: bool = False,
 ) -> IngestRow:
     """Parse one source file and return the classified IngestRow.
 
     Pure compute — no writes happen here. Edge cases (parse errors,
-    empty bodies, scope conflicts) all surface as a ``skip_*`` action
-    with a one-line reason so the renderer can show them.
+    empty bodies, scope conflicts, cap violations) all surface as a
+    ``skip_*`` action with a one-line reason so the renderer can show
+    them.
+
+    ``behavior=None`` means the SHIPPED defaults (`BehaviorConfig()`),
+    not "caps off": unlike the allowlist, whose unset value is a no-op,
+    the default byte and scope caps are live on every `memory_write`,
+    so a caller that threads no config must be judged the way
+    `apply_ingest_plan`'s `Config()` fallback (`_gate_deps`) will judge
+    the commit. This is the only place that reading of ``None`` lives on
+    the plan side; `test_absent_config_enforces_the_shipped_defaults`
+    pins the two sides' agreement.
     """
     blank = IngestRow(
         source_path=source_path,
@@ -348,15 +368,35 @@ def _classify_one(
         if s not in scope_list:
             scope_list.append(s)
 
-    # `[scopes] allowed`, in the SAME position `apply_ingest_plan` runs it:
-    # ahead of the dedup gates, which is where `memory_write` runs it too
-    # (`_validate_write_payload` precedes `apply_write_gates`). The position
-    # is half the point of running it here at all — a plan that reached the
-    # same verdict by a different route could still label a row
+    # The `[behavior]` write caps, then `[scopes] allowed`, in the SAME
+    # positions `apply_ingest_plan` runs them: caps ahead of allowlist
+    # ahead of the dedup gates, which is the order `memory_write` uses
+    # (`_validate_write_payload` checks floor/size/count before the
+    # allowlist, and all of it precedes `apply_write_gates`). The position
+    # is half the point of running them here at all — a plan that reached
+    # the same verdict by a different route could still label a row
     # `skip_duplicate` where the apply says `skip_invalid`, and the two
-    # renderings would disagree about WHY. Costs nothing when the knob is
-    # unset: `_scope_allowlist_reason` returns None on an empty list before
-    # touching the row.
+    # renderings would disagree about WHY.
+    caps_reason = _write_caps_reason(
+        composed,
+        scope_list,
+        _tool_stamped_scopes(auto_type),
+        behavior if behavior is not None else BehaviorConfig(),
+    )
+    if caps_reason is not None:
+        return IngestRow(
+            source_path=source_path,
+            title=title,
+            description=description,
+            auto_memory_type=auto_type,
+            body=composed,
+            scopes=scope_list,
+            category=category,
+            action="skip_invalid",
+            reason=caps_reason,
+        )
+    # Costs nothing when the knob is unset: `_scope_allowlist_reason`
+    # returns None on an empty list before touching the row.
     scope_reason = _scope_allowlist_reason(
         scope_list, list(allowed_scopes or []), _tool_stamped_scopes(auto_type)
     )
@@ -459,20 +499,26 @@ def compute_ingest_plan(
     `force=True` bypasses the active-store dedup gate (parity with
     `memory_write`'s `force`); tombstone dedup is always honoured.
 
-    `config` is here for one reason: `[scopes] allowed`. It is the same
-    optional `Config` `apply_ingest_plan` takes, and a caller that will
-    follow up with an apply must pass the SAME object to both, exactly as
-    it must pass the same `force` — otherwise the plan and the commit
-    disagree about which rows survive, which is the whole failure mode
-    `resolve_dedup_policy` exists to prevent for the dedup half. Omitting
-    it means "no allowlist" (`Config()`'s default is an empty list, which
-    means "any scope"), so a read-only caller that only wants the
-    classification — `doctor._check_auto_memory_stranded` — keeps working
-    unchanged. Nothing else on the object is read here: the dedup knobs
-    reach this function pre-resolved as `semantic_model` /
-    `high_threshold`, and re-reading them from `config` would be the
-    second copy of that resolution `resolve_dedup_policy` was written to
-    delete.
+    `config` is here for two reasons: `[scopes] allowed` and the three
+    `[behavior]` write caps. It is the same optional `Config`
+    `apply_ingest_plan` takes, and a caller that will follow up with an
+    apply must pass the SAME object to both, exactly as it must pass the
+    same `force` — otherwise the plan and the commit disagree about which
+    rows survive, which is the whole failure mode `resolve_dedup_policy`
+    exists to prevent for the dedup half. Omitting it means "no
+    allowlist" (`Config()`'s default is an empty list, which means "any
+    scope") but NOT "no caps": the shipped byte and scope caps are live
+    defaults, so `config=None` is judged under `BehaviorConfig()` — the
+    same answer `_gate_deps`'s `Config()` fallback gives the apply side.
+    A read-only caller that only wants the classification —
+    `doctor._check_auto_memory_stranded` — keeps working unchanged: its
+    rows carry no caller scopes, the floor defaults to off, and a source
+    file big enough to trip the default byte cap fails the
+    `_frontmatter` read ceiling first. Nothing else on the object is
+    read here: the dedup knobs reach this function pre-resolved as
+    `semantic_model` / `high_threshold`, and re-reading them from
+    `config` would be the second copy of that resolution
+    `resolve_dedup_policy` was written to delete.
 
     `semantic_model` + `high_threshold` are the dedup policy this plan
     is scored under. Callers that will follow up with
@@ -493,8 +539,11 @@ def compute_ingest_plan(
     # which is the same answer `Config()`'s default gives. Spelled without
     # constructing a `Config()` fallback because that fallback is what
     # `_gate_deps` owns for the apply side; a second copy here is how the
-    # two sides drift.
+    # two sides drift. The caps can't use the same trick — their unset
+    # value is NOT a no-op — so their `None` reading lives in
+    # `_classify_one` (-> `BehaviorConfig()`), one place, not per-row.
     allowed_scopes = list(config.scopes.allowed) if config is not None else []
+    behavior = config.behavior if config is not None else None
 
     if not source_root.exists():
         raise FileNotFoundError(
@@ -550,6 +599,7 @@ def compute_ingest_plan(
             extra_scopes=extras,
             high_threshold=high_threshold,
             allowed_scopes=allowed_scopes,
+            behavior=behavior,
             semantic_model=semantic_model,
             force=force,
         )
@@ -780,6 +830,62 @@ def _scope_allowlist_reason(
     )
 
 
+def _write_caps_reason(
+    body: str, scopes: list[str], stamped: set[str], behavior: BehaviorConfig
+) -> str | None:
+    """Row `reason` when `body`/`scopes` break a `[behavior]` write cap; None when not.
+
+    The three caps `_validate_write_payload` owns — `min_content_tokens`,
+    `max_content_bytes`, `max_scopes_per_write` — were unenforced at BOTH
+    ingest phases: `compute_ingest_plan` never checked them and
+    `apply_ingest_plan` builds its `Store.write` payload by hand, so the
+    plan and the commit agreed exactly and neither refused. Measured
+    2026-08-02 with all three set tight: a 3,098-byte body and a 3-token
+    body, two scopes on each, every row planned as `write` and every row
+    committed. There was no `--dry-run` over-promise to fix; the residue
+    was that ingest landed rows `memory_write` refuses, and closing it
+    means this predicate on both sides at once.
+
+    The validators are the shared ones from `handlers/_shared.py`, called
+    in `_validate_write_payload`'s own order (floor, size, count), so a
+    row that breaks several caps reports the same one `memory_write`
+    would have named — the message can't drift from `memory_write`'s
+    because it IS `memory_write`'s, which is the property
+    `_scope_allowlist_reason` gets by copying the first sentence and this
+    function gets by construction.
+
+    `max_scopes_per_write` counts the CALLER's scopes only — the same
+    line `_scope_allowlist_reason` draws, for the same reason: ingest
+    stamps `DEFAULT_PROVENANCE_SCOPE` plus a type tag on every row, the
+    user never typed them and cannot opt out of them, so a store with
+    `max_scopes_per_write = 1` would otherwise refuse every import
+    including one with no `--scope` at all. The knob is handler-boundary
+    policy about what the caller may pile on; the file format is
+    protected regardless by the model-layer YAML ceiling
+    (`_frontmatter._MAX_YAML_BYTES`), which no exemption here touches.
+    The exemption is appended to the message so the operator is not left
+    reconciling "2 entries > 1" against a row visibly carrying four.
+
+    Returns a reason rather than raising, like `_scope_allowlist_reason`
+    and for its reason: a plan is a batch, and one oversize row must not
+    abort the rest of the import.
+    """
+    caller_scopes = [s for s in scopes if s not in stamped]
+    try:
+        _validate_content_floor(body, behavior.min_content_tokens)
+        _validate_content_size(body, behavior.max_content_bytes)
+        _validate_scope_count(caller_scopes, behavior.max_scopes_per_write)
+    except ValueError as exc:
+        reason = str(exc)
+        if "max_scopes_per_write" in reason:
+            reason += (
+                f" Only caller-supplied scopes are counted — the scopes "
+                f"ingest stamps itself ({sorted(stamped)}) are exempt."
+            )
+        return reason
+    return None
+
+
 def apply_ingest_plan(
     plan: IngestPlan,
     store: Store,
@@ -797,21 +903,20 @@ def apply_ingest_plan(
     `skip_invalid` with the exception text as `reason` so the user
     can see which file failed without losing the rest of the batch.
 
-    ``config`` supplies the `[scopes] allowed` whitelist as well as the
-    dedup knobs. This function builds its `Store.write` payload by hand and
-    so never reaches `_validate_write_payload`, which is where every other
-    write path enforces that list; `_scope_allowlist_reason` closes exactly
-    that hole and nothing more — and it is enforced against the scopes the
-    CALLER supplied, not against the ones ingest stamps on every row (see
-    `_tool_stamped_scopes`). The other three checks
-    `_validate_write_payload` owns — `max_content_bytes`,
-    `min_content_tokens` and `max_scopes_per_write` — are still missed on
-    this path, and no gate in `CONTENT_GATES` reads them either.
+    ``config`` supplies the `[scopes] allowed` whitelist, the three
+    `[behavior]` write caps, and the dedup knobs. This function builds its
+    `Store.write` payload by hand and so never reaches
+    `_validate_write_payload`, which is where every other write path
+    enforces all four; `_scope_allowlist_reason` and `_write_caps_reason`
+    close exactly those holes and nothing more — both enforced against
+    what the CALLER supplied, not against the scopes ingest stamps on
+    every row (see `_tool_stamped_scopes`). No gate in `CONTENT_GATES`
+    reads any of the four either.
 
     Pass the SAME ``config`` to ``compute_ingest_plan``: it runs the
-    identical allowlist predicate in the identical position, and that is
-    what makes a `--dry-run`'s row count the count a commit produces. The
-    check stays here as well as there — this is the enforcement boundary,
+    identical predicates in the identical positions, and that is what
+    makes a `--dry-run`'s row count the count a commit produces. The
+    checks stay here as well as there — this is the enforcement boundary,
     the only side that writes, and it is reachable with a plan computed by
     a caller that passed no config at all.
 
@@ -880,6 +985,11 @@ def apply_ingest_plan(
     # mode is worse for a whitelist: a divergent fallback would silently
     # decide the knob is empty and enforce nothing.
     allowed_scopes = list(gate_deps.config.scopes.allowed)
+    # Same-object discipline for the caps: `Config()`'s defaults are NOT
+    # no-ops here (byte cap 1 MB, scope cap 64), so a divergent fallback
+    # would not merely enforce nothing — it would enforce different caps
+    # on the plan and the commit.
+    behavior = gate_deps.config.behavior
     # This loop is O(rows x store): each surviving row's dedup gates re-read
     # the whole store and the whole tombstone log from disk. Measured rather
     # than assumed (2026-07-30, synthetic 40-token bodies, one machine): the
@@ -899,22 +1009,35 @@ def apply_ingest_plan(
     for row in plan.rows:
         if row.action != "write":
             continue
-        # `[scopes] allowed`, BEFORE the gate chain — the ordering
-        # `memory_write` uses, where `_validate_write_payload` (which owns
-        # this check) runs ahead of `apply_write_gates`. Two consequences,
-        # both intended. A row refused for scope is not scanned for
-        # credentials, exactly as `memory_write` refuses an unsanctioned
-        # scope before `CredentialGate` ever runs — nothing is written on
-        # either path, so what is deferred is the operator seeing the
-        # secret named, not the secret being kept out. And a row that would
-        # be refused anyway skips the dedup gates' per-row `store.load_all()`,
+        # The `[behavior]` write caps, then `[scopes] allowed`, BEFORE the
+        # gate chain — the ordering `memory_write` uses, where
+        # `_validate_write_payload` (which owns all four checks) runs the
+        # caps ahead of the allowlist and the whole payload validation
+        # ahead of `apply_write_gates`. Two consequences, both intended. A
+        # row refused here is not scanned for credentials, exactly as
+        # `memory_write` refuses an oversize body or an unsanctioned scope
+        # before `CredentialGate` ever runs — nothing is written on either
+        # path, so what is deferred is the operator seeing the secret
+        # named, not the secret being kept out. And a row that would be
+        # refused anyway skips the dedup gates' per-row `store.load_all()`,
         # which is the dominant cost of this loop.
         #
-        # `compute_ingest_plan` runs this same predicate at this same point,
-        # so on the CLI path every row reaching here has already passed it
-        # and this is a re-check, not the first check. Kept because it is
-        # the enforcement boundary: a library caller can hand this function
-        # a plan computed with no config, and only this side writes.
+        # `compute_ingest_plan` runs these same predicates at this same
+        # point, so on the CLI path every row reaching here has already
+        # passed them and this is a re-check, not the first check. Kept
+        # because it is the enforcement boundary: a library caller can hand
+        # this function a plan computed with no config — or a plan whose
+        # rows it edited after planning — and only this side writes.
+        caps_reason = _write_caps_reason(
+            row.body,
+            row.scopes,
+            _tool_stamped_scopes(row.auto_memory_type),
+            behavior,
+        )
+        if caps_reason is not None:
+            row.action = "skip_invalid"
+            row.reason = caps_reason
+            continue
         scope_reason = _scope_allowlist_reason(
             row.scopes, allowed_scopes, _tool_stamped_scopes(row.auto_memory_type)
         )

@@ -75,27 +75,35 @@ Planned work, in rough priority order. Plans change; the
      it. Only scopes the CALLER supplied are checked: the provenance and
      type-derived scopes ingest stamps itself are exempt, because
      enforcing a user-scope policy against scopes the tool chose refused
-     every row for anyone with a whitelist. What is left of the residue is
-     the three caps in the same `_validate_write_payload` that no gate
-     reads either: `max_content_bytes`, `min_content_tokens`,
-     `max_scopes_per_write`. Those are unenforced at BOTH phases, which
-     is what makes this half unlike the `[scopes] allowed` half:
-     `compute_ingest_plan` never checks them and `apply_ingest_plan`
-     builds its `Store.write` payload by hand, so the plan and the commit
-     agree exactly and neither one refuses. Measured 2026-08-02 against a
-     throwaway store with all three set tight — `max_content_bytes` 200,
-     `min_content_tokens` 50, `max_scopes_per_write` 1: a 3,098-byte body
-     and a 3-token body, two scopes on each, every row planned as `write`
-     and every row committed. So there is no `--dry-run` over-promise to
-     fix; the residue is that ingest lands rows `memory_write` would
-     refuse, and closing it means adding the predicate on both sides at
-     once rather than reconciling a divergence. Two earlier wordings
-     called the caps "apply-time-only" — introduced in f281c39, carried
-     through 964baad. That described `_validate_write_payload`'s position
-     on the `memory_write` path, never anything ingest does;
-     `apply_ingest_plan`'s docstring, written in that same f281c39, has
-     said the caps are "still missed on this path" correctly all along.
-     The two halves of one commit disagreed from the day they landed.
+     every row for anyone with a whitelist. The three-caps half of the
+     ingest residue is now CLOSED (**shipped 3.39.0**):
+     `_write_caps_reason` runs the shared validators — floor, size,
+     count, in `_validate_write_payload`'s own order, caps ahead of
+     allowlist — at both phases, so the refusal messages are
+     `memory_write`'s by construction. The scope-count cap counts
+     caller-supplied scopes only, the stamp exemption re-derived as
+     arithmetic: counting the stamps would let a tight cap refuse every
+     import, including one with no `--scope` at all. One place the caps
+     deliberately part ways with the allowlist: `config=None` means the
+     SHIPPED defaults, not caps-off, because the allowlist's unset value
+     is a no-op and the byte and scope caps' are not — absence-as-absence
+     would enforce different caps on the plan and the commit. The
+     2026-08-02 measurement that located the gap (all three set tight —
+     `max_content_bytes` 200, `min_content_tokens` 50,
+     `max_scopes_per_write` 1: a 3,098-byte body and a 3-token body, two
+     scopes on each, every row planned as `write` and every row
+     committed) is pinned verbatim in `TestIngestWriteCaps`; there was
+     never a `--dry-run` over-promise here, only rows landing that
+     `memory_write` refuses, which is why the fix is one predicate on
+     both sides rather than a reconciliation. Historical note, kept
+     because two published wordings earned it: earlier entries called the
+     caps "apply-time-only" (f281c39, carried through 964baad) — that
+     described `_validate_write_payload`'s position on the `memory_write`
+     path, never anything ingest does, while `apply_ingest_plan`'s
+     docstring from that same commit said the caps were "still missed on
+     this path", correctly, until 3.39.0 made it false in the right
+     direction. The two halves of one commit disagreed from the day they
+     landed.
      `memory_update` is the fourth, and it grew rather than shrank: it now
      mirrors two gates by hand — the credential scan, and the user-claim
      gate, added when write-then-update turned out to launder exactly the
