@@ -40,8 +40,8 @@ declared claims on `memory_write` / `memory_verify` (3.40.0).
   The session-start standing tier (3.42.0, `[behavior] standing_tier`,
   default off) is the unconditional one: the SessionStart hint appends
   the caller-scoped `ambient` memories whose staleness verdict
-  computes fresh — whole bodies, newest-verified first, under a ~1 KB
-  budget that truncates only at memory boundaries — because opt-in
+  computes fresh — whole bodies, newest-verified first, capped at
+  ~1 KB, truncating only at memory boundaries — because opt-in
   retrieval cannot serve knowledge whose trigger condition is not
   knowing you need it. Admission runs the same verdict chain
   `memory_show` computes (calendar leg, claim-anchored path drift,

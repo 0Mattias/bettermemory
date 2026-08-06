@@ -59,7 +59,8 @@ Offline, throwaway store.
   `memory_show` (`[behavior] prompt_recall`; off = purely opt-in). A
   second exception ships default-off: `[behavior] standing_tier`
   delivers the repository's fresh-verified `ambient` memories whole at
-  session start (~1 KB, truncated only at memory boundaries), because
+  session start (capped at ~1 KB, truncated only at memory
+  boundaries), because
   opt-in retrieval cannot serve knowledge whose trigger condition is
   not knowing you need it — and verification is the admission ticket,
   so a stale ambient memory is never delivered, only named in an

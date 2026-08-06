@@ -32,9 +32,10 @@ The plugin bundles five things:
    when the store is empty, and always exits 0. With `[behavior]
    standing_tier = true` (default off) the same block additionally
    carries the repository's fresh-verified `ambient` memories in
-   full — the one delivery that fires without being asked — under a
-   ~1 KB whole-memory-truncation budget, with stale ambient memories
-   collapsed to one "verify to restore delivery" line.
+   full — the one delivery that fires without being asked — capped at
+   ~1 KB, truncated only at whole-memory boundaries, with stale
+   ambient memories collapsed to one "verify to restore delivery"
+   line.
 5. **UserPromptSubmit hook** (same file) — runs
    `uvx bettermemory prompt-recall` on each prompt submission. Probes
    the prompt with the same silent-miss predicate the Stop hook
