@@ -53,7 +53,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
-from . import search
+from . import _install_hints, search
 from .config import Config, TelemetryConfig, load_config
 from .eval import is_admin_recorded_event
 from .events import EVENT_LOG_FILENAME, iter_all_events
@@ -3310,43 +3310,15 @@ def _read_text_or_none(path: Path) -> str | None:
         return None
 
 
-def _install_extra_command(extra: str) -> str:
-    """The command that adds an embeddings extra to the environment
-    bettermemory RUNS from.
-
-    `docs/installation.md` documents `uv tool install
-    'bettermemory[<extra>]'` as the install path, and `uv pip` writes to
-    the active virtualenv rather than to a tool environment — so the
-    `uv pip` spelling repairs nothing for a `uv tool install` or `pipx`
-    user, which is most of the population a diagnostic that also
-    inspects MCP client configs and plugin installs is talking to. The
-    development-clone form stays as the parenthetical variant, quoted:
-    `[` is a glob character, so an unquoted `.[embeddings]` is not
-    pasteable into zsh.
-    """
-    return (
-        f"`uv tool install --reinstall 'bettermemory[{extra}]'` "
-        f"(pipx: `pipx install --force 'bettermemory[{extra}]'`; from a "
-        f'development clone: `uv pip install -e ".[{extra}]"`)'
-    )
-
-
-def _reinstall_extra_command(module: str, extra: str) -> str:
-    """The command that REPAIRS an installed-but-broken embeddings extra.
-
-    Same environment argument as `_install_extra_command`: the damaged
-    module is a dependency of the environment bettermemory runs from, so
-    a tool install is repaired by reinstalling the tool. `uv pip install
-    --force-reinstall` reaches the module only when the virtualenv that
-    runs bettermemory is also the active one, so it follows as the
-    variant rather than leading.
-    """
-    return (
-        f"`uv tool install --reinstall 'bettermemory[{extra}]'` "
-        f"(pipx: `pipx install --force 'bettermemory[{extra}]'`; inside "
-        f"the virtualenv that runs bettermemory: `uv pip install "
-        f"--force-reinstall {module}`)"
-    )
+# The install/repair command spellings live in `_install_hints`, along
+# with the two arguments that shaped them (the tool form leads; the
+# extras spec is quoted) — one module owns them so this file,
+# `handlers.search`, and `semantic` cannot drift apart again
+# (`tests/test_install_hints.py` pins the literals there). Bound under
+# the historical private names so the doctor-internal call sites read
+# unchanged.
+_install_extra_command = _install_hints.install_extra_command
+_reinstall_extra_command = _install_hints.reinstall_extra_command
 
 
 #: What a semantic ranking leg buys, beside the artifact that measured

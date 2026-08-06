@@ -57,6 +57,7 @@ from typing import TYPE_CHECKING, Any, Callable, NamedTuple, cast
 
 from ..events import _event_id_list
 from ..models import utcnow, validate_scope
+from .._install_hints import extras_spec, pip_force_reinstall, tool_reinstall
 from .._response import NEGATIVE_OUTCOME_WINDOW_DAYS
 from ..time_utils import parse_event_ts
 from ..search import (
@@ -693,14 +694,10 @@ def _semantic_mode_unavailable(config: "Config") -> str:
     ``resolve_provider`` commits to one, so a healthy fastembed says
     nothing about a run that was going to load torch.
 
-    Commands are spelled the way ``doctor._install_extra_command`` and
-    ``doctor._reinstall_extra_command`` spell them, for their reasons:
-    the extras spec is quoted because ``[`` is a glob character and zsh
-    — macOS's default shell — refuses an unquoted
-    ``bettermemory[embeddings]`` outright, and ``uv tool install
-    --reinstall`` leads because ``uv pip`` writes to the active
-    virtualenv rather than to the tool environment that
-    ``docs/installation.md``'s install runs from.
+    Command spellings come from ``_install_hints``, the one module that
+    owns them — and the quoted-spec / tool-form-leads rationale — for
+    every surface. Hand-restating them here is exactly the drift that
+    produced this message's unquoted pre-fix wording.
     """
     from ..semantic import extra_import_failure, extra_importable
     from ..semantic_setup import _resolve_semantic_provider_and_model
@@ -716,10 +713,9 @@ def _semantic_mode_unavailable(config: "Config") -> str:
             return (
                 "mode='semantic' needs a working embeddings extra: "
                 f"`{module}` IS installed but fails to import ({reason}). "
-                "Reinstall it — `uv tool install --reinstall "
-                f"'bettermemory[{_MODULE_EXTRA[module]}]'`, or inside the "
-                "virtualenv that runs bettermemory: `uv pip install "
-                f"--force-reinstall {module}` — "
+                f"Reinstall it — `{tool_reinstall(_MODULE_EXTRA[module])}`, "
+                "or inside the virtualenv that runs bettermemory: "
+                f"`{pip_force_reinstall(module)}` — "
                 "rather than install it; a damaged or partially-synced "
                 "install (a virtualenv inside iCloud Drive or Dropbox is "
                 "the common cause) is what this looks like. Or use "
@@ -742,8 +738,8 @@ def _semantic_mode_unavailable(config: "Config") -> str:
     # `resolve_provider` reporting that neither extra is on disk.
     return (
         "mode='semantic' requires the embeddings extra, and none is "
-        "installed. Install with `uv tool install --reinstall "
-        "'bettermemory[embeddings]'` (or `'bettermemory[embeddings-fast]'` "
+        f"installed. Install with `{tool_reinstall('embeddings')}` "
+        f"(or `{extras_spec('embeddings-fast')}` "
         "for the smaller ONNX provider), or use "
         "mode='hybrid' for graceful keyword+bm25 fallback."
     )

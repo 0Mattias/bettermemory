@@ -364,22 +364,20 @@ def _log_provider_unavailable_once(
             exc,
         )
     else:
+        # Spelled by `_install_hints`, which owns the quoting and
+        # tool-form-leads rationale for every surface. Imported lazily —
+        # this branch runs at most once per (provider, model) and only
+        # on failure, so `semantic`'s own import path stays free of it.
+        from ._install_hints import dev_clone_editable, tool_reinstall
+
         log.warning(
-            # Spelled as `doctor._install_extra_command` spells it: the
-            # extras spec is quoted because `[` globs (zsh refuses an
-            # unquoted `bettermemory[embeddings]`), and the tool install
-            # leads because `uv pip` writes to the active virtualenv
-            # rather than to the tool environment the documented install
-            # runs from.
             "semantic provider %r requested but the %s extra is not "
-            "installed. Install with `uv tool install --reinstall "
-            "'bettermemory[%s]'` (from a development clone: `uv pip "
-            'install -e ".[%s]"`). Falling back to Jaccard / '
-            "keyword.",
+            "installed. Install with `%s` (from a development clone: "
+            "`%s`). Falling back to Jaccard / keyword.",
             key[0],
             extra,
-            extra,
-            extra,
+            tool_reinstall(extra),
+            dev_clone_editable(extra),
         )
     _LOAD_FAILED_LOGGED.add(key)
 
