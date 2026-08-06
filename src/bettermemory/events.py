@@ -804,34 +804,71 @@ def _event_id_list(value: Any) -> list[str]:
     return [v for _, v in _event_id_items(value)]
 
 
+def _parse_event_line(raw: bytes) -> dict[str, Any] | None:
+    """Decode and parse ONE raw event-log line; None for anything that
+    is not a JSON object.
+
+    The single per-line tolerance definition, shared by the forward
+    reader (`_iter_json_lines`) and the backward reader
+    (`iter_events_backward`) so the two cannot drift on what counts as
+    a readable event. Module-level on purpose: it is also the seam
+    tests wrap to COUNT parses — `iter_events_backward`'s lazy-parse
+    guarantee is asserted structurally by counting calls here, the same
+    instrumentation pattern `handlers._shared._event_ts_epoch` provides
+    for the pending-token scan's early-exit.
+
+    Two of the four corruption modes documented on `_iter_json_lines`
+    are line-scoped and handled here:
+
+    - an invalid-UTF-8 byte: decoded with `errors="replace"`, so a bad
+      byte becomes U+FFFD and the line simply fails json.loads and is
+      dropped. (In the earlier text-mode reader the decode happened in
+      the line iterator, BEFORE json.loads, so the JSONDecodeError
+      guard never fired — UnicodeDecodeError, a ValueError not an
+      OSError, escaped and took the whole read surface down.)
+    - a line that parses as VALID JSON yet isn't an object (`[1, 2,
+      3]`, `"a string"`, `42`, `null` — a hand-edit or partial
+      overwrite of this plain-text, git-syncable log). `json.loads`
+      succeeds, so the JSONDecodeError guard never fires, and the
+      non-dict used to flow straight through the declared
+      Iterator[dict] contract: the eval rollups' isinstance guards
+      tolerated it, but `compute_health`'s first `ev.get(...)` raised
+      AttributeError, taking memory_health / scope_overview /
+      report_for_directory down with it. Dropped here — at the single
+      parse site every reader shares — exactly like any other corrupt
+      line.
+
+    Blank lines return None too, so every caller needs exactly one
+    skip branch.
+    """
+    line = raw.decode("utf-8", errors="replace").strip()
+    if not line:
+        return None
+    try:
+        parsed = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    return parsed
+
+
 def _iter_json_lines(f: Any) -> Iterator[dict[str, Any]]:
     """Yield parsed JSON objects from a BINARY line stream, degrading
     per-record instead of aborting the whole stream on corruption.
 
-    Three real corruption modes the previous text-mode `for line in f` +
-    `except json.JSONDecodeError` did NOT survive — they all crashed the
-    reader, taking down memory_health / scope_overview / eval / doctor,
-    which read through here:
+    Four real corruption modes, none of which may crash a reader (the
+    previous text-mode `for line in f` + `except json.JSONDecodeError`
+    survived none of them — they took down memory_health /
+    scope_overview / eval / doctor, which all read through here). The
+    two STREAM-scoped ones are guarded at the readline:
 
-    - an invalid-UTF-8 byte: in text mode the decode happens in the line
-      iterator, BEFORE json.loads, so JSONDecodeError never fired —
-      UnicodeDecodeError (a ValueError, not OSError) escaped. We read bytes
-      and decode each line with `errors="replace"`, so a bad byte becomes
-      U+FFFD and the line simply fails json.loads and is skipped.
     - a truncated gzip archive: `readline` raises EOFError (not an OSError).
     - a CRC-corrupt gzip archive: `readline` raises zlib.error (not OSError).
 
-    A fourth mode crashes not the reader but its consumers: a line that
-    parses as VALID JSON yet isn't an object (`[1, 2, 3]`, `"a string"`,
-    `42`, `null` — a hand-edit or partial overwrite of this plain-text,
-    git-syncable log). `json.loads` succeeds, so the JSONDecodeError
-    guard never fires, and the non-dict used to flow straight through
-    the declared Iterator[dict] contract: the eval rollups' isinstance
-    guards tolerated it, but `compute_health`'s first `ev.get(...)`
-    raised AttributeError, taking memory_health / scope_overview /
-    report_for_directory down with it. Such lines are now skipped here
-    — at the single parse site every reader shares — exactly like any
-    other corrupt line.
+    The two LINE-scoped modes — an invalid-UTF-8 byte, and valid JSON
+    that isn't an object — live in `_parse_event_line`, the per-line
+    definition this stream reader shares with `iter_events_backward`.
 
     Reading line-by-line under a try lets a truncated/corrupt archive still
     yield its readable prefix rather than contributing nothing.
@@ -843,20 +880,10 @@ def _iter_json_lines(f: Any) -> Iterator[dict[str, Any]]:
             return
         if not raw:
             return
-        line = raw.decode("utf-8", errors="replace").strip()
-        if not line:
+        event = _parse_event_line(raw)
+        if event is None:
             continue
-        try:
-            parsed = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        # Fourth corruption mode (docstring): valid JSON, wrong shape.
-        # The parse succeeded but the value isn't an object — yielding
-        # it would violate the Iterator[dict] contract every consumer
-        # types against. Skip it like any other corrupt line.
-        if not isinstance(parsed, dict):
-            continue
-        yield parsed
+        yield event
 
 
 _TS_MIN = datetime.min.replace(tzinfo=timezone.utc)
@@ -932,6 +959,64 @@ def iter_events(root: Path) -> Iterator[dict[str, Any]]:
                 handle.close()
             except OSError:  # pragma: no cover
                 pass
+
+
+def _iter_parsed_reversed(lines: list[bytes]) -> Iterator[dict[str, Any]]:
+    """One segment's raw lines, newest-first, json-parsed ONLY as the
+    consumer pulls — the lazy leg of `iter_events_backward`. Skips
+    whatever `_parse_event_line` rejects, so tolerance is identical to
+    the forward reader's."""
+    for raw in reversed(lines):
+        event = _parse_event_line(raw)
+        if event is not None:
+            yield event
+
+
+def iter_events_backward(root: Path) -> Iterator[dict[str, Any]]:
+    """Yield events from the *active* segments newest-first — the
+    reverse of `iter_events`' merged chronological order, built for
+    consumers that examine the recent tail and stop (the pending-token
+    dedup scan, `handlers._shared._already_recorded_pending_ids`).
+
+    Cost model, the reason this exists alongside `iter_events`: each
+    segment's bytes are read once and split into lines up front (cheap
+    — no JSON involved), but a line is json-parsed only when the merge
+    actually pulls it (`_iter_parsed_reversed`). A consumer that stops
+    after K events therefore pays K parses plus one buffered lookahead
+    per active segment, where a materialise-then-reverse
+    `list(iter_events(root))` pays one parse per line in the active
+    log before the first event comes out — measured at 14.0 ms of a
+    15.6 ms dedup-scan call against a 10k-event log whose loop
+    examined ONE event. The resident cost is the segments' raw bytes,
+    strictly below the parsed-dict list the materialised shape held
+    for the same store.
+
+    Reads ACTIVE segments only, exactly like `iter_events`: the
+    rotation cap (`max_bytes`, default 10 MB per shard) bounds both
+    the resident bytes and the worst-case full walk, and that cap is
+    the correctness envelope consumers of the active log already
+    document. Rotated archives are out of scope — use
+    `iter_all_events` (forward) for history.
+
+    Ordering is the forward merge's contract mirrored: each segment is
+    ts-ordered by construction (appends serialise under the shard
+    lock), so the per-segment reversed streams are ts-descending and
+    `heapq.merge(reverse=True)` yields the global newest-first order.
+    An event with a missing/unparseable `ts` ranks via the same
+    UTC-min sentinel the forward merge uses (`_event_ts_key`). A
+    segment that vanishes between listing and read (a concurrent
+    rotation) is skipped, the way `iter_events` skips a segment it
+    cannot open.
+    """
+    streams: list[Iterator[dict[str, Any]]] = []
+    for path in _active_segment_paths(root):
+        try:
+            data = path.read_bytes()
+        except OSError:
+            continue
+        if data:
+            streams.append(_iter_parsed_reversed(data.splitlines()))
+    yield from heapq.merge(*streams, key=_event_ts_key, reverse=True)
 
 
 def _archive_sort_key(path: Path) -> tuple[str, int, str]:
@@ -1415,6 +1500,7 @@ def iter_events_window(
 __all__ = [
     "Recorder",
     "iter_events",
+    "iter_events_backward",
     "iter_all_events",
     "iter_events_window",
     "EVENT_LOG_FILENAME",

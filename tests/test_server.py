@@ -6706,10 +6706,9 @@ def test_already_recorded_pending_ids_early_exits_on_old_events(
        the optimisation.
     2. The early-exit itself — the backward scan examines a handful of
        recent events rather than all 10k. Asserted by counting the
-       events the loop touches, not by wall clock: the O(N) log parse
-       ahead of the loop is not short-circuited and dominates the
-       elapsed time, so a clock threshold measures the runner rather
-       than the optimisation. See the comment at the assertion.
+       events the loop touches, not by wall clock: a clock threshold
+       measures the runner's throughput, not the optimisation. See the
+       comment at the assertion.
     """
     import time as _time
 
@@ -6750,17 +6749,21 @@ def test_already_recorded_pending_ids_early_exits_on_old_events(
     # backward scan examines — not by wall clock.
     #
     # A clock assertion here measured the wrong thing and flaked on it.
-    # The early-exit bounds the MATCHING loop only: `_already_recorded_
-    # pending_ids` first does `list(iter_events(root))` and then
-    # `_stop_hook_session_ids(events)`, both O(N) over the whole active
-    # log and neither short-circuited. Parsing 10k events is therefore
-    # the dominant cost whether or not the optimisation works — measured
-    # locally at 14ms of a 15.6ms call, with the backward loop examining
-    # exactly one event. So the old `elapsed < 0.5` was reading the
-    # runner's parse throughput, and when a shared ubuntu-latest slot
-    # returned 0.538s during the 3.37.0 release run it reported "early-
-    # exit appears not to be triggering" about an early-exit that was
-    # working perfectly.
+    # Through 3.40 the scan materialised `list(iter_events(root))` plus
+    # a whole-log stop-hook-session pre-pass before the loop — both
+    # O(N) over the whole active log and neither short-circuited — so
+    # parsing 10k events dominated the call (measured locally at 14ms
+    # of a 15.6ms call, with the backward loop examining exactly one
+    # event) whether or not the early-exit worked. The old
+    # `elapsed < 0.5` was reading the runner's parse throughput, and
+    # when a shared ubuntu-latest slot returned 0.538s during the
+    # 3.37.0 release run it reported "early-exit appears not to be
+    # triggering" about an early-exit that was working perfectly. The
+    # scan now streams `iter_events_backward` with a lazy per-line
+    # parse, so the parse cost is tail-bounded too (pinned separately:
+    # test_already_recorded_pending_ids_parse_count_is_tail_bounded) —
+    # but a clock threshold would still measure the runner, so the
+    # structural count stays.
     #
     # Counting `_event_ts_epoch` calls measures the loop directly: it is
     # called once per event the backward scan examines and nowhere else
@@ -6825,6 +6828,155 @@ def test_already_recorded_pending_ids_respects_issued_at_guard(
     assert result == set(), (
         f"stale event falsely matched fresh token; got {result}. "
         "The event.ts >= token.issued_at guard regressed."
+    )
+
+
+def test_already_recorded_pending_ids_parse_count_is_tail_bounded(
+    memory_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The dedup scan's PARSE cost — not just its matching loop — is
+    bounded by the examined tail. The early-exit above always bounded
+    the loop, but through 3.40 the scan materialised
+    `list(iter_events(root))` (plus a whole-log stop-hook-session
+    pre-pass) first, so every turn with pending tokens json-parsed the
+    WHOLE active log to examine a handful of events — 14.0ms of a
+    15.6ms call measured against 10k events, with the loop examining
+    one. The scan now streams `iter_events_backward`, which parses a
+    line only when the merge pulls it.
+
+    Counting `bettermemory.events._parse_event_line` calls measures
+    the parse directly: it is the single per-line parse seam both
+    readers share, and nothing else in this call path parses log
+    lines. Mutation property: revert the consumer to
+    `list(iter_events(root))`, or make the reader parse eagerly, or
+    delete the early-exit `break`, and this count becomes ~N (10_003
+    lines here) instead of the examined tail plus one merge-seed
+    lookahead per active segment.
+    """
+    import time as _time
+
+    from bettermemory import events as events_mod
+    from bettermemory._handlers import _already_recorded_pending_ids
+    from bettermemory.events import EVENT_LOG_FILENAME, Recorder
+    from bettermemory.session import PendingUseToken, SessionState
+
+    memory_dir.mkdir(parents=True, exist_ok=True)
+    state = SessionState()
+    recorder = Recorder(root=memory_dir, session_id=state.session_id)
+
+    # Phase 1: a long ancient prefix, hand-written into the LEGACY
+    # segment (one json.dumps line per event — no per-line fsync, so
+    # the fixture stays cheap; the reader merges the legacy file with
+    # the recorder's shard, so the scan sees one 10_003-line active
+    # log). All timestamped before any pending token, so the scan's
+    # early-exit crosses the boundary after the tail.
+    ancient = json.dumps(
+        {"ts": "2026-01-01T00:00:00Z", "session": state.session_id, "kind": "noise"}
+    )
+    (memory_dir / EVENT_LOG_FILENAME).write_text(
+        "\n".join([ancient] * 10_000) + "\n", encoding="utf-8"
+    )
+
+    # Phase 2: mint pending tokens NOW, then record their `use` events
+    # through the real Recorder (the consumed shape must be
+    # production's — EventLog discipline).
+    now_ts = _time.time()
+    pending_mids = [f"01J0000000000000000000{i:04d}" for i in range(3)]
+    for mid in pending_mids:
+        state.pending_use_tokens[mid] = PendingUseToken(
+            token=f"use_{mid[-8:]}",
+            memory_id=mid,
+            issued_at=now_ts,
+            issued_at_turn=1,
+        )
+    for mid in pending_mids:
+        recorder.record(
+            "use", ids=[mid], outcome="applied", auto=False, attribution="model"
+        )
+
+    parses = 0
+    real_parse = events_mod._parse_event_line
+
+    def _counting_parse(raw: bytes) -> dict[str, Any] | None:
+        nonlocal parses
+        parses += 1
+        return real_parse(raw)
+
+    monkeypatch.setattr(events_mod, "_parse_event_line", _counting_parse)
+    result = _already_recorded_pending_ids(state, recorder)
+
+    assert result == set(pending_mids), f"expected all pending ids back, got {result}"
+    assert parses < 50, (
+        f"dedup scan parsed {parses} of 10_003 active-log lines; the backward "
+        "reader's lazy parse (or the early-exit that bounds it) regressed"
+    )
+
+
+def test_already_recorded_pending_ids_bridges_tagged_hook_use_event(
+    memory_dir: Path,
+) -> None:
+    """Session-id bridge, per-event derivation: a hook-written `use`
+    event lives under the Claude Code TRANSCRIPT id — a different id
+    space from the server's `sess_<hex>` — and is recognised by the
+    `triggered_from="stop_hook"` tag the hook stamps on every event it
+    writes (both `use` shapes in `hook._emit_hook_attributions`). A
+    tagged event emitted AFTER the token mint must purge the pending
+    id. An UNTAGGED `use` event under some other foreign session must
+    NOT, however fresh: non-hook foreign sessions (another window's
+    server, the CLI acknowledge-debt path) never bridged under the
+    derived-set shape and must not bridge now — the tag, not mere
+    foreignness, is what crosses the id-space boundary.
+    """
+    import time as _time
+
+    from bettermemory._handlers import _already_recorded_pending_ids
+    from bettermemory.events import Recorder
+    from bettermemory.session import PendingUseToken, SessionState
+
+    from ._event_helpers import EventLog
+
+    memory_dir.mkdir(parents=True, exist_ok=True)
+    state = SessionState()
+    recorder = Recorder(root=memory_dir, session_id=state.session_id)
+
+    mid_hook = "01J0000000000000000000HOOK"
+    mid_foreign = "01J000000000000000000FORGN"
+    now_ts = _time.time()
+    for mid in (mid_hook, mid_foreign):
+        state.pending_use_tokens[mid] = PendingUseToken(
+            token=f"use_{mid[-8:]}",
+            memory_id=mid,
+            issued_at=now_ts,
+            issued_at_turn=1,
+        )
+
+    # The Stop hook settles mid_hook: transcript-id session, tagged —
+    # the production shape `hook.run_audit` emits (EventLog wraps the
+    # real Recorder, so the event lands byte-for-byte as production's).
+    hook_log = EventLog(memory_dir, session_id="claude-code-transcript-bridge")
+    hook_log.emit(
+        "use",
+        ids=[mid_hook],
+        outcome="applied",
+        auto=False,
+        attribution="hook",
+        claim_excerpts=["A retrievable fact"],
+        triggered_from="stop_hook",
+    )
+    # A DIFFERENT window's server settles mid_foreign under its own
+    # sess_<hex> — untagged, and not this recorder's session.
+    foreign_log = EventLog(memory_dir, session_id="sess_other_window")
+    foreign_log.emit(
+        "use", ids=[mid_foreign], outcome="applied", auto=False, attribution="model"
+    )
+
+    result = _already_recorded_pending_ids(state, recorder)
+    assert result == {mid_hook}, (
+        f"expected exactly the hook-tagged settlement to bridge; got {result}. "
+        "Missing mid_hook means the stop_hook tag no longer bridges the "
+        "transcript id space; a present mid_foreign means an untagged foreign "
+        "session slipped through the bridge."
     )
 
 

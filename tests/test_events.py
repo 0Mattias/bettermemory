@@ -7,6 +7,7 @@ import json
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -18,6 +19,7 @@ from bettermemory.events import (
     _SECRET_PATTERNS,
     iter_all_events,
     iter_events,
+    iter_events_backward,
     iter_events_window,
 )
 
@@ -261,6 +263,126 @@ def test_iter_all_events_survives_corrupt_archives_and_bytes(tmp_path: Path) -> 
 
 def test_iter_events_empty_when_no_log(tmp_path: Path) -> None:
     assert list(iter_events(tmp_path)) == []
+
+
+# ---------------------------------------------------------------------------
+# iter_events_backward — the newest-first, lazily-parsing mirror of
+# iter_events, built for early-exiting consumers (the pending-token
+# dedup scan). Same active-segment coverage, same per-line tolerance.
+# ---------------------------------------------------------------------------
+
+
+def test_iter_events_backward_yields_newest_first_across_segments(
+    tmp_path: Path,
+) -> None:
+    """Events from every ACTIVE segment (shard files plus the legacy
+    `.events.jsonl`) come back in one globally ts-descending stream —
+    the forward merge mirrored. Segments are hand-built with
+    interleaved DISTINCT timestamps so the expected global order is
+    unambiguous (the forward-merge test above pins only per-session
+    order because same-second ties are genuinely ambiguous)."""
+
+    def _line(ts: str, eid: str) -> str:
+        return json.dumps({"ts": ts, "session": "s", "kind": "write", "id": eid})
+
+    (tmp_path / EVENT_LOG_FILENAME).write_text(
+        _line("2026-01-01T00:00:01Z", "e1")
+        + "\n"
+        + _line("2026-01-01T00:00:04Z", "e4")
+        + "\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".events.03.jsonl").write_text(
+        _line("2026-01-01T00:00:02Z", "e2")
+        + "\n"
+        + _line("2026-01-01T00:00:05Z", "e5")
+        + "\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".events.09.jsonl").write_text(
+        _line("2026-01-01T00:00:03Z", "e3") + "\n",
+        encoding="utf-8",
+    )
+
+    ids = [e["id"] for e in iter_events_backward(tmp_path)]
+    assert ids == ["e5", "e4", "e3", "e2", "e1"]
+    # Exact mirror of the forward merge over the same store.
+    assert ids == [e["id"] for e in iter_events(tmp_path)][::-1]
+
+
+def test_iter_events_backward_skips_malformed_lines(tmp_path: Path) -> None:
+    """Same tolerance as the forward reader — shared via
+    `_parse_event_line`: raw garbage, an invalid-UTF-8 byte, and
+    valid-JSON-non-object lines are skipped, not crashed on, wherever
+    they sit relative to the tail a consumer examines."""
+    rec = Recorder(root=tmp_path, session_id="sess_test")
+    rec.record("write", id="01HXYZ", scopes=["tools"])
+    with _live_segment(rec).open("ab") as f:
+        f.write(b"not json at all\n")
+        f.write(b"\xff\xfe not valid utf-8 or json\n")
+        f.write(b"[1, 2, 3]\n")
+        f.write(b"null\n")
+    rec.record("show", id="01HXYZ")
+
+    events = list(iter_events_backward(tmp_path))  # must not raise
+    assert [e["kind"] for e in events] == ["show", "write"]
+
+
+def test_iter_events_backward_empty_when_no_log(tmp_path: Path) -> None:
+    assert list(iter_events_backward(tmp_path)) == []
+    # Existing-but-empty segments (zero bytes, or blank lines only)
+    # contribute nothing rather than crashing the merge.
+    (tmp_path / EVENT_LOG_FILENAME).write_bytes(b"")
+    (tmp_path / ".events.00.jsonl").write_bytes(b"\n\n")
+    assert list(iter_events_backward(tmp_path)) == []
+
+
+def test_iter_events_backward_parses_lazily(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The reader's whole reason to exist: a consumer that stops after
+    the newest K events pays K json-parses (plus at most one merge-seed
+    lookahead per active segment) — NOT one parse per line in the
+    active log. Counting `_parse_event_line` calls pins this
+    structurally; the seam is module-level precisely so tests can wrap
+    it. Mutation property: make the parse eager (e.g. build the stream
+    from a reversed `list(iter_events(root))`) and the count for K=5
+    jumps to N=2000."""
+    from itertools import islice
+
+    from bettermemory import events as events_mod
+
+    lines = [
+        json.dumps(
+            {
+                "ts": f"2026-01-01T00:{i // 60:02d}:{i % 60:02d}Z",
+                "session": "s",
+                "kind": "write",
+                "id": f"e{i}",
+            }
+        )
+        for i in range(2000)
+    ]
+    (tmp_path / EVENT_LOG_FILENAME).write_text(
+        "\n".join(lines) + "\n", encoding="utf-8"
+    )
+
+    parses = 0
+    real_parse = events_mod._parse_event_line
+
+    def _counting_parse(raw: bytes) -> dict[str, Any] | None:
+        nonlocal parses
+        parses += 1
+        return real_parse(raw)
+
+    monkeypatch.setattr(events_mod, "_parse_event_line", _counting_parse)
+
+    tail = list(islice(iter_events_backward(tmp_path), 5))
+    assert [e["id"] for e in tail] == ["e1999", "e1998", "e1997", "e1996", "e1995"]
+    assert parses <= 5 + 2, (
+        f"backward reader parsed {parses} of 2000 lines for a 5-event tail; "
+        "the lazy per-line parse regressed to an eager pre-parse"
+    )
 
 
 # ---------------------------------------------------------------------------
