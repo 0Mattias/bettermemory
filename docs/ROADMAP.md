@@ -249,11 +249,45 @@ Planned work, in rough priority order. Plans change; the
   3.41.0 prompt-recall hook delivers CONDITIONALLY (query-matched,
   score-gated, ~2% of turns), which serves "you asked about something
   you forgot is stored" and still cannot serve "you didn't ask".
-  Candidate:
-  a hard-budgeted tier delivered at session start — the delivery shape
-  `episode_handoff` already uses — under the same verification
-  discipline as the rest of the store. Prior art: Letta's core-memory
-  blocks; the differentiator is the budget and the verification.
+  Prior art: Letta's core-memory blocks; the differentiator is the
+  budget and the verification. Build-ready spec, settled 2026-08-05 so
+  the implementing round starts at the code:
+  1. **The cohort is `ambient`, not a new flag.** The category's own
+     docstring is the tier's definition ("atmospheric context that
+     shapes replies without being cited"), it is already excluded from
+     dead-weight curation, and a new `standing` marker would create
+     two spellings of one intent. Scope-matching reuses the session
+     hint's caller-repo resolution.
+  2. **Verification is the admission ticket.** Only memories whose
+     staleness verdict computes `fresh` are delivered; stale ambient
+     memories surface as one aggregate line ("N standing memories
+     stale — verify to restore delivery"), which turns the
+     verification debt the tier would otherwise ship into pressure to
+     pay it. Same read path as a search hit, no bypass.
+  3. **Hard byte budget, whole-memory truncation.** Newest-verified
+     first, cap ~1 KB total (the SessionStart block already carries
+     the scope counts; Claude Code truncates injected blocks), never
+     split a body mid-way; overflow reads "…and K more
+     (`memory_list`)". A body over the whole budget is skipped, not
+     trimmed — a truncated fact is a different fact.
+  4. **`[behavior] standing_tier`, default OFF at introduction.** The
+     recall hook's default-on was earned by a measured 2% bar; this
+     tier fires on every session open for whoever holds ambient
+     memories, and no equivalent measurement exists yet. Flip only
+     with dogfood evidence.
+  5. **The session-start negative mandate stays intact, and the cost
+     is named:** delivery records nothing, so adoption is unmeasured
+     in v1 and a delivered memory does not shield the miss probe (a
+     same-topic prompt inside the attribution window can re-point at
+     it via prompt-recall — redundant, rare, accepted). Two
+     instrumentation shapes were considered and rejected for now: a
+     `standing_delivered` event classified like `prompt_recall`
+     (solves the anchor hijack via the roster, but an
+     opened-and-abandoned session would put phantom sessions back in
+     doctor's cadence census — the exact corruption the mandate
+     exists to stop), and retroactive stamping from the first Stop
+     hook (the hook cannot see the injected context). Revisit only
+     with a design that keeps the census clean.
 - **Event-time on the memory record.** Every timestamp on `Memory`
   (`created`, `updated`, `last_verified_at`, `last_corroborated`) is
   storage time; nothing represents when a fact is *about*, or when it
