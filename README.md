@@ -42,9 +42,18 @@ Offline, throwaway store.
 
 - Every hit carries a staleness verdict — calendar age, the paths it
   cites, commits landed since it was last confirmed.
+- That verdict is measured, not asserted. A preregistered benchmark
+  ([bench/rot][rot]) grades the shipped staleness code against git
+  ground truth on 30 repositories it did not choose — 37,635 claims
+  (the artifact's `pooled_claims`), every prediction filed before the
+  run and the misses published as retractions rather than
+  renegotiated. The claim-level tier reads 94% precision at 1.1
+  alerts per catch against the file-level signal's 3.4
+  ([artifact][rot-artifact]); declared claims on `memory_write` /
+  `memory_verify` are that detector shipped (3.40.0).
 - Retrieval is a deliberate tool call, with one score-gated exception:
   on the rare prompts where the silent-miss probe says memory was
-  needed (the measured rate lives in [docs/eval-results.md](docs/eval-results.md)),
+  needed (the measured rate lives in [docs/eval-results.md][eval-results]),
   the recall hook injects the top hit's id + snippet — a
   pointer, never a body, so verification still runs through
   `memory_show` (`[behavior] prompt_recall`; off = purely opt-in). The
@@ -109,4 +118,6 @@ MIT licensed — see [LICENSE][license].
 [installation]: https://github.com/0Mattias/bettermemory/blob/main/docs/installation.md
 [internals]: https://github.com/0Mattias/bettermemory/blob/main/docs/internals.md
 [license]: https://github.com/0Mattias/bettermemory/blob/main/LICENSE
+[rot]: https://github.com/0Mattias/bettermemory/blob/main/bench/rot/README.md
+[rot-artifact]: https://github.com/0Mattias/bettermemory/blob/main/bench/rot/results/multirepo-anchored-2026-07-30.json
 [toolcost]: https://github.com/0Mattias/bettermemory/blob/main/bench/toolcost/README.md

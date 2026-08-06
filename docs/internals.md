@@ -21,6 +21,13 @@ What the model acts on, as it appears on a search hit:
 The model repoints the path with `memory_update`, attests the rest
 with `memory_verify`, and answers from the corrected memory.
 
+The verdict's accuracy is measured, not asserted:
+[bench/rot](../bench/rot/README.md) grades the shipped staleness code
+against git ground truth on a preregistered 30-repository corpus, with
+the predictions filed before the run and the misses published as
+retractions. The claim-level detector that benchmark validated ships as
+declared claims on `memory_write` / `memory_verify` (3.40.0).
+
 - Retrieval is opt-in at the tool surface. `memory_search` is a
   deliberate tool call; the one delivery that bypasses it is the
   score-gated prompt-recall hook (3.41.0), which injects a single
