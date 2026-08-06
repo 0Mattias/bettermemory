@@ -5,6 +5,70 @@ Planned work, in rough priority order. Plans change; the
 
 ## Planned
 
+- **Score-gated recall at prompt time — SHIPPED 2026-08-05 (3.41.0).**
+  Never a Planned entry; it arrived from the 2026-08-03 altitude
+  review, which found the machine already built: the Stop hook ran
+  `probe_for_miss` on every turn — production pool, production
+  ranking, four shields — computed "was memory needed this turn?",
+  and wrote the answer to the event log after the turn could no
+  longer use it. The UserPromptSubmit hook (`bettermemory
+  prompt-recall`) now runs the SAME probe before the turn via the
+  shared `hook._probe_message` and, on a would-be miss, injects a
+  one-hit pointer block and records a `prompt_recall` event. The
+  founding don't-pollute-generic-answers stance was preserved by
+  opt-in because opt-in and a high bar were conflated; the bar alone
+  carries it — v1 top-1 "high" plus the shields fired on 3/128
+  audited turns on the dogfood store (docs/eval-results.md), and
+  that ~2% is a THIS-store measurement, not a promise.
+  Decisions that should not be re-litigated:
+  1. **Full predicate reuse, including `_caller_in_top_hit_project`.**
+     The fire rate was measured WITH that shield; dropping it for the
+     recall path would fire injection on exactly the cohort its
+     dogfood evidence measured ~95% noise ("push it" asked from
+     inside the repo, the project memory as top hit).
+  2. **Pointer, never a body.** The staleness machinery (path drift,
+     claim drift, verdicts) lives on `memory_show` / `memory_search`;
+     a body delivered around it would be the one read surface that
+     skips verification. `MissHit` retaining no bodies was the same
+     decision made earlier for the event log.
+  3. **`prompt_recall` joins `_RETRIEVAL_EVENT_KINDS`.** A delivered
+     pointer is not a SILENT miss, so the Stop audit reports `ok`;
+     membership also self-suppresses a second injection for the
+     attribution window — the anti-spam bound is the existing
+     constant, not a new knob. The miss lane's semantics change is
+     named in docs/eval.md and docs/eval-results.md BEFORE the first
+     post-3.41 snapshot, per the discontinuity discipline.
+  4. **`telemetry.enabled = false` refuses to inject.** An unlogged
+     injection is invisible to the shield (the same turn re-flags as
+     a miss) and unmeasurable; a delivery lane that can't be measured
+     doesn't fire.
+  5. **`triggered_from="prompt_hook"` + `_OUT_OF_PROCESS_TRIGGERS`.**
+     The recall hook RECORDS (unlike session-start's negative
+     mandate), so the server-session anchor's skip set had to widen
+     from the literal `"stop_hook"` — an event admitted as anchor
+     would hand the shield a transcript id and kill it. In-session
+     classification in eval's rosters for the same reason doctor's
+     census must not drop the session.
+  Rejected alternatives: a shorter prompt-path lookback (invents an
+  unmeasured knob; ship the measured predicate, tune from
+  `prompt_recall` telemetry); leaving the Stop audit unshielded to
+  measure ignored injections (pollutes the silent lane with
+  non-silent events — adoption is replayable instead from the
+  injected id joined against subsequent `show`/`search`/`use`);
+  touching `SYSTEM_PROMPT_ADDENDUM` / the MCP `instructions` block
+  (the model-side contract is unchanged — model-initiated retrieval
+  is still opt-in; both surfaces are budget-pinned; the injected
+  block teaches its own handling at the only moment it matters).
+  Honest caveats, recorded now: the predicate inherits v1's
+  length-blindness (long prompts are near-unflaggable, so recall
+  under-fires exactly where memory is most likely needed — the
+  successor-rule work in docs/eval.md#silent_miss_rate is where that
+  gets fixed, and the recall path inherits any rule upgrade through
+  the shared probe); a no-git cwd with a live server session can
+  double-flag (worktree leg absent, session spaces differ —
+  conservative direction, over-flag not over-inject); and every
+  prompt now pays one `uvx` process spawn (bounded by the manifest's
+  10s timeout, `|| true`, and the common-path early exits).
 - ~~**Truncation as a write-time gate, deferred on budget.**~~ **SHIPPED
   2026-08-04.** `memory_update` returns `status="truncation_warning"` when
   a body edit both shrinks the record and leaves it ending mid-sentence,
@@ -181,7 +245,11 @@ Planned work, in rough priority order. Plans change; the
 - **Standing tier.** Opt-in retrieval cannot serve knowledge whose
   trigger condition is not knowing you need it. The `ambient` category
   is still retrieval-gated and `memory_scope_overview` returns counts
-  only, so nothing in the product delivers unconditionally. Candidate:
+  only, so nothing in the product delivers unconditionally — the
+  3.41.0 prompt-recall hook delivers CONDITIONALLY (query-matched,
+  score-gated, ~2% of turns), which serves "you asked about something
+  you forgot is stored" and still cannot serve "you didn't ask".
+  Candidate:
   a hard-budgeted tier delivered at session start — the delivery shape
   `episode_handoff` already uses — under the same verification
   discipline as the rest of the store. Prior art: Letta's core-memory
@@ -290,7 +358,7 @@ enough to earn its own entry above.
   `src/bettermemory/search.py` (`src/bettermemory/search.py:1255-1261`)
   — the one ranking knob live by default, applied in three scorers and
   configured by `recency_boost_half_life_days` in
-  `src/bettermemory/config.py` (`src/bettermemory/config.py:352`) —
+  `src/bettermemory/config.py` (`src/bettermemory/config.py:383`) —
   sees ages that differ by microseconds across the whole store. Every
   published number therefore describes ranking with that factor held
   flat. (ii) **The corpus cannot exercise `auto_scope`.** `build_store`

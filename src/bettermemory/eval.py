@@ -2453,6 +2453,13 @@ TOOLS_WITHOUT_TELEMETRY: tuple[str, ...] = ("memory_health",)
 # consequence of ``memory_search`` / ``memory_show`` going unsettled,
 # not a call — counting it would inflate whichever tool it was
 # attributed to, and it has no tool of its own to be attributed to.
+#
+# ``prompt_recall`` is the UserPromptSubmit hook's delivery record
+# (`hook.run_prompt_recall`): the probe's miss verdict computed before
+# the turn and injected as context instead of flagged after it. Not a
+# tool invocation — no model call happened — so it stays off the usage
+# rollup; it is the delivery lane's OWN counter, read beside
+# ``search_miss`` when tracing what the recall path did.
 _KNOWN_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
     {
         "search_miss",
@@ -2461,6 +2468,7 @@ _KNOWN_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
         "proposals_enqueued",
         "doctor_fix",
         "use_token_expired",
+        "prompt_recall",
     }
 )
 
@@ -2468,7 +2476,10 @@ _KNOWN_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
 # under that client's own session id. Verified at the call sites:
 # ``search_miss`` / ``proposals_enqueued`` come off the Stop hook's
 # recorder (hook.py) — the same recorder that writes that session's
-# ``turn_audited`` rows — and ``pending_expired`` and
+# ``turn_audited`` rows — ``prompt_recall`` comes off the
+# UserPromptSubmit hook's recorder (hook.py), stamped with the SAME
+# Claude Code transcript session id the Stop hook's rows for that
+# conversation carry — and ``pending_expired`` and
 # ``use_token_expired`` are both drained handler-side through the live
 # session's recorder (handlers/_shared.py), at the entry of the very
 # tool call that noticed the eviction.
@@ -2487,7 +2498,13 @@ _KNOWN_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
 # for the shape (membership assertion plus a behavioural census half).
 # Write one alongside every new entry here.
 _IN_SESSION_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
-    {"search_miss", "pending_expired", "proposals_enqueued", "use_token_expired"}
+    {
+        "search_miss",
+        "pending_expired",
+        "proposals_enqueued",
+        "use_token_expired",
+        "prompt_recall",
+    }
 )
 
 # Event kinds recorded by an admin/CLI surface OUTSIDE any client

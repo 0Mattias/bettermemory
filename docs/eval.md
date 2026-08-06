@@ -79,6 +79,19 @@ have surfaced a high-relevance hit and the model made no
 The threshold rule is versioned (`THRESHOLD_RULE_V1 = "v1_top1_high"`)
 and recorded on every event.
 
+**Denominator semantics changed at 3.41.0.** The prompt-recall hook
+runs the same predicate at prompt time and converts a would-be miss
+into a `prompt_recall` event plus an `ok` audit verdict (the injection
+is a retrieval-kind event, so the Stop hook's probe is shielded by
+design, not by accident). On a hook-wired store with
+`[behavior] prompt_recall` on — the default — `silent_miss_rate`
+therefore measures the residual the recall path could not serve, and
+trends toward zero for reasons unrelated to model behaviour; read
+`prompt_recall` events as the delivery lane beside it. The two series
+are not comparable across the 3.41.0 line, the same way the audited
+denominators are not comparable across a
+`--acknowledge-misses-before` cutoff.
+
 **Read this rate as a floor, not a health score.** The v1 verdict fires
 on a *coverage* label — the top hit matched ≥75% of the query's
 distinctive tokens — and that denominator grows with the user's message.

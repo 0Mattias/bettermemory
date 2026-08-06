@@ -32,6 +32,7 @@ from bettermemory.audit import (
     _VALID_TRIGGERED_FROM,
     MissReport,
     probe_for_miss,
+    prompt_recall_fields,
 )
 from bettermemory.config import Config, StorageConfig
 from bettermemory.events import Recorder, iter_events
@@ -1000,14 +1001,19 @@ def test_caller_in_top_hit_project_helper_normalizes_remote_urls() -> None:
 # `recent_retrieval_count` accumulator in `probe_for_miss`.
 #
 # `_RETRIEVAL_EVENT_KINDS` (`audit.py:96`) gates which event kinds count
-# as "the model already retrieved" — `search`, `show`, `list`. A silent
+# as "the model already retrieved" — `search`, `show`, `list`, plus the
+# UserPromptSubmit hook's `prompt_recall` delivery (3.41.0: an injected
+# pointer means the turn is not a SILENT miss, and membership is also
+# the recall path's self-suppression bound). A silent
 # addition to the source set (e.g. a hypothetical `replay` kind) would
 # shield turns that shouldn't be shielded — under-counting fresh
 # retrievals and inflating `search_miss` false-positives. A silent
 # deletion would over-count misses (a retrieval that no longer counts
 # triggers a false miss). The existing
 # `test_search_show_and_list_all_count_toward_recent_retrieval` below
-# pins all three via `count == 3` against three events — catches a
+# pins the model-initiated three via `count == 3` against three events
+# (`prompt_recall` has its own shielding test beside the builder tests)
+# — catches a
 # deletion (count drops to 2) but never imports `_RETRIEVAL_EVENT_KINDS`,
 # so an addition slips through silently.
 #
@@ -1019,7 +1025,12 @@ def test_caller_in_top_hit_project_helper_normalizes_remote_urls() -> None:
 # Negative-control: adding `"bogus"` to `_RETRIEVAL_EVENT_KINDS` fails
 # `test_retrieval_event_kinds_match_frozenset` (set inequality). Revert
 # restores green.
-_EXPECTED_RETRIEVAL_EVENT_KINDS: tuple[str, ...] = ("list", "search", "show")
+_EXPECTED_RETRIEVAL_EVENT_KINDS: tuple[str, ...] = (
+    "list",
+    "prompt_recall",
+    "search",
+    "show",
+)
 
 
 def test_retrieval_event_kinds_match_frozenset() -> None:
@@ -1073,6 +1084,85 @@ def test_search_show_and_list_all_count_toward_recent_retrieval() -> None:
     )
     assert report.verdict == "ok"
     assert report.recent_retrieval_count == 3
+
+
+def test_prompt_recall_event_shields_the_probe() -> None:
+    """A `prompt_recall` event inside the lookback window shields the
+    verdict exactly like a model-initiated retrieval — the fourth
+    member of `_RETRIEVAL_EVENT_KINDS` (3.41.0). This is the property
+    the recall path's honesty rests on twice over: the Stop hook's
+    audit of an injection-served turn must report `ok` rather than
+    re-flag a delivered pointer as a silent miss, and a second
+    injection inside the window must self-suppress (the recall hook
+    runs this same probe, so the shield IS its anti-spam bound).
+    Deleting `"prompt_recall"` from the frozenset flips this verdict
+    to `"miss"`; the count assertion pins the consumer clause the way
+    the three-kind test above does for the model-initiated kinds."""
+    m = _memory("backup strategy uses triangular restic replication")
+    now = _utc(2026, 5, 1)
+    events = [
+        {
+            "ts": (now - timedelta(seconds=30)).isoformat().replace("+00:00", "Z"),
+            "session": "sess_x",
+            "kind": "prompt_recall",
+            "top_hits": [{"id": m.id}],
+            "triggered_from": "prompt_hook",
+        }
+    ]
+    report = probe_for_miss(
+        [m],
+        "backup strategy",
+        recent_events=events,
+        session_id="sess_x",
+        now=now,
+        lookback_seconds=60,
+    )
+    assert report.verdict == "ok"
+    assert report.recent_retrieval_count == 1
+
+
+def test_prompt_recall_fields_shape_and_guard() -> None:
+    """`prompt_recall_fields` is the canonical builder for the recall
+    hook's event — same drift-prevention boundary as
+    `turn_audited_fields` / `search_miss_fields`. Pins the field set
+    (the `search_miss` replay shape plus `probe_mode` and
+    `injected_chars`, minus nothing), the `"prompt_hook"` default, and
+    the closed-set guard: a typo'd `triggered_from` raises at the
+    builder rather than producing unsplittable eval rows."""
+    now = _utc(2026, 5, 1)
+    report = MissReport(
+        verdict="miss",
+        checked_at=now,
+        session_id="transcript-abc",
+        lookback_seconds=600,
+        recent_retrieval_count=0,
+        threshold_rule=THRESHOLD_RULE_V1,
+        top_hits=(),
+        probe_query="backup strategy",
+    )
+    fields = prompt_recall_fields(
+        report,
+        session_id="transcript-abc",
+        probe_mode="hybrid",
+        injected_chars=712,
+    )
+    assert fields["triggered_from"] == "prompt_hook"
+    assert fields["probe_mode"] == "hybrid"
+    assert fields["injected_chars"] == 712
+    assert fields["threshold_rule"] == THRESHOLD_RULE_V1
+    assert fields["probe_query"] == "backup strategy"
+    assert fields["session_id"] == "transcript-abc"
+    assert fields["recent_retrieval_count"] == 0
+    assert fields["top_hits"] == []
+    assert fields["event_id"]
+    with pytest.raises(ValueError, match="triggered_from"):
+        prompt_recall_fields(
+            report,
+            session_id="transcript-abc",
+            probe_mode="hybrid",
+            injected_chars=712,
+            triggered_from="prompt-hook",
+        )
 
 
 def test_probe_mode_rejects_unknown_value() -> None:
@@ -2303,7 +2393,11 @@ def test_turn_audited_fields_omits_no_signal_reason_when_none() -> None:
 # Negative-control: adding `"bogus"` to `_VALID_TRIGGERED_FROM` fails
 # `test_valid_triggered_from_match_frozenset` (set inequality). Revert
 # restores green.
-_EXPECTED_VALID_TRIGGERED_FROM: tuple[str, ...] = ("mcp_tool", "stop_hook")
+_EXPECTED_VALID_TRIGGERED_FROM: tuple[str, ...] = (
+    "mcp_tool",
+    "prompt_hook",
+    "stop_hook",
+)
 
 
 def test_valid_triggered_from_match_frozenset() -> None:

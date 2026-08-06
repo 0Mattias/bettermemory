@@ -5,16 +5,20 @@ Claude Code injects a SessionStart hook's stdout verbatim into the
 model's context, so the model opens every session already knowing the
 per-scope counts it would otherwise have spent a `memory_scope_overview`
 tool call to learn — or, far more often, never learned at all because
-retrieval is opt-in and nothing prompted it.
+retrieval is opt-in and, between prompts the recall hook's high bar
+doesn't fire on (the ~98% common case), nothing prompted it.
 
 THE NEGATIVE MANDATE — this command constructs no `Recorder` and calls
 no `.record()`, ever. Two independent failures follow from breaking it:
 
 1. Anchor hijack. `hook._latest_in_process_session` picks the most
-   recent session in the event log whose `triggered_from` is not
-   `"stop_hook"` — it never reads `attribution`. A session-start row
+   recent session in the event log whose `triggered_from` is not in
+   `hook._OUT_OF_PROCESS_TRIGGERS` — it never reads `attribution`. A
+   session-start row
    would therefore become the anchor the Stop hook's turn audit
-   attributes against, no matter how the row is stamped. The familiar
+   attributes against, no matter how the row is stamped (this command
+   has no roster entry to hide behind — the recall hook records, but
+   it records AS a roster member). The familiar
    "just mark it `cli_*` like consolidate does" workaround fixes
    doctor's census and does NOT fix this.
 2. Phantom sessions. Every session open would publish a fresh session id

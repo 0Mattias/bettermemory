@@ -70,8 +70,9 @@ DESC_MEMORY_AUDIT_TURN = (
     "Silent-miss telemetry (full reference in docs/api.md). Runs the "
     "search probe `memory_search` would have run for `user_message` "
     "(`assistant_response` optional), then checks whether a "
-    "`memory_search`, `memory_show`, or `memory_list` event fired in "
-    "the same session within `lookback_seconds` (default 60). A "
+    "`memory_search`, `memory_show`, `memory_list`, or hook-injected "
+    "`prompt_recall` event fired in the same session within "
+    "`lookback_seconds` (default 60). A "
     "high-relevance probe hit with no retrieval in that window is a "
     "miss. Auto-scopes to the caller's repo so the probe matches the "
     "model's view; honours session-disabled scopes. Returns a "
@@ -96,9 +97,9 @@ async def memory_audit_turn(
     candidate set (`resolve_search_pool`), same `[behavior]` factors
     (`resolve_ranking_inputs`), same configured search mode; if a
     high-relevance hit exists AND no retrieval event (`search`,
-    `show`, or `list`) fired in the same session within the
-    lookback window, emits `search_miss` so curation views can
-    surface the rate.
+    `show`, `list`, or `prompt_recall`) fired in the same session
+    within the lookback window, emits `search_miss` so curation views
+    can surface the rate.
 
     `assistant_response` is accepted but currently used only to keep
     the API shape stable — a future probe will run against it too

@@ -6,13 +6,13 @@
   },
   "metadata": {
     "description": "Memory you can verify — a trust layer between an agent and its own past: per-hit staleness verdicts, claim-level use attribution, measured effectiveness, episodic run-state. Local-first, no cloud.",
-    "version": "3.40.0"
+    "version": "3.41.0"
   },
   "plugins": [
     {
       "name": "bettermemory",
       "source": "./plugin",
-      "description": "Verification-grade memory for Claude Code. Every retrieved fact carries a staleness verdict (calendar age + filesystem path drift + git commit drift) so the model knows when a stored memory has rotted before relying on it; retrievals are logged with three attribution tiers (model-explicit with claim-level excerpts, Stop-hook substring match, or auto-fallback) so a reply months later can be traced back to the load-bearing stored claim wherever it was recorded. Memories are plain markdown + YAML in ~/.claude-memory/; retrieval is opt-in per turn; writes about you always stage for confirmation. A sibling episode tier (5 episode_* tools) gives /loop iterations and subagent handoffs a home for journal-shaped run-state the durability gate rejects. Bundles 27 MCP tools — 18 registered by default, the nine curation/power-user tools behind full_tool_surface (22 memory_* + 5 episode_*) — and a memory-discipline skill that lands the policy in the system prompt.",
+      "description": "Verification-grade memory for Claude Code. Every retrieved fact carries a staleness verdict (calendar age + filesystem path drift + git commit drift) so the model knows when a stored memory has rotted before relying on it; retrievals are logged with three attribution tiers (model-explicit with claim-level excerpts, Stop-hook substring match, or auto-fallback) so a reply months later can be traced back to the load-bearing stored claim wherever it was recorded. Memories are plain markdown + YAML in ~/.claude-memory/; retrieval is opt-in per turn, with a score-gated recall hook injecting a single stored pointer on the ~2% of prompts the silent-miss probe flags; writes about you always stage for confirmation. A sibling episode tier (5 episode_* tools) gives /loop iterations and subagent handoffs a home for journal-shaped run-state the durability gate rejects. Bundles 27 MCP tools — 18 registered by default, the nine curation/power-user tools behind full_tool_surface (22 memory_* + 5 episode_*) — and a memory-discipline skill that lands the policy in the system prompt.",
       "category": "memory",
       "tags": [
         "memory",

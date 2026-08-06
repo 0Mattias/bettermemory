@@ -120,6 +120,22 @@ outcome_demotion = false
 # record itself.
 corroboration_boost = false
 
+# Score-gated recall at prompt time. The plugin's UserPromptSubmit hook
+# probes every submitted prompt with the SAME predicate the Stop hook's
+# silent-miss audit uses (same pool, ranker, threshold, shields); where
+# the audit would later have flagged "the model should have searched",
+# the hook instead injects the top hit's id + snippet into context
+# before the turn starts — a pointer, never a body, so the read path's
+# verify-before-relying discipline still runs through memory_show. The
+# predicate fires on ~2% of audited turns (docs/eval-results.md), which
+# is what keeps generic answers unpolluted. A delivered recall is
+# recorded as a `prompt_recall` event and counts as retrieval for the
+# audit's shield, so it also suppresses further injections for the
+# ~10-minute attribution window. Needs telemetry.enabled (off-the-books
+# injections are refused). Set false to return to purely opt-in
+# retrieval.
+prompt_recall = true
+
 # When true, memory_write dedup uses cosine similarity on sentence
 # embeddings instead of Jaccard on token sets — catches paraphrases
 # like "the database" / "Postgres" that lexical overlap misses.
@@ -388,6 +404,16 @@ class BehaviorConfig:
     # Recurrence-fed ranking nudge (bounded ≤ +10%) reading the persisted
     # `corroborations` rollup. Opt-in — see DEFAULT_CONFIG.
     corroboration_boost: bool = False
+    # Score-gated recall at prompt time (`hook.run_prompt_recall`,
+    # wired to the plugin's UserPromptSubmit hook). Default ON — the
+    # delivery is gated by the silent-miss predicate itself (v1 top-1
+    # "high" plus its shields, ~2% of audited turns), which is the
+    # don't-pollute-generic-answers stance carried by a bar instead of
+    # by opt-in. Requires `telemetry.enabled` at the call site: an
+    # unlogged injection is invisible to the Stop-hook shield and
+    # unmeasurable, so the recall path refuses to fire rather than
+    # fire off the books. See DEFAULT_CONFIG for prose.
+    prompt_recall: bool = True
     # Semantic dedup is opt-in — see DEFAULT_CONFIG for prose.
     semantic_dedup: bool = False
     # Provider selection — "auto" (default), "torch", or "fastembed".
@@ -1076,6 +1102,7 @@ def load_config(path: Path | None = None) -> Config:
             corroboration_boost=_coerce_bool(
                 behavior_raw.get("corroboration_boost"), False
             ),
+            prompt_recall=_coerce_bool(behavior_raw.get("prompt_recall"), True),
             semantic_dedup=_coerce_bool(behavior_raw.get("semantic_dedup"), False),
             semantic_provider=str(behavior_raw.get("semantic_provider", "auto")),
             semantic_model_name=str(

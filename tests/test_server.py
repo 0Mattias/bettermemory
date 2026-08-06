@@ -6401,7 +6401,7 @@ _DESC_BASELINE = {
     # so the description was naming a transport the hook does not use. The
     # tool's registration is unchanged and deliberately so: no MCP dispatch
     # in one maintainer's event log is n=1, not evidence about other clients.
-    "memory_audit_turn": 798,
+    "memory_audit_turn": 829,
     "memory_list": 454,
     "memory_record_use": 1556,
     "memory_remove": 463,

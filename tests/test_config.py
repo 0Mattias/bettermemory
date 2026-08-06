@@ -314,6 +314,7 @@ def test_default_config_round_trips_through_load_config(tmp_path: Path) -> None:
         == fresh.behavior.recency_boost_half_life_days
     )
     assert loaded.behavior.semantic_dedup == fresh.behavior.semantic_dedup
+    assert loaded.behavior.prompt_recall == fresh.behavior.prompt_recall
     assert loaded.behavior.semantic_model_name == fresh.behavior.semantic_model_name
     assert (
         loaded.behavior.semantic_high_threshold
@@ -515,15 +516,21 @@ def test_load_config_reads_proposals_section(tmp_path: Path) -> None:
 
 def test_load_config_coerces_behavior_bool_fields(tmp_path: Path) -> None:
     """`bool(...)` wraps the lookup so a missing field defaults False/True
-    via the dataclass without crashing, and an explicit value is coerced."""
+    via the dataclass without crashing, and an explicit value is coerced.
+    `prompt_recall` is the one default-TRUE bool in the batch, so its
+    explicit-false round-trip is the direction that proves the override
+    reaches the loader (a default-true knob that ignored its TOML value
+    would pass every default-shaped test in this file)."""
     config_path = tmp_path / "config.toml"
     config_path.write_text(
-        "[behavior]\nrequire_write_confirmation = true\nsemantic_dedup = true\n",
+        "[behavior]\nrequire_write_confirmation = true\nsemantic_dedup = true\n"
+        "prompt_recall = false\n",
         encoding="utf-8",
     )
     cfg = load_config(config_path)
     assert cfg.behavior.require_write_confirmation is True
     assert cfg.behavior.semantic_dedup is True
+    assert cfg.behavior.prompt_recall is False
 
 
 def test_load_config_coerces_behavior_str_field(tmp_path: Path) -> None:

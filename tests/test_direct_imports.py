@@ -562,6 +562,19 @@ def test_cli_session_start_cmd_direct_import() -> None:
     assert exc.value.code == 0
 
 
+def test_cli_prompt_recall_cmd_direct_import() -> None:
+    """Same `_cmd` suffix rationale as its hook siblings: the module is
+    hook-facing, and a future `handlers/prompt_recall.py` twin is
+    exactly the basename collision the round-3 rename removed."""
+    from bettermemory.cli import prompt_recall_cmd
+
+    subparser = _registered_parser(prompt_recall_cmd, "prompt_recall_cmd")
+    assert callable(prompt_recall_cmd.run)
+    with pytest.raises(SystemExit) as exc:
+        subparser.parse_args(["--help"])
+    assert exc.value.code == 0
+
+
 def test_cli_sync_direct_import() -> None:
     from bettermemory.cli import sync
 

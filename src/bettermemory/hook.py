@@ -1,4 +1,5 @@
-"""Client-side hook entry point for end-of-turn audit telemetry.
+"""Client-side hook entry points: the Stop-hook turn audit and the
+UserPromptSubmit prompt recall — one probe, two moments.
 
 The audit MCP tool (`memory_audit_turn`) needs to fire after every
 assistant turn to populate silent-miss telemetry. The model is
@@ -8,12 +9,21 @@ distribution point is a Claude Code Stop hook: the harness invokes
 a CLI on the user's machine at the end of every turn, before
 control returns to the user.
 
-This module is the thin CLI surface that Stop hooks wire to. It
-reads Claude Code's Stop hook payload from stdin
-(`{session_id, transcript_path, cwd, hook_event_name}`), parses the
-transcript JSONL to find the latest user message and assistant
-response, and calls `audit.probe_for_miss` against the store
-identified by `BETTERMEMORY_DIR` (or the usual resolution rules).
+This module is the thin CLI surface those hooks wire to. The Stop
+half (`main` / `run_audit`) reads Claude Code's Stop hook payload
+from stdin (`{session_id, transcript_path, cwd, hook_event_name}`),
+parses the transcript JSONL to find the latest user message and
+assistant response, and calls `audit.probe_for_miss` against the
+store identified by `BETTERMEMORY_DIR` (or the usual resolution
+rules). The UserPromptSubmit half (`prompt_main` /
+`run_prompt_recall`) runs the SAME probe over the prompt being
+submitted — before the turn, via the shared `_probe_message` — and,
+where the Stop hook would later have flagged a silent miss, prints a
+score-gated pointer block that Claude Code injects into the model's
+context instead. For years the probe computed "was memory needed
+this turn?" every turn and wrote the answer to the log after the
+fact; the recall half is that same answer delivered while it can
+still change the turn.
 
 Cross-process limitation: the model and the hook run in different
 processes, so the hook can't share the model's in-memory
@@ -103,8 +113,10 @@ from .attribution import attribute_uses
 from .audit import (
     ATTRIBUTION_LOOKBACK_SECONDS,
     REAUDIT_DEDUP_WINDOW_SECONDS,
+    MissReport,
     is_duplicate_audit,
     probe_for_miss,
+    prompt_recall_fields,
     search_miss_fields,
     turn_audited_fields,
 )
@@ -112,7 +124,7 @@ from .config import Config, load_config
 from .events import Recorder, redact_query
 from .events import iter_events_window
 from .models import utcnow
-from .origin import capture as capture_origin
+from .origin import Origin, capture as capture_origin
 from .store import MemoryNotFoundError, Store, TombstonedError
 from .time_utils import parse_event_ts
 
@@ -164,8 +176,24 @@ _SYNTHETIC_USER_PREFIXES = (
 # radius. Without this cap the hook process would buffer the entire pipe
 # into memory before `json.loads` got a chance to reject. An oversized
 # payload is treated as a malformed input — the hook silently no-ops,
-# same contract as a bad JSON payload.
+# same contract as a bad JSON payload. The UserPromptSubmit payload adds
+# the raw `prompt` text; Claude Code caps prompts well under this bound,
+# and an over-cap payload no-ops identically (no recall beats a blocked
+# prompt).
 _STDIN_PAYLOAD_CAP_BYTES = 64 * 1024
+
+# `triggered_from` values stamped by OUT-OF-PROCESS writers — the two
+# client-side hooks, which record under Claude Code's transcript session
+# id rather than the server's `sess_<hex>`. `_latest_in_process_session`
+# must skip every member when recovering the live server session: the
+# bridge's premise is "the newest event not written by a hook was
+# written by the in-process server", and a `prompt_recall` row admitted
+# as an anchor would hand the shield a transcript id that matches no
+# server-emitted retrieval event, silently killing it (the same
+# structurally-dead-shield failure the `retrieval_session_id` bridge
+# exists to prevent). `audit._VALID_TRIGGERED_FROM` cross-references
+# this set; extend both together.
+_OUT_OF_PROCESS_TRIGGERS: frozenset[str] = frozenset({"stop_hook", "prompt_hook"})
 
 
 def _read_payload(stdin_text: str) -> dict[str, Any]:
@@ -304,6 +332,144 @@ def _flatten_assistant_content(content: Any) -> str | None:
     return "\n".join(parts)
 
 
+def _probe_message(
+    *,
+    cfg: Config,
+    root: Path,
+    store: Store,
+    user_message: str,
+    session_id: str,
+    server_session: str | None,
+    caller_origin: Origin,
+    excluded_scopes: set[str],
+    recent: list[dict[str, Any]],
+) -> MissReport:
+    """The one probe both hooks run: production pool, production
+    ranking inputs, `probe_for_miss`, nothing else.
+
+    Shared by `run_audit` (Stop — the after-the-fact audit) and
+    `run_prompt_recall` (UserPromptSubmit — the same verdict computed
+    before the turn, delivered instead of logged). One body because
+    the two callers MUST agree: the recall path's promise is "injects
+    exactly where the audit would have flagged a silent miss", and two
+    hand-kept copies of this plumbing would let the promise drift the
+    first time one of them was retuned.
+    """
+    from .handlers.search import (
+        default_search_width,
+        ranking_events_window_seconds,
+        resolve_ranking_inputs,
+        resolve_search_pool,
+    )
+
+    # Candidate pool: production's, not an unconditional `load_all()`.
+    # `resolve_search_pool` is the same helper `memory_search` builds its
+    # pool with — the FTS prefilter above `_INDEX_THRESHOLD_DEFAULT`, the
+    # cap-starvation guard, and the BM25 corpus-statistics provider that
+    # capped slice needs. Probing the whole corpus instead ranked a
+    # strict SUPERSET of what the model's retrieval could reach, and the
+    # miss verdict reads only the rank-1 hit, so a memory production's
+    # prefilter would have dropped could take that slot and decide the
+    # verdict on its own. The filters handed here are the ones
+    # `probe_for_miss` re-applies inside `run_search` (it derives the
+    # repo/worktree pair from `caller_origin` exactly this way), so the
+    # document frequencies price exactly the collection about to be
+    # ranked. `min_survivors` is the width of a DEFAULT `memory_search`
+    # (`default_search_width` — the config knob under the same clamp a
+    # request goes through, NOT the raw knob, which `config.py` never
+    # range-checks), not the probe's `_TOP_HITS_RETAINED`: the starvation
+    # guard has to fire on the same slices a default-width retrieval's
+    # would. It does NOT track a wider or narrower REQUEST — there is no
+    # request on this path, and `resolve_search_pool` records what that
+    # leaves open.
+    #
+    # `probe_pool` is deliberately NOT named `memories`: it is a capped,
+    # query-biased SEARCH pool, and anything downstream that wants the
+    # store's size (the auto-consolidate bounded-store guard in
+    # `run_audit`) must load the active set itself.
+    probe_pool = resolve_search_pool(
+        store,
+        user_message,
+        excluded_scopes=excluded_scopes,
+        repo_filter=caller_origin.repo,
+        worktree_filter=caller_origin.worktree_root,
+        min_survivors=default_search_width(cfg.behavior),
+    )
+    # Config-driven ranking inputs: the SAME `RankingInputs` the
+    # production search handler threads
+    # (`handlers.search.resolve_ranking_inputs`), so the probe cannot
+    # rank on a different set of factors than the model's actual
+    # retrieval would have. That covers both usage-aware directions —
+    # `endorsement_boost` nudges applied memories up, `outcome_demotion`
+    # slides recently ignored/contradicted ones down — plus
+    # `corroboration_boost` and the recency half-life. Threading only the
+    # endorsement half was a telemetry-honesty bug in both directions,
+    # because the miss verdict reads ONLY the rank-1 hit: a memory
+    # production had demoted out of the top slot still held rank 1 here
+    # (masked miss), and the hit production's demotion promoted instead
+    # was never the one this probe judged (phantom miss).
+    #
+    # The event read is issued HERE, not inside the helper, and is
+    # separately scoped — NOT the dedup-widened `recent` the caller
+    # read (`REAUDIT_DEDUP_WINDOW_SECONDS`, 3600s). `recent` is a
+    # coverage read for the dedup / shield / attribution consumers,
+    # each of which applies its own narrower cutoff. The tallies
+    # enforce their own cutoffs too, so the width here is about
+    # matching production's ROTATION-PROOFING rather than bounding a
+    # count: `ranking_events_window_seconds` returns 600s with
+    # endorsement alone (narrower than `recent`) and the full 30-day
+    # negative window once demotion is on (wider), and returns None
+    # when neither flag is set — the default-config path, which pays
+    # no read at all.
+    tally_window = ranking_events_window_seconds(cfg.behavior)
+    tally_events: list[dict[str, Any]] | None = None
+    if tally_window is not None and probe_pool.memories:
+        tally_events = list(iter_events_window(root, tally_window))
+    ranking = resolve_ranking_inputs(
+        root, probe_pool.memories, cfg.behavior, now=utcnow(), events=tally_events
+    )
+    return probe_for_miss(
+        probe_pool.memories,
+        user_message,
+        recent_events=recent,
+        session_id=session_id,
+        retrieval_session_id=server_session,
+        now=utcnow(),
+        # The probe's "did the model already retrieve this turn?" shield
+        # must use the same wall-clock definition of "this turn" as the
+        # attribution pass at the Stop hook — the Stop hook fires at turn
+        # END, so a tool-heavy turn easily outlives a short window.
+        # Pre-fix this hardcoded 60s while attribution used 600s: any
+        # turn longer than a minute aged its own search event out of the
+        # shield and emitted a false `search_miss`. 600s is also the
+        # ceiling the MCP handler clamps `lookback_seconds` to; the
+        # wider window's bias is conservative (over-suppress), matching
+        # the project's stance on miss-signal noise. The recall path
+        # inherits the same window deliberately: a `prompt_recall` event
+        # is itself a retrieval kind, so one delivered recall suppresses
+        # the next injection for this window — the anti-spam bound is
+        # this constant, not a separate knob.
+        lookback_seconds=_ATTRIBUTION_LOOKBACK_SECONDS,
+        caller_origin=caller_origin,
+        excluded_scopes=excluded_scopes,
+        mode=cfg.behavior.search_mode or "hybrid",
+        # Never load an embedding model here: both hooks run as fresh
+        # processes (every Stop event; every prompt submit), so a
+        # semantic-model load (1-10s) per invocation would violate the
+        # must-never-block contract. For `search_mode = "semantic"` the
+        # probe records an explicit `no_signal`
+        # (`no_signal_reason="semantic_model_unavailable"`) instead of
+        # crashing before `turn_audited` lands; `hybrid` degrades to
+        # keyword+BM25 fusion as documented.
+        semantic_model=None,
+        half_life_days=ranking.half_life_days,
+        applied_by_id=ranking.applied_by_id,
+        negative_by_id=ranking.negative_by_id,
+        corroboration_boost=ranking.corroboration_boost,
+        corpus_stats_provider=probe_pool.corpus_stats_provider,
+    )
+
+
 def run_audit(
     *,
     user_message: str,
@@ -370,112 +536,16 @@ def run_audit(
     server_session = _latest_in_process_session(
         recent, worktree_root=caller_origin.worktree_root
     )
-    from .handlers.search import (
-        default_search_width,
-        ranking_events_window_seconds,
-        resolve_ranking_inputs,
-        resolve_search_pool,
-    )
-
-    # Candidate pool: production's, not an unconditional `load_all()`.
-    # `resolve_search_pool` is the same helper `memory_search` builds its
-    # pool with — the FTS prefilter above `_INDEX_THRESHOLD_DEFAULT`, the
-    # cap-starvation guard, and the BM25 corpus-statistics provider that
-    # capped slice needs. Probing the whole corpus instead ranked a
-    # strict SUPERSET of what the model's retrieval could reach, and the
-    # miss verdict reads only the rank-1 hit, so a memory production's
-    # prefilter would have dropped could take that slot and decide the
-    # verdict on its own. The filters handed here are the ones
-    # `probe_for_miss` re-applies inside `run_search` (it derives the
-    # repo/worktree pair from `caller_origin` exactly this way), so the
-    # document frequencies price exactly the collection about to be
-    # ranked. `min_survivors` is the width of a DEFAULT `memory_search`
-    # (`default_search_width` — the config knob under the same clamp a
-    # request goes through, NOT the raw knob, which `config.py` never
-    # range-checks), not the probe's `_TOP_HITS_RETAINED`: the starvation
-    # guard has to fire on the same slices a default-width retrieval's
-    # would. It does NOT track a wider or narrower REQUEST — there is no
-    # request on this path, and `resolve_search_pool` records what that
-    # leaves open.
-    #
-    # `probe_pool` is deliberately NOT named `memories`: it is a capped,
-    # query-biased SEARCH pool, and anything downstream that wants the
-    # store's size (the auto-consolidate bounded-store guard below) must
-    # load the active set itself.
-    probe_pool = resolve_search_pool(
-        store,
-        user_message,
-        excluded_scopes=excluded_scopes,
-        repo_filter=caller_origin.repo,
-        worktree_filter=caller_origin.worktree_root,
-        min_survivors=default_search_width(cfg.behavior),
-    )
-    # Config-driven ranking inputs: the SAME `RankingInputs` the
-    # production search handler threads
-    # (`handlers.search.resolve_ranking_inputs`), so the probe cannot
-    # rank on a different set of factors than the model's actual
-    # retrieval would have. That covers both usage-aware directions —
-    # `endorsement_boost` nudges applied memories up, `outcome_demotion`
-    # slides recently ignored/contradicted ones down — plus
-    # `corroboration_boost` and the recency half-life. Threading only the
-    # endorsement half was a telemetry-honesty bug in both directions,
-    # because the miss verdict reads ONLY the rank-1 hit: a memory
-    # production had demoted out of the top slot still held rank 1 here
-    # (masked miss), and the hit production's demotion promoted instead
-    # was never the one this probe judged (phantom miss).
-    #
-    # The event read is issued HERE, not inside the helper, and is
-    # separately scoped — NOT the dedup-widened `recent` above
-    # (`REAUDIT_DEDUP_WINDOW_SECONDS`, 3600s). `recent` is a coverage
-    # read for the dedup / shield / attribution consumers, each of which
-    # applies its own narrower cutoff. The tallies enforce their own
-    # cutoffs too, so the width here is about matching production's
-    # ROTATION-PROOFING rather than bounding a count:
-    # `ranking_events_window_seconds` returns 600s with endorsement alone
-    # (narrower than `recent`) and the full 30-day negative window once
-    # demotion is on (wider), and returns None when neither flag is set —
-    # the default-config path, which pays no read at all.
-    tally_window = ranking_events_window_seconds(cfg.behavior)
-    tally_events: list[dict[str, Any]] | None = None
-    if tally_window is not None and probe_pool.memories:
-        tally_events = list(iter_events_window(root, tally_window))
-    ranking = resolve_ranking_inputs(
-        root, probe_pool.memories, cfg.behavior, now=utcnow(), events=tally_events
-    )
-    report = probe_for_miss(
-        probe_pool.memories,
-        user_message,
-        recent_events=recent,
+    report = _probe_message(
+        cfg=cfg,
+        root=root,
+        store=store,
+        user_message=user_message,
         session_id=session_id,
-        retrieval_session_id=server_session,
-        now=utcnow(),
-        # The probe's "did the model already retrieve this turn?" shield
-        # must use the same wall-clock definition of "this turn" as the
-        # attribution pass below — the Stop hook fires at turn END, so a
-        # tool-heavy turn easily outlives a short window. Pre-fix this
-        # hardcoded 60s while attribution used 600s: any turn longer
-        # than a minute aged its own search event out of the shield and
-        # emitted a false `search_miss`. 600s is also the ceiling the
-        # MCP handler clamps `lookback_seconds` to; the wider window's
-        # bias is conservative (over-suppress), matching the project's
-        # stance on miss-signal noise.
-        lookback_seconds=_ATTRIBUTION_LOOKBACK_SECONDS,
+        server_session=server_session,
         caller_origin=caller_origin,
         excluded_scopes=excluded_scopes,
-        mode=cfg.behavior.search_mode or "hybrid",
-        # Never load an embedding model here: the hook runs as a fresh
-        # process on every Stop event, so a semantic-model load (1-10s)
-        # per turn end would violate the must-never-block contract. For
-        # `search_mode = "semantic"` the probe records an explicit
-        # `no_signal` (`no_signal_reason="semantic_model_unavailable"`)
-        # instead of crashing before `turn_audited` lands; `hybrid`
-        # degrades to keyword+BM25 fusion as documented.
-        semantic_model=None,
-        half_life_days=ranking.half_life_days,
-        applied_by_id=ranking.applied_by_id,
-        negative_by_id=ranking.negative_by_id,
-        corroboration_boost=ranking.corroboration_boost,
-        corpus_stats_provider=probe_pool.corpus_stats_provider,
+        recent=recent,
     )
     # Emit the audit event so cadence is visible even when there's
     # nothing to flag — matches the MCP handler's discipline. Honour
@@ -634,6 +704,213 @@ def run_audit(
     return report.to_dict()
 
 
+# Ceiling on the rendered recall block. The snippet is already
+# query-window-bounded by the search layer (~200 chars) and the block
+# injects exactly one hit, so a typical render sits near 700 chars; the
+# cap is the guard against a pathological scope list or a future edit
+# quietly turning a pointer into a payload. Enforced by truncating the
+# SNIPPET (the only unbounded-ish part), never the instructions — a
+# recall whose "verify before relying" line got cut would be worse than
+# no recall.
+_RECALL_BLOCK_CAP_CHARS = 1_200
+
+
+def _render_recall_block(report: MissReport) -> str:
+    """Render the injected context block for a miss-verdict report.
+
+    One hit only — the verdict reads only rank 1 (`THRESHOLD_RULE_V1`),
+    so rank 1 is the only hit the ~2%-of-turns fire rate was measured
+    for; injecting the rank 2-3 hits would widen delivery beyond the
+    measured rule exactly the way the dropped w1/w2 label-widening
+    candidates were measured NOT to earn (docs/ROADMAP.md).
+
+    The block is a POINTER, not a payload: id + scopes + the
+    query-biased snippet that cleared the bar, plus the verify-first
+    instruction. Full bodies are deliberately not injected — the read
+    path's staleness machinery (path drift, claim drift, verdicts)
+    lives on `memory_show` / `memory_search`, and a body delivered
+    around it would be the one read surface in the product that skips
+    verification. The model is told to fetch; the fetch carries the
+    signals.
+    """
+    hit = report.top_hits[0]
+    scopes = ", ".join(hit.scopes)
+    snippet = " ".join(hit.snippet.split())
+    frame = (
+        "bettermemory recall (score-gated: a stored memory ranks high for "
+        "this prompt; this fires on ~2% of turns):\n"
+        f"- {hit.id} [{scopes}]\n"
+        '  "{snippet}"\n'
+        "Verify before relying: memory_show(id) carries the full body and "
+        "staleness verdict, and say so when it shapes the reply. "
+        'Irrelevant? memory_record_use([id], outcome="ignored") tunes '
+        "this down."
+    )
+    overhead = len(frame) - len("{snippet}")
+    room = _RECALL_BLOCK_CAP_CHARS - overhead
+    if len(snippet) > room:
+        snippet = snippet[: max(room - 1, 0)].rstrip() + "…"
+    return frame.replace("{snippet}", snippet)
+
+
+def run_prompt_recall(
+    *,
+    prompt: str,
+    session_id: str,
+    config: Config | None = None,
+) -> str | None:
+    """UserPromptSubmit entry point: probe the submitted prompt and, on
+    a would-be silent miss, return the context block to inject (None
+    otherwise — the caller prints nothing and Claude Code adds nothing).
+
+    This is `run_audit`'s verdict computed BEFORE the turn instead of
+    after it. Same pool, same ranking inputs, same threshold rule, same
+    four shields (`_probe_message` is shared code, not a parallel
+    implementation), so it fires exactly where the Stop hook would
+    otherwise have flagged a `search_miss` — the machine that already
+    decided "memory was needed this turn" now delivers the answer while
+    it is still actionable instead of filing the failure afterward.
+    The founding don't-pollute-generic-answers stance is carried by the
+    bar (v1 top-1 "high" plus the shields, ~2% of audited turns —
+    docs/eval-results.md), not by opt-in.
+
+    On a miss this records a `prompt_recall` event BEFORE returning the
+    block. The event is load-bearing twice over: it is a member of
+    `audit._RETRIEVAL_EVENT_KINDS`, so the Stop hook's audit of this
+    same turn sees the delivery and reports `ok` (a delivered pointer
+    is not a SILENT miss), and it carries the full `MissHit` shapes so
+    delivered recalls stay replayable under future threshold rules
+    exactly like flagged misses. Same-worktree suppression rides the
+    same membership: a second high-scoring prompt within the
+    attribution window after a delivery probes `ok`, which is the
+    anti-spam bound.
+
+    Honesty note on the one shield asymmetry: the retrieval shield asks
+    "was memory retrieved in the last 600s", and at prompt time every
+    such event belongs to a PREVIOUS turn — so a session actively using
+    memory gets no injections. That is the conservative direction
+    (over-suppress), deliberate, and cheap: a session with a live
+    retrieval reflex doesn't need prodding.
+
+    Telemetry config is honoured the same way `run_audit` honours it:
+    with `telemetry.enabled = false` the Recorder drops the event, and
+    the block is NOT injected — an unlogged injection would be
+    invisible to the Stop-hook shield and re-flagged as a miss, and a
+    delivery lane that can't be measured shouldn't fire at all.
+    """
+    cfg = config or load_config(None)
+    if not cfg.behavior.prompt_recall or not cfg.telemetry.enabled:
+        return None
+    root = cfg.resolved_directory()
+    if not root.exists():
+        return None
+    store = Store(root)
+    recent = list(iter_events_window(root, REAUDIT_DEDUP_WINDOW_SECONDS))
+    caller_origin = capture_origin()
+    excluded_scopes = _disabled_scopes_from_events(
+        recent, worktree_root=caller_origin.worktree_root
+    )
+    server_session = _latest_in_process_session(
+        recent, worktree_root=caller_origin.worktree_root
+    )
+    report = _probe_message(
+        cfg=cfg,
+        root=root,
+        store=store,
+        user_message=prompt,
+        session_id=session_id,
+        server_session=server_session,
+        caller_origin=caller_origin,
+        excluded_scopes=excluded_scopes,
+        recent=recent,
+    )
+    if not report.is_miss:
+        return None
+    block = _render_recall_block(report)
+    recorder = Recorder(
+        root=root,
+        session_id=session_id,
+        enabled=cfg.telemetry.enabled,
+        max_bytes=cfg.telemetry.max_bytes,
+        log_queries_verbatim=cfg.telemetry.log_queries_verbatim,
+        worktree_root=caller_origin.worktree_root,
+    )
+    recorder.record(
+        "prompt_recall",
+        **prompt_recall_fields(
+            report,
+            session_id=session_id,
+            probe_mode=cfg.behavior.search_mode or "hybrid",
+            injected_chars=len(block),
+        ),
+    )
+    return block
+
+
+def prompt_main(argv: list[str] | None = None) -> int:
+    """CLI entry point wired into `bettermemory prompt-recall`.
+
+    Reads the Claude Code UserPromptSubmit payload from stdin
+    (`{session_id, transcript_path, cwd, hook_event_name, prompt}`),
+    and prints the recall block to stdout when — and only when — the
+    probe verdict is a would-be miss. Claude Code injects stdout
+    verbatim into the model's context; empty stdout adds nothing.
+    `--prompt` / `--session-id` drive it manually for debugging.
+
+    Always exits 0 — this hook runs on EVERY prompt submission, ahead
+    of the model seeing the prompt, so a failure here is strictly
+    worse than a missing recall. Errors go to stderr and are swallowed
+    at the exit code, mirroring `main`.
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="bettermemory prompt-recall",
+        description="Score-gated memory recall for a just-submitted prompt.",
+    )
+    parser.add_argument(
+        "--prompt",
+        type=str,
+        default=None,
+        help="Prompt text to probe. When omitted, read from the "
+        "UserPromptSubmit hook stdin payload.",
+    )
+    parser.add_argument(
+        "--session-id",
+        type=str,
+        default=None,
+        help="Session id for event correlation. When omitted, read "
+        "from the UserPromptSubmit hook stdin payload.",
+    )
+    args = parser.parse_args(argv)
+
+    try:
+        payload: dict[str, Any] = {}
+        if args.prompt is None or args.session_id is None:
+            # Same bounded read + silent-no-op contract as `main`; see
+            # the `_STDIN_PAYLOAD_CAP_BYTES` comment.
+            try:
+                raw_payload = bounded_stream_read(
+                    sys.stdin.buffer, _STDIN_PAYLOAD_CAP_BYTES
+                )
+            except ValueError:
+                return 0
+            payload = _read_payload(raw_payload.decode("utf-8", errors="replace"))
+
+        prompt = args.prompt if args.prompt is not None else payload.get("prompt")
+        session_id = args.session_id or payload.get("session_id")
+        if not prompt or not isinstance(prompt, str) or not session_id:
+            return 0
+
+        block = run_prompt_recall(prompt=prompt, session_id=str(session_id))
+        if block:
+            print(block, file=sys.stdout)
+            sys.stdout.flush()
+    except Exception as exc:  # noqa: BLE001 — hook must never block a prompt
+        print(f"bettermemory prompt-recall: {exc}", file=sys.stderr)
+    return 0
+
+
 def _disabled_scopes_from_events(
     events: list[dict[str, Any]],
     *,
@@ -689,12 +966,14 @@ def _latest_in_process_session(
     *,
     worktree_root: str | None = None,
 ) -> str | None:
-    """Session id of the most recent non-Stop-hook event, or None.
+    """Session id of the most recent in-process event, or None.
 
-    In-process MCP tool calls and the Stop hook write to the same event
-    log under different session-id spaces (the server's `sess_<hex>` vs.
-    Claude Code's transcript session id). Stop-hook events tag
-    `triggered_from="stop_hook"`; everything else is in-process. The last
+    In-process MCP tool calls and the client-side hooks write to the
+    same event log under different session-id spaces (the server's
+    `sess_<hex>` vs. Claude Code's transcript session id). Hook events
+    tag `triggered_from` with a member of `_OUT_OF_PROCESS_TRIGGERS`
+    (`"stop_hook"` for the Stop hook, `"prompt_hook"` for the
+    UserPromptSubmit recall); everything else is in-process. The last
     such event identifies the live server session whose disabled-scope
     toggles the hook should honour. `events` is in chronological (append)
     order, so the latest match is found by walking in reverse.
@@ -716,7 +995,7 @@ def _latest_in_process_session(
     """
     fallback: str | None = None
     for event in reversed(events):
-        if event.get("triggered_from") == "stop_hook":
+        if event.get("triggered_from") in _OUT_OF_PROCESS_TRIGGERS:
             continue
         session = event.get("session") or event.get("session_id")
         if not isinstance(session, str):

@@ -21,8 +21,15 @@ What the model acts on, as it appears on a search hit:
 The model repoints the path with `memory_update`, attests the rest
 with `memory_verify`, and answers from the corrected memory.
 
-- Retrieval is opt-in. `memory_search` is a deliberate tool call;
-  nothing is auto-injected into context.
+- Retrieval is opt-in at the tool surface. `memory_search` is a
+  deliberate tool call; the one delivery that bypasses it is the
+  score-gated prompt-recall hook (3.41.0), which injects a single
+  id + snippet pointer on the ~2% of prompts the silent-miss probe
+  flags — the same predicate, threshold, and shields as the Stop-hook
+  audit, so it fires exactly where the audit would have logged a
+  `search_miss` after the fact. Bodies are never injected; the
+  verify-before-relying read path stays on `memory_show`.
+  `[behavior] prompt_recall = false` restores purely opt-in retrieval.
 - Claims about the user always stage for confirmation before commit.
 - Write gates instead of trust: durability check (rejects transient
   state), credential check (rejects secret-shaped tokens), duplicate

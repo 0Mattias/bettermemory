@@ -56,6 +56,15 @@ Reading the table:
   era now dominates the log, so the columns converge as the early
   signal-poor months shrink as a share of all time. Read the trend,
   not either column alone.
+- **The miss series ends in its current meaning at 3.41.0.** The
+  prompt-recall hook now runs the same predicate at prompt time and
+  converts a would-be miss into a `prompt_recall` delivery event plus
+  an `ok` audit verdict, so on hook-wired stores with the default
+  `[behavior] prompt_recall = true` the `search_miss` lane measures
+  only the residual the recall path could not serve. The next
+  snapshot's miss columns are not comparable to this one's — same
+  discontinuity discipline as the 2026-07-22 cutoff above, named
+  before the numbers rather than after.
 - **The `silent_miss_rate` figures are a floor, and the low value is
   substantially an artifact of message length.** The v1 verdict fires on
   a coverage fraction whose denominator grows with the user's message,

@@ -218,10 +218,21 @@ class Footprint(NamedTuple):
 # — the same 60 a post-scrub boolean flag costs in the table below, which is
 # the fourth independent confirmation that the price list there is still
 # accurate rather than inherited.
+# Re-measured 2026-08-05 at 3.41.0. Two releases moved two legs:
+# 3.40.0 grew descriptions +438 (claims-at-write bullets, offset by its
+# E1-style cuts elsewhere in the window) and input_schemas +190 (the
+# `claims` parameter on memory_write / memory_verify) without
+# re-measuring this table — exactly the drift the module docstring's
+# re-measure rule exists to prevent, repaired here rather than
+# compounded; 3.41.0 adds +31 of descriptions (the audit-turn DESC now
+# names `prompt_recall` in the shield enumeration). The recall hook
+# itself costs nothing resident — its delivery is hook stdout, which no
+# leg of this table measures (the injected block's size is recorded
+# per-event as `injected_chars` instead).
 _FOOTPRINT_BASELINE = Footprint(
     instructions=1_608,
-    descriptions=25_419,
-    input_schemas=5_353,
+    descriptions=25_888,
+    input_schemas=5_543,
     output_schemas=1_077,
     skill_frontmatter=759,
     tool_count=18,

@@ -40,6 +40,7 @@ from . import (
     ingest,
     init as init_cmd,
     migrate,
+    prompt_recall_cmd,
     proposals,
     reindex,
     rename_scope,
@@ -123,6 +124,7 @@ def _build_parser() -> tuple[
         "reindex": reindex.add_subparser(sub),
         "audit-turn": audit_turn_cmd.add_subparser(sub),
         "session-start": session_start_cmd.add_subparser(sub),
+        "prompt-recall": prompt_recall_cmd.add_subparser(sub),
         "consolidate": consolidate.add_subparser(sub),
         "ingest": ingest.add_subparser(sub),
         "eval": eval_cmd.add_subparser(sub),
@@ -186,6 +188,9 @@ def main() -> None:
         return
     if cmd == "session-start":
         session_start_cmd.run(args)
+        return
+    if cmd == "prompt-recall":
+        prompt_recall_cmd.run(args)
         return
     if cmd == "consolidate":
         consolidate.run(args)

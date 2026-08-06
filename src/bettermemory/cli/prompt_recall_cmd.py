@@ -1,11 +1,10 @@
 """`bettermemory prompt-recall` — Claude Code UserPromptSubmit recall.
 
-The `_cmd`-free basename is safe here (no `handlers/prompt_recall.py`
-sibling exists), but the module keeps the suffix-free name short of one
-anyway: the command is hook-facing like `audit_turn_cmd` /
-`session_start_cmd`, and a future in-process handler twin is exactly
-the collision the round-3 rename existed to prevent, so the name
-follows its siblings.
+A suffix-free basename would be safe today (no handlers/prompt_recall
+sibling exists), but the module carries the cmd suffix anyway: the
+command is hook-facing like `audit_turn_cmd` / `session_start_cmd`,
+and a future in-process handler twin is exactly the collision the
+round-3 rename existed to prevent, so the name follows its siblings.
 """
 
 from __future__ import annotations
@@ -27,7 +26,7 @@ def add_subparser(
         "only when that probe says the turn would otherwise be flagged "
         "a silent miss. Claude Code injects stdout into the model's "
         "context; empty stdout adds nothing, which is the common case "
-        "(~2% of audited turns fire). A delivered recall is recorded "
+        "(roughly one audited turn in fifty fires). A delivered recall is recorded "
         "as a `prompt_recall` event, which the audit counts as "
         "retrieval — so the same turn is not re-flagged and a second "
         "injection is suppressed for the attribution window. Disable "

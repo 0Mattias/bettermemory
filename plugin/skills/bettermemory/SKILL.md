@@ -26,7 +26,7 @@ The plugin's `.mcp.json` launches the server with no config overrides, and `load
 
 ## When to retrieve
 
-Memory is **OPT-IN retrieval**. Stored memories are NOT in your context unless you call `memory_search`. **Default to not retrieving.** False positives (irrelevant context cascading through a conversation) are much worse than false negatives (one followup turn).
+Memory is **OPT-IN retrieval**. Stored memories are NOT in your context unless you call `memory_search` — with one narrow exception: the prompt-recall hook may inject a single id + snippet pointer when a stored memory scores high for the submitted prompt (~2% of turns). Treat an injected pointer as a lead, not a body: `memory_show` it before relying on it, and the transparency rule applies unchanged. **Default to not retrieving.** False positives (irrelevant context cascading through a conversation) are much worse than false negatives (one followup turn).
 
 Call `memory_search` only when:
 

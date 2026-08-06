@@ -1397,6 +1397,56 @@ def test_use_token_expired_is_classified_in_session(tmp_path: Path) -> None:
     )
 
 
+def test_prompt_recall_is_classified_in_session(tmp_path: Path) -> None:
+    """`prompt_recall` (3.41.0) is written by the UserPromptSubmit hook
+    under Claude Code's transcript session id — the SAME id the Stop
+    hook stamps on that conversation's `turn_audited` rows — so it is
+    in-session by construction, and this is the hand-written per-kind
+    guard the roster comment in `eval.py` demands alongside every new
+    `_KNOWN_SIDE_EFFECT_KINDS` entry (see
+    `test_use_token_expired_is_classified_in_session` above for why the
+    partition apparatus cannot catch a mis-landing itself).
+
+    The behavioural half mirrors production's event order: the recall
+    fires BEFORE the turn, the Stop hook's `turn_audited` lands after —
+    one session, two events, and a census that reads the recall as
+    admin-recorded would drop the session that Claude Code most
+    definitely ran."""
+    from datetime import datetime, timezone
+
+    from bettermemory.eval import (
+        ADMIN_RECORDED_EVENT_KINDS,
+        _IN_SESSION_SIDE_EFFECT_KINDS,
+    )
+
+    assert "prompt_recall" in _IN_SESSION_SIDE_EFFECT_KINDS
+    assert "prompt_recall" not in ADMIN_RECORDED_EVENT_KINDS
+
+    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    _write_event(
+        tmp_path,
+        "prompt_recall",
+        ts=now_iso,
+        session="transcript-live",
+        triggered_from="prompt_hook",
+        injected_chars=700,
+    )
+    _write_event(
+        tmp_path,
+        "turn_audited",
+        ts=now_iso,
+        session="transcript-live",
+        verdict="ok",
+        triggered_from="stop_hook",
+    )
+    diag = _check_audit_turn_cadence(tmp_path)
+    assert diag.details["sessions"] == 1
+    assert diag.details["total_events"] == 2, (
+        "the recall event was dropped from the census — it is being read "
+        "as admin-recorded, which also drops its session"
+    )
+
+
 def test_audit_turn_cadence_excludes_cli_attributed_in_session_kinds(
     tmp_path: Path,
 ) -> None:

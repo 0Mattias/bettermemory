@@ -42,8 +42,13 @@ Offline, throwaway store.
 
 - Every hit carries a staleness verdict — calendar age, the paths it
   cites, commits landed since it was last confirmed.
-- Nothing is auto-injected; retrieval is a deliberate tool call. The 18
-  default tools still charge schema every turn: a serialized
+- Retrieval is a deliberate tool call, with one score-gated exception:
+  on the rare prompts where the silent-miss probe says memory was
+  needed (the measured rate lives in [docs/eval-results.md](docs/eval-results.md)),
+  the recall hook injects the top hit's id + snippet — a
+  pointer, never a body, so verification still runs through
+  `memory_show` (`[behavior] prompt_recall`; off = purely opt-in). The
+  18 default tools still charge schema every turn: a serialized
   `tools/list` of 33,960 bytes, 27,092 of it names and descriptions,
   measured 2026-07-31 at 3.32.0 ([bench/toolcost][toolcost]). CI caps
   the descriptions.

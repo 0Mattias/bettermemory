@@ -33,8 +33,11 @@ from bettermemory.hook import (
     _latest_in_process_session,
     _pending_retrievals,
     _read_payload,
+    _render_recall_block,
     main as hook_main,
+    prompt_main,
     run_audit,
+    run_prompt_recall,
 )
 from bettermemory.store import Store
 
@@ -930,6 +933,15 @@ def test_hook_attributes_use_when_body_appears_in_reply(
     assert ev["auto"] is False
     assert ev["ids"] == [written.id]
     assert isinstance(ev["claim_excerpts"], list)
+    # Producer-side pin, load-bearing since the 3.41.0 dedup rewrite:
+    # `_already_recorded_pending_ids` derives the session bridge
+    # PER-EVENT from this tag (a `use` row under a transcript id is
+    # accepted because the row itself says a hook wrote it — the old
+    # whole-log stop-hook-session pre-pass is gone). An attributed use
+    # event that dropped the stamp would stop deduping against the
+    # in-process auto-fallback and double-count the retrieval. The
+    # AUTO-fallback shape has the same pin in its own test below.
+    assert ev["triggered_from"] == "stop_hook"
     assert "grafana.internal/d/api-latency" in ev["claim_excerpts"][0]
 
 
@@ -2438,3 +2450,346 @@ def test_run_audit_ranks_productions_candidate_pool(
     assert result["verdict"] == "miss"
     misses = [e for e in iter_events(mem_dir) if e["kind"] == "search_miss"]
     assert len(misses) == 1
+
+
+# ---------------------------------------------------------------------------
+# UserPromptSubmit recall — the probe's verdict delivered before the turn.
+#
+# `run_prompt_recall` is `run_audit`'s predicate re-aimed (shared
+# `_probe_message`), so this family does not re-test the shields the
+# run_audit family above already pins. What it pins is the DELIVERY
+# contract: inject exactly on a would-be miss, record the injection as a
+# retrieval-kind event, refuse to fire off the books, and never disturb
+# the server-session anchor the Stop hook bridges through.
+# ---------------------------------------------------------------------------
+
+
+def test_run_prompt_recall_injects_on_would_be_miss(tmp_path: Path) -> None:
+    """Happy path: high-relevance hit, no recent retrieval — the recall
+    fires. The block carries the id (the pointer), the scopes, and the
+    verify-first instruction; the `prompt_recall` event carries
+    `injected_chars == len(block)` so the per-turn context cost the
+    resident-footprint suite deliberately does not measure stays
+    measurable from the log."""
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    memory_id = _write_miss_memory(mem_dir)
+
+    block = run_prompt_recall(
+        prompt=_MISS_QUERY,
+        session_id="transcript-recall",
+        config=_miss_config(mem_dir),  # type: ignore[arg-type]
+    )
+    assert block is not None
+    assert memory_id in block
+    assert "memory_show" in block
+    assert "infrastructure" in block
+
+    events = list(iter_events(mem_dir))
+    recalls = [e for e in events if e["kind"] == "prompt_recall"]
+    assert len(recalls) == 1
+    event = recalls[0]
+    assert event["triggered_from"] == "prompt_hook"
+    assert event["injected_chars"] == len(block)
+    assert event["top_hits"][0]["id"] == memory_id
+    assert event["session"] == "transcript-recall"
+
+
+def test_run_prompt_recall_silent_when_probe_says_ok(tmp_path: Path) -> None:
+    """A recent retrieval in the window means the probe reports `ok`,
+    and `ok` means NOTHING is injected and NOTHING is recorded — the
+    common case must leave the log byte-identical, because the recall
+    hook runs on every single prompt submission."""
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    memory_id = _write_miss_memory(mem_dir)
+
+    recorder = Recorder(root=mem_dir, session_id="transcript-recall", enabled=True)
+    recorder.record("search", query=_MISS_QUERY, returned=[memory_id])
+    before = list(iter_events(mem_dir))
+
+    block = run_prompt_recall(
+        prompt=_MISS_QUERY,
+        session_id="transcript-recall",
+        config=_miss_config(mem_dir),  # type: ignore[arg-type]
+    )
+    assert block is None
+    assert list(iter_events(mem_dir)) == before
+
+
+def test_run_prompt_recall_self_suppresses_within_window(tmp_path: Path) -> None:
+    """The delivered recall is itself a retrieval-kind event, so an
+    immediate second high-scoring prompt probes `ok` — the anti-spam
+    bound is `_RETRIEVAL_EVENT_KINDS` membership plus the attribution
+    window, not a separate knob. One injection, then silence."""
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    _write_miss_memory(mem_dir)
+    cfg = _miss_config(mem_dir)
+
+    first = run_prompt_recall(
+        prompt=_MISS_QUERY,
+        session_id="transcript-recall",
+        config=cfg,  # type: ignore[arg-type]
+    )
+    second = run_prompt_recall(
+        prompt=_MISS_QUERY,
+        session_id="transcript-recall",
+        config=cfg,  # type: ignore[arg-type]
+    )
+    assert first is not None
+    assert second is None
+    events = list(iter_events(mem_dir))
+    assert len([e for e in events if e["kind"] == "prompt_recall"]) == 1
+
+
+def test_stop_audit_reports_ok_after_recall(tmp_path: Path) -> None:
+    """THE honesty property the whole design leans on: a turn served by
+    an injection is not a SILENT miss. The Stop hook's audit of the
+    same turn must see the `prompt_recall` event through the retrieval
+    shield and report `ok` with no `search_miss` — otherwise every
+    delivery would be double-counted as a failure of the contract it
+    just fulfilled."""
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    _write_miss_memory(mem_dir)
+    cfg = _miss_config(mem_dir)
+
+    block = run_prompt_recall(
+        prompt=_MISS_QUERY,
+        session_id="transcript-turn",
+        config=cfg,  # type: ignore[arg-type]
+    )
+    assert block is not None
+
+    result = run_audit(
+        user_message=_MISS_QUERY,
+        assistant_response="using the stored strategy",
+        session_id="transcript-turn",
+        config=cfg,  # type: ignore[arg-type]
+    )
+    assert result["verdict"] == "ok"
+    assert result["recent_retrieval_count"] >= 1
+    kinds = [e["kind"] for e in iter_events(mem_dir)]
+    assert "search_miss" not in kinds
+    assert "turn_audited" in kinds
+
+
+def test_run_prompt_recall_respects_knob_off(tmp_path: Path) -> None:
+    """`[behavior] prompt_recall = false` restores purely opt-in
+    retrieval: no injection, no probe side effects, no event log."""
+    from bettermemory.config import (
+        BehaviorConfig,
+        Config,
+        StorageConfig,
+        TelemetryConfig,
+    )
+
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    _write_miss_memory(mem_dir)
+    cfg = Config(
+        storage=StorageConfig(directory=str(mem_dir)),
+        telemetry=TelemetryConfig(enabled=True),
+        behavior=BehaviorConfig(prompt_recall=False),
+    )
+    block = run_prompt_recall(
+        prompt=_MISS_QUERY, session_id="transcript-off", config=cfg
+    )
+    assert block is None
+    assert list(iter_events(mem_dir)) == []
+
+
+def test_run_prompt_recall_refuses_without_telemetry(tmp_path: Path) -> None:
+    """With telemetry off the Recorder would drop the `prompt_recall`
+    event, the Stop-hook shield would never see the delivery, and the
+    same turn would re-flag as a miss — an unlogged injection is worse
+    than none, so the recall path refuses to fire at all."""
+    from bettermemory.config import Config, StorageConfig, TelemetryConfig
+
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    _write_miss_memory(mem_dir)
+    cfg = Config(
+        storage=StorageConfig(directory=str(mem_dir)),
+        telemetry=TelemetryConfig(enabled=False),
+    )
+    block = run_prompt_recall(
+        prompt=_MISS_QUERY, session_id="transcript-quiet", config=cfg
+    )
+    assert block is None
+    assert list(iter_events(mem_dir)) == []
+
+
+def test_recall_event_does_not_hijack_server_session_anchor() -> None:
+    """`_latest_in_process_session` must skip `prompt_recall` rows the
+    way it skips Stop-hook rows: both are stamped with members of
+    `_OUT_OF_PROCESS_TRIGGERS`, and both carry Claude Code's transcript
+    id — a different id space from the server's `sess_<hex>`. Admitting
+    one as the anchor would hand the retrieval shield a session id that
+    matches no server-emitted event, structurally killing it (the
+    pre-2.6.x dead-shield failure, reintroduced through the new
+    writer)."""
+    events = [
+        {"ts": "2026-08-05T10:00:00Z", "session": "sess_server", "kind": "search"},
+        {
+            "ts": "2026-08-05T10:00:05Z",
+            "session": "transcript-abc",
+            "kind": "prompt_recall",
+            "triggered_from": "prompt_hook",
+        },
+    ]
+    assert _latest_in_process_session(events) == "sess_server"
+
+
+def test_render_recall_block_caps_snippet_never_instructions() -> None:
+    """The cap truncates the SNIPPET, not the frame: a recall whose
+    verify-first instruction got cut would deliver a pointer without
+    the discipline that makes pointers safe. Pathological snippet in,
+    bounded block out, instructions intact."""
+    from bettermemory.audit import MissHit, MissReport, THRESHOLD_RULE_V1
+    from bettermemory.hook import _RECALL_BLOCK_CAP_CHARS
+    from bettermemory.models import utcnow
+
+    hit = MissHit(
+        id="01TESTRECALLCAP0000000000",
+        score=1.0,
+        relevance="high",
+        scopes=("infrastructure",),
+        snippet="x" * (3 * _RECALL_BLOCK_CAP_CHARS),
+        matched_unique=2,
+        query_unique=2,
+        relevance_v2="high",
+    )
+    report = MissReport(
+        verdict="miss",
+        checked_at=utcnow(),
+        session_id="transcript-cap",
+        lookback_seconds=600,
+        recent_retrieval_count=0,
+        threshold_rule=THRESHOLD_RULE_V1,
+        top_hits=(hit,),
+        probe_query="cap probe",
+    )
+    block = _render_recall_block(report)
+    assert len(block) <= _RECALL_BLOCK_CAP_CHARS
+    assert "…" in block
+    assert "memory_show" in block
+    assert 'outcome="ignored"' in block
+    assert hit.id in block
+
+
+def test_prompt_main_injects_and_exits_zero(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """End-to-end through the CLI shim: UserPromptSubmit payload on
+    stdin, block on stdout (Claude Code injects stdout verbatim), exit
+    0. The printed text is the rendered block plus print's newline —
+    `injected_chars` on the event measures the block, not the pipe."""
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(mem_dir))
+    memory_id = _write_miss_memory(mem_dir)
+
+    payload = json.dumps(
+        {
+            "session_id": "transcript-cli",
+            "transcript_path": str(tmp_path / "t.jsonl"),
+            "cwd": str(tmp_path),
+            "hook_event_name": "UserPromptSubmit",
+            "prompt": _MISS_QUERY,
+        }
+    )
+    monkeypatch.setattr("sys.stdin", _StdinMock(payload.encode("utf-8")))
+    code = prompt_main([])
+    assert code == 0
+    out = capsys.readouterr().out
+    assert memory_id in out
+    recalls = [e for e in iter_events(mem_dir) if e["kind"] == "prompt_recall"]
+    assert len(recalls) == 1
+    assert recalls[0]["injected_chars"] == len(out.rstrip("\n"))
+
+
+def test_prompt_main_no_op_when_payload_empty(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Empty stdin — silent no-op, exit 0, no store side effects. Same
+    contract as the Stop hook's `main`, and it matters more here: this
+    hook fires on every prompt submission."""
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(tmp_path / "mem"))
+    monkeypatch.setattr("sys.stdin", _StdinMock(b""))
+    code = prompt_main([])
+    assert code == 0
+    assert capsys.readouterr().out == ""
+    assert not (tmp_path / "mem" / ".events.jsonl").exists()
+
+
+def test_prompt_main_no_op_when_stdin_oversized(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Over the 64 KiB payload cap — same bucket as malformed JSON:
+    silent no-op. A pathological pipe writer must not hold the prompt
+    hostage while the process buffers garbage."""
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(tmp_path / "mem"))
+    monkeypatch.setattr("sys.stdin", _StdinMock(b"x" * (128 * 1024)))
+    code = prompt_main([])
+    assert code == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_prompt_main_no_op_without_prompt_text(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A payload with a session id but no usable `prompt` (absent, or a
+    non-string shape a misbehaving upstream hook rewrote) is a silent
+    no-op — never a crash, never an injection built from `str(None)`."""
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(tmp_path / "mem"))
+    for payload in (
+        {"session_id": "s"},
+        {"session_id": "s", "prompt": 42},
+        {"session_id": "s", "prompt": ""},
+    ):
+        monkeypatch.setattr(
+            "sys.stdin", _StdinMock(json.dumps(payload).encode("utf-8"))
+        )
+        code = prompt_main([])
+        assert code == 0
+        assert capsys.readouterr().out == ""
+
+
+def test_prompt_main_swallows_unexpected_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A blown-up store must land on stderr and exit 0 — this hook sits
+    between the user and the model on every prompt, so the failure
+    contract is stricter than anywhere else in the product."""
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(mem_dir))
+    _write_miss_memory(mem_dir)
+
+    def _boom(**_kwargs: object) -> None:
+        raise RuntimeError("synthetic recall failure")
+
+    monkeypatch.setattr("bettermemory.hook.run_prompt_recall", _boom)
+    monkeypatch.setattr(
+        "sys.stdin",
+        _StdinMock(
+            json.dumps({"session_id": "s", "prompt": _MISS_QUERY}).encode("utf-8")
+        ),
+    )
+    code = prompt_main([])
+    assert code == 0
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "synthetic recall failure" in captured.err

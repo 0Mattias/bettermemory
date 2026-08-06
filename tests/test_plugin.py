@@ -347,7 +347,8 @@ def test_stop_hook_has_reasonable_timeout() -> None:
 # `bettermemory session-start` prints the per-scope counts, so the model
 # starts every conversation knowing what is stored instead of spending a
 # `memory_scope_overview` call to find out — or, far more often, never
-# finding out, since retrieval is opt-in and nothing prompts it.
+# finding out, since retrieval is opt-in and, between prompts the recall
+# hook's high bar doesn't fire on, nothing prompts it.
 #
 # The matcher is the failure mode worth guarding. Per the Claude Code
 # hooks reference, SessionStart's matcher values are `startup`, `resume`,
@@ -437,6 +438,91 @@ def test_session_start_hook_has_reasonable_timeout() -> None:
         assert 0 < timeout <= 60, (
             f"SessionStart hook timeout {timeout!r} is outside the 1..60s "
             f"window — hooks must not visibly block session open"
+        )
+
+
+# ---------------------------------------------------------------------------
+# UserPromptSubmit hook — score-gated recall at prompt time (3.41.0).
+#
+# The second of the stdout-injecting events. `bettermemory prompt-recall`
+# runs the same silent-miss predicate the Stop hook audits with and prints
+# a one-hit pointer block only on the ~2% of prompts that clear it; empty
+# stdout — the common case — adds nothing to context. The four guards
+# below mirror the SessionStart set: exact-subcommand pin, `|| true`,
+# matcher discipline, timeout window. UserPromptSubmit differs from
+# SessionStart on the matcher axis — the hooks reference defines NO
+# matcher values for it at all — so where the SessionStart guard checks
+# names against a documented set, this one refuses any named matcher
+# outright: a matcher here means someone assumed semantics Claude Code
+# doesn't implement, and the hook would fire anyway (or never), neither
+# of them what the author intended.
+# ---------------------------------------------------------------------------
+
+
+def test_plugin_ships_prompt_recall_hook() -> None:
+    """The UserPromptSubmit binding exists and calls the right
+    subcommand, with the `|| true` guard that keeps an older published
+    wheel (argparse exit 2) from surfacing as a hook-error banner on
+    every single prompt — the same degradation the SessionStart pin
+    guards, but per-prompt instead of per-session."""
+    body = json.loads(PLUGIN_HOOKS_PATH.read_text(encoding="utf-8"))
+    assert "UserPromptSubmit" in body["hooks"], "UserPromptSubmit event binding missing"
+    entries = body["hooks"]["UserPromptSubmit"]
+    assert entries, "UserPromptSubmit entry list is empty"
+    command_hooks = [
+        h
+        for entry in entries
+        for h in entry.get("hooks", [])
+        if h.get("type") == "command"
+    ]
+    assert command_hooks, "no command-form hook under UserPromptSubmit"
+    matched = [
+        h for h in command_hooks if "bettermemory prompt-recall" in h.get("command", "")
+    ]
+    assert matched, (
+        f"none of the UserPromptSubmit command hooks call `bettermemory "
+        f"prompt-recall`; got: {[h.get('command') for h in command_hooks]}"
+    )
+    for hook in matched:
+        assert "|| true" in hook["command"], (
+            f"UserPromptSubmit hook drops the `|| true` guard: {hook['command']!r}"
+        )
+
+
+def test_prompt_recall_matcher_is_omitted() -> None:
+    """UserPromptSubmit defines no matcher values in the hooks
+    reference, so the only correct shapes are absent / empty / `"*"`.
+    A named matcher would encode semantics the event doesn't have."""
+    body = json.loads(PLUGIN_HOOKS_PATH.read_text(encoding="utf-8"))
+    for entry in body["hooks"]["UserPromptSubmit"]:
+        matcher = entry.get("matcher")
+        assert matcher is None or matcher in {"", "*"}, (
+            f"UserPromptSubmit entry names a matcher {matcher!r}, but the "
+            f"event defines no matcher values — omit the field"
+        )
+
+
+def test_prompt_recall_hook_has_tight_timeout() -> None:
+    """This hook sits between the user pressing enter and the model
+    seeing the prompt — the most latency-sensitive seat of the three
+    hooks. The manifest grants it the TIGHTEST budget: the sub-minute
+    principle of the other two, plus a 15s ceiling of its own so a
+    wedged resolve can't hold every prompt for half a minute."""
+    body = json.loads(PLUGIN_HOOKS_PATH.read_text(encoding="utf-8"))
+    command_hooks = [
+        h
+        for entry in body["hooks"]["UserPromptSubmit"]
+        for h in entry.get("hooks", [])
+        if h.get("type") == "command"
+    ]
+    for hook in command_hooks:
+        timeout = hook.get("timeout")
+        assert timeout is not None, (
+            f"UserPromptSubmit hook is missing a timeout field: {hook!r}"
+        )
+        assert 0 < timeout <= 15, (
+            f"UserPromptSubmit hook timeout {timeout!r} is outside the "
+            f"1..15s window — this hook blocks every prompt submission"
         )
 
 

@@ -8,7 +8,17 @@ False positives (junk hits) are visible in `dead_weight` and
 *should* have been retrieved but wasn't — are structurally invisible,
 because nothing in the event log records a search that didn't happen.
 
-This module closes that loop. `probe_for_miss` runs a cheap search
+This module closes that loop, and since 3.41.0 the loop closes twice:
+`probe_for_miss` is also the predicate behind `hook.run_prompt_recall`
+(the UserPromptSubmit hook), which computes the SAME verdict before
+the turn starts and, on a would-be miss, injects the top hit's id +
+snippet instead of logging the failure after the fact. The founding
+wager is preserved by the bar, not by opt-in: the probe's threshold
+and shields fire on ~2% of audited turns (docs/eval-results.md), so
+generic answers stay unpolluted while the flagged 2% get the pointer
+when it is still actionable.
+
+`probe_for_miss` runs a cheap search
 sweep over the candidate list its CALLER supplies, using a completed
 turn's user message, and looks for a high-relevance hit. Both
 production producers supply production's own search pool
@@ -16,12 +26,13 @@ production producers supply production's own search pool
 store, so above the FTS index threshold the probe ranks the same capped
 slice the model's retrieval would have; offline tooling that hands over
 a full `load_all()` gets the whole store. When a hit exists AND no retrieval
-event (see `_RETRIEVAL_EVENT_KINDS`: `search`, `show`, or `list`)
-fired in the same session within a configurable lookback window, the
-probe returns a `MissReport` — the explicit signal that the retrieval
-contract slipped on this turn. The probe uses the model's configured
-search mode by default so it measures what the model would have done,
-not what a hypothetical scorer might have found.
+event (see `_RETRIEVAL_EVENT_KINDS`: `search`, `show`, `list`, or
+`prompt_recall`) fired in the same session within a configurable
+lookback window, the probe returns a `MissReport` — the explicit
+signal that the retrieval contract slipped on this turn. The probe
+uses the model's configured search mode by default so it measures
+what the model would have done, not what a hypothetical scorer might
+have found.
 
 Design notes:
 
@@ -36,12 +47,15 @@ Design notes:
   done."
 
 - **`memory_show` and `memory_list` count as retrieval activity too.**
-  The miss probe doesn't fire when a `search`, `show`, or `list`
-  event landed in the session's lookback window — all three are
-  retrievals from the model's perspective (`list` surfaces ids and,
-  with `with_bodies=True`, full bodies — the model has the content
-  it needed without a `search`). Counting only `search` would mis-flag
-  the legitimate search-then-show and triage-via-list flows.
+  The miss probe doesn't fire when a `search`, `show`, `list`, or
+  `prompt_recall` event landed in the session's lookback window — the
+  first three are retrievals from the model's perspective (`list`
+  surfaces ids and, with `with_bodies=True`, full bodies — the model
+  has the content it needed without a `search`), and the fourth is
+  the UserPromptSubmit hook having already delivered the pointer, so
+  whatever the model does next the miss is not silent. Counting only
+  `search` would mis-flag the legitimate search-then-show and
+  triage-via-list flows.
 
 - **No event emitted from this module.** Like `search.search` itself,
   the probe returns a structured verdict; the *handler* records the
@@ -103,15 +117,23 @@ from .time_utils import ensure_utc, isoformat_utc, parse_event_ts
 # Events that count as "the model retrieved memory in this turn."
 # `search` is the obvious one; `show` is the equally-legitimate
 # direct-by-id retrieval; `list` is the same surface with a different
-# entry point (scope filter, optionally with bodies). All three put
-# memory content in front of the model, so a turn where any of them
-# fired shouldn't trip the miss probe. Other event kinds (`use`,
-# `verify`, etc.) are downstream of an earlier retrieval — counting
-# them as retrieval would double-shield the audit. Kept as a
-# module-level frozenset so a future event kind (e.g. a hypothetical
-# `replay` mode) can be added in one place rather than scattered
-# across the function body.
-_RETRIEVAL_EVENT_KINDS: frozenset[str] = frozenset({"search", "show", "list"})
+# entry point (scope filter, optionally with bodies). `prompt_recall`
+# is the UserPromptSubmit hook's score-gated injection (`hook.
+# run_prompt_recall`): the hook put a stored memory's id + snippet in
+# front of the model before the turn began, so the turn is not a
+# SILENT miss whatever the model does next — and the same membership
+# makes the recall path self-limiting (a delivered recall suppresses
+# a second injection for the lookback window; the model that wants
+# more has the tool surface). All four put memory content in front of
+# the model, so a turn where any of them fired shouldn't trip the
+# miss probe. Other event kinds (`use`, `verify`, etc.) are
+# downstream of an earlier retrieval — counting them as retrieval
+# would double-shield the audit. Kept as a module-level frozenset so
+# a future event kind (e.g. a hypothetical `replay` mode) can be
+# added in one place rather than scattered across the function body.
+_RETRIEVAL_EVENT_KINDS: frozenset[str] = frozenset(
+    {"search", "show", "list", "prompt_recall"}
+)
 
 
 # Threshold rule identifiers. Bumped when the criterion changes so a
@@ -245,15 +267,21 @@ _ACK_TOKENS: frozenset[str] = frozenset(
     tok for word in _ACK_SURFACE for tok in _tokenize_unstemmed(word)
 )
 
-# Closed set of `triggered_from` discriminator values for `turn_audited`
-# and `search_miss` events. The Stop hook emits `"stop_hook"`; the
-# in-process MCP handler emits `"mcp_tool"`. Pinning the set at the
+# Closed set of `triggered_from` discriminator values for `turn_audited`,
+# `search_miss`, and `prompt_recall` events. The Stop hook emits
+# `"stop_hook"`; the in-process MCP handler emits `"mcp_tool"`; the
+# UserPromptSubmit hook emits `"prompt_hook"`. Pinning the set at the
 # builder boundary mirrors the search-mode runtime guard in
 # `search.py:761` — without this check, a typo elsewhere silently
 # produces unsplittable eval rows (downstream consumers `groupby`-split
 # on this field). Mirrors the same Literal-at-types-only situation:
-# Python doesn't enforce it at call time.
-_VALID_TRIGGERED_FROM: frozenset[str] = frozenset({"stop_hook", "mcp_tool"})
+# Python doesn't enforce it at call time. Any out-of-process value
+# added here must ALSO join `hook._OUT_OF_PROCESS_TRIGGERS`, or its
+# events become false anchors for `hook._latest_in_process_session`
+# (the server-session bridge skips on that set alone).
+_VALID_TRIGGERED_FROM: frozenset[str] = frozenset(
+    {"stop_hook", "mcp_tool", "prompt_hook"}
+)
 
 
 # Verdict literals — surfaced both in the structured return and (verbatim)
@@ -331,9 +359,9 @@ class MissReport:
     `verdict` is the load-bearing field:
 
     - ``"miss"``: a high-relevance hit exists for this turn's query AND no
-      retrieval event (see `_RETRIEVAL_EVENT_KINDS`: `search`, `show`, or
-      `list`) fired in the lookback window. The retrieval contract
-      slipped — the model should have searched.
+      retrieval event (see `_RETRIEVAL_EVENT_KINDS`: `search`, `show`,
+      `list`, or `prompt_recall`) fired in the lookback window. The
+      retrieval contract slipped — the model should have searched.
     - ``"ok"``: either no hit cleared the threshold (genuine "nothing to
       retrieve here") OR a retrieval event already fired in the lookback
       window (the model did search/show/list; nothing for the audit to
@@ -344,7 +372,7 @@ class MissReport:
       had nothing to work with."
 
     `recent_retrieval_count` is the number of retrieval events (see
-    `_RETRIEVAL_EVENT_KINDS`: `search`, `show`, or `list`) found within
+    `_RETRIEVAL_EVENT_KINDS`) found within
     `lookback_seconds` — matched on the session id, plus (when the
     caller has a worktree) any event stamped with the caller's
     `worktree_root` regardless of session (see
@@ -532,6 +560,58 @@ def search_miss_fields(
     return fields
 
 
+def prompt_recall_fields(
+    report: MissReport,
+    *,
+    session_id: str,
+    probe_mode: str,
+    injected_chars: int,
+    triggered_from: str = "prompt_hook",
+) -> dict[str, Any]:
+    """Canonical field set for a ``prompt_recall`` event — the
+    UserPromptSubmit hook's record that it injected a stored memory's
+    id + snippet into the model's context before the turn began.
+
+    Pairs with :func:`turn_audited_fields` / :func:`search_miss_fields`
+    and exists for the same drift-prevention reason: today the hook is
+    the only producer, but the builder boundary is where the shape is
+    pinned, not the call site.
+
+    Field semantics mirror ``search_miss_fields`` deliberately — a
+    ``prompt_recall`` IS the miss verdict, computed before the turn
+    instead of after it, so the full ``MissHit.to_dict`` shapes ride
+    along and any future threshold rule can be replayed over delivered
+    recalls exactly as it replays over flagged misses. Two additions:
+
+    - ``probe_mode`` — the ranker the probe used; ``search_miss``
+      leaves this on the companion ``turn_audited`` event, but a
+      recall has no companion (the Stop hook's later audit of the same
+      turn sees the recall via ``_RETRIEVAL_EVENT_KINDS`` and reports
+      ``ok``), so the mode must travel on the event itself.
+    - ``injected_chars`` — rendered size of the injected block. There
+      is no budget test for per-turn injected context (the resident
+      footprint suite measures the tool surface, not hook stdout), so
+      the log carries the number that would let one be written.
+    """
+    if triggered_from not in _VALID_TRIGGERED_FROM:
+        raise ValueError(
+            f"triggered_from must be one of "
+            f"{sorted(_VALID_TRIGGERED_FROM)!r}, got {triggered_from!r}"
+        )
+    return {
+        "event_id": generate_ulid(),
+        "session_id": session_id,
+        "threshold_rule": report.threshold_rule,
+        "lookback_seconds": report.lookback_seconds,
+        "recent_retrieval_count": report.recent_retrieval_count,
+        "top_hits": [h.to_dict() for h in report.top_hits],
+        "probe_query": report.probe_query,
+        "probe_mode": probe_mode,
+        "injected_chars": injected_chars,
+        "triggered_from": triggered_from,
+    }
+
+
 def is_duplicate_audit(
     events: list[dict[str, Any]],
     *,
@@ -615,8 +695,8 @@ def probe_for_miss(
     Runs a cheap search probe over `memories` using `user_message`, then
     asks: did the model retrieve memory this session within the last
     `lookback_seconds` (via any event in `_RETRIEVAL_EVENT_KINDS`:
-    `search`, `show`, or `list`)? The cross of those two facts gives
-    the verdict.
+    `search`, `show`, `list`, or `prompt_recall`)? The cross of those
+    two facts gives the verdict.
 
     `recent_events` is an iterable over the session's recent event log
     entries (any iterable — the function only walks it once). Callers

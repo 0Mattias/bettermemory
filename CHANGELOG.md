@@ -7,6 +7,107 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.41.0 - 2026-08-05
+
+### Added — score-gated recall at prompt time: the probe's answer, delivered instead of filed
+
+For as long as the Stop hook has existed, the product has computed the
+answer to "did this turn need memory?" on every turn — production's
+search pool, production's ranking inputs, the versioned threshold rule,
+all four shields — and written it to the event log at the one moment it
+could no longer help. The new UserPromptSubmit hook (`bettermemory
+prompt-recall`) runs the SAME probe before the turn starts:
+`hook._probe_message` is shared code, not a parallel implementation, so
+the recall path fires exactly where the audit would otherwise have
+flagged a `search_miss`. On a would-be miss it prints a one-hit pointer
+block — memory id, scopes, the query-biased snippet that cleared the
+bar, and the verify-first instruction — which Claude Code injects into
+the model's context, and records a `prompt_recall` event carrying the
+same replayable `MissHit` shapes as `search_miss` plus `probe_mode` and
+`injected_chars`.
+
+The founding "don't pollute generic answers" stance is carried by the
+bar, not by opt-in — those two were conflated. The predicate fired on
+3 of 128 audited turns on the dogfood store
+(docs/eval-results.md, the 2026-08-04 snapshot; a this-store
+measurement, not a promise), so ~98% of prompts inject nothing and the
+flagged few get a pointer, never a body: the staleness read path
+(verdicts, path drift, claim drift) stays on `memory_show`, which the
+injected block instructs the model to call before relying — the one
+delivery in the product that bypasses the tool surface still cannot
+bypass verification.
+
+Three interlocking decisions keep the telemetry honest, spelled out in
+docs/ROADMAP.md so they are not re-litigated: `prompt_recall` joins the
+retrieval-event set (a delivered pointer is not a SILENT miss, so the
+Stop audit reports `ok`, and a second injection self-suppresses for the
+attribution window — the anti-spam bound is the existing 600s constant,
+not a new knob); `telemetry.enabled = false` refuses to inject rather
+than deliver off the books (an unlogged injection would re-flag its own
+turn and be unmeasurable); and the hook stamps
+`triggered_from="prompt_hook"`, with `hook._latest_in_process_session`
+widened to skip the full out-of-process set — a recall row admitted as
+the server-session anchor would have handed the shield a transcript id
+and silently killed it. The miss lane's denominator semantics change
+with this release and are named in docs/eval.md and
+docs/eval-results.md before the first affected snapshot, the same
+discipline as the 2026-07-22 cutoff. `[behavior] prompt_recall = false`
+restores purely opt-in retrieval exactly.
+
+### Fixed — the claim oracle reaches legacy no-worktree memories from a matching checkout
+
+The 3.40.0 backfill hit 8 of 128 repo-matched memories whose origin
+carries `repo` but no `worktree_root` — records written before the
+field existed. The verify-side claim oracle refused all 8 for the
+missing tree, permanently: nothing rewrites a stored origin, so a
+legacy record could never carry claims at all. `memory_verify` now
+falls back to the CALLER's checkout when its `repo` matches the
+memory's origin repo; the write-side oracle is untouched, and the
+attestation existence check and the advisory symbol check inherit the
+same root on the same argument.
+
+### Changed — the pending-token dedup parses the tail it examines, not the log
+
+`_already_recorded_pending_ids` documented a backward early-exit and
+paid an O(N) toll before reaching it: `list(iter_events(root))` and the
+`_stop_hook_session_ids` pre-pass both parsed the entire active log on
+every turn that held pending tokens — 14.0ms of a 15.6ms call was that
+parse, while the backward loop then examined exactly one event
+(measured on the round-179 dogfood log; the numbers are in the
+function's own docstring). The new `events.iter_events_backward` reads
+each active segment's bytes once, splits lines without parsing, and
+JSON-parses lazily as the newest-first merge yields — so the demolition
+demonstration (8,003-line synthetic log, three fresh tokens) went from
+8,003 parses to 4, with an identical result set. The session bridge
+that justified the pre-pass is now derived per-event: every hook-written
+`use` row carries `triggered_from="stop_hook"` itself, proven by
+enumerating all four `use` producers in `src/` (the CLI acknowledge-debt
+writer is untagged and was never bridged under either shape), and the
+producer-side stamp is now pinned in both attribution shapes' tests so
+the equivalence cannot silently rot. Two parse-count ratchets join the
+round-181 iteration ratchet — the property "examined ≈ parsed" is what
+the fix adds, so that is what the tests count; removing the early-exit
+takes the demonstration from 4 parses back to thousands and both go
+red. Bounded by the 10MB rotation cap before and after — this was a
+constant-factor tax on every turn, not a leak, and it is now paid only
+on the tail.
+
+### Changed — one spelling for the extras install commands
+
+`doctor._install_extra_command` / `_reinstall_extra_command`, the
+search handler's semantic-mode-unavailable message, and `semantic.py`'s
+provider-unavailable warning each hand-spelled the same install
+commands — three copies of the drift that produced the 2026-08-01
+false-green's misleading remedy. The spellings now live once in
+`_install_hints.py` (import-free; `semantic.py` takes it as a lazy
+import inside the failure branch, keeping the hot path clean), doctor's
+names re-export it, and every composed message was verified
+byte-identical to its predecessor before landing. A shrink-only ratchet
+pins each command literal's per-file occurrence count over `src/`, so
+the fourth copy fails in CI rather than in a postmortem; the known
+hand-spelled `[ui]`/`[dev]` variants in `web.py`, `llm.py`, and
+`cli/ui.py` are frozen as recorded debt in that same ratchet.
+
 ## 3.40.0 - 2026-08-04
 
 ### Added — claims-at-write: declared claims, checked at declaration, watched by the drift leg

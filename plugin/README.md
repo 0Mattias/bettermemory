@@ -6,7 +6,7 @@ layer between an agent and its own past: every retrieved fact carries
 a staleness verdict, every use an attribution, and whether it helped
 is measured rather than assumed.
 
-The plugin bundles four things:
+The plugin bundles five things:
 
 1. **MCP server registration** ([`.mcp.json`](.mcp.json)) — spawns
    `uvx bettermemory` as a stdio MCP server. 18 of the 27 tools
@@ -30,6 +30,14 @@ The plugin bundles four things:
    spending a `memory_scope_overview` call on it. Reads the search
    index only (never memory bodies), records nothing, prints nothing
    when the store is empty, and always exits 0.
+5. **UserPromptSubmit hook** (same file) — runs
+   `uvx bettermemory prompt-recall` on each prompt submission. Probes
+   the prompt with the same silent-miss predicate the Stop hook
+   audits with; on the ~2% of prompts that clear it, prints a one-hit
+   pointer block (memory id + scopes + snippet — never a body) that
+   Claude Code injects into context, and records a `prompt_recall`
+   event the audit counts as retrieval. `[behavior]
+   prompt_recall = false` disables it. Always exits 0.
 
 ## Install
 
