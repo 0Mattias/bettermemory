@@ -7,6 +7,73 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.42.0 - 2026-08-06
+
+### Added — the standing tier: fresh-verified ambient bodies at session start
+
+Opt-in retrieval cannot serve knowledge whose trigger condition is not
+knowing you need it. The 3.41.0 prompt-recall hook delivers
+conditionally — query-matched, score-gated, on the ~2% of prompts the
+silent-miss probe flags — which serves "you asked about something you
+forgot is stored" and still cannot serve "you didn't ask". The standing
+tier (`[behavior] standing_tier`, **default off**) is the unconditional
+lane: `bettermemory session-start` now appends the caller-scoped
+`ambient` memories whose staleness verdict computes fresh to the
+SessionStart hint — whole bodies, not pointers, because a pointer still
+requires the model to know to dereference it. Prior art is Letta's
+core-memory blocks; the differentiator is the budget and the
+verification.
+
+The tier ships on the five decisions the ROADMAP settled build-ready
+(2026-08-05), unchanged by implementation:
+
+- **The cohort is the existing `ambient` category, not a new flag.**
+  The category's docstring ("atmospheric context that shapes replies
+  without being cited") is already the tier's definition, and ambient
+  is already excluded from dead-weight curation. Scope matching reuses
+  the session hint's `candidate_admitted` predicate, so what the tier
+  delivers is provably a subset of what `memory_search` would admit.
+- **Verification is the admission ticket.** Each candidate runs the
+  same chain `memory_show` computes — calendar verification,
+  claim-anchored path drift, commit drift against the caller's
+  checkout — at the gate, no relaxed session-start variant. Anything
+  not fresh is never delivered; it collapses into one aggregate
+  "N standing memories are stale — verify to restore delivery" line,
+  which converts the verification debt the tier would otherwise ship
+  into visible pressure to pay it. A calendar-fresh memory whose
+  attested path vanished is caught by the drift leg and held back
+  (pinned by test).
+- **Hard byte budget, whole-memory truncation only.** Entries walk
+  newest-verified first under a 1 KB ceiling. A body over the entire
+  budget is skipped whole — never trimmed, a truncated fact is a
+  different fact — so it cannot head-of-line-block smaller memories
+  behind it; a body that merely doesn't fit the remaining budget stops
+  the walk, because delivering an older body after declining a newer
+  one would invert the priority order. Both land in the "…and K more
+  (`memory_list`)" overflow count.
+- **Default OFF at introduction.** The recall hook's default-on was
+  earned by a measured 2% firing bar; this tier fires on every session
+  open for whoever holds ambient memories, and no equivalent
+  measurement exists yet. It flips only with dogfood evidence.
+- **The session-start negative mandate stays intact, and the cost is
+  named.** Delivery records nothing — no event, no session — so v1
+  adoption is deliberately unmeasured; the two instrumentation shapes
+  considered and rejected (a `standing_delivered` event, retroactive
+  stamping from the first Stop hook) are recorded in the ROADMAP entry
+  with the census-corruption argument that killed them.
+  `test_standing_tier_records_nothing` enforces the mandate on the
+  flag-on path with a real delivery.
+
+The read stays index-first: the new `index.category_rows` names which
+files hold admitted ambient rows (same never-raises degrade contract as
+`scope_counts`) and only those files are parsed — the flag does not buy
+a `load_all`. The parse re-checks category and admission against the
+parsed truth, because the index-trust gates establish file identity,
+not file content. A failure anywhere in the standing computation
+degrades to a stderr note and the base hint ships without the section;
+with the flag off, the printed block is byte-identical to the pre-tier
+surface, also pinned by test.
+
 ## 3.41.0 - 2026-08-05
 
 ### Added — score-gated recall at prompt time: the probe's answer, delivered instead of filed
