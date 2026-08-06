@@ -9,6 +9,12 @@ on:
   # publish on the FULL matrix (macOS/Windows + embeddings + pyright),
   # not just the core Linux gate. Additive: push/PR runs are unchanged.
   workflow_call:
+  # Manual re-fire for dropped events. During the 2026-08-06 GitHub
+  # partial outage the push event for a release-gating commit was never
+  # delivered to Actions, and with only push/PR triggers the sole
+  # remedy was an empty commit. `gh workflow run CI --ref main` is the
+  # honest version of that: same matrix, same gate, no history noise.
+  workflow_dispatch:
 
 permissions:
   contents: read
