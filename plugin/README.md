@@ -29,7 +29,12 @@ The plugin bundles five things:
    context, so the session begins knowing what is stored without
    spending a `memory_scope_overview` call on it. Reads the search
    index only (never memory bodies), records nothing, prints nothing
-   when the store is empty, and always exits 0.
+   when the store is empty, and always exits 0. With `[behavior]
+   standing_tier = true` (default off) the same block additionally
+   carries the repository's fresh-verified `ambient` memories in
+   full — the one delivery that fires without being asked — under a
+   ~1 KB whole-memory-truncation budget, with stale ambient memories
+   collapsed to one "verify to restore delivery" line.
 5. **UserPromptSubmit hook** (same file) — runs
    `uvx bettermemory prompt-recall` on each prompt submission. Probes
    the prompt with the same silent-miss predicate the Stop hook

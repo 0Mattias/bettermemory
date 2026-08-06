@@ -315,6 +315,7 @@ def test_default_config_round_trips_through_load_config(tmp_path: Path) -> None:
     )
     assert loaded.behavior.semantic_dedup == fresh.behavior.semantic_dedup
     assert loaded.behavior.prompt_recall == fresh.behavior.prompt_recall
+    assert loaded.behavior.standing_tier == fresh.behavior.standing_tier
     assert loaded.behavior.semantic_model_name == fresh.behavior.semantic_model_name
     assert (
         loaded.behavior.semantic_high_threshold
@@ -524,13 +525,16 @@ def test_load_config_coerces_behavior_bool_fields(tmp_path: Path) -> None:
     config_path = tmp_path / "config.toml"
     config_path.write_text(
         "[behavior]\nrequire_write_confirmation = true\nsemantic_dedup = true\n"
-        "prompt_recall = false\n",
+        "prompt_recall = false\nstanding_tier = true\n",
         encoding="utf-8",
     )
     cfg = load_config(config_path)
     assert cfg.behavior.require_write_confirmation is True
     assert cfg.behavior.semantic_dedup is True
     assert cfg.behavior.prompt_recall is False
+    # `standing_tier` is default-FALSE, so explicit-true is the direction
+    # that proves ITS override reaches the loader.
+    assert cfg.behavior.standing_tier is True
 
 
 def test_load_config_coerces_behavior_str_field(tmp_path: Path) -> None:

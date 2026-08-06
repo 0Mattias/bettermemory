@@ -49,6 +49,41 @@ than a fallback:
   expensive path. A session-start hook that stalls the session is worse
   than one that says nothing.
 
+THE STANDING TIER (`[behavior] standing_tier`, default OFF) is the one
+deliberate exception to the bodies-stay-on-disk rule above, and it is
+paid only by users who opted in. Opt-in retrieval cannot serve
+knowledge whose trigger condition is not knowing you need it, so when
+the flag is on, the hint carries the caller-scoped `ambient` memories
+whose staleness verdict computes ``fresh`` — bodies, not pointers,
+because a pointer still requires the model to know to dereference it.
+The discipline that protects the surface:
+
+* Verification is the admission ticket. The verdict is computed by the
+  SAME chain a `memory_show` runs — `compute_verification_status` +
+  `detect_path_drift` (claim-anchored subset) + `compute_commit_drift`
+  — no relaxed session-start variant. Anything not ``fresh`` is never
+  delivered; it collapses into one aggregate "N standing memories are
+  stale — verify to restore delivery" line, which converts the tier's
+  verification debt into visible pressure to pay it.
+* Hard byte budget (`_STANDING_BUDGET_BYTES`), whole-memory truncation
+  only. Entries go newest-verified first; a body that does not fit is
+  counted in the "…and K more" overflow, never split — a truncated
+  fact is a different fact. A body larger than the entire budget is
+  skipped (it can never fit) so it cannot head-of-line-block smaller
+  memories behind it.
+* The candidate read stays index-first: `index.category_rows` names
+  the ambient files, and only THOSE are parsed — the flag does not buy
+  a `load_all`. The parse re-checks category and admission against the
+  parsed truth, because the index-trust gates establish file identity,
+  not file content.
+* The negative mandate is untouched: delivery records nothing, so
+  adoption is unmeasured in v1 by decision (both instrumentation
+  shapes considered would have re-corrupted the cadence census the
+  mandate exists to protect; the ROADMAP entry records them).
+* A failure anywhere in the standing computation degrades to a stderr
+  note and the base hint ships without the section — the proven half
+  of the block never rides on the new half.
+
 Diagnostics go to stderr (Claude Code routes it to the debug log, not
 the model's context) and the process always exits 0. `hooks.json` still
 appends `|| true` as belt-and-suspenders, because a `uvx` network
@@ -66,8 +101,11 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     # `run`. `cli/__init__.py` imports this module for every `bettermemory
     # <anything>` invocation, so a top-level `from ..origin import Origin`
     # would tax every other subcommand for a symbol only this one uses.
+    from collections.abc import Callable
     from pathlib import Path
 
+    from ..config import Config
+    from ..models import Memory
     from ..origin import Origin
 
 # How many ids `_indexed_filenames` hands to one `filenames_for_ids`
@@ -92,6 +130,17 @@ _ID_BATCH = 900
 # context. The total is always exact — only the enumeration is capped.
 _MAX_SCOPES_SHOWN = 5
 
+# The standing tier's whole-section byte ceiling, measured over the
+# rendered memory entries (UTF-8). The framing lines around them —
+# header, overflow count, stale aggregate — are small bounded constants
+# and deliberately outside the budget: the stale line is the tier's
+# verification-pressure mechanism and must appear even when the budget
+# is spent. ~1 KB is the ROADMAP-settled figure: the SessionStart block
+# already carries the scope counts, Claude Code truncates oversized
+# injected blocks wholesale, and a tier that grows past a few short
+# bodies has stopped being "standing context" and become an unread wall.
+_STANDING_BUDGET_BYTES = 1024
+
 
 def add_subparser(
     sub: "argparse._SubParsersAction[argparse.ArgumentParser]",
@@ -103,8 +152,12 @@ def add_subparser(
         "counts for the current repository so a fresh session starts "
         "with them in context instead of spending a "
         "`memory_scope_overview` call to get them (or never learning "
-        "them at all). Reads the search index, never the memory bodies, "
-        "and records NOTHING — no event, no session. Prints nothing "
+        "them at all). Reads the search index, never the memory bodies "
+        "— unless `[behavior] standing_tier` is on, which additionally "
+        "delivers the fresh-verified ambient memories for this "
+        "repository (whole bodies, newest-verified first, ~1 KB budget) "
+        "and names the stale remainder in one aggregate line. Records "
+        "NOTHING either way — no event, no session. Prints nothing "
         "when the store is empty or the index cannot be trusted, and "
         "always exits 0 so a hook misfire never breaks session start."
     )
@@ -265,7 +318,8 @@ def _build_context_block() -> str | None:
     from ..search import candidate_admitted
     from ..store import active_memory_filenames
 
-    directory = load_config().resolved_directory()
+    config = load_config()
+    directory = config.resolved_directory()
     if not directory.exists():
         # First run, or a store the user has not created yet. Not a
         # problem to report — there is simply nothing to say.
@@ -404,10 +458,210 @@ def _build_context_block() -> str | None:
         f"stored in {directory} (repo={current.repo!r}).",
         file=sys.stderr,
     )
-    return _render_block(total, scopes)
+
+    standing: str | None = None
+    if config.behavior.standing_tier:
+        # Guarded on its own, narrower than `run`'s catch-all: the scope
+        # table above is the proven half of this surface, and the
+        # standing computation — file parses, stat calls, git
+        # subprocesses — must never take it down. On failure the base
+        # hint ships without the section and stderr says why.
+        try:
+            standing = _standing_section(directory, config, current, _admit)
+        except Exception as exc:  # noqa: BLE001
+            print(
+                "[bettermemory] session-start: standing tier skipped: "
+                f"{exc.__class__.__name__}: {exc}",
+                file=sys.stderr,
+            )
+    return _render_block(total, scopes, standing=standing)
 
 
-def _render_block(total: int, scopes: dict[str, int]) -> str:
+def _standing_section(
+    directory: Path,
+    config: "Config",
+    current: "Origin",
+    admit: "Callable[[list[str], Origin | None], bool]",
+) -> str | None:
+    """The standing tier's lines, or None when there is nothing to say.
+
+    Candidates come from `index.category_rows` — the index names which
+    files hold caller-admitted ambient memories, and only those files
+    are parsed. The parse then RE-checks category and admission against
+    the parsed truth: the caller's index-trust gates establish that the
+    index's rows name exactly the files on disk, not that each file's
+    content still matches its row (a hand-edit that flips a category or
+    a scope leaves id, filename and count intact). For a count that
+    residue is acceptable; for delivering a body it is not.
+
+    Per admitted memory, the staleness verdict is computed by the same
+    chain `handlers/show.memory_show` runs — calendar leg, claim-anchored
+    path drift, commit drift against this caller's checkout — minus that
+    handler's `.record()`, which the negative mandate forbids here. The
+    commit leg is the expensive one (a git subprocess per anchored
+    memory); it stays because it is the leg that lets a calendar-stale
+    memory prove itself still fresh AND the one that catches a
+    calendar-fresh memory whose repo moved on — an admission ticket
+    checked at the gate, not a cached stamp.
+
+    A row that fails to parse, no longer matches its id, or no longer
+    reads ambient/admitted is skipped silently — the same shape
+    `Store.load_all` gives an unparseable file, and `bettermemory
+    doctor` is the surface that reports it.
+    """
+    from .. import index as _index
+    from ..models import Category, utcnow
+    from ..store import _parse_memory_file
+    from ..verify import (
+        compute_commit_drift,
+        compute_staleness_verdict,
+        compute_verification_status,
+        detect_path_drift,
+    )
+
+    rows = _index.category_rows(directory, category=Category.AMBIENT.value, admit=admit)
+    if not rows:
+        return None
+
+    now = utcnow()
+    fresh: list[Memory] = []
+    stale = 0
+    for memory_id, filename in rows:
+        if not filename:
+            # Pre-v2 row with no recorded filename. The caller's
+            # filename-set gate declines the whole hint for such stores,
+            # so this arm is defensive against racing an out-of-band
+            # reindex mid-run.
+            continue
+        try:
+            memory = _parse_memory_file(directory / filename)
+        except (OSError, ValueError):
+            continue
+        if (
+            memory.id != memory_id
+            or memory.category is not Category.AMBIENT
+            or not admit(memory.scopes, memory.origin)
+        ):
+            continue
+        drift = detect_path_drift(
+            memory.body,
+            verified_paths=memory.verified_paths,
+            absent_paths=memory.verified_absent_paths,
+            worktree_root=memory.origin.worktree_root if memory.origin else None,
+        )
+        verification = compute_verification_status(
+            memory.last_verified_at,
+            now=now,
+            stale_after_days=config.behavior.verification_stale_days,
+        )
+        commit_drift = compute_commit_drift(
+            memory.last_verified_at,
+            memory.origin.repo if memory.origin else None,
+            caller_origin=current,
+            verified_paths=memory.verified_paths,
+            body=memory.body,
+            claims=memory.claims,
+        )
+        verdict = compute_staleness_verdict(
+            verification=verification,
+            # Claim-anchored subset only — same rule as every other
+            # verdict site. See `verdict_from_signals`.
+            path_drift_missing=len(drift.claim_anchored_missing),
+            commit_drift_count=(
+                commit_drift.commits_since_verify if commit_drift is not None else None
+            ),
+        )
+        if verdict == "fresh":
+            fresh.append(memory)
+        else:
+            stale += 1
+
+    if not fresh and stale == 0:
+        return None
+    return _render_standing(fresh, stale)
+
+
+def _render_standing(fresh: "list[Memory]", stale_count: int) -> str:
+    """Render the standing lines: entries under budget, then pressure.
+
+    Delivery order is newest-verified first (`last_verified_at`
+    descending; every fresh verdict implies the field is set — the
+    ladder pins ``status == "never"`` to ``spot_check_required`` — but
+    the `or m.created` fallback keeps the sort total rather than
+    trusting that invariant with a TypeError). Ties break on id,
+    descending, so two same-second verifies order deterministically.
+
+    The budget walk implements the ROADMAP's two distinct non-fit
+    cases: an entry larger than the WHOLE budget can never be delivered,
+    so it is skipped and the walk continues — otherwise one oversized
+    body would permanently starve everything verified before it — while
+    an entry that merely exceeds the REMAINING budget stops the walk,
+    because delivering an older body after declining a newer one would
+    invert the priority order the sort just established. Both cases,
+    and everything behind a stop, land in the same "…and K more" count:
+    undelivered is undelivered, and the model's remedy for all of them
+    is the same `memory_list` call.
+
+    The stale aggregate renders even when nothing else does — it is the
+    tier's pressure mechanism, not decoration — but when NOTHING was
+    admitted at all the caller returns None before reaching here, so an
+    ambient-free store adds no lines.
+    """
+    fresh.sort(key=lambda m: ((m.last_verified_at or m.created), m.id), reverse=True)
+    delivered: list[str] = []
+    remaining = _STANDING_BUDGET_BYTES
+    overflow = 0
+    stopped = False
+    for memory in fresh:
+        if stopped:
+            overflow += 1
+            continue
+        entry = f"- {memory.id} ({', '.join(memory.scopes)}): {memory.body.strip()}"
+        size = len(entry.encode("utf-8"))
+        if size > _STANDING_BUDGET_BYTES:
+            # Whole-budget oversize: skipped, never trimmed — a
+            # truncated fact is a different fact — and never a blocker
+            # for the smaller bodies behind it.
+            overflow += 1
+            continue
+        if size > remaining:
+            overflow += 1
+            stopped = True
+            continue
+        delivered.append(entry)
+        remaining -= size
+
+    lines: list[str] = []
+    if delivered:
+        lines.append(
+            "Standing memories (ambient, verified fresh at delivery — "
+            "bodies below are already in context, no retrieval needed):"
+        )
+        lines.extend(delivered)
+        if overflow:
+            noun = "memory" if overflow == 1 else "memories"
+            lines.append(
+                f"…and {overflow} more fresh standing {noun} over the "
+                "delivery budget (memory_list)."
+            )
+    elif overflow:
+        noun = "memory" if overflow == 1 else "memories"
+        lines.append(
+            f"{overflow} fresh standing {noun} exceeded the delivery "
+            "budget entirely (memory_list)."
+        )
+    if stale_count:
+        noun = "memory is" if stale_count == 1 else "memories are"
+        lines.append(
+            f"{stale_count} standing {noun} stale — verify to restore "
+            "delivery (memory_search, then memory_verify)."
+        )
+    return "\n".join(lines)
+
+
+def _render_block(
+    total: int, scopes: dict[str, int], standing: str | None = None
+) -> str:
     """Format the context block the model actually sees.
 
     Ordering is count-descending then name-ascending — the same
@@ -419,6 +673,14 @@ def _render_block(total: int, scopes: dict[str, int]) -> str:
     are NOT (no bodies, no ids), so the model doesn't treat this as
     retrieval already performed, and it restates the opt-in rule, so a
     non-zero count doesn't read as an invitation to search.
+
+    With a standing section present, the closing disclaimer swaps to a
+    wording that carves the delivered bodies out of the "no bodies"
+    claim — the two halves of the block must not contradict each other
+    about what is in context. Without one (`standing=None`, the flag-off
+    default), the returned text is byte-identical to what this surface
+    printed before the tier existed;
+    `test_standing_tier_off_keeps_block_byte_identical` holds that pin.
     """
     ordered = sorted(scopes.items(), key=lambda kv: (-kv[1], kv[0]))
     shown = ordered[:_MAX_SCOPES_SHOWN]
@@ -427,10 +689,24 @@ def _render_block(total: int, scopes: dict[str, int]) -> str:
     if remaining > 0:
         rendered += f", +{remaining} more"
     noun = "memory is" if total == 1 else "memories are"
-    return (
+    head = (
         f"bettermemory: {total} {noun} in scope for this repository.\n"
         f"Top scopes: {rendered}.\n"
-        "Per-scope counts only — no bodies, no ids. This is the cheap half "
+    )
+    if standing is None:
+        return head + (
+            "Per-scope counts only — no bodies, no ids. This is the cheap half "
+            "of memory_scope_overview; call that tool when you also need the "
+            "curation / proposals rollups. Retrieval stays opt-in: reach for "
+            "memory_search when a request leans on shared context or is "
+            "ambiguous, not for self-contained questions."
+        )
+    return (
+        head
+        + standing
+        + "\n"
+        + "Beyond the standing section above, per-scope counts only — no "
+        "other bodies or ids are in context. This is the cheap half "
         "of memory_scope_overview; call that tool when you also need the "
         "curation / proposals rollups. Retrieval stays opt-in: reach for "
         "memory_search when a request leans on shared context or is "

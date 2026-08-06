@@ -2172,3 +2172,375 @@ def test_session_start_exits_0_when_the_reader_hung_up(tmp_path: Path) -> None:
         "the write unexpectedly succeeded, so this run proved nothing "
         f"about the salvage; stderr was {err!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# The standing tier (`[behavior] standing_tier`) — fresh-verified ambient
+# bodies appended to the hint. Spec settled in docs/ROADMAP.md: cohort is
+# the `ambient` category; a computed-fresh staleness verdict is the
+# admission ticket; hard byte budget with whole-memory truncation only;
+# default OFF; the negative mandate untouched.
+# ---------------------------------------------------------------------------
+
+
+def _standing_tier_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    """Point `default_config_path` at a temp config whose `standing_tier`
+    is `value`. Real file, real `load_config()` — the CLI reaches the
+    knob the way a user's install does (same pattern as
+    `_config_with_ratio_threshold`), and the assert pins the key's
+    presence in DEFAULT_CONFIG so a template rename cannot silently turn
+    every test here into a default-off run."""
+    from bettermemory.config import DEFAULT_CONFIG
+
+    cfg_dir = tmp_path / "bm-config"
+    cfg_dir.mkdir(exist_ok=True)
+    cfg_path = cfg_dir / "config.toml"
+    original = "standing_tier = false"
+    assert original in DEFAULT_CONFIG, "DEFAULT_CONFIG key drifted"
+    cfg_path.write_text(
+        DEFAULT_CONFIG.replace(original, f"standing_tier = {value}"),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("bettermemory.config.default_config_path", lambda: cfg_path)
+
+
+def test_standing_tier_off_keeps_block_byte_identical(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Flag off, the tier does not exist — not even as changed wording.
+
+    A store holding a fresh-verified ambient memory (the exact cohort
+    the tier would deliver) must produce the SAME three-line block this
+    surface printed before the tier shipped, closing disclaimer
+    included. This is the pin `_render_block`'s docstring names: the
+    default-off path is not "standing with zero entries", it is the
+    pre-tier surface, verbatim.
+    """
+    from bettermemory.models import Category
+
+    _standing_tier_config(tmp_path, monkeypatch, "false")
+    store = _seeded_store(tmp_path, monkeypatch)
+    memory = store.write(
+        content="User prefers code-driven tutorials.",
+        scopes=["learning-style"],
+        category=Category.AMBIENT,
+    )
+    store.mark_verified(memory.id)
+
+    _run_session_start(monkeypatch, tmp_path)
+
+    out = capsys.readouterr().out
+    lines = out.splitlines()
+    assert len(lines) == 3, f"expected the pre-tier 3-line block, got {lines!r}"
+    assert "Standing" not in out
+    assert "code-driven" not in out, "flag-off run delivered a body"
+    assert lines[2] == (
+        "Per-scope counts only — no bodies, no ids. This is the cheap half "
+        "of memory_scope_overview; call that tool when you also need the "
+        "curation / proposals rollups. Retrieval stays opt-in: reach for "
+        "memory_search when a request leans on shared context or is "
+        "ambiguous, not for self-contained questions."
+    )
+
+
+def test_standing_tier_delivers_fresh_verified_ambient_bodies(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The tier's positive contract, all three gates in one store.
+
+    Fresh-verified ambient: delivered, body and id. Never-verified
+    ambient: NOT delivered (the verdict ladder pins `never` to
+    `spot_check_required`), aggregated into the stale line instead.
+    Fresh-verified FACT: not delivered — category is the cohort, and a
+    verified fact is exactly the bait that catches a delivery keyed on
+    verification alone. And the closing disclaimer must swap to the
+    carve-out wording: the block cannot claim "no bodies" under a body.
+    """
+    from bettermemory.models import Category
+
+    _standing_tier_config(tmp_path, monkeypatch, "true")
+    store = _seeded_store(tmp_path, monkeypatch)
+    fresh_ambient = store.write(
+        content="User prefers code-driven tutorials over prose.",
+        scopes=["learning-style"],
+        category=Category.AMBIENT,
+    )
+    store.mark_verified(fresh_ambient.id)
+    store.write(
+        content="Timezone is Europe/Stockholm.",
+        scopes=["personal-context"],
+        category=Category.AMBIENT,
+    )
+    fact = store.write(content="Deploy script is tools/deploy.sh.", scopes=["tools"])
+    store.mark_verified(fact.id)
+
+    _run_session_start(monkeypatch, tmp_path)
+
+    out = capsys.readouterr().out
+    assert "Standing memories (ambient, verified fresh" in out
+    assert f"- {fresh_ambient.id} (learning-style): " in out
+    assert "User prefers code-driven tutorials over prose." in out
+    assert "Europe/Stockholm" not in out, "never-verified ambient was delivered"
+    assert "deploy.sh" not in out, "a fact crossed the category gate"
+    assert "1 standing memory is stale — verify to restore delivery" in out
+    assert "Beyond the standing section above, per-scope counts only" in out
+    assert "no bodies, no ids" not in out, (
+        "the pre-tier disclaimer survived under a delivered body — the "
+        "block now contradicts itself about what is in context"
+    )
+
+
+def test_standing_tier_stale_only_still_prints_the_pressure_line(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Nothing deliverable ≠ nothing to say.
+
+    The stale aggregate is the tier's verification-pressure mechanism —
+    with every admitted ambient memory unverified, the section is
+    exactly that one line: no header, no bodies, but the debt named.
+    A cheaper implementation that only rendered the section when
+    something was delivered would pass every other test here and
+    silently remove the pressure the spec put at the tier's center.
+    """
+    from bettermemory.models import Category
+
+    _standing_tier_config(tmp_path, monkeypatch, "true")
+    store = _seeded_store(tmp_path, monkeypatch)
+    store.write(
+        content="Ambient alpha.", scopes=["personal-context"], category=Category.AMBIENT
+    )
+    store.write(
+        content="Ambient beta.", scopes=["personal-context"], category=Category.AMBIENT
+    )
+
+    _run_session_start(monkeypatch, tmp_path)
+
+    out = capsys.readouterr().out
+    assert "2 standing memories are stale — verify to restore delivery" in out
+    assert "Standing memories (ambient" not in out, (
+        "an empty delivery grew a header with nothing under it"
+    )
+    assert "Ambient alpha." not in out and "Ambient beta." not in out
+
+
+def test_standing_tier_budget_truncates_at_whole_memory_boundaries(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The ~1 KB budget: newest-verified first, whole entries only.
+
+    Six same-size fresh entries at ~216 bytes each: four fit (864),
+    the fifth would cross 1024, so delivery stops at four and the
+    overflow line counts the remaining two. Assertions pin all of it:
+    every delivered body appears IN FULL (whole-memory truncation — a
+    prefix match with a missing tail is the "different fact" the spec
+    forbids), the delivered set is the four newest-verified, the
+    en-bloc byte total stays under budget, and the overflow count is
+    exact rather than merely present.
+    """
+    import time
+
+    from bettermemory.models import Category
+
+    _standing_tier_config(tmp_path, monkeypatch, "true")
+    store = _seeded_store(tmp_path, monkeypatch)
+    bodies = [f"Standing body number {i} " + "y" * 150 for i in range(6)]
+    written = []
+    for body in bodies:
+        memory = store.write(content=body, scopes=["x"], category=Category.AMBIENT)
+        store.mark_verified(memory.id)
+        written.append(memory)
+        # Distinct `last_verified_at` stamps so newest-verified-first is
+        # a total order the assertion below can rely on.
+        time.sleep(0.01)
+
+    _run_session_start(monkeypatch, tmp_path)
+
+    out = capsys.readouterr().out
+    entries = [line for line in out.splitlines() if line.startswith("- 01")]
+    assert len(entries) == 4, f"expected 4 delivered entries, got {len(entries)}"
+    assert sum(len(e.encode("utf-8")) for e in entries) <= 1024
+    # Newest-verified first: the last four written, newest leading.
+    expected_order = [m.id for m in reversed(written[-4:])]
+    assert [e.split()[1] for e in entries] == expected_order
+    for body in bodies[2:]:
+        assert body in out, "a delivered body was split mid-way"
+    for body in bodies[:2]:
+        assert body not in out, "an over-budget body was delivered anyway"
+    assert (
+        "…and 2 more fresh standing memories over the delivery budget "
+        "(memory_list)." in out
+    )
+
+
+def test_standing_tier_oversize_body_is_skipped_not_trimmed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A body larger than the whole budget can never be delivered — so
+    it must be passed over, whole, without blocking the queue behind it.
+
+    The oversize memory is verified LAST, putting it at the head of the
+    newest-verified order: a walk that stopped at the first non-fit
+    would deliver nothing, and a walk that trimmed would deliver a
+    prefix. The assertions demand the third behaviour — the older,
+    smaller body arrives intact, no fragment of the giant appears, and
+    the giant is accounted for in the overflow count rather than
+    vanishing.
+    """
+    import time
+
+    from bettermemory.models import Category
+
+    _standing_tier_config(tmp_path, monkeypatch, "true")
+    store = _seeded_store(tmp_path, monkeypatch)
+    small = store.write(
+        content="Small standing body that fits.",
+        scopes=["x"],
+        category=Category.AMBIENT,
+    )
+    store.mark_verified(small.id)
+    time.sleep(0.01)
+    giant = store.write(content="G" * 1500, scopes=["x"], category=Category.AMBIENT)
+    store.mark_verified(giant.id)
+
+    _run_session_start(monkeypatch, tmp_path)
+
+    out = capsys.readouterr().out
+    assert "Small standing body that fits." in out
+    assert "G" * 32 not in out, "a fragment of the oversize body was delivered"
+    assert giant.id not in out
+    assert (
+        "…and 1 more fresh standing memory over the delivery budget "
+        "(memory_list)." in out
+    )
+
+
+def test_standing_tier_records_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The negative mandate survives the tier — measured, not assumed.
+
+    `test_session_start_records_nothing` holds the mandate for the
+    default path; this holds it for the flag-on path with a real
+    delivery, which is the run a would-be `standing_delivered` event
+    would land in. The ROADMAP records why no such event exists (both
+    instrumentation shapes considered would re-corrupt the cadence
+    census); this test is what makes that decision enforceable rather
+    than archival.
+    """
+    from bettermemory.events import Recorder
+    from bettermemory.models import Category
+
+    _standing_tier_config(tmp_path, monkeypatch, "true")
+    store = _seeded_store(tmp_path, monkeypatch)
+    memory = store.write(
+        content="Delivered standing body.", scopes=["x"], category=Category.AMBIENT
+    )
+    store.mark_verified(memory.id)
+    Recorder(root=store.root, session_id="a-prior-session").record(
+        "search", query="anything", returned=[]
+    )
+    before = _event_log_snapshot(store.root)
+    assert before
+
+    _run_session_start(monkeypatch, tmp_path)
+
+    out = capsys.readouterr().out
+    assert "Delivered standing body." in out, "the tier did not fire; proves nothing"
+    assert _event_log_snapshot(store.root) == before, (
+        "a standing delivery wrote to the event log — see the negative "
+        "mandate at the top of cli/session_start_cmd.py"
+    )
+
+
+def test_standing_tier_admission_is_the_same_verdict_a_show_would_compute(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """ "Verification is the admission ticket" means the full ladder,
+    not the calendar leg alone.
+
+    An ambient memory verified minutes ago is calendar-fresh; when its
+    ATTESTED path then vanishes, the claim-anchored drift leg raises
+    the verdict to `spot_check_recommended` and `memory_show` would say
+    so. A tier that admitted on `last_verified_at` age would deliver
+    it anyway — this pins that it lands in the stale aggregate instead,
+    i.e. the admission check runs the same chain the read path runs.
+    """
+    from bettermemory.models import Category
+
+    _standing_tier_config(tmp_path, monkeypatch, "true")
+    store = _seeded_store(tmp_path, monkeypatch)
+    attested = tmp_path / "attested-artifact.txt"
+    attested.write_text("present", encoding="utf-8")
+    memory = store.write(
+        content=f"Ambient context citing {attested} as its anchor.",
+        scopes=["x"],
+        category=Category.AMBIENT,
+    )
+    store.mark_verified(memory.id, verified_paths=[str(attested)])
+    attested.unlink()
+
+    _run_session_start(monkeypatch, tmp_path)
+
+    out = capsys.readouterr().out
+    assert "Ambient context citing" not in out, (
+        "a calendar-fresh memory with claim-anchored drift was delivered — "
+        "the admission check is not running the full verdict ladder"
+    )
+    assert "1 standing memory is stale — verify to restore delivery" in out
+
+
+def test_standing_tier_failure_degrades_to_the_base_block(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The proven half of the surface never rides on the new half.
+
+    Whatever breaks inside the standing computation — here, the whole
+    helper raising — the scope-counts block must still print, in its
+    pre-tier wording (a failed section is NOT an empty section), with
+    the failure named on stderr and exit 0 held.
+    """
+    from bettermemory.cli import session_start_cmd
+    from bettermemory.models import Category
+
+    _standing_tier_config(tmp_path, monkeypatch, "true")
+    store = _seeded_store(tmp_path, monkeypatch)
+    memory = store.write(
+        content="Would-be standing body.", scopes=["x"], category=Category.AMBIENT
+    )
+    store.mark_verified(memory.id)
+
+    def _boom(*args: object, **kwargs: object) -> str | None:
+        raise RuntimeError("synthetic standing failure")
+
+    monkeypatch.setattr(session_start_cmd, "_standing_section", _boom)
+
+    _run_session_start(monkeypatch, tmp_path)
+
+    captured = capsys.readouterr()
+    lines = captured.out.splitlines()
+    assert len(lines) == 3, (
+        f"expected the base 3-line block after a standing failure, got {lines!r}"
+    )
+    assert "Would-be standing body." not in captured.out
+    assert "no bodies, no ids" in lines[2], (
+        "a failed standing section left the carve-out disclaimer behind"
+    )
+    assert "standing tier skipped: RuntimeError" in captured.err

@@ -56,7 +56,14 @@ Offline, throwaway store.
   needed (the measured rate lives in [docs/eval-results.md][eval-results]),
   the recall hook injects the top hit's id + snippet — a
   pointer, never a body, so verification still runs through
-  `memory_show` (`[behavior] prompt_recall`; off = purely opt-in). The
+  `memory_show` (`[behavior] prompt_recall`; off = purely opt-in). A
+  second exception ships default-off: `[behavior] standing_tier`
+  delivers the repository's fresh-verified `ambient` memories whole at
+  session start (~1 KB, truncated only at memory boundaries), because
+  opt-in retrieval cannot serve knowledge whose trigger condition is
+  not knowing you need it — and verification is the admission ticket,
+  so a stale ambient memory is never delivered, only named in an
+  aggregate verify-to-restore line. The
   18 default tools still charge schema every turn: a serialized
   `tools/list` of 33,960 bytes, 27,092 of it names and descriptions,
   measured 2026-07-31 at 3.32.0 ([bench/toolcost][toolcost]). CI caps

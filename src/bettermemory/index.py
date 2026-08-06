@@ -1118,6 +1118,78 @@ def scope_counts(
             conn.close()
 
 
+def category_rows(
+    root: Path,
+    *,
+    category: str,
+    admit: Callable[[list[str], Origin | None], bool],
+) -> list[tuple[str, str]] | None:
+    """`(id, filename)` pairs for the ADMITTED rows of one category.
+
+    The standing tier's candidate selector (`cli/session_start_cmd.py`):
+    the SessionStart hook needs to know WHICH files hold ambient
+    memories for this caller before it pays a parse for any of them, and
+    this answers that from the same columnar row `scope_counts` already
+    reads plus the `category` and `filename` columns. Bodies stay
+    untouched — the caller parses the named files itself, because
+    delivery needs fields the index does not carry (`verified_paths`,
+    `claims`, the attestation lists that feed the staleness verdict).
+
+    `admit` is the same predicate `scope_counts` takes, bound to
+    `search.candidate_admitted` with the caller's repo / worktree
+    filters, and judged in Python for the same reason: `repos_match`
+    consults per-process alternate spellings, so the rule is not
+    expressible in SQL. A row whose `scopes_json` does not parse is
+    skipped, exactly as `scope_counts` skips it.
+
+    The category comparison, by contrast, IS done in SQL: `category` is
+    a single stored string with no normalisation rule, so there is no
+    predicate to share and filtering rows the caller will discard would
+    be pure waste. `filename` can be empty on a pre-v2 row — those are
+    returned as-is; the caller's index-trust gates (the filename-set
+    comparison) run before this and already decline the hint for stores
+    where rows cannot name their files.
+
+    Returns None — never raises — when the index is absent, unreadable,
+    corrupt, or older than this reader, mirroring `scope_counts`' degrade
+    contract: the standing tier goes silent rather than stalling session
+    open.
+    """
+    path = index_path(root)
+    if not path.exists():
+        return None
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = _connect(path)
+        _ensure_schema(conn, path)
+        out: list[tuple[str, str]] = []
+        for row in conn.execute(
+            "SELECT id, filename, scopes_json, origin_repo, origin_worktree "
+            "FROM memories WHERE category = ? ORDER BY id",
+            (category,),
+        ):
+            repo = row["origin_repo"]
+            worktree = row["origin_worktree"]
+            origin = (
+                Origin(repo=repo, worktree_root=worktree)
+                if (repo is not None or worktree is not None)
+                else None
+            )
+            try:
+                scopes = json.loads(row["scopes_json"])
+            except (TypeError, ValueError):
+                continue
+            if not admit(list(scopes), origin):
+                continue
+            out.append((row["id"], row["filename"]))
+        return out
+    except (sqlite3.Error, IndexVersionError, OSError):
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 def indexed_ids(root: Path, ids: Sequence[str] | None = None) -> set[str]:
     """Memory ids that currently have a row in the index.
 

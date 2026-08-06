@@ -29,14 +29,28 @@ retractions. The claim-level detector that benchmark validated ships as
 declared claims on `memory_write` / `memory_verify` (3.40.0).
 
 - Retrieval is opt-in at the tool surface. `memory_search` is a
-  deliberate tool call; the one delivery that bypasses it is the
-  score-gated prompt-recall hook (3.41.0), which injects a single
-  id + snippet pointer on the ~2% of prompts the silent-miss probe
-  flags — the same predicate, threshold, and shields as the Stop-hook
-  audit, so it fires exactly where the audit would have logged a
-  `search_miss` after the fact. Bodies are never injected; the
+  deliberate tool call; two deliveries bypass it. The score-gated
+  prompt-recall hook (3.41.0) injects a single id + snippet pointer
+  on the ~2% of prompts the silent-miss probe flags — the same
+  predicate, threshold, and shields as the Stop-hook audit, so it
+  fires exactly where the audit would have logged a `search_miss`
+  after the fact. The recall hook injects no bodies; the
   verify-before-relying read path stays on `memory_show`.
   `[behavior] prompt_recall = false` restores purely opt-in retrieval.
+  The session-start standing tier (3.42.0, `[behavior] standing_tier`,
+  default off) is the unconditional one: the SessionStart hint appends
+  the caller-scoped `ambient` memories whose staleness verdict
+  computes fresh — whole bodies, newest-verified first, under a ~1 KB
+  budget that truncates only at memory boundaries — because opt-in
+  retrieval cannot serve knowledge whose trigger condition is not
+  knowing you need it. Admission runs the same verdict chain
+  `memory_show` computes (calendar leg, claim-anchored path drift,
+  commit drift); anything not fresh collapses to one aggregate
+  "verify to restore delivery" line, which converts the tier's
+  verification debt into pressure to pay it. Delivery records nothing
+  (the session-start negative mandate is untouched), so v1 adoption is
+  deliberately unmeasured; docs/ROADMAP.md records the two rejected
+  instrumentation shapes and why.
 - Claims about the user always stage for confirmation before commit.
 - Write gates instead of trust: durability check (rejects transient
   state), credential check (rejects secret-shaped tokens), duplicate

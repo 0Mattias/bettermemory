@@ -136,6 +136,20 @@ corroboration_boost = false
 # retrieval.
 prompt_recall = true
 
+# Standing tier at session start. When true, the plugin's SessionStart
+# hook appends fresh-verified `ambient` memories — bodies, not pointers —
+# to the scope-counts hint it already prints, newest-verified first under
+# a ~1 KB budget that truncates only at whole-memory boundaries. This is
+# the one surface that delivers without being asked: ambient context
+# whose trigger condition is not knowing you need it. Verification is
+# the admission ticket (only a computed-fresh staleness verdict is
+# delivered; stale ambient memories collapse to one aggregate
+# verify-to-restore line), so the tier cannot ship unverified claims
+# into every session. Default OFF: the recall hook's default-on was
+# earned by a measured ~2% firing bar, and no equivalent measurement
+# exists for a tier that fires on every session open.
+standing_tier = false
+
 # When true, memory_write dedup uses cosine similarity on sentence
 # embeddings instead of Jaccard on token sets — catches paraphrases
 # like "the database" / "Postgres" that lexical overlap misses.
@@ -414,6 +428,12 @@ class BehaviorConfig:
     # unmeasurable, so the recall path refuses to fire rather than
     # fire off the books. See DEFAULT_CONFIG for prose.
     prompt_recall: bool = True
+    # Standing tier at session start (`cli/session_start_cmd.py`):
+    # fresh-verified ambient bodies appended to the SessionStart hint
+    # under a whole-memory-truncation byte budget. Default OFF at
+    # introduction — unlike prompt_recall there is no measured firing
+    # bar yet; see DEFAULT_CONFIG for prose.
+    standing_tier: bool = False
     # Semantic dedup is opt-in — see DEFAULT_CONFIG for prose.
     semantic_dedup: bool = False
     # Provider selection — "auto" (default), "torch", or "fastembed".
@@ -1103,6 +1123,7 @@ def load_config(path: Path | None = None) -> Config:
                 behavior_raw.get("corroboration_boost"), False
             ),
             prompt_recall=_coerce_bool(behavior_raw.get("prompt_recall"), True),
+            standing_tier=_coerce_bool(behavior_raw.get("standing_tier"), False),
             semantic_dedup=_coerce_bool(behavior_raw.get("semantic_dedup"), False),
             semantic_provider=str(behavior_raw.get("semantic_provider", "auto")),
             semantic_model_name=str(

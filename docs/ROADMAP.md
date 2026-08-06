@@ -242,52 +242,58 @@ Planned work, in rough priority order. Plans change; the
   a replacement measured first, not a subtraction; see
   `_COMMIT_DRIFT_ESCALATES` under "Not planned". Backfill is one curation
   pass over the ~143 checkable live bodies.
-- **Standing tier.** Opt-in retrieval cannot serve knowledge whose
-  trigger condition is not knowing you need it. The `ambient` category
-  is still retrieval-gated and `memory_scope_overview` returns counts
-  only, so nothing in the product delivers unconditionally — the
-  3.41.0 prompt-recall hook delivers CONDITIONALLY (query-matched,
-  score-gated, ~2% of turns), which serves "you asked about something
-  you forgot is stored" and still cannot serve "you didn't ask".
-  Prior art: Letta's core-memory blocks; the differentiator is the
-  budget and the verification. Build-ready spec, settled 2026-08-05 so
-  the implementing round starts at the code:
-  1. **The cohort is `ambient`, not a new flag.** The category's own
-     docstring is the tier's definition ("atmospheric context that
-     shapes replies without being cited"), it is already excluded from
-     dead-weight curation, and a new `standing` marker would create
-     two spellings of one intent. Scope-matching reuses the session
-     hint's caller-repo resolution.
-  2. **Verification is the admission ticket.** Only memories whose
-     staleness verdict computes `fresh` are delivered; stale ambient
-     memories surface as one aggregate line ("N standing memories
-     stale — verify to restore delivery"), which turns the
-     verification debt the tier would otherwise ship into pressure to
-     pay it. Same read path as a search hit, no bypass.
-  3. **Hard byte budget, whole-memory truncation.** Newest-verified
-     first, cap ~1 KB total (the SessionStart block already carries
-     the scope counts; Claude Code truncates injected blocks), never
-     split a body mid-way; overflow reads "…and K more
-     (`memory_list`)". A body over the whole budget is skipped, not
-     trimmed — a truncated fact is a different fact.
-  4. **`[behavior] standing_tier`, default OFF at introduction.** The
-     recall hook's default-on was earned by a measured 2% bar; this
-     tier fires on every session open for whoever holds ambient
-     memories, and no equivalent measurement exists yet. Flip only
-     with dogfood evidence.
+- ~~**Standing tier.**~~ **SHIPPED 2026-08-06 (3.42.0).** Opt-in
+  retrieval cannot serve knowledge whose trigger condition is not
+  knowing you need it — the 3.41.0 prompt-recall hook delivers
+  CONDITIONALLY (query-matched, score-gated, ~2% of turns), which
+  serves "you asked about something you forgot is stored" and still
+  cannot serve "you didn't ask". The tier now ships as spec'd
+  (settled 2026-08-05, `a4d06f5`; prior art Letta's core-memory
+  blocks, the differentiator the budget and the verification): with
+  `[behavior] standing_tier = true`, `bettermemory session-start`
+  appends the caller-scoped fresh-verified `ambient` bodies to the
+  SessionStart hint (`cli/session_start_cmd._standing_section`,
+  candidates named by `index.category_rows`, only those files
+  parsed). All five settled decisions survived implementation
+  unchanged:
+  1. **The cohort is `ambient`, not a new flag** — the category's own
+     docstring is the tier's definition; scope-matching reuses the
+     session hint's `candidate_admitted` predicate, and the parse
+     re-checks category + admission against the parsed truth (the
+     index-trust gates establish file identity, not content).
+  2. **Verification is the admission ticket** — the same
+     verification + claim-anchored path-drift + commit-drift chain
+     `memory_show` computes, per candidate, at the gate; anything not
+     `fresh` collapses to the aggregate "N standing memories are
+     stale — verify to restore delivery" line
+     (`test_standing_tier_admission_is_the_same_verdict_a_show_would_compute`
+     pins the drift leg specifically).
+  3. **Hard byte budget, whole-memory truncation** —
+     `_STANDING_BUDGET_BYTES = 1024` over the rendered entries,
+     newest-verified first; a body over the whole budget is skipped
+     so it cannot head-of-line-block smaller memories behind it,
+     while a merely-doesn't-fit-now body stops the walk (delivering
+     an older body after declining a newer one would invert the
+     priority the sort establishes); both land in "…and K more
+     (`memory_list`)".
+  4. **`[behavior] standing_tier`, default OFF at introduction** —
+     the recall hook's default-on was earned by a measured 2% bar and
+     this tier has none yet. Flip only with dogfood evidence.
   5. **The session-start negative mandate stays intact, and the cost
      is named:** delivery records nothing, so adoption is unmeasured
      in v1 and a delivered memory does not shield the miss probe (a
      same-topic prompt inside the attribution window can re-point at
-     it via prompt-recall — redundant, rare, accepted). Two
-     instrumentation shapes were considered and rejected for now: a
-     `standing_delivered` event classified like `prompt_recall`
-     (solves the anchor hijack via the roster, but an
-     opened-and-abandoned session would put phantom sessions back in
-     doctor's cadence census — the exact corruption the mandate
-     exists to stop), and retroactive stamping from the first Stop
-     hook (the hook cannot see the injected context). Revisit only
-     with a design that keeps the census clean.
+     it via prompt-recall — redundant, rare, accepted).
+     `test_standing_tier_records_nothing` enforces the mandate on the
+     flag-on path with a real delivery. Two instrumentation shapes
+     were considered and rejected for now: a `standing_delivered`
+     event classified like `prompt_recall` (solves the anchor hijack
+     via the roster, but an opened-and-abandoned session would put
+     phantom sessions back in doctor's cadence census — the exact
+     corruption the mandate exists to stop), and retroactive stamping
+     from the first Stop hook (the hook cannot see the injected
+     context). Revisit only with a design that keeps the census
+     clean.
 - **Event-time on the memory record.** Every timestamp on `Memory`
   (`created`, `updated`, `last_verified_at`, `last_corroborated`) is
   storage time; nothing represents when a fact is *about*, or when it
