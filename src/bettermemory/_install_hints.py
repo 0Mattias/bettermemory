@@ -30,8 +30,8 @@ this at module level and ``semantic`` lazily on a failure path, and a
 module with no imports of its own keeps both unconditionally cheap.
 
 The atoms are bare of backticks — the caller owns the prose around a
-command, and the three surfaces deliberately compose different prose
-(the search-handler error drops the pipx parenthetical; the semantic
+command, and the surfaces deliberately compose different prose (the
+search-handler error drops the pipx parenthetical; the semantic
 WARNING keeps only the development-clone variant). The two ``*_command``
 forms at the bottom are the fully-backticked compositions ``doctor``
 ships verbatim.

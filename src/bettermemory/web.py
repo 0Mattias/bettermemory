@@ -80,6 +80,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+from ._install_hints import tool_reinstall
 from ._response import ResponseBuilder
 from .config import Config
 from .consolidate import consolidate
@@ -1603,7 +1604,7 @@ def build_app(
     except ImportError as exc:
         raise ImportError(
             "FastAPI is required for the web UI. Install with "
-            "`uv tool install --reinstall 'bettermemory[ui]'`."
+            f"`{tool_reinstall('ui')}`."
         ) from exc
 
     store = store or Store(config.resolved_directory())
@@ -2301,7 +2302,7 @@ def serve(
     except ImportError as exc:
         raise ImportError(
             "uvicorn is required for the web UI. Install with "
-            "`uv tool install --reinstall 'bettermemory[ui]'`."
+            f"`{tool_reinstall('ui')}`."
         ) from exc
 
     tunnel_proc: subprocess.Popen[bytes] | None = None

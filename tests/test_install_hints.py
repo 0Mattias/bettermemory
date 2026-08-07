@@ -121,14 +121,7 @@ def test_doctor_binds_the_composed_forms_not_copies() -> None:
 #: grep — acceptable, because the defect class is drift-by-copy-paste,
 #: and a paste lands contiguous.
 _SPELLING_HOMES: dict[str, dict[str, int]] = {
-    "uv tool install --reinstall": {
-        _CANONICAL: 1,
-        # Other-extras surfaces ([ui], [dev]) that predate the atoms and
-        # still hand-spell the tool form — frozen debt, not license.
-        "src/bettermemory/cli/ui.py": 1,
-        "src/bettermemory/llm.py": 1,
-        "src/bettermemory/web.py": 2,
-    },
+    "uv tool install --reinstall": {_CANONICAL: 1},
     "pipx install --force": {_CANONICAL: 1},
     "--force-reinstall": {
         _CANONICAL: 1,

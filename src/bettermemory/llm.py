@@ -53,6 +53,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal, Protocol, Union, cast
 
+from ._install_hints import tool_reinstall
 from .models import (
     Memory,
     _PROPOSABLE_CATEGORIES,
@@ -403,8 +404,7 @@ class OllamaProvider:
         except ImportError as exc:
             raise RuntimeError(
                 "OllamaProvider requires httpx. Install with "
-                "`uv tool install --reinstall 'bettermemory[dev]'` or "
-                "`pip install httpx`."
+                f"`{tool_reinstall('dev')}` or `pip install httpx`."
             ) from exc
 
         prompt = build_prompt(cluster, today=today)
