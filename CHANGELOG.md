@@ -7,6 +7,70 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 4.0.0 - 2026-08-09
+
+### Removed — the embedding lane, whole
+
+An owner decision, recorded as such: bettermemory is a purist product —
+**the code is the model.** No embedding models, no borrowed pretrained
+weights, no third-party neural components anywhere. This release removes
+the entire embedding lane rather than disabling it:
+
+- The `[embeddings]` (sentence-transformers/PyTorch) and
+  `[embeddings-fast]` (fastembed/ONNX) optional extras, the `semantic`
+  and `semantic_setup` modules behind them, and the
+  `[behavior] semantic_provider` knob that arbitrated between providers.
+- The hybrid ranker's third leg. `hybrid` is RRF fusion of keyword +
+  BM25, full stop; every ranker is deterministic lexical code.
+- The `"semantic"` search mode. A per-call `mode="semantic"` raises
+  `unknown search mode` like any other bad value.
+- `[behavior] semantic_dedup` and the cosine write-dedup path. Dedup is
+  Jaccard on stopword-stripped, kebab-expanded token sets at every
+  entry point (0.75/0.40 manual, 0.90 unattended auto-consolidate).
+- The persistent embedding cache (`.embeddings.*.npz`), its flush/hydrate
+  machinery, and `reindex --embeddings`.
+- `doctor`'s embeddings checks and install hints, including the
+  recall-lift fix hint.
+- The two extras CI legs (`test-embeddings`, `test-embeddings-fast`) —
+  the embeddings jobs were also the matrix's only model-download legs,
+  the class behind the 3.43.0 release run's one-hour stall.
+- The bench semantic arms: both runners now refuse a requested
+  `semantic` arm with an explicit note instead of measuring a lane the
+  product no longer ships. The semantic arms' historical results stay in
+  the bench READMEs as dated record.
+
+### Migration
+
+- A config file still saying `search_mode = "semantic"` is normalised to
+  `hybrid` at load with one loud warning — delete the line to silence
+  it. (A page or server must not go down over a stale config line; an
+  explicit per-call ask must not silently rank with a different
+  algorithm — so the per-call form raises instead.)
+- A leftover `semantic_dedup` / `semantic_provider` line is ignored;
+  delete it.
+- Install specs referencing the removed extras
+  (`bettermemory[embeddings]`, `bettermemory[embeddings-fast]`) should
+  drop the bracket. Leftover `.embeddings.*.npz` cache files in a store
+  are inert and safe to delete; `sync` already excluded them from
+  shared history.
+
+### Changed — the comparative claims, restated without the tie
+
+The removed leg measured real recall, and the record keeps saying so:
+the retrieval bench's semantic arm beat lexical by 25 points at recall@1
+(60% vs 35% as-asked), and on LongMemEval the pre-4.0
+best-arm-vs-best-arm framing read as parity with claude-mem (91.8% vs
+91.6% macro recall@5). That tie framing is retired with the lane.
+Restated honestly: **bettermemory retrieves with deterministic lexical
+code only and scores 89.3% macro recall@5 on LongMemEval; claude-mem's
+embedding-native stack scores 91.6%. We are 2.3 points behind, by our
+own harness.** Closing that gap in code — no borrowed weights — is the
+standing retrieval campaign, and no current claim should be read as it
+having closed. `docs/api.md`, `docs/internals.md`,
+`docs/installation.md`, and both bench READMEs carry the migration
+notes and the dated restatement; incident reports keep their citations
+of the removed modules explicitly marked non-resolving at HEAD.
+
 ## 3.43.0 - 2026-08-08
 
 ### Fixed — the whole-tree audit: thirty-five findings drained
