@@ -708,11 +708,20 @@ def run_audit(
 # query-window-bounded by the search layer (~200 chars) and the block
 # injects exactly one hit, so a typical render sits near 700 chars; the
 # cap is the guard against a pathological scope list or a future edit
-# quietly turning a pointer into a payload. Enforced by truncating the
-# SNIPPET (the only unbounded-ish part), never the instructions — a
-# recall whose "verify before relying" line got cut would be worse than
-# no recall.
+# quietly turning a pointer into a payload. Enforced by bounding the
+# two caller-data parts — the scope list to its own cap below, the
+# snippet to the room the bounded frame leaves — never the
+# instructions: a recall whose "verify before relying" line got cut
+# would be worse than no recall.
 _RECALL_BLOCK_CAP_CHARS = 1_200
+
+# The scope list's bound inside the block. Scopes are caller data with
+# no schema-side length cap, and they live in the FRAME the snippet
+# math measures around — so without their own bound a pathological
+# list pushes the whole block past the ceiling no matter how hard the
+# snippet is cut. Whole scope names only; the dropped tail is marked
+# with an ellipsis.
+_RECALL_SCOPES_CAP_CHARS = 200
 
 
 def _render_recall_block(report: MissReport) -> str:
@@ -735,6 +744,13 @@ def _render_recall_block(report: MissReport) -> str:
     """
     hit = report.top_hits[0]
     scopes = ", ".join(hit.scopes)
+    if len(scopes) > _RECALL_SCOPES_CAP_CHARS:
+        kept: list[str] = []
+        for scope in hit.scopes:
+            if len(", ".join([*kept, scope])) > _RECALL_SCOPES_CAP_CHARS:
+                break
+            kept.append(scope)
+        scopes = (", ".join(kept) + ", …") if kept else "…"
     snippet = " ".join(hit.snippet.split())
     frame = (
         "bettermemory recall (score-gated: a stored memory ranks high for "

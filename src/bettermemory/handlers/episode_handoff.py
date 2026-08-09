@@ -344,6 +344,7 @@ async def episode_handoff(
     resolved_session_id: str | None = prior_session_id
     if resolved_session_id is None:
         from ..events import iter_all_events
+        from ..hook import _OUT_OF_PROCESS_TRIGGERS
 
         # Reuse the origin captured at handler entry above (used to
         # tag the session-tag floor episode). Same shim discipline
@@ -371,6 +372,17 @@ async def episode_handoff(
         latest_ts_by_session: dict[str, str] = {}
         worktree_by_session: dict[str, str] = {}
         for ev in iter_all_events(deps.store.root):
+            if ev.get("triggered_from") in _OUT_OF_PROCESS_TRIGGERS:
+                # Client-side hook events (Stop audit, prompt recall)
+                # record under Claude Code's transcript session id, not
+                # the server's `sess_<hex>`. Those sessions hold events
+                # but can never hold episodes, so admitting one here
+                # creates a worktree-matching zero-episode phantom that
+                # outranks and buries the real predecessor's takeaway.
+                # Same skip `hook._latest_in_process_session` applies,
+                # off the shared roster, so the two surfaces agree on
+                # what "in-process" means.
+                continue
             sid = ev.get("session") or ev.get("session_id")
             if not isinstance(sid, str) or sid == deps.recorder.session_id:
                 continue

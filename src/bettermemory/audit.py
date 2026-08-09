@@ -98,7 +98,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Iterable, Literal, cast
+from typing import Any, Callable, Collection, Iterable, Literal, cast
 
 from .models import Memory, MemoryHit, generate_ulid
 from .origin import Origin, repos_match
@@ -373,11 +373,12 @@ class MissReport:
 
     `recent_retrieval_count` is the number of retrieval events (see
     `_RETRIEVAL_EVENT_KINDS`) found within
-    `lookback_seconds` — matched on the session id, plus (when the
-    caller has a worktree) any event stamped with the caller's
-    `worktree_root` regardless of session (see
-    `_count_recent_retrievals`). Zero means no retrieval happened
-    within the window; non-zero is the "model did retrieve" branch.
+    `lookback_seconds` — matched on the session ids (the retrieval
+    anchor and the caller's own), plus (when the caller has a worktree)
+    any event stamped with the caller's `worktree_root` regardless of
+    session (see `_count_recent_retrievals`). Zero means no retrieval
+    happened within the window; non-zero is the "model did retrieve"
+    branch.
 
     `threshold_rule` records which decision rule was applied. Versioned
     so a future calibration pass can replay old reports under a new rule.
@@ -797,12 +798,17 @@ def probe_for_miss(
 
     `retrieval_session_id` is the session id used ONLY for the "did the
     model already retrieve this turn?" shield (`_count_recent_retrievals`).
-    It defaults to `session_id`. Out-of-process callers (the Stop hook)
-    must pass the bridged *server* session here, because their `session_id`
-    is Claude Code's transcript id — a different id space from the server's
-    `sess_<hex>` — so it never matches the search/show/list events the
-    server emitted, leaving the shield dead and every searched-then-
-    continued turn mis-flagged as a miss. In-process callers omit it; their
+    Out-of-process callers (the hooks) must pass the bridged *server*
+    session here, because their `session_id` is Claude Code's transcript
+    id — a different id space from the server's `sess_<hex>` — so alone
+    it never matches the search/show/list events the server emitted,
+    leaving the shield dead and every searched-then-continued turn
+    mis-flagged as a miss. The shield matches the UNION of the two ids,
+    not the anchor alone: a `prompt_recall` delivery records under the
+    CALLER's transcript id, and outside any git checkout it carries no
+    worktree stamp either, so an anchored-server-only match orphaned
+    exactly that event — re-flagging a delivered turn as a silent miss
+    and defeating the anti-spam bound. In-process callers omit it; their
     `session_id` already is the server session. The shield additionally
     counts retrieval events stamped with the caller's
     `caller_origin.worktree_root` under ANY session id, so a concurrent
@@ -990,11 +996,15 @@ def probe_for_miss(
 
     recent_retrieval_count = _count_recent_retrievals(
         recent_events,
-        # Match the *server* session that emitted the retrieval events, not
-        # necessarily the caller's `session_id` (see `retrieval_session_id`
-        # in the docstring). In-process callers leave it None and fall back
-        # to `session_id`, which already is the server session.
-        session_id=retrieval_session_id or session_id,
+        # Match the *server* session that emitted the retrieval events
+        # AND the caller's own id (see `retrieval_session_id` in the
+        # docstring): a `prompt_recall` delivery records under the
+        # caller's transcript id, and with no worktree stamp (hooks
+        # outside a checkout) the caller-id match is the only thing
+        # keeping "a delivered pointer is not a silent miss" true.
+        # In-process callers pass no anchor; the set is just their own
+        # server session.
+        session_ids={sid for sid in (retrieval_session_id, session_id) if sid},
         now=now,
         lookback_seconds=lookback_seconds,
         # The caller's worktree widens the shield to ANY session's
@@ -1089,13 +1099,13 @@ def _caller_in_top_hit_project(
 def _count_recent_retrievals(
     events: Iterable[dict[str, Any]],
     *,
-    session_id: str,
+    session_ids: Collection[str],
     now: datetime,
     lookback_seconds: int,
     worktree_root: str | None = None,
 ) -> int:
-    """Count retrieval events for the caller's worktree or `session_id`
-    within the window.
+    """Count retrieval events for the caller's worktree or any of
+    `session_ids` within the window.
 
     Retrieval = `kind in _RETRIEVAL_EVENT_KINDS` (`{"search", "show",
     "list"}`). All three shield the audit from flagging a miss: a
@@ -1116,15 +1126,20 @@ def _count_recent_retrievals(
       in-window retrieval the previous session made and re-fire a
       false miss (round 85's 60→600s widening scaled that collision
       window ~10x in the over-flag direction); or
-    * its session matches `session_id` — the legacy single-session
-      match, kept so unstamped events (logs written before the
-      Recorder stamped `worktree_root`, a server outside any git
-      checkout) and callers with no worktree keep their pre-round-88
-      behavior. The union is strictly additive on the shield side
-      (everything that shielded before still does), so the bias is
-      conservative — over-suppress, the project's stance on
-      miss-signal noise. The session-anchored `_disabled_scopes_from_
-      events` replay deliberately keeps its single-session semantics:
+    * its session matches one of `session_ids` — the anchored server
+      session plus the hook caller's own transcript id. The caller id
+      is load-bearing for exactly one producer: a `prompt_recall`
+      delivery records under the transcript id, and when the hooks run
+      outside a git checkout it carries no worktree stamp either, so
+      an anchored-server-only match orphaned the delivery and
+      re-flagged a served turn as a silent miss. Unstamped legacy
+      events and callers with no worktree keep their pre-round-88
+      single-session behavior through the same membership. The union
+      is strictly additive on the shield side (everything that
+      shielded before still does), so the bias is conservative —
+      over-suppress, the project's stance on miss-signal noise. The
+      session-anchored `_disabled_scopes_from_events` replay
+      deliberately keeps its single-session semantics:
       reset-on-restart is load-bearing there, not here.
 
     Defensive against the same malformed-event cases the rest of the
@@ -1147,7 +1162,7 @@ def _count_recent_retrievals(
             continue
         # Canonical-first session read with the legacy fallback the
         # other event consumers use — see 70e41a4.
-        if (ev.get("session") or ev.get("session_id")) != session_id:
+        if (ev.get("session") or ev.get("session_id")) not in session_ids:
             continue
         count += 1
     return count

@@ -2679,6 +2679,58 @@ def test_render_recall_block_caps_snippet_never_instructions() -> None:
     assert hit.id in block
 
 
+def test_render_recall_block_cap_holds_against_pathological_scope_list() -> None:
+    """The cap guards the WHOLE block, scope list included. Scopes are
+    caller data living in the FRAME the snippet math measures around,
+    so pre-fix a pathological list pushed the render past the ceiling
+    no matter how hard the snippet was cut — the exact hole the cap's
+    comment claimed to cover. Post-fix the list is bounded to
+    `_RECALL_SCOPES_CAP_CHARS` (whole names, ellipsis tail) and the
+    verify-first instructions survive verbatim.
+
+    Mutation-soundness: reverting the scope bound makes the length
+    assertion fail (~4KB render); routing the bound through name
+    truncation instead of whole-name drops breaks the whole-name
+    assertion."""
+    from bettermemory.audit import MissHit, MissReport, THRESHOLD_RULE_V1
+    from bettermemory.hook import _RECALL_BLOCK_CAP_CHARS, _RECALL_SCOPES_CAP_CHARS
+    from bettermemory.models import utcnow
+
+    scopes = tuple(f"projects:very-long-scope-name-{i:04d}" for i in range(120))
+    hit = MissHit(
+        id="01TESTRECALLSCOPECAP00000",
+        score=1.0,
+        relevance="high",
+        scopes=scopes,
+        snippet="y" * 400,
+        matched_unique=2,
+        query_unique=2,
+        relevance_v2="high",
+    )
+    report = MissReport(
+        verdict="miss",
+        checked_at=utcnow(),
+        session_id="transcript-scope-cap",
+        lookback_seconds=600,
+        recent_retrieval_count=0,
+        threshold_rule=THRESHOLD_RULE_V1,
+        top_hits=(hit,),
+        probe_query="scope cap probe",
+    )
+    block = _render_recall_block(report)
+    assert len(block) <= _RECALL_BLOCK_CAP_CHARS, len(block)
+    # The rendered scope run is bounded and marked, with only WHOLE
+    # scope names kept ahead of the ellipsis.
+    assert ", \u2026" in block or ", …" in block
+    rendered_scopes = block.split("[", 1)[1].split("]", 1)[0]
+    assert len(rendered_scopes) <= _RECALL_SCOPES_CAP_CHARS + len(", …")
+    for name in rendered_scopes.split(", ")[:-1]:
+        assert name in scopes, name
+    assert "memory_show" in block
+    assert 'outcome="ignored"' in block
+    assert hit.id in block
+
+
 def test_prompt_main_injects_and_exits_zero(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

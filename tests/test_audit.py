@@ -2681,3 +2681,68 @@ async def test_audit_turn_endorsement_tally_uses_production_window(
     # ...but the endorsement tally is scoped to production's 600s window,
     # so the audit ranker matches what the model's retrieval actually saw.
     assert ATTRIBUTION_LOOKBACK_SECONDS in windows
+
+
+def test_prompt_recall_under_caller_id_shields_when_server_session_anchored() -> None:
+    """The delivery lane's no-checkout shape: a `prompt_recall` event
+    records under the CALLER's transcript id and — hooks outside a git
+    checkout — carries no worktree stamp, while
+    `_latest_in_process_session` anchors the server's `sess_<hex>`.
+    The shield matches the UNION of the anchor and the caller's own id;
+    an anchored-server-only match orphans the delivery, re-flags the
+    served turn as a silent miss, and defeats the anti-spam bound (the
+    recall hook runs this same probe as its suppression check).
+
+    Mutation-soundness: restoring the pre-fix single-id anchor
+    (`session_id=retrieval_session_id or session_id`) flips the verdict
+    to "miss" and the count to 0."""
+    m = _memory("backup strategy uses triangular restic replication")
+    now = _utc(2026, 5, 1)
+    events = [
+        {
+            "ts": (now - timedelta(seconds=30)).isoformat().replace("+00:00", "Z"),
+            "session": "cc-transcript-1",
+            "kind": "prompt_recall",
+            "top_hits": [{"id": m.id}],
+            "triggered_from": "prompt_hook",
+        }
+    ]
+    report = probe_for_miss(
+        [m],
+        "backup strategy",
+        recent_events=events,
+        session_id="cc-transcript-1",
+        retrieval_session_id="sess_anchor",
+        now=now,
+        lookback_seconds=60,
+    )
+    assert report.verdict == "ok"
+    assert report.recent_retrieval_count == 1
+
+
+def test_unrelated_session_still_does_not_shield_with_anchor_present() -> None:
+    """The union is {anchor, caller} and nothing more — an event under a
+    THIRD session id shields neither, keeping the per-session audit
+    boundary that `test_show_in_different_session_does_not_shield` pins
+    for the anchorless path."""
+    m = _memory("backup strategy uses triangular restic replication")
+    now = _utc(2026, 5, 1)
+    events = [
+        {
+            "ts": (now - timedelta(seconds=30)).isoformat().replace("+00:00", "Z"),
+            "session": "sess_SOMEONE_ELSE",
+            "kind": "search",
+            "triggered_from": "stop_hook",
+        }
+    ]
+    report = probe_for_miss(
+        [m],
+        "backup strategy",
+        recent_events=events,
+        session_id="cc-transcript-1",
+        retrieval_session_id="sess_anchor",
+        now=now,
+        lookback_seconds=60,
+    )
+    assert report.verdict == "miss"
+    assert report.recent_retrieval_count == 0

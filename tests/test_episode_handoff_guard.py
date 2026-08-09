@@ -1006,3 +1006,90 @@ def test_desc_episode_handoff_documents_note_contract(
         f"time must not drift from the documented empty-shape / rewind "
         f"semantics."
     )
+
+
+async def test_episode_handoff_skips_out_of_process_hook_phantom_sessions(
+    memory_dir: Path,
+) -> None:
+    """A newer "session" whose only events are client-side hook rows
+    (`triggered_from` in `hook._OUT_OF_PROCESS_TRIGGERS`) must not enter
+    the auto-resolution walk at all. Those rows record under Claude
+    Code's transcript session id — a namespace that can never hold
+    episodes — so admitting one manufactures a worktree-matching
+    zero-episode phantom between the caller and its real predecessor.
+
+    Sequence:
+
+        S1: writes a REAL takeaway ("from S1"), plus a search event so
+            the server's stamped worktree_root is on disk to harvest
+        P:  a forged Stop-hook row — transcript-id session, newest ts,
+            same worktree_root, `triggered_from="stop_hook"`
+        S3: calls episode_handoff at entry
+
+    Post-fix, P is invisible: S1 resolves as the immediately-prior
+    session and its takeaway surfaces with NO note. Pre-fix, P is a
+    zero-episode candidate: the rewind still reaches S1's takeaway, but
+    the handoff reports the misleading zero-episode `note` claiming the
+    immediately-preceding session journaled nothing — the exact shape
+    this store's own run log showed while the defect was live.
+
+    Mutation-soundness: reverting the `_OUT_OF_PROCESS_TRIGGERS` skip in
+    the walk makes `"note" in res` true and the note assertion below
+    fail; the takeaway/id assertions keep the rewind contract honest
+    either way.
+    """
+    from bettermemory.episodes import EpisodeStore
+    from bettermemory.events import Recorder, iter_all_events
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    # S1: a real takeaway plus one search event (worktree_root donor).
+    server_s1 = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(server_s1, "episode_write", body="S1 phantom body", takeaway="from S1")
+    await _call(server_s1, "memory_search", query="anything at all")
+
+    ep_store = EpisodeStore(memory_dir)
+    s1_session_id: str
+    for sid in ep_store.iter_session_ids():
+        if any("S1 phantom body" in e.body for e in ep_store.list_by_session(sid)):
+            s1_session_id = sid
+            break
+    else:
+        raise AssertionError("could not locate session S1's id")
+
+    # Harvest the worktree stamp S1's server put on its events, so the
+    # phantom is a worktree MATCH for the walk (a None-worktree phantom
+    # would be invisible even pre-fix and pin nothing).
+    stamps = {
+        ev.get("worktree_root")
+        for ev in iter_all_events(memory_dir)
+        if isinstance(ev.get("worktree_root"), str)
+    }
+    assert stamps, "expected at least one worktree-stamped event to harvest"
+    (worktree,) = stamps
+
+    # P: the forged Stop-hook row — newest event in the log, transcript
+    # session id, out-of-process trigger. Recorder stamps ts=now, which
+    # is strictly newer than S1's events written above.
+    phantom = Recorder(
+        root=memory_dir,
+        session_id="cc-transcript-phantom-1234",
+        worktree_root=worktree,
+    )
+    phantom.record("turn_audited", triggered_from="stop_hook", verdict="ok")
+
+    # S3: handoff must resolve straight to S1 — no phantom, no note.
+    server_s3 = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    res = await _call(server_s3, "episode_handoff")
+
+    assert [e["takeaway"] for e in res["episodes"]] == ["from S1"], (
+        f"handoff must surface S1's takeaway; got: {res!r}"
+    )
+    assert res["prior_session_id"] == s1_session_id, (
+        f"prior_session_id must be S1, never the hook-phantom transcript id; "
+        f"got: {res!r}"
+    )
+    assert "note" not in res, (
+        f"a hook-phantom candidate must not manufacture the zero-episode "
+        f"rewind note; got: {res!r}"
+    )
