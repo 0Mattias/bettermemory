@@ -30,10 +30,7 @@ from bettermemory.events import EVENT_LOG_FILENAME, _SEGMENT_TEMPLATE
 from bettermemory.index import INDEX_FILENAME
 from bettermemory.ingest import INGEST_WATERMARK_FILENAME
 from bettermemory.proposals import PROPOSALS_FILENAME
-from bettermemory.semantic import (
-    EMBEDDING_FILENAME_PREFIX,
-    EMBEDDING_FILENAME_SUFFIX,
-)
+
 from bettermemory.store import TOMBSTONE_DIR, Store
 
 
@@ -3557,8 +3554,8 @@ def test_pull_uses_no_tags(
 #
 #   - `events.py:EVENT_LOG_FILENAME`            → `.events.jsonl`
 #   - `index.py:INDEX_FILENAME`                 → `.index.sqlite`
-#   - `semantic.py:EMBEDDING_FILENAME_PREFIX`   → `.embeddings.`
-#     `semantic.py:EMBEDDING_FILENAME_SUFFIX`   → `.npz`
+#   - `semantic.py:".embeddings."`   → `.embeddings.`
+#     `semantic.py:".npz"`   → `.npz`
 #   - `doctor.py:DOCTOR_PROBE_FILENAME`         → `.doctor-probe`
 #
 # Hazard: a future rename of any canonical filename constant updates
@@ -3610,11 +3607,11 @@ def test_gitignore_lines_include_canonical_filename_constants() -> None:
     # Embedding cache is a glob; assert it was built from the lifted
     # prefix/suffix constants. A rename of either half without
     # updating the sync glob would strand the rebuilt cache in git.
-    embedding_glob = f"{EMBEDDING_FILENAME_PREFIX}*{EMBEDDING_FILENAME_SUFFIX}"
+    embedding_glob = ".embeddings.*.npz"
     assert embedding_glob in sync._GITIGNORE_LINES, (
-        f"sync._GITIGNORE_LINES missing embedding-cache glob "
-        f"({embedding_glob!r}) built from "
-        f"semantic.EMBEDDING_FILENAME_PREFIX / SUFFIX"
+        f"sync._GITIGNORE_LINES missing the legacy embedding-cache glob "
+        f"({embedding_glob!r}) — upgraded stores may still hold pre-4.0 "
+        "cache files and sync must never commit them"
     )
     # Orphaned atomic-write `*.tmp` sidecars carry the same plaintext payload
     # as the file they were about to become (a memory body, or the raw-capture

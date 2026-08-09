@@ -636,8 +636,7 @@ class SimilarHit(BaseModel):
 
     Surfaced by `find_similar` and by `memory_write` when it refuses to
     create a parallel entry. `similarity` is Jaccard on stopword-stripped,
-    kebab-expanded token sets (or cosine when semantic dedup is on) —
-    symmetric, unlike `MemoryHit.score`.
+    kebab-expanded token sets — symmetric, unlike `MemoryHit.score`.
 
     `relevance` is one of `"high" | "medium" | "high-removed" | "medium-
     removed"`. The `-removed` suffix means the matched record is a

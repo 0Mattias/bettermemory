@@ -1,17 +1,16 @@
 """The install-command spelling exists once.
 
-Three hand-written copies of one command string — ``doctor``'s fix
-hints, the ``mode='semantic'`` error in ``handlers.search``, the
-provider WARNING in ``semantic`` — are the drift that shipped an
-unquoted, zsh-refused install command: each surface got fixed on its
-own schedule, and each fix closed an instance rather than the class.
-``bettermemory._install_hints`` closed the class by owning the atoms
-every surface composes from. This module holds both halves of that
-deal:
+Hand-written per-surface copies of one command string — ``doctor``'s
+fix hints plus two surfaces in the pre-4.0 semantic lane — are the
+drift that shipped an unquoted, zsh-refused install command: each
+surface got fixed on its own schedule, and each fix closed an instance
+rather than the class. ``bettermemory._install_hints`` closed the class
+by owning the atoms every surface composes from. This module holds both
+halves of that deal:
 
 1. the atoms render the exact pastable spellings (users copy these into
    shells, so every byte — the quoting above all — is load-bearing), and
-2. the spellings appear nowhere else in shipped source, so a fourth
+2. the spellings appear nowhere else in shipped source, so a new
    hand-written copy fails here instead of drifting.
 """
 
@@ -59,40 +58,38 @@ def test_atoms_render_the_pastable_spellings_verbatim() -> None:
     quote reopens the original defect everywhere at once — the flip
     side of having one definition.
     """
-    assert _install_hints.extras_spec("embeddings") == "'bettermemory[embeddings]'"
+    assert _install_hints.extras_spec("ui") == "'bettermemory[ui]'"
     assert (
-        _install_hints.tool_reinstall("embeddings")
-        == "uv tool install --reinstall 'bettermemory[embeddings]'"
+        _install_hints.tool_reinstall("ui")
+        == "uv tool install --reinstall 'bettermemory[ui]'"
     )
     assert (
-        _install_hints.pipx_force("embeddings-fast")
-        == "pipx install --force 'bettermemory[embeddings-fast]'"
+        _install_hints.pipx_force("dev") == "pipx install --force 'bettermemory[dev]'"
     )
     assert (
-        _install_hints.pip_force_reinstall("sentence_transformers")
-        == "uv pip install --force-reinstall sentence_transformers"
+        _install_hints.pip_force_reinstall("fastapi")
+        == "uv pip install --force-reinstall fastapi"
     )
     assert _install_hints.dev_clone_editable("ui") == 'uv pip install -e ".[ui]"'
 
 
 def test_composed_forms_keep_doctors_exact_shipped_shape() -> None:
-    """The two convenience forms are what `doctor` shipped pre-extraction.
+    """The two convenience forms keep the shape `doctor` shipped.
 
-    `test_doctor`'s hint assertions (`"force-reinstall fastembed" in
-    hint`, the parenthetical-position checks) read these through
-    `_check_embeddings_extra`, so the extraction must be a pure move —
-    byte-identical output, prose shape included.
+    The prose shape (tool form leading, parentheticals following) was
+    won in `doctor`'s fix hints pre-extraction and is pinned
+    byte-for-byte so a future consumer inherits it unchanged.
     """
-    assert _install_hints.install_extra_command("embeddings") == (
-        "`uv tool install --reinstall 'bettermemory[embeddings]'` "
-        "(pipx: `pipx install --force 'bettermemory[embeddings]'`; from a "
-        'development clone: `uv pip install -e ".[embeddings]"`)'
+    assert _install_hints.install_extra_command("ui") == (
+        "`uv tool install --reinstall 'bettermemory[ui]'` "
+        "(pipx: `pipx install --force 'bettermemory[ui]'`; from a "
+        'development clone: `uv pip install -e ".[ui]"`)'
     )
-    assert _install_hints.reinstall_extra_command("fastembed", "embeddings-fast") == (
-        "`uv tool install --reinstall 'bettermemory[embeddings-fast]'` "
-        "(pipx: `pipx install --force 'bettermemory[embeddings-fast]'`; "
+    assert _install_hints.reinstall_extra_command("fastapi", "ui") == (
+        "`uv tool install --reinstall 'bettermemory[ui]'` "
+        "(pipx: `pipx install --force 'bettermemory[ui]'`; "
         "inside the virtualenv that runs bettermemory: "
-        "`uv pip install --force-reinstall fastembed`)"
+        "`uv pip install --force-reinstall fastapi`)"
     )
 
 
@@ -173,10 +170,10 @@ def test_each_spelling_lives_only_in_its_pinned_homes(
 def test_install_hints_stays_import_free() -> None:
     """Zero imports, `__future__` included — pinned because it is relied on.
 
-    `handlers.search` imports the module at module level and `semantic`
-    lazily on its failure path; both placements were justified by the
-    import being unconditionally cheap, which only holds while this
-    module pulls in nothing at all.
+    `doctor`, `web`, `llm`, and `cli.ui` all import the module at module
+    level; those placements were justified by the import being
+    unconditionally cheap, which only holds while this module pulls in
+    nothing at all.
     """
     source = (_REPO_ROOT / _CANONICAL).read_text(encoding="utf-8")
     imports = [

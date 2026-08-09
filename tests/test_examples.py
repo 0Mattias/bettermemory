@@ -186,22 +186,18 @@ def test_example_memory_parses_and_validates(example_path: Path) -> None:
     assert memory.body.strip(), f"{example_path.name}: body is empty after validation"
 
 
-def test_mypy_numpy_override_skips_follow_imports() -> None:
-    """mypy silently type-checks NOTHING when the `embeddings` extra is
-    installed unless numpy's imports are skipped.
+def test_mypy_python_version_stays_at_project_minimum() -> None:
+    """`python_version` must stay pinned to the project minimum (3.11)
+    so 3.11-incompatible syntax in our own code keeps getting flagged —
+    a 'just bump it to 3.12' shortcut silently weakens the type gate.
 
-    With numpy present, `python_version = "3.11"`, mypy follows the
-    numpy import and tries to parse numpy 2.x's `__init__.pyi`, which
-    uses the 3.12-only `type` statement. That aborts the whole run
-    ('errors prevented further checking') and the bettermemory package
-    goes unchecked. The guard: numpy must have a dedicated override with
-    `follow_imports = "skip"` so mypy never opens numpy's stubs.
-
-    python_version MUST stay pinned to the project minimum (3.11) so
-    3.11-incompatible syntax in our own code keeps getting flagged —
-    assert that here too, so a future 'just bump it to 3.12' shortcut
-    (which would mask this by making numpy's stubs parse) trips a red
-    test instead of silently weakening the type gate.
+    (Pre-4.0 this test also required a numpy override with
+    `follow_imports = "skip"` + `follow_imports_for_stubs = true`:
+    with the embeddings extra installed, mypy parsed numpy 2.x's
+    3.12-syntax stubs under this pin, aborted, and type-checked
+    NOTHING. The 4.0.0 purist strip removed the extras — no dependency
+    ships numpy — so the override went with them; the version pin is
+    the half that still guards our own code.)
     """
     with (_REPO_ROOT / "pyproject.toml").open("rb") as fh:
         cfg = tomllib.load(fh)
@@ -209,46 +205,6 @@ def test_mypy_numpy_override_skips_follow_imports() -> None:
     mypy = cfg["tool"]["mypy"]
     assert mypy["python_version"] == "3.11", (
         "mypy python_version must stay at the project minimum (3.11); "
-        "bumping it to 3.12 silently lets 3.12-only syntax through and "
-        "also masks the numpy-stub parse abort this test guards."
-    )
-
-    overrides = mypy.get("overrides", [])
-
-    def _modules(block: dict[str, object]) -> list[str]:
-        mod = block.get("module", [])
-        if isinstance(mod, str):
-            return [mod]
-        if isinstance(mod, list):
-            return [str(m) for m in mod]
-        return []
-
-    numpy_blocks = [
-        block
-        for block in overrides
-        if any(m == "numpy" or m == "numpy.*" for m in _modules(block))
-    ]
-    assert numpy_blocks, (
-        "expected a [[tool.mypy.overrides]] block matching numpy — "
-        "without one, an installed numpy's 3.12-syntax stubs abort the "
-        "whole mypy run and the package goes unchecked."
-    )
-    # Both settings are load-bearing and must live on the SAME override block:
-    # `follow_imports = "skip"` is IGNORED for stub (.pyi) files by default, and
-    # numpy ships its types as bundled .pyi — so without
-    # `follow_imports_for_stubs = true` mypy STILL opens numpy's __init__.pyi
-    # and aborts on its 3.12-only `type` statement (verified: skip alone leaves
-    # mypy checking 0 files). Assert both on one block so a future edit can't
-    # drop the stub setting and silently reintroduce the no-op.
-    assert any(
-        block.get("follow_imports") == "skip"
-        and block.get("follow_imports_for_stubs") is True
-        for block in numpy_blocks
-    ), (
-        "the numpy mypy override must set BOTH follow_imports = 'skip' AND "
-        "follow_imports_for_stubs = true. ignore_missing_imports alone does "
-        "NOT stop mypy from parsing an *installed* numpy's __init__.pyi, and "
-        "follow_imports='skip' alone is ignored for numpy's bundled .pyi "
-        "stubs — so mypy parses them and its 3.12-only `type` statement "
-        "aborts type-checking under python_version 3.11."
+        "bumping it silently lets newer-syntax code through on the "
+        "oldest supported interpreter."
     )

@@ -244,7 +244,6 @@ def skip_to_candidate(pair: Any, *, created: str) -> ConflictCandidate:
 def find_conflict_candidates(
     memories: list[Memory],
     *,
-    semantic_model: Any | None = None,
     threshold: float | None = None,
 ) -> list[ConflictCandidate]:
     """Run the dedup scan and lift its conflict-shaped skips into
@@ -252,9 +251,7 @@ def find_conflict_candidates(
     persistence wrapper."""
     from .consolidate import _find_dedup_with_skips
 
-    _, skipped, _method = _find_dedup_with_skips(
-        memories, semantic_model=semantic_model, threshold=threshold
-    )
+    _, skipped, _method = _find_dedup_with_skips(memories, threshold=threshold)
     now_iso = utcnow().isoformat()
     out: list[ConflictCandidate] = []
     seen: set[str] = set()
@@ -604,15 +601,12 @@ def scan_conflicts(
     root: Path,
     memories: list[Memory],
     *,
-    semantic_model: Any | None = None,
     threshold: float | None = None,
 ) -> dict[str, int]:
     """Detect over the (full) active set and merge into the queue.
     The one-call orchestration both producers use — the
     `memory_conflicts(scan=True)` handler and the consolidate pass."""
-    fresh = find_conflict_candidates(
-        memories, semantic_model=semantic_model, threshold=threshold
-    )
+    fresh = find_conflict_candidates(memories, threshold=threshold)
     queue = ConflictQueue(root)
     return queue.upsert_scan(fresh, {m.id: m for m in memories})
 

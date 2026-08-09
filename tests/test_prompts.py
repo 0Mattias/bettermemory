@@ -772,34 +772,18 @@ def test_api_md_dead_weight_rule_matches_shared_predicate() -> None:
     )
 
 
-def test_docs_state_semantic_is_enabled_by_the_extra_alone() -> None:
-    """api.md + internals.md state the semantic model-gating contract.
+def test_docs_state_the_semantic_lane_is_removed() -> None:
+    """api.md + internals.md state the 4.0.0 lexical-only contract.
 
-    REVERSED, deliberately, and this test is the record of it. It used to
-    pin the opposite: that `_semantic_model_or_none` resolves ONLY behind
-    a config opt-in (`search_mode = "semantic"` or `semantic_dedup =
-    true`), so an installed extra alone left `hybrid` at keyword+BM25 and
-    made per-call `mode="semantic"` error with the install hint.
-
-    That contract lost on measurement. Fusing the semantic leg took
-    recall@1 from 35% to 60% on plainly-worded questions and from 80% to
-    90% on re-queried ones
-    (`bench/retrieval/results/v2-unpadded-2026-07-26.json` — 180 synthetic
-    documents, 20 blind-authored questions per probe, easier than a real
-    store, so the deltas carry and the absolute rates do not), and requiring
-    an unrelated WRITE-time flag to unlock a SEARCH improvement was a
-    foot-gun that had already produced wrong install advice more than once.
-    `hybrid` now resolves a model whenever an extra imports.
-
-    The old gate's stated reason — the shared factory would flip
-    write-dedup Jaccard->cosine — was real and is answered rather than
-    ignored: `handlers.write._resolve_dedup_thresholds` reads
-    `semantic_dedup` itself now, pinned by
-    `test_tombstone_dedup.py::test_write_dedup_ignores_a_model_resolved_for_search`.
-
-    Both directions stay pinned, just inverted: the docs must not
-    re-acquire the opt-in claim, and they must keep saying `semantic_dedup`
-    is about writes.
+    TWICE-REVERSED, deliberately, and this test is the record of both.
+    It first pinned that the semantic model resolved ONLY behind a
+    config opt-in; that lost on measurement (fusing the leg took
+    recall@1 from 35% to 60% on plainly-worded questions), so it flipped
+    to pin that installing an extra was the whole opt-in. The 4.0.0
+    purist direction then removed the lane outright: the project ships
+    no embedding models, retrieval is deterministic lexical code, and
+    the measured gap is a campaign target, not a config away. The docs
+    must say so — and must not quietly re-acquire either older claim.
     """
     root = Path(__file__).resolve().parents[1]
 
@@ -812,68 +796,60 @@ def test_docs_state_semantic_is_enabled_by_the_extra_alone() -> None:
     api_text = _flat("api.md")
     internals_text = _flat("internals.md")
 
-    # Direction 1 runs over EVERY tracked markdown file, not a hand-list.
-    #
-    # It used to name `api.md` and `internals.md`. `docs/installation.md` —
-    # the canonical install page, the one `doctor`'s own `fix_hint` sends
-    # people to — was never in the population, and carried the retired
-    # claim for three releases while five other surfaces were pinned
-    # against it. A guard whose population is a hand-list only ever covers
-    # the files someone remembered; the population has to come from
-    # somewhere that grows on its own. `git ls-files` is that somewhere,
-    # and it is the same correction 3.34.0 applied to the prose corpora.
-    #
-    # The forbidden literals widened too, and that half matters just as
-    # much: the drift wrote "the extra alone doesn't change ranking —
-    # semantic search also needs the config opt-in", which matches neither
-    # original literal. Adding the file without adding the wording would
-    # have left the guard green over the very text it exists to forbid.
+    # Direction 1 runs over EVERY tracked markdown file, not a hand-list —
+    # the 3.34.0 lesson (a guard whose population is a hand-list only ever
+    # covers the files someone remembered; `git ls-files` grows on its
+    # own). The forbidden literals are the load-bearing sentences of BOTH
+    # retired contracts, so re-acquiring either one trips here.
     forbidden = (
+        # the extra-alone era's claim sentences
+        "installing it is the whole opt-in",
+        "installing either one is sufficient",
+        "whenever an embeddings extra is installed",
+        "plus a semantic leg",
+        "fuses it as a third leg",
+        # the config-opt-in era's claim sentences
         "plus a config opt-in",
         "the extra alone is not enough",
         "also needs the config opt-in",
-        "doesn't change ranking",
-        "does not change ranking",
     )
     tracked_md = _git_tracked_files("*.md")
     assert tracked_md, "expected a git checkout with tracked markdown"
     for rel in tracked_md:
-        # CHANGELOG.md is the project's record of what changed, so it
-        # QUOTES retired prose on purpose. Exempting it is not narrowing
-        # the population to dodge a failure — a changelog that could not
-        # name the wording it retired could not describe the fix.
-        if rel == "CHANGELOG.md":
+        # Frozen dated records are exempt BY KIND, with the reason stated:
+        # CHANGELOG.md quotes retired prose on purpose (a changelog that
+        # could not name the wording it retired could not describe the
+        # fix); incident reports and audit transcripts are records of the
+        # tree as it stood; docs/v1.6-plan.md's own header declares it a
+        # preserved planning record.
+        if rel == "CHANGELOG.md" or rel == "docs/v1.6-plan.md":
             continue
-        text = re.sub(r"\s+", " ", (root / rel).read_text(encoding="utf-8"))
+        if rel.startswith(("docs/incidents/", "docs/audit/")):
+            continue
+        text = re.sub(r"\s+", " ", (root / rel).read_text(encoding="utf-8")).lower()
         for literal in forbidden:
             assert literal not in text, (
-                f"{rel} states that an embeddings extra alone does not enable "
-                f"the semantic leg ({literal!r}); installing one is the whole "
-                "opt-in, and `semantic_dedup` is a WRITE-time flag."
+                f"{rel} re-acquired a retired semantic-lane claim "
+                f"({literal!r}); the 4.0.0 strip removed the lane — the "
+                "project ships no embedding models, and no doc may imply "
+                "an extra or a config flag brings one back."
             )
 
-    # Direction 2: both surfaces say installation is what enables it, and
-    # that `semantic_dedup` is not the lever.
-    assert "installing it is the whole opt-in" in api_text, (
-        "docs/api.md no longer states that installing the extra is what "
-        "enables the semantic leg."
+    # Direction 2: both surfaces state the removal and the lexical-only
+    # contract in their own words.
+    assert "removed with the embedding lane in 4.0.0" in api_text, (
+        "docs/api.md no longer records that the semantic mode was removed "
+        "with the embedding lane in 4.0.0 — the migration note is the only "
+        'place a leftover `search_mode = "semantic"` user learns what '
+        "happened."
     )
-    assert "installing it is the whole opt-in" in internals_text, (
-        "docs/internals.md no longer states that installing the extra is "
-        "what enables the semantic leg."
+    assert "ships no embedding models" in api_text, (
+        "docs/api.md no longer states the lexical-only contract "
+        "(`ships no embedding models`)."
     )
-    for name, text in (
-        ("docs/api.md", api_text),
-        ("docs/internals.md", internals_text),
-    ):
-        assert "semantic_dedup" in text, (
-            f"{name} no longer mentions `semantic_dedup`. It still exists and "
-            "still changes behaviour — silently dropping it is how a reader "
-            "concludes it is the search knob again."
-        )
-    assert "WRITE-time dedup only" in api_text, (
-        "docs/api.md no longer scopes `semantic_dedup` to write-time dedup; "
-        "unscoped, it reads as a retrieval gate."
+    assert "ships no embedding models" in internals_text, (
+        "docs/internals.md no longer states the lexical-only contract "
+        "(`ships no embedding models`)."
     )
 
 

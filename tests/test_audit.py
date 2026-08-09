@@ -1189,56 +1189,26 @@ def test_probe_mode_default_is_hybrid() -> None:
     assert sig.parameters["mode"].default == "hybrid"
 
 
-class _ProbeStubSemanticModel:
-    """Deterministic sentence-transformers stand-in for the probe tests.
+def test_probe_mode_semantic_is_removed_and_no_signal_reason_stays_none() -> None:
+    """`mode="semantic"` was removed with the embedding lane in 4.0.0.
 
-    Same contract and shape as `_StubSemanticModel` in
-    test_search_modes.py — embeds over a tiny fixed vocabulary so cosine
-    similarity mirrors token overlap. Local copy because the audit tests
-    only need the dispatch smoke, not the ranking-quality cases."""
-
-    def __init__(self, vocab: list[str]) -> None:
-        self._vocab = vocab
-
-    def encode(self, text: str, *, normalize_embeddings: bool = False) -> list[float]:
-        from bettermemory.search import tokenize
-
-        toks = set(tokenize(text))
-        vec = [1.0 if term in toks else 0.0 for term in self._vocab]
-        if normalize_embeddings:
-            norm = sum(x * x for x in vec) ** 0.5
-            if norm > 0:
-                vec = [x / norm for x in vec]
-        return vec
-
-
-def test_probe_semantic_mode_without_model_returns_no_signal_with_reason() -> None:
-    """Regression: `mode="semantic"` with no `semantic_model` used to fall
-    through to `run_search`, whose ValueError aborted the entire audit —
-    the Stop hook swallowed it before `turn_audited` was recorded, so
-    semantic-mode users got zero audit telemetry ever. The probe now
-    declines honestly: an explicit `no_signal` with
-    `no_signal_reason="semantic_model_unavailable"`, never a silent
-    degrade to a different scorer (the module documents against
-    wrong-scorer probes)."""
+    The probe forwards the mode to `search`, whose runtime guard raises
+    on it like any unknown mode — config normalisation
+    (`config._coerce_search_mode`) means no production Stop hook can
+    reach this branch, so the raise only faces programmatic callers.
+    `no_signal_reason` survives as a FIELD (recorded events carry its
+    one historical value and replay must keep reading them), but every
+    current no-signal branch leaves it None."""
     m = _memory("backup strategy uses triangular restic replication")
-    report = probe_for_miss(
-        [m],
-        "backup strategy",
-        recent_events=[],
-        session_id="sess_x",
-        now=_utc(2026, 5, 1),
-        mode="semantic",
-    )
-    assert report.verdict == "no_signal"
-    assert report.no_signal_reason == "semantic_model_unavailable"
-    assert report.top_hits == ()
-    # probe_query is preserved so triage can see what the audit declined
-    # to probe; the reason field disambiguates from the no-hits branch.
-    assert report.probe_query == "backup strategy"
-    # The new field is additive on the wire shape; the legacy no-signal
-    # branches keep it None.
-    assert report.to_dict()["no_signal_reason"] == "semantic_model_unavailable"
+    with pytest.raises(ValueError, match="unknown audit probe mode"):
+        probe_for_miss(
+            [m],
+            "backup strategy",
+            recent_events=[],
+            session_id="sess_x",
+            now=_utc(2026, 5, 1),
+            mode="semantic",
+        )
     empty_store = probe_for_miss(
         [],
         "backup strategy",
@@ -1246,30 +1216,9 @@ def test_probe_semantic_mode_without_model_returns_no_signal_with_reason() -> No
         session_id="sess_x",
         now=_utc(2026, 5, 1),
     )
+    assert empty_store.verdict == "no_signal"
     assert empty_store.no_signal_reason is None
-
-
-def test_probe_semantic_mode_with_model_runs_ranker() -> None:
-    """With a model threaded through, semantic mode probes normally — the
-    same body/query pair the keyword matrix uses scores a high-relevance
-    hit and, with no retrieval in the window, flags a miss. Pre-fix this
-    raised ValueError out of `run_search` regardless of the caller."""
-    m = _memory("backup strategy uses triangular restic replication")
-    model = _ProbeStubSemanticModel(
-        ["backup", "strategy", "uses", "triangular", "restic", "replication"]
-    )
-    report = probe_for_miss(
-        [m],
-        "backup strategy",
-        recent_events=[],
-        session_id="sess_x",
-        now=_utc(2026, 5, 1),
-        mode="semantic",
-        semantic_model=model,
-    )
-    assert report.verdict == "miss"
-    assert report.top_hits[0].id == m.id
-    assert report.no_signal_reason is None
+    assert empty_store.to_dict()["no_signal_reason"] is None
 
 
 def test_probe_half_life_days_matches_run_search_ranking() -> None:
@@ -1341,8 +1290,8 @@ def test_probe_half_life_days_matches_run_search_ranking() -> None:
 def test_probe_forwards_ranker_config_to_run_search(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Wiring pin for every threaded ranker knob: `half_life_days`,
-    `semantic_model`, and the three usage-aware factors
+    """Wiring pin for every threaded ranker knob: `half_life_days` and
+    the three usage-aware factors
     (`applied_by_id`, `negative_by_id`, `corroboration_boost`) must
     reach `run_search` verbatim — the probe-matches-the-ranker rule is
     only as good as the forwarding.
@@ -1381,7 +1330,6 @@ def test_probe_forwards_ranker_config_to_run_search(
     assert captured["applied_by_id"] is sentinel_counts
     assert captured["negative_by_id"] is sentinel_negatives
     assert captured["corroboration_boost"] is True
-    assert captured["semantic_model"] is None
 
 
 # `_DEMOTION_*`: a two-memory near-tie whose rank-1 slot the bounded
@@ -1809,69 +1757,15 @@ async def test_audit_turn_lookback_seconds_is_clamped(
     assert audited[-1]["lookback_seconds"] == 1
 
 
-async def test_audit_turn_semantic_mode_without_extra_records_no_signal(
-    memory_dir: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Regression: with `search_mode = "semantic"` configured and no
-    embeddings model resolvable, memory_audit_turn used to propagate
-    `ValueError("mode=semantic requires semantic_model ...")` as a tool
-    error on every call — and no `turn_audited` was ever recorded. The
-    handler now resolves the model via the same factory production
-    search uses; when it comes back None the probe records an explicit
-    `no_signal` with a reason instead of crashing.
-
-    The no-model premise is FORCED, not assumed from the environment:
-    since the factory started resolving for `search_mode = "semantic"`
-    itself, an extras-installed environment (the embeddings CI lanes)
-    would hand the probe a real model and this test would silently flip
-    to testing the happy path. `get_model -> None` pins the premise
-    everywhere (the factory re-imports it from `bettermemory.semantic`
-    per call, so patching the module attribute is sufficient)."""
-    from bettermemory import semantic as semantic_mod
-    from bettermemory.config import BehaviorConfig
-
-    monkeypatch.setattr(semantic_mod, "get_model", lambda *a, **kw: None)
-
-    cfg = Config(
-        storage=StorageConfig(directory=str(memory_dir)),
-        behavior=BehaviorConfig(search_mode="semantic"),
-    )
-    state = SessionState()
-    rec = Recorder(root=memory_dir, session_id=state.session_id, enabled=True)
-    server = build_server(
-        config=cfg, store=Store(memory_dir), state=state, recorder=rec
-    )
-    Store(memory_dir).write(
-        content="backup strategy uses triangular restic replication",
-        scopes=["infrastructure"],
-    )
-
-    report = await _call(server, "memory_audit_turn", user_message="backup strategy")
-    assert report["verdict"] == "no_signal"
-    assert report["no_signal_reason"] == "semantic_model_unavailable"
-
-    audited = [e for e in _events(memory_dir) if e["kind"] == "turn_audited"]
-    assert len(audited) == 1
-    assert audited[0]["verdict"] == "no_signal"
-    assert audited[0]["probe_mode"] == "semantic"
-    # Round-88: the reason must reach the WIRE, not just the tool
-    # response — without it the eventlog/health consumers cannot split
-    # the structurally-unmeasured semantic cohort from benign
-    # per-turn no_signals.
-    assert audited[0]["no_signal_reason"] == "semantic_model_unavailable"
-
-
 async def test_audit_turn_threads_ranker_config_into_probe(
     memory_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The in-process handler must hand the probe the same ranker
     configuration production search uses: the configured
-    `recency_boost_half_life_days`, the endorsement tally (when
-    `endorsement_boost` is on), and the factory-resolved semantic
-    model for hybrid/semantic probe modes. Pre-fix the probe call
-    passed none of these, so any non-default config probed with a
-    different scorer than the model's retrieval."""
-    from bettermemory import builder as builder_mod
+    `recency_boost_half_life_days` and the endorsement tally (when
+    `endorsement_boost` is on). Pre-fix the probe call passed none of
+    these, so any non-default config probed with a different scorer
+    than the model's retrieval."""
     from bettermemory.audit import probe_for_miss as real_probe
     from bettermemory.config import BehaviorConfig
 
@@ -1882,13 +1776,6 @@ async def test_audit_turn_threads_ranker_config_into_probe(
         return real_probe(*args, **kwargs)
 
     monkeypatch.setattr("bettermemory.handlers.audit_turn.probe_for_miss", spy)
-    # The factory is consulted for hybrid (the configured mode below);
-    # a sentinel that satisfies the model contract proves the resolved
-    # object is threaded, not re-resolved or dropped.
-    model_sentinel = _ProbeStubSemanticModel(["backup", "strategy"])
-    monkeypatch.setattr(
-        builder_mod, "_semantic_model_or_none", lambda _cfg: model_sentinel
-    )
 
     cfg = Config(
         storage=StorageConfig(directory=str(memory_dir)),
@@ -1912,7 +1799,6 @@ async def test_audit_turn_threads_ranker_config_into_probe(
     await _call(server, "memory_audit_turn", user_message="backup strategy")
     assert captured["half_life_days"] == 7.0
     assert captured["applied_by_id"] == {written.id: 1}
-    assert captured["semantic_model"] is model_sentinel
 
 
 async def test_search_endorsement_tally_matches_audit_probe_across_rotation(

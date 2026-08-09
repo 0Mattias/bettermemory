@@ -21,13 +21,12 @@ Design notes:
 
 - **Dedup leans on the existing `find_similar` pass.** A re-ingest
   after a partial run won't duplicate, because byte-for-byte matches
-  score 1.0 under either scorer and trip the high-similarity
-  threshold. No sidecar state file is needed. The scorer and threshold
-  come from `resolve_dedup_policy`, so the plan phase and the
-  gate-driven apply phase reach the same *dedup* verdict for a row
-  instead of scoring it under two different policies. The other
-  content gates still run only at apply time, so a `--dry-run` can
-  over-promise on a row carrying a credential or a transient marker.
+  score 1.0 and trip the high-similarity threshold. No sidecar state
+  file is needed. The plan phase and the gate-driven apply phase score
+  every row under the one Jaccard policy, so both reach the same dedup
+  verdict. The other content gates still run only at apply time, so a
+  `--dry-run` can over-promise on a row carrying a credential or a
+  transient marker.
   The `[scopes] allowed` check (see `_scope_allowlist_reason`) is
   NOT in that residue: `compute_ingest_plan` takes the same optional
   `Config` `apply_ingest_plan` does and runs the identical predicate
@@ -257,7 +256,6 @@ def _classify_one(
     high_threshold: float,
     allowed_scopes: list[str] | None = None,
     behavior: BehaviorConfig | None = None,
-    semantic_model: Any | None = None,
     force: bool = False,
 ) -> IngestRow:
     """Parse one source file and return the classified IngestRow.
@@ -413,9 +411,8 @@ def _classify_one(
             reason=scope_reason,
         )
 
-    # Dedup gate: active store wins, then tombstones. Both checks use
-    # the scorer and threshold `resolve_dedup_policy` hands the caller,
-    # which is the same pair `memory_write`'s dedup gates resolve, so a
+    # Dedup gate: active store wins, then tombstones. Both checks run
+    # the same Jaccard scorer `memory_write`'s dedup gates run, so a
     # re-ingest behaves the same way an interactive write would have —
     # and so this plan's verdict survives `apply_ingest_plan` re-running
     # the same policy per row. `force` bypasses the active-store check
@@ -426,7 +423,6 @@ def _classify_one(
         active_hits = find_similar(
             composed,
             existing,
-            semantic_model=semantic_model,
             high_threshold=high_threshold,
         )
         high_active = [h for h in active_hits if h.relevance == "high"]
@@ -446,7 +442,6 @@ def _classify_one(
     tombstone_hits = find_similar_tombstones(
         composed,
         tombstoned,
-        semantic_model=semantic_model,
         high_threshold=high_threshold,
     )
     # Tombstone hits carry a `-removed` suffix on the relevance label
@@ -487,7 +482,6 @@ def compute_ingest_plan(
     extra_scopes: list[str] | None = None,
     now: datetime | None = None,
     high_threshold: float = HIGH_SIMILARITY,
-    semantic_model: Any | None = None,
     config: "Config | None" = None,
     force: bool = False,
 ) -> IngestPlan:
@@ -504,8 +498,7 @@ def compute_ingest_plan(
     `apply_ingest_plan` takes, and a caller that will follow up with an
     apply must pass the SAME object to both, exactly as it must pass the
     same `force` — otherwise the plan and the commit disagree about which
-    rows survive, which is the whole failure mode `resolve_dedup_policy`
-    exists to prevent for the dedup half. Omitting it means "no
+    rows survive — the dry-run-lies failure mode. Omitting it means "no
     allowlist" (`Config()`'s default is an empty list, which means "any
     scope") but NOT "no caps": the shipped byte and scope caps are live
     defaults, so `config=None` is judged under `BehaviorConfig()` — the
@@ -515,18 +508,7 @@ def compute_ingest_plan(
     rows carry no caller scopes, the floor defaults to off, and a source
     file big enough to trip the default byte cap fails the
     `_frontmatter` read ceiling first. Nothing else on the object is
-    read here: the dedup knobs reach this function pre-resolved as
-    `semantic_model` / `high_threshold`, and re-reading them from
-    `config` would be the second copy of that resolution
-    `resolve_dedup_policy` was written to delete.
-
-    `semantic_model` + `high_threshold` are the dedup policy this plan
-    is scored under. Callers that will follow up with
-    `apply_ingest_plan` should source both from `resolve_dedup_policy`
-    so the plan is scored by the same scorer the apply-time gates will
-    use; the defaults (no model, Jaccard `HIGH_SIMILARITY`) are what
-    that resolver returns whenever `semantic_dedup` is off, which is
-    the default config.
+    read here.
 
     Raises `FileNotFoundError` if the source root doesn't exist —
     distinguished from "exists but empty" so the CLI can tell the
@@ -600,7 +582,6 @@ def compute_ingest_plan(
             high_threshold=high_threshold,
             allowed_scopes=allowed_scopes,
             behavior=behavior,
-            semantic_model=semantic_model,
             force=force,
         )
         rows.append(row)
@@ -637,43 +618,11 @@ def _gate_deps(store: Store, config: "Config | None") -> Any:
     plan with a bare `Store`. Falling back to `Config()` defaults is the
     only safe reading: the alternative (skip the gates when no config
     arrived) would make the chokepoint opt-in, which is the exact shape of
-    the bug this closes. Defaults are conservative — semantic dedup off, so
-    the fallback is the cheap lexical path, never a surprise model load.
+    the bug this closes. Defaults are conservative.
     """
     from .handlers.write import GateBundle
 
     return GateBundle.for_store(store, config if config is not None else Config())
-
-
-def resolve_dedup_policy(store: Store, config: "Config | None") -> tuple[Any, float]:
-    """The `(semantic_model, high_threshold)` pair the dedup gates will use.
-
-    Exists so `compute_ingest_plan` can be scored under the SAME policy
-    `apply_ingest_plan`'s gates enforce. The two used to disagree by
-    construction: the plan side hardcoded lexical Jaccard at
-    `HIGH_SIMILARITY` while the apply side read `[behavior] semantic_dedup`
-    per row, so under `semantic_dedup = true` a green `--dry-run` ("would
-    write N") could commit fewer than N — cosine-0.85 and Jaccard-0.75 are
-    different scorers on different scales and disagree in both directions.
-    That is the same dry-run-lies class the `--scope` pre-validation in
-    `cli/ingest.py` exists to prevent.
-
-    Delegates the resolution itself to the gates' own
-    `_resolve_dedup_thresholds` rather than re-reading the config here:
-    a second copy of "which flag turns cosine on, and does a model
-    actually resolve" is exactly how the two sides drifted apart the
-    first time. `None` from that resolver means "no semantic model" —
-    translated to the Jaccard-natural `HIGH_SIMILARITY` because
-    `compute_ingest_plan` takes a concrete float.
-    """
-    from .handlers.write import _resolve_dedup_thresholds
-
-    semantic_model, high_threshold, _medium = _resolve_dedup_thresholds(
-        _gate_deps(store, config)
-    )
-    return semantic_model, (
-        high_threshold if high_threshold is not None else HIGH_SIMILARITY
-    )
 
 
 def _content_gates(*, force: bool) -> tuple[Any, ...]:
@@ -981,7 +930,7 @@ def apply_ingest_plan(
     # Read the allowlist off the SAME object the gates run against rather
     # than re-deriving `config if config is not None else Config()` here. A
     # second copy of that fallback is how the plan and apply sides drifted
-    # over the dedup policy (see `resolve_dedup_policy`), and the failure
+    # over the dedup policy, and the failure
     # mode is worse for a whitelist: a divergent fallback would silently
     # decide the knob is empty and enforce nothing.
     allowed_scopes = list(gate_deps.config.scopes.allowed)
@@ -1451,6 +1400,5 @@ __all__ = [
     "discover_default_source_root",
     "load_ingest_watermark",
     "render_ingest_text",
-    "resolve_dedup_policy",
     "source_is_ingested",
 ]

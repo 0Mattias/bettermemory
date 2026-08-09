@@ -61,16 +61,13 @@ def add_subparser(
         ),
     )
     parser.add_argument(
-        "--semantic-threshold",
+        "--dedup-threshold",
         type=float,
         default=None,
         help=(
-            "Cosine threshold for the semantic dedup pass (default 0.85). "
-            "When the embeddings extra is not installed the pass falls back "
-            "to Jaccard (default 0.75). If you pass this flag without "
-            "embeddings it IS still applied — as the Jaccard cutoff, which "
-            "is a different scale from cosine, so raising it makes dedup "
-            "stricter (fewer near-duplicates tombstoned)."
+            "Jaccard similarity cutoff for the dedup pass (default 0.75). "
+            "Raising it makes dedup stricter — fewer near-duplicates "
+            "tombstoned."
         ),
     )
     parser.add_argument(
@@ -215,7 +212,7 @@ def run(args: argparse.Namespace) -> None:
         json_out=args.json,
         window_days=args.window_days,
         cold_scope_days=args.cold_scope_days,
-        semantic_threshold=args.semantic_threshold,
+        dedup_threshold=args.dedup_threshold,
         typo_distance=args.typo_distance,
         llm=args.llm,
         llm_provider=args.llm_provider,
@@ -234,7 +231,7 @@ def _cli_consolidate(
     json_out: bool,
     window_days: int,
     cold_scope_days: int,
-    semantic_threshold: float | None,
+    dedup_threshold: float | None,
     typo_distance: int,
     llm: bool = False,
     llm_provider: str = "ollama",
@@ -259,17 +256,10 @@ def _cli_consolidate(
     untrusted reasoning.
     """
     from ..consolidate import consolidate, render_json, render_text
-    from ..semantic_setup import _semantic_model_or_none
 
     ctx = cli_context()
     config = ctx.config
     store = ctx.store
-
-    # Resolve the semantic model if an embedding extra is installed.
-    # `_semantic_model_or_none` honours `[behavior] semantic_provider`
-    # and returns None on a clean install without an extra, which the
-    # dedup pass treats as the "fall back to Jaccard" signal.
-    semantic_model = _semantic_model_or_none(config)
 
     # Build a session id so tombstones produced by --apply carry a
     # caller-attributable record. Matches the SessionState pattern used
@@ -281,8 +271,7 @@ def _cli_consolidate(
 
     report = consolidate(
         store,
-        semantic_model=semantic_model,
-        semantic_threshold=semantic_threshold,
+        dedup_threshold=dedup_threshold,
         window_days=window_days,
         cold_scope_days=cold_scope_days,
         typo_distance=typo_distance,
@@ -294,8 +283,7 @@ def _cli_consolidate(
     if llm:
         _cli_consolidate_llm(
             store=store,
-            semantic_model=semantic_model,
-            semantic_threshold=semantic_threshold,
+            dedup_threshold=dedup_threshold,
             apply=apply,
             yes=yes,
             json_out=json_out,
@@ -673,8 +661,7 @@ def _cli_consolidate_acknowledge_misses(
 def _cli_consolidate_llm(
     *,
     store: Store,
-    semantic_model: Any,
-    semantic_threshold: float | None,
+    dedup_threshold: float | None,
     apply: bool,
     yes: bool,
     json_out: bool,
@@ -712,8 +699,7 @@ def _cli_consolidate_llm(
     report = consolidate_llm(
         store,
         provider,
-        semantic_model=semantic_model,
-        semantic_threshold=semantic_threshold,
+        dedup_threshold=dedup_threshold,
         apply=apply,
         accept=yes,
         interactive_input=interactive_input,

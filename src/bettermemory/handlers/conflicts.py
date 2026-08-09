@@ -51,7 +51,6 @@ from ..conflicts import (
 from ..models import LinkType, Memory, MemoryLink
 from ..store import ConcurrentUpdateError, MemoryNotFoundError, TombstonedError
 from ._shared import Context, _advance_turn
-from .write import _resolve_dedup_thresholds
 
 if TYPE_CHECKING:
     from .._handlers import ToolHandlers
@@ -132,12 +131,9 @@ async def memory_conflicts(
             deps, queue, candidate_id=resolve, verdict=verdict, note=note
         )
     elif scan:
-        semantic_model, high_threshold, _medium = _resolve_dedup_thresholds(deps)
         counters = scan_conflicts(
             deps.store.root,
             deps.store.load_all(),
-            semantic_model=semantic_model,
-            threshold=high_threshold,
         )
         out["scan"] = counters
         deps.recorder.record("conflict_scan", **counters)

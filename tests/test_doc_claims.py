@@ -581,6 +581,16 @@ _ALLOWLIST: dict[tuple[str, str, str], str] = {
     ),
     (
         _CHANGELOG,
+        "path",
+        "tests/test_broken_optional_extra.py",
+    ): (
+        "Frozen history. The 3.35.0 entry describes the optional-extra "
+        "regression suite as shipped; the 4.0.0 purist strip removed the "
+        "embedding lane and this suite with it. Accurate release note, "
+        "since-removed surface."
+    ),
+    (
+        _CHANGELOG,
         "symbol",
         "_FakeCtx in tests/test_session_registry.py",
     ): (

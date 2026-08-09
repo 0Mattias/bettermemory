@@ -1192,7 +1192,6 @@ def surface_claim_counts() -> dict[str, int]:
 _CLAIM_FLOORS = {
     "README.md": 2,
     "docs/internals.md": 3,
-    _DOCTOR_MODULE: 4,
 }
 
 
@@ -1207,12 +1206,14 @@ def test_coverage_floor_the_known_claim_bearing_surfaces_still_match() -> None:
 
     Recorded at the time of writing, for a reader chasing a change here:
     the README bullet and the internals paragraph each state the serialized
-    tool-surface cost in four figures, and the doctor fix hint states the
-    lexical-to-semantic recall lift in four. The descriptions and the
-    instructions block state no measurement at all, by design — the
-    truth-sync pass moved the one they carried into a module docstring,
-    because a rate is only honest beside its caveat and an always-resident
-    string should not spend characters on one.
+    tool-surface cost in four figures. (The doctor fix hint used to state
+    the lexical-to-semantic recall lift in four more; the 4.0.0 purist
+    strip removed that check, hint and all, so doctor dropped out of the
+    floor table legitimately.) The descriptions and the instructions
+    block state no measurement at all, by design — the truth-sync pass
+    moved the one they carried into a module docstring, because a rate is
+    only honest beside its caveat and an always-resident string should
+    not spend characters on one.
     """
     counts = surface_claim_counts()
     for source, floor in _CLAIM_FLOORS.items():

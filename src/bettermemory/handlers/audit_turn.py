@@ -232,16 +232,6 @@ async def memory_audit_turn(
     # have shown." Falls through to `"hybrid"` (the package
     # default since 2.6.8) when the config doesn't carry an override.
     probe_mode = deps.config.behavior.search_mode or "hybrid"
-    # Resolve the semantic model exactly as the production search
-    # handler does (`handlers/search.py`): the factory caches per
-    # process, so the in-process audit can afford the same scorer the
-    # model's retrieval would have used. When `semantic` mode has no
-    # model available the probe returns an explicit `no_signal`
-    # (`no_signal_reason="semantic_model_unavailable"`) rather than
-    # erroring the tool call.
-    semantic_model: Any | None = None
-    if probe_mode in ("semantic", "hybrid"):
-        semantic_model = deps._semantic_model_factory(deps.config)
     # Config-driven ranking inputs: the SAME `RankingInputs` the
     # production search handler threads
     # (`handlers.search.resolve_ranking_inputs`), so this probe cannot
@@ -284,7 +274,6 @@ async def memory_audit_turn(
         caller_origin=current_origin,
         excluded_scopes=set(state.disabled_scopes),
         mode=probe_mode,
-        semantic_model=semantic_model,
         half_life_days=ranking.half_life_days,
         applied_by_id=ranking.applied_by_id,
         negative_by_id=ranking.negative_by_id,

@@ -208,7 +208,7 @@ def test_per_question_records_reproduce_the_aggregate_recall() -> None:
             ["sC", "sD"],
         ),
     ]
-    res = bm.run_arm(corpus, arm="lexical", semantic_model=None, progress=False)
+    res = bm.run_arm(corpus, arm="lexical", progress=False)
 
     assert len(res.per_question) == res.n == 2
     assert [r["qid"] for r in res.per_question] == ["qa", "qb"]

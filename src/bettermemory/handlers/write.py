@@ -39,7 +39,6 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -554,47 +553,6 @@ class GroundednessGate(WriteGate):
         )
 
 
-def _resolve_dedup_thresholds(
-    deps: "GateDeps",
-) -> tuple[Any, float | None, float | None]:
-    """Shared setup for both dedup gates: the semantic model plus the
-    high/medium overlap thresholds (None unless semantic dedup is on).
-
-    `DedupActiveGate` and `DedupTombstoneGate` run back-to-back in the
-    same write chain and need the identical triple; keeping it in one
-    place stops the two gates from silently drifting apart.
-    """
-    # Ask for the model ONLY when this consumer wants it. The factory is
-    # shared with retrieval, and retrieval now resolves a model whenever an
-    # embeddings extra is installed — so taking whatever the factory hands
-    # back would silently switch write-dedup from Jaccard to cosine for
-    # anyone who installed the extra to improve SEARCH and never opted into
-    # semantic dedup. Worse, the thresholds below stay Jaccard-natural in
-    # that case, so it would score cosine against 0.75/0.40 — a similarity
-    # scale the numbers were never calibrated for. `semantic_dedup` is this
-    # gate's own flag; read it here rather than inferring intent from
-    # whether some other consumer caused a load.
-    semantic_model = (
-        deps._semantic_model_factory(deps.config)
-        if deps.config.behavior.semantic_dedup
-        else None
-    )
-    # Gate the COSINE-calibrated thresholds on the RESOLVED model, not on
-    # the `semantic_dedup` flag alone. When `semantic_dedup=true` but the
-    # embeddings extra isn't installed, the factory returns None (one
-    # WARNING) and `find_similar` falls back to the Jaccard scorer — feeding
-    # it cosine thresholds (0.85/0.65) would silently neuter dedup, since
-    # Jaccard rarely reaches 0.85. Passing None lets `find_similar` pick the
-    # Jaccard-natural 0.75/0.40.
-    if semantic_model is not None:
-        high_threshold: float | None = deps.config.behavior.semantic_high_threshold
-        medium_threshold: float | None = deps.config.behavior.semantic_medium_threshold
-    else:
-        high_threshold = None
-        medium_threshold = None
-    return semantic_model, high_threshold, medium_threshold
-
-
 class DedupActiveGate(WriteGate):
     """Content dedup against the active set. High overlap → reject as
     duplicate (the right move is memory_update on the matched id);
@@ -606,15 +564,9 @@ class DedupActiveGate(WriteGate):
     def evaluate(self, deps: "GateDeps", gc: GateContext) -> GateResult:
         if gc.force:
             return Continue()
-        semantic_model, high_threshold, medium_threshold = _resolve_dedup_thresholds(
-            deps
-        )
         similar = find_similar(
             gc.payload["content"],
             deps.store.load_all(),
-            semantic_model=semantic_model,
-            high_threshold=high_threshold,
-            medium_threshold=medium_threshold,
         )
         high = [h for h in similar if h.relevance == "high"]
         if high:
@@ -652,15 +604,9 @@ class DedupTombstoneGate(WriteGate):
     def evaluate(self, deps: "GateDeps", gc: GateContext) -> GateResult:
         if gc.force:
             return Continue()
-        semantic_model, high_threshold, medium_threshold = _resolve_dedup_thresholds(
-            deps
-        )
         tombstone_similar = find_similar_tombstones(
             gc.payload["content"],
             deps.store.load_tombstones(),
-            semantic_model=semantic_model,
-            high_threshold=high_threshold,
-            medium_threshold=medium_threshold,
         )
         high_removed = [h for h in tombstone_similar if h.relevance == "high-removed"]
         if high_removed:
@@ -794,17 +740,11 @@ class GateDeps(Protocol):
     what previously pushed `ingest` and `consolidate` into hand-rolling
     policy rather than calling into it.
 
-    `_semantic_model_factory` is declared as a callable ATTRIBUTE, not a
-    method, because that is what `ToolHandlers` actually holds
-    (`_handlers.py:367` assigns the factory to the instance). Declaring it
-    `def` here would type-check against a bound method and quietly exclude
-    the very class this protocol exists to describe.
     """
 
     store: Store
     config: Config
     responses: ResponseBuilder
-    _semantic_model_factory: Callable[[Config], Any]
 
 
 class GateBundle:
@@ -823,44 +763,22 @@ class GateBundle:
         store: Store,
         config: Config,
         responses: ResponseBuilder,
-        semantic_model_factory: Callable[[Config], Any],
     ) -> None:
         self.store = store
         self.config = config
         self.responses = responses
-        self._semantic_model_factory = semantic_model_factory
 
     @classmethod
-    def for_store(
-        cls,
-        store: Store,
-        config: Config,
-        *,
-        semantic_model: Any | None = None,
-    ) -> GateBundle:
-        """Build a bundle from the two things every caller already has.
-
-        `semantic_model` short-circuits the factory for callers that have
-        already paid to load a model (`consolidate_llm` loads one per run,
-        and re-loading it per proposal would mean a model init per write).
-        Passing None keeps the config-driven default, including the Jaccard
-        fallback when the `semantic` extra isn't installed.
-        """
+    def for_store(cls, store: Store, config: Config) -> GateBundle:
+        """Build a bundle from the two things every caller already has."""
         from .._response import ResponseBuilder
-        from ..semantic_setup import _semantic_model_or_none
 
-        factory: Callable[[Config], Any]
-        if semantic_model is not None:
-            factory = lambda _config: semantic_model  # noqa: E731
-        else:
-            factory = _semantic_model_or_none
         return cls(
             store=store,
             config=config,
             responses=ResponseBuilder(
                 stale_after_days=config.behavior.verification_stale_days
             ),
-            semantic_model_factory=factory,
         )
 
 

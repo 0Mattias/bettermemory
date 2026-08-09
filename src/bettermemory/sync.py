@@ -67,7 +67,6 @@ from .index import INDEX_FILENAME
 from .ingest import INGEST_WATERMARK_FILENAME
 from .patterns import PATTERNS_FILENAME
 from .proposals import PROPOSALS_FILENAME
-from .semantic import EMBEDDING_FILENAME_PREFIX, EMBEDDING_FILENAME_SUFFIX
 from .session import PENDING_WRITES_FILENAME
 
 # Coarse store-wide lock for push/pull. The git operations the sync
@@ -115,7 +114,10 @@ _GITIGNORE_LINES = [
     # every clone. The pattern matches the sharded names but not the
     # legacy `.events.jsonl` (already covered on the line above).
     ".events.*.jsonl",
-    f"{EMBEDDING_FILENAME_PREFIX}*{EMBEDDING_FILENAME_SUFFIX}",
+    # Legacy embedding-cache files (the semantic lane, removed in 4.0.0).
+    # Upgraded stores may still hold them; they stay excluded so a sync
+    # never commits a machine-local cache into the shared history.
+    ".embeddings.*.npz",
     # Write-reflex proposal queue. Host-local, transient state like the
     # event log — but with a sharper edge: it holds RAW captured user text
     # that never passed the write-path credential gate, so a secret-shaped

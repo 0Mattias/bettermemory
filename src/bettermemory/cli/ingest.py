@@ -132,7 +132,6 @@ def _cli_ingest(
         compute_ingest_plan,
         discover_default_source_root,
         render_ingest_text,
-        resolve_dedup_policy,
     )
     from ..models import validate_scope
 
@@ -168,20 +167,12 @@ def _cli_ingest(
     existing = store.load_all()
     tombstoned = store.load_tombstones()
 
-    # Score the plan under the policy the apply-time dedup gates will
-    # enforce, not under a hardcoded lexical default. Same reason the
-    # --scope validation above runs before the branch: a --dry-run whose
-    # verdicts a commit would overturn is a dry-run that lied.
-    semantic_model, high_threshold = resolve_dedup_policy(store, ctx.config)
-
     try:
         plan = compute_ingest_plan(
             source_root,
             existing_memories=existing,
             existing_tombstones=tombstoned,
             extra_scopes=extra_scopes,
-            high_threshold=high_threshold,
-            semantic_model=semantic_model,
             # Same object the apply below gets, for the same reason the
             # dedup policy is resolved once above: `[scopes] allowed` is
             # read on BOTH sides, and a plan that did not know about it
@@ -214,12 +205,10 @@ def _cli_ingest(
             max_bytes=ctx.config.telemetry.max_bytes,
             log_queries_verbatim=ctx.config.telemetry.log_queries_verbatim,
         )
-        # Thread the real config, not the `Config()` fallback: `[behavior]
-        # semantic_dedup` and the two similarity thresholds are user knobs,
-        # they are what the apply-time dedup gates score against, and the
-        # CLI is the one caller that always has them resolved. Passing the
-        # same object `resolve_dedup_policy` read above is also what keeps
-        # the plan and the commit on ONE dedup policy.
+        # Thread the real config, not the `Config()` fallback — the CLI
+        # is the one caller that always has it resolved, and passing the
+        # same object to both phases keeps the plan and the commit on ONE
+        # policy.
         #
         # The same object also carries the `[scopes] allowed` whitelist.
         # That one is enforced inside `apply_ingest_plan` (and predicted

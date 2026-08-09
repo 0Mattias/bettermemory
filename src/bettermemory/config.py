@@ -60,27 +60,11 @@ recency_boost_half_life_days = 30
 #   "keyword" — the original TF + coverage + recency scorer (legacy default
 #       in 1.6.0). No IDF weighting, so rare-term queries underperform.
 #   "bm25"    — Okapi BM25 with the same scope-bonus + recency boost
-#   "semantic" — embedding-model cosine. Setting this IS the config-level
-#       opt-in that loads the model (an embeddings extra must be
-#       installed; without one, semantic searches error with an install
-#       hint and turn audits record no_signal — there is no silent
-#       keyword fallback for an explicit ask).
-#   "hybrid"  — reciprocal-rank-fusion of keyword + BM25, plus a semantic
-#       leg whenever an embeddings extra is INSTALLED. Installing it is
-#       the whole opt-in; no flag. Measured worth, on a 180-document
-#       synthetic bench corpus (20 questions per probe; raw JSON in
-#       bench/retrieval/results/v2-unpadded-2026-07-26.json): recall@1
-#       35% -> 60% on questions as asked, 80% -> 90% on re-queried ones.
-#       That corpus is easier than a real store — the deltas carry, the
-#       absolute rates do not. With no extra it degrades to keyword +
-#       BM25 and never attempts a load, so users without one pay nothing
-#       and see no warning. Default since 2.6.8.
-# `semantic_dedup` below is NOT part of this — it governs write-time
-# duplicate detection only. It used to double as the switch that let
-# "hybrid" load a model, which made installing the extra a no-op for the
-# default mode and forced anyone wanting better SEARCH to also change how
-# WRITES dedup. The MCP `mode` parameter on memory_search overrides this
-# per-call for ranker selection.
+#   "hybrid"  — reciprocal-rank-fusion of keyword + BM25. Default since
+#       2.6.8; a strict improvement over either alone. Every mode is
+#       deterministic code — the project ships no embedding models
+#       (removed in 4.0.0). The MCP `mode` parameter on memory_search
+#       overrides this per-call.
 search_mode = "hybrid"
 
 # Usage-aware ranking. When true, a bounded "endorsement" factor (the same
@@ -150,53 +134,6 @@ prompt_recall = true
 # exists for a tier that fires on every session open.
 standing_tier = false
 
-# When true, memory_write dedup uses cosine similarity on sentence
-# embeddings instead of Jaccard on token sets — catches paraphrases
-# like "the database" / "Postgres" that lexical overlap misses.
-# Requires one of the embedding extras (see `semantic_provider`). Falls
-# back to Jaccard with a WARNING log line when no extra is installed,
-# so flipping the bit without the deps is safe.
-semantic_dedup = false
-
-# Which embedding provider to use. One of:
-#   "auto"      — pick torch when [embeddings] is installed AND imports,
-#                 else fastembed when [embeddings-fast] is installed AND
-#                 imports, else fall back to Jaccard. Health, not just
-#                 presence: a broken torch loses to a working fastembed
-#                 instead of taking the semantic leg down with it. When
-#                 every installed extra is broken, the broken one is
-#                 picked anyway, so its loader's WARNING names the actual
-#                 import failure rather than reading as "nothing
-#                 installed". Default.
-#   "torch"     — sentence-transformers + PyTorch. Heavier install
-#                 (~500MB) but the well-trodden path.
-#   "fastembed" — fastembed + ONNX Runtime. ~50MB total. Same retrieval
-#                 surface, smaller footprint. Wheels lag the newest
-#                 Python by a release; use the torch extra on 3.14.
-# An explicit value is honoured even when the extra isn't installed or
-# is broken — you'll see a per-provider WARNING and the Jaccard
-# fallback. Auto prefers torch when both extras import cleanly, so
-# existing `.embeddings.<model>.npz` caches stay byte-stable.
-semantic_provider = "auto"
-
-# Embedding model for the torch provider. `all-MiniLM-L6-v2` is the
-# small default (~80MB); swap for a larger sentence-transformers
-# model if you need better paraphrase detection and have CPU/RAM
-# headroom. Read only when `semantic_provider` resolves to "torch".
-semantic_model_name = "all-MiniLM-L6-v2"
-
-# Embedding model for the fastembed provider. `BAAI/bge-small-en-v1.5`
-# is the 384-dim small default (~33MB ONNX); see the fastembed model
-# catalogue for alternatives. Read only when `semantic_provider`
-# resolves to "fastembed".
-semantic_model_fastembed = "BAAI/bge-small-en-v1.5"
-
-# Cosine thresholds for the semantic path. Cosine on normalized
-# embeddings tends to land 0.5-0.9 for semantically similar sentences,
-# 0.1-0.3 for unrelated, so the cutoffs sit higher than the Jaccard
-# defaults (0.75 / 0.40).
-semantic_high_threshold = 0.85
-semantic_medium_threshold = 0.65
 
 # Floor on `applied_count` for inclusion in `memory_health.heavily_used`.
 # Default 3 — at 1 the bucket is dominated by one-off acknowledgements
@@ -397,14 +334,10 @@ class BehaviorConfig:
     recency_boost_half_life_days: float = 30.0
     # Retrieval ranker for `memory_search`. One of `keyword` (the
     # original TF + coverage + recency scorer; legacy), `bm25` (Okapi
-    # BM25), `semantic` (sentence-transformers cosine; requires the
-    # embeddings extra), or `hybrid` (RRF fusion of keyword + BM25,
-    # plus semantic when the extra is installed). The MCP `mode`
-    # parameter on memory_search overrides this per-call. Default
-    # is `hybrid` since 2.6.8 — the keyword scorer lacks IDF weighting
-    # so rare-term queries underperform; hybrid is a strict improvement
-    # and degrades gracefully to keyword+BM25 when no embedding extra
-    # is installed.
+    # BM25), or `hybrid` (RRF fusion of both; default since 2.6.8 —
+    # the keyword scorer lacks IDF weighting, so rare-term queries
+    # underperform, and hybrid is a strict improvement). The MCP
+    # `mode` parameter on memory_search overrides this per-call.
     search_mode: str = "hybrid"
     # Usage-aware ranking. When true, a bounded endorsement factor (mirrors
     # the recency boost, capped at +10%) nudges memories the model has
@@ -434,24 +367,6 @@ class BehaviorConfig:
     # introduction — unlike prompt_recall there is no measured firing
     # bar yet; see DEFAULT_CONFIG for prose.
     standing_tier: bool = False
-    # Semantic dedup is opt-in — see DEFAULT_CONFIG for prose.
-    semantic_dedup: bool = False
-    # Provider selection — "auto" (default), "torch", or "fastembed".
-    # The resolver in `semantic.resolve_provider` honours an explicit
-    # value even when the corresponding extra isn't installed; auto-
-    # detection asks about health rather than presence and prefers torch
-    # when both extras import cleanly, so legacy
-    # `.embeddings.<model>.npz` caches stay byte-stable.
-    semantic_provider: str = "auto"
-    # Torch-provider model. Read when the resolved provider is "torch".
-    semantic_model_name: str = "all-MiniLM-L6-v2"
-    # Fastembed-provider model. Read when the resolved provider is
-    # "fastembed". Default is the 384-dim BGE small variant — same
-    # vector dimensionality as all-MiniLM-L6-v2 so threshold settings
-    # are roughly interchangeable.
-    semantic_model_fastembed: str = "BAAI/bge-small-en-v1.5"
-    semantic_high_threshold: float = 0.85
-    semantic_medium_threshold: float = 0.65
     # Floor on `applied_count` for inclusion in the heavily_used report.
     # Default is 3 — at 1 the bucket is mostly noise (one acknowledgement
     # is not a usage pattern). Raising it sharpens the signal at the cost
@@ -855,7 +770,7 @@ def _coerce_int(
 #: `SearchMode` Literal rather than imported because `config` is imported
 #: by `search`, not the other way round; `test_config.py` cross-pins the
 #: two so the copy cannot drift.
-_SEARCH_MODES = ("keyword", "bm25", "semantic", "hybrid")
+_SEARCH_MODES = ("keyword", "bm25", "hybrid")
 
 
 def _coerce_search_mode(value: object, *, config_path: Path | None) -> str:
@@ -866,26 +781,21 @@ def _coerce_search_mode(value: object, *, config_path: Path | None) -> str:
     were wrong for this knob, because three consumers read it and each one
     made a different assumption about what it holds:
 
-    - `semantic_setup._search_mode_needs_model`, which decides whether an
-      embedding model is LOADED, compares `.strip().lower()`.
     - `handlers.search.memory_search` passes `search_mode or "hybrid"`
       through unnormalised, and `search.search` raises on anything outside
-      the four literals.
+      the three literals.
     - the web UI normalises an unrecognised value to `hybrid` and ranks
       with it, because a page cannot 500 on a config typo.
 
-    So a config saying `search_mode = "Semantic"` loaded an embedding
-    model, made EVERY `memory_search` call raise `unknown search mode`,
-    and served a working lexical web page — three behaviours from one
-    string. `"HYBRID"` was the cruel one: capitalising the DEFAULT value
-    killed memory search outright while every other surface looked fine.
-
-    Normalising here makes the whole system agree with the assumption
-    `_search_mode_needs_model` was already making. Falling back rather
+    Historically a config saying `search_mode = "Semantic"` loaded an
+    embedding model, made EVERY `memory_search` call raise, and served
+    a working lexical web page — three behaviours from one string.
+    Normalising here makes every consumer agree. Falling back rather
     than raising follows `default_max_results`' rule that a bad value in
-    one knob must not take the server down — and the fallback is loud,
-    since a silent one would leave a user who asked for semantic ranking
-    quietly getting lexical.
+    one knob must not take the server down — and the fallback is loud.
+    The legacy pre-4.0 value `"semantic"` lands here too: the lane was
+    removed outright, so the warning below is that config's one
+    migration notice.
 
     Scope, stated so it is not mistaken for a whole-system invariant:
     this runs in `load_config`, so it covers config FILES. A programmatic
@@ -893,8 +803,8 @@ def _coerce_search_mode(value: object, *, config_path: Path | None) -> str:
     reaches the consumers unnormalised. That is deliberate and matches
     how `full_tool_surface` already works — these are value types and
     the loader is the policy layer — and it is why
-    `_search_mode_needs_model` keeps its own `.strip().lower()` rather
-    than being simplified now that this exists.
+    downstream consumers keep their own guards rather than trusting
+    every constructor path was normalised.
     """
     if value is None:
         return "hybrid"
@@ -905,9 +815,9 @@ def _coerce_search_mode(value: object, *, config_path: Path | None) -> str:
 
     logging.getLogger("bettermemory.config").warning(
         "[behavior] search_mode = %r is not one of %s%s; falling back to "
-        "'hybrid'. Retrieval will be lexical (keyword + BM25 fused), so if "
-        "you meant to enable semantic ranking, fix the spelling — nothing "
-        "else will report this.",
+        "'hybrid' (keyword + BM25 fused). The pre-4.0 'semantic' mode was "
+        "removed with the embedding lane — delete the line to silence "
+        "this; nothing else will report it.",
         value,
         ", ".join(_SEARCH_MODES),
         f" (in {config_path})" if config_path is not None else "",
@@ -1124,26 +1034,6 @@ def load_config(path: Path | None = None) -> Config:
             ),
             prompt_recall=_coerce_bool(behavior_raw.get("prompt_recall"), True),
             standing_tier=_coerce_bool(behavior_raw.get("standing_tier"), False),
-            semantic_dedup=_coerce_bool(behavior_raw.get("semantic_dedup"), False),
-            semantic_provider=str(behavior_raw.get("semantic_provider", "auto")),
-            semantic_model_name=str(
-                behavior_raw.get("semantic_model_name", "all-MiniLM-L6-v2")
-            ),
-            semantic_model_fastembed=str(
-                behavior_raw.get("semantic_model_fastembed", "BAAI/bge-small-en-v1.5")
-            ),
-            semantic_high_threshold=_coerce_float(
-                behavior_raw.get("semantic_high_threshold"),
-                0.85,
-                label="[behavior] semantic_high_threshold",
-                config_path=config_path,
-            ),
-            semantic_medium_threshold=_coerce_float(
-                behavior_raw.get("semantic_medium_threshold"),
-                0.65,
-                label="[behavior] semantic_medium_threshold",
-                config_path=config_path,
-            ),
             heavily_used_min_applied=_coerce_int(
                 behavior_raw.get("heavily_used_min_applied"),
                 3,

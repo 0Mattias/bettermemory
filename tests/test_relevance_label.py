@@ -1,19 +1,18 @@
-"""What the `relevance` label measures, and what `matched_leg` adds.
+"""What the `relevance` label measures.
 
 `relevance` is LEXICAL COVERAGE — the fraction of distinct query tokens
-that literally appear in the hit. `_score_semantic` deliberately reports
-only the tokens that literally hit, so a pure-paraphrase result carries
-`match_terms=[]`, coverage 0.0, and the label "low". That is honest about
-coverage and misleading about the hit: it is the field the tool
-description told callers to treat as noise, and the field `expand_top`
-refused to expand on, so the embeddings extra's whole capability arrived
-wearing the mark of junk.
+that literally appear in the hit. Pre-4.0 the semantic leg made that
+honest-but-misleading: a pure-paraphrase hit carried `match_terms=[]`,
+coverage 0.0, and the label "low", while the then-current tool
+description told callers to treat "low" as probable noise — so the
+embeddings extra's whole capability arrived wearing the mark of junk.
+The recut shipped EVIDENCE rather than a replacement verdict, and the
+pieces that outlived the 4.0.0 strip still carry it:
 
-The recut ships EVIDENCE rather than a replacement verdict:
-
-- `matched_leg` says WHICH RANKER surfaced the hit, so "low" on a
-  `semantic` leg reads as "matched by meaning, shares no words" instead
-  of "probably noise".
+- `matched_leg` says WHICH RANKER surfaced the hit. Every ranker is
+  lexical since 4.0.0, so its live value is `lexical`; the field
+  survives for parsers keyed on it, and for a future CODE ranker to
+  earn a leg of its own.
 - `expand_top` gates on the coverage label OR a decisive score lead, so a
   hit no lexical rule can call "high" can still reach the affordance.
 - The label rule itself is UNCHANGED. The cosine-band recut was measured
@@ -61,22 +60,6 @@ def _memory(body: str, scopes: list[str] | None = None) -> Memory:
     )
 
 
-class _StubModel:
-    """SentenceTransformer-shaped stub returning canned unit vectors.
-
-    Keyed on the exact stripped text so a test can make one body a
-    paraphrase of the query (cosine 1.0) while sharing no tokens with it,
-    which is the only way to produce a genuinely semantic-only hit
-    without the embeddings extra installed.
-    """
-
-    def __init__(self, vectors: dict[str, list[float]]) -> None:
-        self.vectors = vectors
-
-    def encode(self, text: str, normalize_embeddings: bool = True) -> list[float]:
-        return self.vectors.get(text.strip(), [0.0, 0.0, 1.0])
-
-
 # ---------------------------------------------------------------------------
 # matched_leg
 # ---------------------------------------------------------------------------
@@ -87,121 +70,6 @@ def test_a_lexical_only_hit_reports_the_lexical_leg() -> None:
     m = _memory("rollback the migration script lives in db/migrate")
     hits = search([m], "rollback migration", matched_leg_out=legs)
     assert [h.id for h in hits] == [m.id]
-    assert legs == {m.id: "lexical"}
-
-
-def test_a_pure_semantic_hit_is_labelled_low_and_says_why() -> None:
-    """The defect, made legible rather than papered over.
-
-    The paraphrase body shares NO tokens with the query, so
-    `match_terms` is empty and the coverage label is "low" — that stays
-    true, because inventing matched terms is what
-    `_score_semantic`'s contract exists to prevent. What changes is that
-    the hit now also says it arrived on the semantic leg, which is the
-    difference between "this is noise" and "this matched by meaning".
-
-    Without `matched_leg` the two are indistinguishable on the wire: a
-    stopword-grade lexical miss and a cosine-1.0 paraphrase both come
-    back `relevance="low", match_terms=[]`.
-    """
-    query = "rollback the migration"
-    paraphrase = _memory("undoing a schema change in production")
-    legs: dict[str, str] = {}
-    hits = search(
-        [paraphrase],
-        query,
-        mode="hybrid",
-        semantic_model=_StubModel(
-            {query: [1.0, 0.0, 0.0], paraphrase.body: [1.0, 0.0, 0.0]}
-        ),
-        matched_leg_out=legs,
-    )
-    assert [h.id for h in hits] == [paraphrase.id]
-    assert hits[0].match_terms == []
-    assert hits[0].relevance == "low"
-    assert legs == {paraphrase.id: "semantic"}
-
-
-def test_a_hit_both_rankers_found_reports_both() -> None:
-    query = "rollback the migration"
-    shared = _memory("rollback the migration by hand")
-    legs: dict[str, str] = {}
-    search(
-        [shared],
-        query,
-        mode="hybrid",
-        semantic_model=_StubModel(
-            {query: [1.0, 0.0, 0.0], shared.body: [1.0, 0.0, 0.0]}
-        ),
-        matched_leg_out=legs,
-    )
-    assert legs == {shared.id: "both"}
-
-
-def test_a_lexical_hit_below_the_cosine_threshold_is_not_called_both() -> None:
-    """The leg is what SCORED the hit, not what was configured.
-
-    `_score_semantic` drops anything under cosine 0.3, so an orthogonal
-    body never entered the semantic ranking even though a model was
-    supplied. Reporting "both" here would make the field a restatement
-    of `semantic_model is not None`.
-    """
-    query = "rollback the migration"
-    lexical = _memory("rollback the migration by hand")
-    legs: dict[str, str] = {}
-    search(
-        [lexical],
-        query,
-        mode="hybrid",
-        semantic_model=_StubModel(
-            {query: [1.0, 0.0, 0.0], lexical.body: [0.0, 0.0, 1.0]}
-        ),
-        matched_leg_out=legs,
-    )
-    assert legs == {lexical.id: "lexical"}
-
-
-def test_a_degraded_semantic_search_reports_the_leg_that_actually_ran() -> None:
-    """`mode="semantic"` is a request; the leg is a report.
-
-    Both semantic branches degrade to a lexical ranking when a loaded
-    model raises at encode time. Deriving the leg from `mode` would
-    attribute a keyword ordering to an embedding ranker that never
-    produced a number — precisely the misattribution this field exists
-    to prevent.
-    """
-
-    class _Exploding:
-        def encode(self, text: str, normalize_embeddings: bool = True) -> list[float]:
-            raise RuntimeError("device fault")
-
-    m = _memory("rollback the migration script")
-    legs: dict[str, str] = {}
-    hits = search(
-        [m],
-        "rollback migration",
-        mode="semantic",
-        semantic_model=_Exploding(),
-        matched_leg_out=legs,
-    )
-    assert [h.id for h in hits] == [m.id]
-    assert legs == {m.id: "lexical"}
-
-
-def test_hybrid_degrading_to_lexical_fusion_reports_no_semantic_leg() -> None:
-    class _Exploding:
-        def encode(self, text: str, normalize_embeddings: bool = True) -> list[float]:
-            raise RuntimeError("device fault")
-
-    m = _memory("rollback the migration script")
-    legs: dict[str, str] = {}
-    search(
-        [m],
-        "rollback migration",
-        mode="hybrid",
-        semantic_model=_Exploding(),
-        matched_leg_out=legs,
-    )
     assert legs == {m.id: "lexical"}
 
 
@@ -405,17 +273,12 @@ async def test_a_sole_low_hit_still_does_not_expand(
 
 
 # Both wire tests below drive a REAL server on its configured default
-# mode, so the legs that run are whatever the install offers. On a
-# lexical-only install that is keyword+BM25 and the leg is `lexical`;
-# with an embeddings extra present the hybrid fuse adds the semantic
-# ranker and the same hit reports `both`. The exact string is the point
-# of these two — a `matched_leg in {...}` assertion would pass against a
-# field that reported the requested mode rather than the legs that ran —
-# so they are scoped to the no-extras install with the marker this repo
-# already registers for that, rather than loosened. The leg-vs-mode
-# distinction under a live semantic ranker is pinned by the unit tests
-# above, which construct their model explicitly.
-@pytest.mark.no_extras
+# mode. Since the 4.0.0 strip every install is lexical-only, so the legs
+# that run are keyword+BM25 and the leg is exactly `lexical` — the exact
+# string is the point of these two: a `matched_leg in {...}` assertion
+# would pass against a field that reported the requested mode rather
+# than the legs that ran. (Pre-4.0 these were scoped to the no-extras CI
+# job because an installed extra flipped the same hit to `both`.)
 async def test_matched_leg_rides_the_search_response(
     server_with_events: tuple[Any, Path],
 ) -> None:
@@ -432,7 +295,6 @@ async def test_matched_leg_rides_the_search_response(
     assert hits[0]["matched_leg"] == "lexical"
 
 
-@pytest.mark.no_extras
 async def test_search_events_record_the_matched_leg(
     server_with_events: tuple[Any, Path],
 ) -> None:
@@ -470,15 +332,18 @@ def _desc_line(fragment: str) -> str:
 def test_the_description_no_longer_calls_a_low_label_noise() -> None:
     """The absolutism was the harm.
 
-    "treat low as probable noise" is a correct reading of a lexical
-    result and a wrong one for every paraphrase hit, and the model has
-    no way to tell them apart from the label alone. The description has
-    to name the pairing instead — scoped to the `relevance` line so an
-    unrelated future bullet can still use the word.
+    "treat low as probable noise" over-read the label pre-4.0 (a
+    paraphrase hit wore it while being exactly what was asked for) and
+    over-reads it now in the other direction: low coverage is a fact
+    about wording overlap, and the actionable response is a re-query
+    with different nouns, not a dismissal. The description must state
+    what the label measures and stop short of a quality verdict —
+    scoped to the `relevance` line so an unrelated future bullet can
+    still use the word.
     """
     line = _desc_line("`relevance`")
     assert "noise" not in line
-    assert "matched_leg" in line
+    assert "not how good it is" in line
 
 
 def test_the_description_does_not_promise_expand_top_gates_on_high() -> None:

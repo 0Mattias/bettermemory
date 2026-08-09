@@ -3,8 +3,8 @@
 The `bettermemory consolidate` CLI walks the store and proposes (or
 applies, with `--apply`) four kinds of curation:
 
-1. **Near-duplicate dedup.** Pairwise similarity over the active set —
-   semantic when the embeddings extra is installed, Jaccard otherwise.
+1. **Near-duplicate dedup.** Pairwise Jaccard similarity over the
+   active set.
    Bodies are compared with any `--llm --from-transcript` provenance
    stamp stripped (`_PROVENANCE_RE`) — the stamp is system boilerplate
    shared by every fact distilled from the same transcript turn, not
@@ -103,14 +103,12 @@ from .health import (
 from .models import Category, Memory, Source, snippet_for
 from .origin import Origin
 from .search import _pairwise_content_jaccard, _raw_content_token_set
-from .semantic import cached_embed, cosine_similarity_normalized
 from .store import Store
 from .time_utils import isoformat_utc, parse_event_ts
 
 log = logging.getLogger("bettermemory.consolidate")
 
 
-_DEFAULT_SEMANTIC_THRESHOLD = 0.85
 _DEFAULT_JACCARD_THRESHOLD = 0.75
 _DEFAULT_WINDOW_DAYS = 30
 _DEFAULT_COLD_SCOPE_DAYS = 180
@@ -163,7 +161,7 @@ class DedupCandidate:
     duplicate_id: str
     duplicate_summary: str
     similarity: float
-    method: str  # "semantic" or "jaccard"
+    method: str  # always "jaccard" since 4.0.0; kept for report shape
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -209,7 +207,7 @@ class PolaritySkippedPair:
     memory_id_b: str
     summary_b: str
     similarity: float
-    method: str  # "semantic" or "jaccard"
+    method: str  # always "jaccard" since 4.0.0; kept for report shape
     # Additive (3.28.0): rows serialized before the field default to
     # "polarity", the only detector that existed.
     detector: str = "polarity"
@@ -339,7 +337,7 @@ class ConsolidateReport:
     applied: bool = False
     actions_taken: list[ConsolidateAction] = field(default_factory=list)
     failures: list[ConsolidateFailure] = field(default_factory=list)
-    dedup_method: str = "jaccard"  # "semantic" if the model was available
+    dedup_method: str = "jaccard"  # always "jaccard" since 4.0.0
     # Pairs the polarity guard kept out of `dedup_candidates` (above
     # threshold, opposite negation polarity). Suggest-only — the apply
     # path never reads this list. Declared last so positional
@@ -466,16 +464,15 @@ def _pick_keeper(
 def find_dedup_candidates(
     memories: list[Memory],
     *,
-    semantic_model: Any | None = None,
     threshold: float | None = None,
 ) -> tuple[list[DedupCandidate], str]:
     """Pairwise similarity over the active set.
 
-    Returns `(candidates, method)` where `method` is `"semantic"` when
-    a model was provided and `"jaccard"` otherwise. The threshold
-    defaults to 0.85 for semantic, 0.75 for Jaccard — same calibration
-    as the write-time dedup path. Output is sorted descending by
-    similarity so the strongest matches surface first.
+    Returns `(candidates, method)`; `method` is always `"jaccard"` (the
+    field survives for report compatibility). The threshold defaults to
+    0.75 — same calibration as the write-time dedup path. Output is
+    sorted descending by similarity so the strongest matches surface
+    first.
 
     Each candidate represents one pair; a memory that's near-duplicate
     to several others appears multiple times. Caller's responsibility
@@ -487,7 +484,7 @@ def find_dedup_candidates(
     `consolidate()` report — go through `_find_dedup_with_skips`.
     """
     candidates, _polarity_skipped, method = _find_dedup_with_skips(
-        memories, semantic_model=semantic_model, threshold=threshold
+        memories, threshold=threshold
     )
     return candidates, method
 
@@ -495,31 +492,19 @@ def find_dedup_candidates(
 def _find_dedup_with_skips(
     memories: list[Memory],
     *,
-    semantic_model: Any | None = None,
     threshold: float | None = None,
 ) -> tuple[list[DedupCandidate], list[PolaritySkippedPair], str]:
     """`find_dedup_candidates` plus the pairs the polarity guard kept
     out of the candidate list (see `PolaritySkippedPair`). Both lists
     are sorted descending by similarity."""
     if len(memories) < 2:
-        return [], [], "semantic" if semantic_model is not None else "jaccard"
+        return [], [], "jaccard"
 
-    if semantic_model is not None:
-        method = "semantic"
-        eff_threshold = (
-            threshold if threshold is not None else _DEFAULT_SEMANTIC_THRESHOLD
-        )
-        candidates, polarity_skipped = _find_dedup_semantic(
-            memories, semantic_model, threshold=eff_threshold
-        )
-    else:
-        method = "jaccard"
-        eff_threshold = (
-            threshold if threshold is not None else _DEFAULT_JACCARD_THRESHOLD
-        )
-        candidates, polarity_skipped = _find_dedup_jaccard(
-            memories, threshold=eff_threshold
-        )
+    method = "jaccard"
+    eff_threshold = threshold if threshold is not None else _DEFAULT_JACCARD_THRESHOLD
+    candidates, polarity_skipped = _find_dedup_jaccard(
+        memories, threshold=eff_threshold
+    )
 
     candidates.sort(key=lambda c: c.similarity, reverse=True)
     polarity_skipped.sort(key=lambda p: p.similarity, reverse=True)
@@ -826,83 +811,6 @@ def _find_dedup_jaccard(
                     duplicate_summary=snippet_for(duplicate.body, max_chars=100),
                     similarity=sim,
                     method="jaccard",
-                )
-            )
-    return out, skipped
-
-
-def _find_dedup_semantic(
-    memories: list[Memory], model: Any, *, threshold: float
-) -> tuple[list[DedupCandidate], list[PolaritySkippedPair]]:
-    """Pairwise cosine over cached embeddings. Reuses the persistent
-    cache from `bettermemory.semantic` — a consolidate run after
-    normal use will hit the cache for most memories.
-    """
-    # Materialize embeddings (and the contradiction signals) once per
-    # memory; the cache makes repeats cheap but we still pay the dict
-    # lookup, so a local list is faster. Both judge the
-    # provenance-stripped body — `_body_signals` strips its own input —
-    # mirroring the Jaccard path.
-    embedded: list[tuple[Memory, Any, _BodySignals]] = []
-    for memory in memories:
-        raw_body = memory.body.strip()
-        body = _strip_provenance(memory.body).strip()
-        if not body:
-            continue
-        # `cached_embed` keys on (memory_id, updated_key) and never
-        # hashes the text, so a stamped memory whose FULL body was
-        # already embedded (the write path's `find_similar` does this)
-        # would serve that stale stamped vector for our stripped input.
-        # Salt the freshness key when stripping changed the body so the
-        # unstamped variant earns its own cache slot; unstamped bodies
-        # (the overwhelming majority) keep byte-identical keys and full
-        # cache reuse.
-        updated_key = memory.updated.isoformat()
-        if body != raw_body:
-            updated_key += "#unstamped"
-        vec = cached_embed(model, memory.id, updated_key, body)
-        embedded.append((memory, vec, _body_signals(memory.body)))
-
-    out: list[DedupCandidate] = []
-    skipped: list[PolaritySkippedPair] = []
-    for i in range(len(embedded)):
-        m_i, v_i, sig_i = embedded[i]
-        for j in range(i + 1, len(embedded)):
-            m_j, v_j, sig_j = embedded[j]
-            try:
-                sim = cosine_similarity_normalized(v_i, v_j)
-            except ValueError:
-                # Vector dimension mismatch — a stale persistent-cache
-                # entry (written under a different model checkpoint)
-                # was collected into this batch before a fresh encode
-                # triggered `semantic._note_model_dimension`'s purge.
-                # Skip the pair rather than crash the consolidate pass.
-                continue
-            if sim < threshold:
-                continue
-            try:
-                keeper, duplicate = _pick_keeper(
-                    m_i, m_j, signals_a=sig_i, signals_b=sig_j
-                )
-            except ConflictingPair as conflict:
-                # Same fence as the Jaccard loop, and this path needs it
-                # just as badly: embedding models score "Use X" / "Do not
-                # use X" well above the cosine threshold and barely notice
-                # a changed digit. Surfaced, not swallowed.
-                skipped.append(
-                    _polarity_skip(
-                        m_i, m_j, sim, "semantic", detector=conflict.detector
-                    )
-                )
-                continue
-            out.append(
-                DedupCandidate(
-                    keeper_id=keeper.id,
-                    keeper_summary=snippet_for(keeper.body, max_chars=100),
-                    duplicate_id=duplicate.id,
-                    duplicate_summary=snippet_for(duplicate.body, max_chars=100),
-                    similarity=sim,
-                    method="semantic",
                 )
             )
     return out, skipped
@@ -1300,8 +1208,7 @@ def _exact_levenshtein(a: str, b: str) -> int:
 def consolidate(
     store: Store,
     *,
-    semantic_model: Any | None = None,
-    semantic_threshold: float | None = None,
+    dedup_threshold: float | None = None,
     window_days: int = _DEFAULT_WINDOW_DAYS,
     cold_scope_days: int = _DEFAULT_COLD_SCOPE_DAYS,
     typo_distance: int = _DEFAULT_TYPO_DISTANCE,
@@ -1351,8 +1258,7 @@ def consolidate(
 
     dedup_candidates, polarity_skipped, dedup_method = _find_dedup_with_skips(
         memories,
-        semantic_model=semantic_model,
-        threshold=semantic_threshold,
+        threshold=dedup_threshold,
     )
     demotion_candidates = find_demotion_candidates(
         memories,
@@ -1707,8 +1613,7 @@ def run_auto_consolidate(
     report = consolidate(
         store,
         apply=True,
-        semantic_model=None,  # Jaccard — never load a heavy model in the hook.
-        semantic_threshold=_AUTO_DEDUP_JACCARD_THRESHOLD,
+        dedup_threshold=_AUTO_DEDUP_JACCARD_THRESHOLD,
         session_id=session_id,
         now=now,
     )
@@ -2070,8 +1975,7 @@ def consolidate_llm(
     store: Store,
     provider: Any,  # llm.LLMProvider — kept Any to avoid import cycle
     *,
-    semantic_model: Any | None = None,
-    semantic_threshold: float | None = None,
+    dedup_threshold: float | None = None,
     today: str | None = None,
     apply: bool = False,
     accept: bool = False,
@@ -2159,8 +2063,7 @@ def consolidate_llm(
     # Seed near-duplicate clusters from the existing pass.
     dedup_candidates, _method = find_dedup_candidates(
         memories,
-        semantic_model=semantic_model,
-        threshold=semantic_threshold,
+        threshold=dedup_threshold,
     )
     pairs = [(c.keeper_id, c.duplicate_id) for c in dedup_candidates]
     clusters = _llm.build_clusters(memories, events=events, near_duplicate_pairs=pairs)
@@ -2255,7 +2158,6 @@ def consolidate_llm(
                 by_id,
                 session_id=session_id,
                 max_content_bytes=max_content_bytes,
-                semantic_model=semantic_model,
                 allowed_scopes=allowed_scopes,
                 origin=origin,
             )
@@ -2282,7 +2184,6 @@ def _apply_llm_proposal(
     *,
     session_id: str | None,
     max_content_bytes: int | None = None,
-    semantic_model: Any | None = None,
     allowed_scopes: list[str] | None = None,
     origin: Origin | None = None,
 ) -> list[LLMProposalAction]:
@@ -2294,7 +2195,7 @@ def _apply_llm_proposal(
     LLM is right here, and the surface area for "what can --llm
     actually do" is short enough to scan.
 
-    `max_content_bytes`, `allowed_scopes`, and `semantic_model` gate the
+    `max_content_bytes` and `allowed_scopes` gate the
     `propose_new` branch's write — the LLM only saw a small cluster
     slice, so the credential / size / scope-allowlist / transient /
     dedup checks `memory_write` runs at the MCP surface have to fire
@@ -2562,9 +2463,7 @@ def _apply_llm_proposal(
         # body_with_provenance because that is what persists.
         active = store.load_all()
         high_active = [
-            h
-            for h in find_similar(proposal.body, active, semantic_model=semantic_model)
-            if h.relevance == "high"
+            h for h in find_similar(proposal.body, active) if h.relevance == "high"
         ]
         if high_active:
             raise RuntimeError(
@@ -2579,7 +2478,6 @@ def _apply_llm_proposal(
             for h in find_similar_tombstones(
                 proposal.body,
                 store.load_tombstones(),
-                semantic_model=semantic_model,
             )
             if h.relevance == "high-removed"
         ]

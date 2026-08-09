@@ -970,60 +970,6 @@ def test_reindex_subcommand_builds_index(
     assert status["indexed_count"] >= 1
 
 
-def test_reindex_embeddings_flag_reports_disabled_when_dedup_off(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """`reindex --embeddings` with `semantic_dedup = false` (the default)
-    reports the skip cleanly rather than silently doing nothing. The
-    message guides the user toward the config switch."""
-    from bettermemory.store import Store
-
-    Store(tmp_path).write(content="reindex me", scopes=["tools"])
-    _run_main(["reindex", "--embeddings"], monkeypatch=monkeypatch, storage=tmp_path)
-    out = capsys.readouterr().out
-    assert "semantic_dedup" in out
-    assert "off" in out.lower() or "disabled" in out.lower()
-
-
-def test_reindex_embeddings_flag_reports_no_provider_when_extras_missing(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """When `semantic_dedup = true` but neither embedding extra is
-    installed, the flag reports the missing-provider case and points
-    at the install hint. A no-extras CI run exercises this path."""
-    from bettermemory.config import DEFAULT_CONFIG
-    from bettermemory.store import Store
-
-    # Drop a config file that flips semantic_dedup on so the no-provider
-    # branch fires instead of the early-disabled return.
-    cfg_dir = tmp_path / "bm-config"
-    cfg_dir.mkdir()
-    cfg_path = cfg_dir / "config.toml"
-    cfg_path.write_text(
-        DEFAULT_CONFIG.replace("semantic_dedup = false", "semantic_dedup = true"),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("BETTERMEMORY_DIR", str(tmp_path))
-    monkeypatch.setattr("bettermemory.config.default_config_path", lambda: cfg_path)
-
-    Store(tmp_path).write(content="reindex me", scopes=["tools"])
-    _run_main(["reindex", "--embeddings"], monkeypatch=monkeypatch, storage=tmp_path)
-    out = capsys.readouterr().out
-    # In the no-extras environment we should see the install-hint branch;
-    # in CI with [embeddings] or [embeddings-fast] installed, the ok
-    # branch fires instead — either is correct, but at least one of the
-    # expected phrases should appear.
-    assert (
-        "neither [embeddings] nor [embeddings-fast]" in out
-        or "Re-embedded" in out
-        or "failed to load" in out
-    )
-
-
 def test_migrate_origin_subcommand_runs(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

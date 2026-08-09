@@ -453,15 +453,6 @@ def _probe_message(
         caller_origin=caller_origin,
         excluded_scopes=excluded_scopes,
         mode=cfg.behavior.search_mode or "hybrid",
-        # Never load an embedding model here: both hooks run as fresh
-        # processes (every Stop event; every prompt submit), so a
-        # semantic-model load (1-10s) per invocation would violate the
-        # must-never-block contract. For `search_mode = "semantic"` the
-        # probe records an explicit `no_signal`
-        # (`no_signal_reason="semantic_model_unavailable"`) instead of
-        # crashing before `turn_audited` lands; `hybrid` degrades to
-        # keyword+BM25 fusion as documented.
-        semantic_model=None,
         half_life_days=ranking.half_life_days,
         applied_by_id=ranking.applied_by_id,
         negative_by_id=ranking.negative_by_id,

@@ -308,7 +308,6 @@ def test_the_prefiltered_arm_never_passes_a_post_cap_filter(
         slug_to_id,
         arm="lexical",
         probe="asked",
-        semantic_model=None,
     )
     assert len(seen) == 2
     for kwargs in seen:
@@ -335,7 +334,6 @@ def test_the_prefiltered_arm_records_every_query_whose_pool_fell_back(
         slug_to_id,
         arm="lexical",
         probe="asked",
-        semantic_model=None,
     )
     assert result.engaged == 0
     assert result.unengaged == [q["question"] for q in questions]

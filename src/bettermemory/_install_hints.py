@@ -2,13 +2,13 @@
 
 Every surface that tells a user how to add or repair an optional extra
 composes its command from these atoms. The spelling used to live in
-three hand-written copies (``doctor``, the ``mode='semantic'`` error in
-``handlers.search``, the provider WARNING in ``semantic``), and three
-copies of one command string is exactly the drift that shipped an
-unquoted, zsh-refused install command in the first place — each surface
-got fixed on its own schedule. ``tests/test_install_hints.py`` greps
-shipped source and pins each spelling to this module, so a fourth
-hand-written copy fails CI instead of drifting.
+hand-written per-surface copies (``doctor``'s fix hints plus two
+surfaces in the pre-4.0 semantic lane), and per-surface copies of one
+command string are exactly the drift that shipped an unquoted,
+zsh-refused install command in the first place — each surface got fixed
+on its own schedule. ``tests/test_install_hints.py`` greps shipped
+source and pins each spelling to this module, so a new hand-written
+copy fails CI instead of drifting.
 
 Two arguments carry every spelling choice below, hoisted here from
 ``doctor`` where they were first won:
@@ -21,20 +21,19 @@ Two arguments carry every spelling choice below, hoisted here from
   to. The virtualenv and development-clone forms follow as parenthetical
   variants, never lead.
 - **The extras spec is quoted.** ``[`` is a glob character, and zsh —
-  macOS's default shell — refuses an unquoted
-  ``bettermemory[embeddings]`` outright ("no matches found"), so an
-  unquoted spelling is a repair instruction that does not run.
+  macOS's default shell — refuses an unquoted ``bettermemory[ui]``
+  outright ("no matches found"), so an unquoted spelling is a repair
+  instruction that does not run.
 
-Import-free on purpose (pinned by test): ``handlers.search`` imports
-this at module level and ``semantic`` lazily on a failure path, and a
-module with no imports of its own keeps both unconditionally cheap.
+Import-free on purpose (pinned by test): ``doctor``, ``web``, ``llm``,
+and ``cli.ui`` all import this at module level, and a module with no
+imports of its own keeps every placement unconditionally cheap.
 
 The atoms are bare of backticks — the caller owns the prose around a
 command, and the surfaces deliberately compose different prose (the
-search-handler error drops the pipx parenthetical; the semantic
-WARNING keeps only the development-clone variant). The two ``*_command``
-forms at the bottom are the fully-backticked compositions ``doctor``
-ships verbatim.
+``ui`` CLI stacks the command on its own line; the web banner inlines
+it backticked mid-sentence). The two ``*_command`` forms at the bottom
+are the fully-backticked compositions ``doctor`` binds.
 """
 
 
@@ -80,8 +79,8 @@ def dev_clone_editable(extra: str) -> str:
     """Editable install of the extra from a development clone.
 
     The spec is quoted here too — ``".[<extra>]"`` — for the reason
-    `extras_spec` documents: an unquoted ``.[embeddings]`` is not
-    pasteable into zsh.
+    `extras_spec` documents: an unquoted ``.[ui]`` is not pasteable
+    into zsh.
     """
     return f'uv pip install -e ".[{extra}]"'
 

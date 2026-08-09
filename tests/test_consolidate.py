@@ -339,56 +339,6 @@ class _FixedVectorModel:
         return [1.0, 0.0]
 
 
-def test_semantic_dedup_skips_opposite_polarity_pair() -> None:
-    """Regression: round 84 added the polarity guard to the Jaccard loop
-    only — `_find_dedup_semantic` went straight from the cosine threshold
-    to `_pick_keeper`, and `consolidate --apply` tombstones every
-    candidate without review, so an embedding model scoring 'Use X' /
-    'Do not use X' above 0.85 (routine for sentence embeddings) got one
-    side auto-tombstoned. The guard is method-independent: a negated
-    pair is a contradiction to arbitrate, whichever scorer surfaced it."""
-    a = _memory("Do not use sudo for npm installs on this machine.")
-    b = _memory("Use sudo for npm installs on this machine.")
-    candidates, method = find_dedup_candidates(
-        [a, b], semantic_model=_FixedVectorModel()
-    )
-    assert method == "semantic"
-    assert candidates == [], (
-        "opposite-polarity pair surfaced as a semantic dedup candidate "
-        "despite the polarity guard"
-    )
-
-    # Same-polarity pair still dedups at cosine 1.0 — the guard compares
-    # polarity, it doesn't exempt negated bodies wholesale.
-    c = _memory("Do not use sudo for npm installs on this machine.")
-    candidates, method = find_dedup_candidates(
-        [a, c], semantic_model=_FixedVectorModel()
-    )
-    assert method == "semantic"
-    assert len(candidates) == 1
-
-
-@pytest.mark.parametrize(("body_a", "body_b", "detector"), _ADVERSARIAL_PAIRS)
-def test_semantic_dedup_inherits_the_same_fence(
-    body_a: str, body_b: str, detector: str
-) -> None:
-    """The embedding path gets the refusal from `_pick_keeper` rather
-    than from a second copy of the checks.
-
-    Round 84's defect was precisely a guard added to one loop and not
-    the other, and the numeric detector had to be added to both by hand
-    for the same reason. With the refusal inside keeper selection there
-    is no second copy to forget. The stub model scores every pair
-    cosine 1.0, so similarity is out of the picture entirely.
-    """
-    candidates, skipped, method = _find_dedup_with_skips(
-        [_memory(body_a), _memory(body_b)], semantic_model=_FixedVectorModel()
-    )
-    assert method == "semantic"
-    assert candidates == []
-    assert [p.detector for p in skipped] == [detector]
-
-
 def test_polarity_guard_surfaces_skipped_pair_on_report(store: Store) -> None:
     """Regression (round-88): the polarity guard dropped above-threshold
     pairs with a bare `continue` — no log, counter, or report field —
@@ -444,29 +394,6 @@ def test_polarity_skipped_pair_is_never_applied(store: Store) -> None:
     assert len(report.polarity_skipped) == 1
     assert report.actions_taken == []
     assert {m.id for m in store.load_all()} == {a.id, b.id}
-
-
-def test_semantic_polarity_skip_lands_on_report(store: Store) -> None:
-    """Same observability on the semantic path: the guard fires after
-    the threshold check, so the surfaced pair carries the similarity
-    that would otherwise have made it a candidate."""
-    a = store.write(
-        content="Do not use sudo for npm installs on this machine.",
-        scopes=["tools"],
-    )
-    b = store.write(
-        content="Use sudo for npm installs on this machine.",
-        scopes=["tools"],
-    )
-
-    report = consolidate(store, semantic_model=_FixedVectorModel())
-    assert report.dedup_method == "semantic"
-    assert report.dedup_candidates == []
-    assert len(report.polarity_skipped) == 1
-    pair = report.polarity_skipped[0]
-    assert {pair.memory_id_a, pair.memory_id_b} == {a.id, b.id}
-    assert pair.method == "semantic"
-    assert pair.similarity == pytest.approx(1.0)
 
 
 def test_dedup_shared_compound_does_not_inflate_jaccard() -> None:
@@ -565,45 +492,6 @@ class _StampAwareModel:
         if "consolidate --llm" in text or "stow" in text:
             return [1.0, 0.0]
         return [0.0, 1.0]
-
-
-def test_semantic_dedup_embeds_provenance_stripped_bodies() -> None:
-    """The stamp strip applies to BOTH dedup paths: the semantic pass
-    must embed the claim, not the stamped body."""
-    model = _StampAwareModel()
-    a = _memory(
-        "User manages dotfiles in ~/dotfiles with GNU stow." + _PROVENANCE_STAMP
-    )
-    b = _memory("User's shell is zsh with the starship prompt." + _PROVENANCE_STAMP)
-    candidates, method = find_dedup_candidates([a, b], semantic_model=model)
-    assert method == "semantic"
-    assert model.seen, "stub model was never asked to encode"
-    assert all("consolidate --llm" not in text for text in model.seen), (
-        "the semantic dedup pass embedded a stamped body"
-    )
-    assert candidates == []
-
-
-def test_semantic_dedup_skips_stale_stamped_cache_entries() -> None:
-    """`cached_embed` keys on (memory_id, updated_key) and never hashes
-    the text, and the write path's `find_similar` embeds FULL stamped
-    bodies under the unsalted key. Without the `#unstamped` key salt
-    the dedup pass would hit those stale stamped vectors and the two
-    distinct facts would collapse to cosine 1.0 again."""
-    from bettermemory.semantic import cached_embed
-
-    model = _StampAwareModel()
-    a = _memory(
-        "User manages dotfiles in ~/dotfiles with GNU stow." + _PROVENANCE_STAMP
-    )
-    b = _memory("User's shell is zsh with the starship prompt." + _PROVENANCE_STAMP)
-    # Simulate the write path having already cached the stamped bodies.
-    for m in (a, b):
-        cached_embed(model, m.id, m.updated.isoformat(), m.body)
-    candidates, _ = find_dedup_candidates([a, b], semantic_model=model)
-    assert candidates == [], (
-        "dedup reused a stale stamped-body embedding from the cache"
-    )
 
 
 def test_dedup_pairs_sorted_by_similarity_desc() -> None:

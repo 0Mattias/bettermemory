@@ -9,14 +9,11 @@ log message format and the never-block-the-caller contract stay one
 definition.
 
 The decorator is intentionally narrow. Sites with idiosyncratic
-recovery state (the per-model ``_LOAD_FAILED`` set in ``semantic.py``,
-the report-failure rows in ``consolidate.py``) keep their bespoke
-try/except — wrapping them in a generic decorator would HIDE the
-recovery semantics the call site needs to be obvious about. The
-audit's broader suggestion landed on these two store sites and
-arguably ``semantic._hydrate_persistent_cache`` (handled
-inline today; the cleanup state there reads naturally as inline
-code, so it stays).
+recovery state (the report-failure rows in ``consolidate.py``) keep
+their bespoke try/except — wrapping them in a generic decorator would
+HIDE the recovery semantics the call site needs to be obvious about.
+The audit's broader suggestion landed on these two store sites and
+nowhere else.
 """
 
 from __future__ import annotations

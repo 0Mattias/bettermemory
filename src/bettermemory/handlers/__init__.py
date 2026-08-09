@@ -9,8 +9,8 @@ auto-`record_use` token scan) lives in `_shared.py`.
 
 The MCP-facing surface (the `ToolHandlers` class) still lives in
 `_handlers.py` as a thin facade: it captures the dependency
-references (`config`, `store`, `sessions`, `recorder`, `responses`,
-`_semantic_model_factory`) once per server and exposes one bound
+references (`config`, `store`, `sessions`, `recorder`, `responses`)
+once per server and exposes one bound
 method per tool that delegates straight to the per-tool module. That
 shape is what keeps the test suite's `mcp._tool_manager.get_tool(name).fn`
 patterns working — `fn` is still a bound method, and the SDK's

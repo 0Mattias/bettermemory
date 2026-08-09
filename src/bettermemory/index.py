@@ -53,7 +53,7 @@ regenerable.
 
 This module is intentionally narrow: schema, lifecycle, and a thin
 ``query`` surface returning ranked memory IDs. The search ranker
-fuses these results with the keyword / BM25 / semantic scorers from
+fuses these results with the keyword / BM25 scorers from
 ``search.py`` — the index is the *candidate set*, not the final
 ranking. That split keeps the existing rankers as the source of
 truth for scoring semantics and lets the index be added or removed

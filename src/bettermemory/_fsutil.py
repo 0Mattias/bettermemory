@@ -32,14 +32,12 @@ exists, the data backing it never reached disk.
   store's Post writer) and `episodes._write_path` both serialise a
   `frontmatter.Post` to bytes and delegate here (Q29), so the
   durable-private-write discipline has one definition instead of three
-  hand-rolled copies. Two writers stay bespoke because they aren't
-  plain-bytes-in-memory callers: `events._compress_rotating` streams
+  hand-rolled copies. One writer stays bespoke because it isn't a
+  plain-bytes-in-memory caller: `events._compress_rotating` streams
   gzip in 64 KB chunks straight to the archive (buffering the whole
   compressed output in memory just to reach this helper would defeat
-  the streaming), and `semantic.flush_persistent_cache` writes via
-  `np.savez_compressed` to a file object under `flock_excl` (numpy's
-  container format, not a bytes blob). Both already perform their own
-  before-rename chmod/fchmod. The plain callers that pass neither mode
+  the streaming). It already performs its own before-rename fchmod.
+  The plain callers that pass neither mode
   — `config.py`'s default-config writer, `init.py`'s MCP-client-config
   writer, `cli/export.py`'s `-o` output writer, and `sync.py`'s
   `.gitignore` writer — inherit `NamedTemporaryFile`'s 0o600 default,

@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from bettermemory import semantic, sync
+from bettermemory import sync
 
 from .conftest import set_git_discovery_ceiling
 from bettermemory.config import BehaviorConfig, Config, StorageConfig
@@ -39,7 +39,6 @@ from bettermemory.doctor import (
     _check_binary_on_path,
     _check_config_loadable,
     _check_distinfo_metadata,
-    _check_embeddings_extra,
     _check_event_log_writable,
     _check_index_health,
     _check_mcp_client_configs,
@@ -1536,61 +1535,6 @@ def test_audit_turn_cadence_only_old_events_skips_warn(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_embeddings_extra_skipped_when_disabled(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The documented-ok default install: no extra, nothing asked for.
-
-    Also the counterweight to
-    `test_embeddings_extra_fails_when_semantic_mode_cannot_degrade`
-    below. `wants_model` is True here — `hybrid` would use a model —
-    but `hybrid` DEGRADES to keyword+bm25 without one, so escalating on
-    that detail would turn the most common install there is red. Only
-    the mode that cannot degrade earns the `fail`.
-    """
-    _pin_extra_state(monkeypatch, torch=None, fastembed=None)
-    cfg = _config_for(tmp_path, search_mode="hybrid", semantic_dedup=False)
-
-    diag = _check_embeddings_extra(cfg)
-
-    assert diag.status == "ok", diag
-    assert "no embeddings extra is installed" in diag.message
-    assert diag.details["resolved_provider"] is None
-    # The detail that must NOT be the gate, stated so a widening of the
-    # gate to it fails here rather than in the field.
-    assert diag.details["wants_model"] is True
-
-
-def test_embeddings_extra_fails_when_enabled_but_missing(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """`semantic_dedup = true` on a genuinely bare install.
-
-    Seeding `semantic._EXTRA_PROBE` alone left `_torch_extra_installed`
-    reading the real filesystem, so `resolve_provider("auto")` returned
-    `torch` on every leg that has sentence-transformers on disk and the
-    check answered from the resolved-provider branch instead — a
-    different branch with a different message, and both satisfy a bare
-    `status == "fail"` with `"embeddings"` in the hint. `_pin_extra_state`
-    seeds the presence probes too, so the branch this test is named for
-    is the one it measures on all three CI legs.
-    """
-    _pin_extra_state(monkeypatch, torch=None, fastembed=None)
-    cfg = _config_for(tmp_path, search_mode="hybrid", semantic_dedup=True)
-
-    # The premise, measured: nothing resolves, so this is the bare
-    # install and not the resolved-provider branch above it.
-    assert semantic.resolve_provider(cfg.behavior.semantic_provider) is None
-
-    diag = _check_embeddings_extra(cfg)
-
-    assert diag.status == "fail"
-    assert "`semantic_dedup = true` in config but neither the" in diag.message
-    assert "embeddings" in (diag.fix_hint or "")
-
-
 # ---------------------------------------------------------------------------
 # embeddings_extra — WHICH extra is broken decides the severity
 #
@@ -1608,458 +1552,16 @@ def test_embeddings_extra_fails_when_enabled_but_missing(
 # ---------------------------------------------------------------------------
 
 
-def _pin_extra_state(
-    monkeypatch: pytest.MonkeyPatch,
-    *,
-    torch: str | None,
-    fastembed: str | None,
-) -> None:
-    """Pin both embedding extras to a chosen state, hermetically.
-
-    `None` = absent, `"ok"` = installed and importable, any other string
-    = installed and BROKEN with that string as the recorded reason.
-
-    Seeds PRODUCTION state — `semantic`'s probe cache, its broken-reason
-    map and the two presence probes — rather than stubbing the check's
-    own helpers, so the assertions measure real resolution logic. It has
-    to: three CI legs install different extras (`[embeddings]`,
-    `[embeddings-fast]`, neither), and a test of "torch broken, fastembed
-    healthy" that read the real environment would measure a different
-    scenario on each of them. The dicts are REPLACED rather than
-    item-patched so nothing another test recorded can leak in.
-    """
-    probe: dict[str, bool] = {}
-    reason: dict[str, str] = {}
-    for module, state in (("sentence_transformers", torch), ("fastembed", fastembed)):
-        # Absent seeds False too — an unseeded module makes
-        # `extra_importable` attempt a real import, which succeeds on
-        # whichever leg happens to have it installed.
-        probe[module] = state == "ok"
-        if state is not None and state != "ok":
-            reason[module] = state
-    monkeypatch.setattr(semantic, "_EXTRA_PROBE", probe)
-    monkeypatch.setattr(semantic, "_EXTRA_BROKEN_REASON", reason)
-    monkeypatch.setattr(semantic, "_torch_extra_installed", lambda: torch is not None)
-    monkeypatch.setattr(
-        semantic, "_fastembed_extra_installed", lambda: fastembed is not None
-    )
-
-
-def test_embeddings_extra_warns_when_a_healthy_sibling_is_the_resolved_one(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A broken extra that is NOT the resolved provider costs nothing.
-
-    `resolve_provider("auto")` skips the broken torch and returns
-    fastembed, so ranking is intact — claiming "silently degraded to
-    keyword/BM25 and Jaccard" over this install states as fact something
-    the process is demonstrably not doing. It is still dead weight worth
-    naming, hence `warn` rather than `ok`.
-    """
-    _pin_extra_state(monkeypatch, torch="KeyError: frozenset()", fastembed="ok")
-    cfg = _config_for(tmp_path, search_mode="hybrid", semantic_dedup=False)
-
-    # The premise, measured rather than assumed.
-    assert semantic.resolve_provider(cfg.behavior.semantic_provider) == "fastembed"
-
-    diag = _check_embeddings_extra(cfg)
-
-    assert diag.status == "warn", diag
-    assert "INSTALLED but" in diag.message
-    assert "KeyError" in diag.message
-    assert "NOT degraded" in diag.message
-    assert diag.details["resolved_provider"] == "fastembed"
-    # The advice must be "reinstall", never "install" — the user has it.
-    assert "Reinstall" in (diag.fix_hint or "")
-
-
-def test_embeddings_extra_fails_when_the_broken_one_is_the_resolved_one(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Counterweight: an explicit preference for the broken provider.
-
-    `semantic_provider = "torch"` is an instruction, not a hint —
-    `resolve_provider` honours it and `get_model` then returns None. The
-    healthy fastembed sitting beside it is never consulted, so the leg
-    really is gone and the degradation claim is true. Without this, the
-    downgrade above could be widened to "any broken extra warns" and the
-    2026-08-01 outage shape would go quiet again.
-    """
-    _pin_extra_state(monkeypatch, torch="KeyError: frozenset()", fastembed="ok")
-    cfg = _config_for(
-        tmp_path,
-        search_mode="hybrid",
-        semantic_dedup=False,
-        semantic_provider="torch",
-    )
-
-    assert semantic.resolve_provider(cfg.behavior.semantic_provider) == "torch"
-
-    diag = _check_embeddings_extra(cfg)
-
-    assert diag.status == "fail", diag
-    assert "silently degraded" in diag.message
-    assert diag.details["resolved_provider"] == "torch"
-
-
-def test_embeddings_extra_fails_when_every_installed_extra_is_broken(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """No sibling to cover: the resolver names a broken provider anyway
-    (so its loader can explain), and the leg is genuinely lost."""
-    _pin_extra_state(
-        monkeypatch,
-        torch="KeyError: frozenset()",
-        fastembed="RuntimeError: onnxruntime missing",
-    )
-    cfg = _config_for(tmp_path, search_mode="hybrid", semantic_dedup=False)
-
-    diag = _check_embeddings_extra(cfg)
-
-    assert diag.status == "fail", diag
-    assert "silently degraded" in diag.message
-    assert diag.details["broken_modules"] == ["sentence_transformers", "fastembed"]
-
-
-def test_embeddings_extra_fails_when_the_only_installed_extra_is_broken(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The mainline outage shape — one extra installed, and gutted.
-
-    Nothing to fail over to, so `resolve_provider` returns the broken
-    torch and the `fail` must stand.
-    """
-    _pin_extra_state(monkeypatch, torch="KeyError: frozenset()", fastembed=None)
-    cfg = _config_for(tmp_path, search_mode="hybrid", semantic_dedup=False)
-
-    assert semantic.resolve_provider(cfg.behavior.semantic_provider) == "torch"
-
-    diag = _check_embeddings_extra(cfg)
-
-    assert diag.status == "fail", diag
-    assert "silently degraded" in diag.message
-
-
-def test_embeddings_extra_ok_when_nothing_is_broken(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Anti-regression: a healthy install must not acquire a warn.
-
-    Without this, returning a constant `warn` from the new branch would
-    satisfy the downgrade test above — the shape this project has
-    published a postmortem about.
-    """
-    _pin_extra_state(monkeypatch, torch="ok", fastembed="ok")
-    cfg = _config_for(tmp_path, search_mode="hybrid", semantic_dedup=True)
-
-    diag = _check_embeddings_extra(cfg)
-
-    assert diag.status == "ok", diag
-
-
-def test_embeddings_extra_fails_when_the_resolved_provider_is_not_INSTALLED(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The warn's premise has to be PROBED, not inferred from the gap.
-
-    The split above downgraded to `warn` whenever the broken extra was
-    not the resolved one — reading "absent from the broken list" as "the
-    resolved provider is healthy". Those are different statements, and
-    `resolve_provider` honours an explicit `semantic_provider` even when
-    that extra is not installed at all, so they come apart here:
-    `semantic_provider = "torch"` with sentence-transformers ABSENT and a
-    broken fastembed beside it resolves to a provider that appears in
-    nobody's broken list and still loads no model. The published `warn`
-    said ranking was "NOT degraded" and that resolution reaches a
-    provider "which imports cleanly" — about an import never attempted —
-    on an install whose semantic leg was gone.
-    """
-    _pin_extra_state(monkeypatch, torch=None, fastembed="RuntimeError: onnx missing")
-    cfg = _config_for(
-        tmp_path,
-        search_mode="hybrid",
-        semantic_dedup=False,
-        semantic_provider="torch",
-    )
-
-    # The premise, measured: resolution commits to torch, and torch
-    # cannot be imported — so no model loads.
-    assert semantic.resolve_provider(cfg.behavior.semantic_provider) == "torch"
-    assert semantic.extra_importable("sentence_transformers") is False
-
-    diag = _check_embeddings_extra(cfg)
-
-    assert diag.status == "fail", diag
-    assert "silently degraded" in diag.message
-    assert diag.details["resolved_provider"] == "torch"
-    assert diag.details["resolved_provider_importable"] is False
-    # The two claims that were false must be gone in every spelling.
-    assert "NOT degraded" not in diag.message
-    assert "imports cleanly" not in diag.message
-    # Reinstalling the broken sibling would not fix this install, so the
-    # hint has to name the missing extra as well.
-    assert "embeddings]" in (diag.fix_hint or "")
-    assert "semantic_provider" in (diag.fix_hint or "")
-
-
-def test_embeddings_extra_probes_the_resolver_with_no_broken_extra_anywhere(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The release-blocker shape: nothing installed-and-BROKEN at all.
-
-    The resolved-provider probe used to live inside `if broken:`, so it
-    only ran when some extra was installed and failing to import. Take
-    the broken sibling away and the same misconfiguration — an explicit
-    `semantic_provider` naming an absent extra, with a perfectly healthy
-    other extra beside it — fell through to a `semantic_dedup` gate and
-    a `working` list that ORs across BOTH extras, and published
-    "semantic_dedup enabled and fastembed importable" over a process
-    that loads no model at all. The verdict was decided by whether an
-    installed-and-broken sibling happened to be present — a fact about a
-    provider that resolution had already declined to use.
-
-    Lesson 1 of `docs/incidents/2026-07-25-doctor-false-green-on-
-    importable-extra.md`: a check may skip only on the condition it
-    measures.
-    """
-    from bettermemory import semantic_setup
-
-    _pin_extra_state(monkeypatch, torch=None, fastembed="ok")
-    cfg = _config_for(
-        tmp_path,
-        search_mode="hybrid",
-        semantic_dedup=True,
-        semantic_provider="torch",
-    )
-
-    # The premise, measured rather than assumed: nothing is broken, the
-    # OR over both extras is true, and yet no model can load.
-    assert semantic.extra_import_failure("sentence_transformers") is None
-    assert semantic.extra_import_failure("fastembed") is None
-    assert semantic_setup._embeddings_extra_importable() is True
-    assert semantic.resolve_provider(cfg.behavior.semantic_provider) == "torch"
-    assert semantic_setup._resolved_provider_importable(cfg) is False
-
-    diag = _check_embeddings_extra(cfg)
-
-    assert diag.status == "fail", diag
-    assert diag.details["resolved_provider"] == "torch"
-    assert diag.details["resolved_provider_importable"] is False
-    # The green message that used to be published here, in the spelling
-    # it had. `working` may still appear as supporting detail, but it
-    # must never again be the thing that decides the verdict.
-    assert "semantic_dedup enabled" not in diag.message
-    assert "silently degraded" in diag.message
-    # The provider that cannot load is named, since that is the one fact
-    # the operator cannot get from anywhere else.
-    assert "torch" in diag.message
-    assert "embeddings]" in (diag.fix_hint or "")
-
-
-def test_embeddings_extra_probe_survives_the_dedup_gate_too(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The other early return the hoisted probe has to outrank.
-
-    `semantic_dedup = false` returned `ok` before anything asked the
-    resolver a question. Since ba7e857 the extra feeds RANKING under the
-    default `hybrid` mode with no `semantic_dedup` involvement, so that
-    gate answers "no extras needed" for the population most likely to be
-    silently lexical.
-    """
-    _pin_extra_state(monkeypatch, torch=None, fastembed="ok")
-    cfg = _config_for(
-        tmp_path,
-        search_mode="hybrid",
-        semantic_dedup=False,
-        semantic_provider="torch",
-    )
-
-    diag = _check_embeddings_extra(cfg)
-
-    assert diag.status == "fail", diag
-    assert "disabled" not in diag.message
-    assert diag.details["resolved_provider_importable"] is False
-
-
-def test_embeddings_extra_fails_when_semantic_mode_cannot_degrade(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The dedup gate's last uncovered branch: nothing installed at all.
-
-    With no extra anywhere `resolve_provider` returns None, so the
-    resolved-provider branch above is skipped and control reached the
-    `semantic_dedup` early return, which published `ok` — a verdict
-    decided by the dedup flag, which is not the condition this check
-    measures. Under `search_mode = "semantic"` that install is not
-    degraded but DEAD: `handlers.search.memory_search` raises on a None
-    model instead of falling back, so every `memory_search` call failed
-    while `bettermemory doctor` printed all-green and exited 0.
-
-    The gate is `_search_mode_needs_model`, the same predicate the
-    handler's model factory routes on, and not `wants_model` — which is
-    also true under `hybrid`, where the absent extra is not a fault at
-    all (`test_embeddings_extra_skipped_when_disabled`).
-    """
-    from bettermemory import semantic_setup
-
-    _pin_extra_state(monkeypatch, torch=None, fastembed=None)
-    cfg = _config_for(tmp_path, search_mode="semantic", semantic_dedup=False)
-
-    # The premise, measured: no provider resolves, and this mode is one
-    # the search handler hard-errors under rather than degrading.
-    assert semantic.resolve_provider(cfg.behavior.semantic_provider) is None
-    assert semantic_setup._search_mode_needs_model(cfg) is True
-
-    diag = _check_embeddings_extra(cfg)
-
-    assert diag.status == "fail", diag
-    assert _EXIT_CODE_BY_STATUS[diag.status] == 2
-    assert "does not degrade" in diag.message
-    assert "semantic" in diag.message
-    # The green message that used to be published here, in its spelling.
-    assert "semantic_dedup disabled" not in diag.message
-    # Both repairs named: install an extra, or pick a mode that degrades.
-    assert "embeddings" in (diag.fix_hint or "")
-    assert "hybrid" in (diag.fix_hint or "")
-
-
-def test_embeddings_extra_hint_points_at_the_provider_this_machine_has(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Counterweight to the `auto` ban below: `auto` IS right here.
-
-    With no broken extra and a healthy sibling there genuinely is a
-    working provider, so `auto` resolves to it and the advice holds. The
-    ban in `test_..._never_recommends_auto_when_nothing_works` is about
-    the state where it does not — pinning both directions is what keeps
-    the two hints from being collapsed into one wrong one.
-    """
-    _pin_extra_state(monkeypatch, torch="ok", fastembed=None)
-    cfg = _config_for(
-        tmp_path,
-        search_mode="hybrid",
-        semantic_dedup=False,
-        semantic_provider="fastembed",
-    )
-
-    # Measured: `auto` really would pick the healthy torch here.
-    assert semantic.resolve_provider("auto") == "torch"
-
-    diag = _check_embeddings_extra(cfg)
-
-    assert diag.status == "fail", diag
-    assert "`torch`" in (diag.fix_hint or "")
-    assert "auto" in (diag.fix_hint or "")
-
-
-def test_embeddings_extra_never_recommends_auto_when_nothing_works(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A fix_hint is a claim, and this one was false.
-
-    Reachable only with the named provider ABSENT and the other one
-    installed-and-BROKEN. There are exactly two providers, so that state
-    has no working one: `resolve_provider` deliberately falls back to a
-    present-but-unimportable provider (so its loader can name the
-    failure), which means `auto` lands on the broken sibling. The hint
-    told the operator to point `semantic_provider` "at a provider you
-    have — or at `auto`, which picks a working one"; they follow it and
-    nothing improves.
-    """
-    _pin_extra_state(monkeypatch, torch=None, fastembed="RuntimeError: onnx missing")
-    cfg = _config_for(
-        tmp_path,
-        search_mode="hybrid",
-        semantic_dedup=False,
-        semantic_provider="torch",
-    )
-
-    # The premise, measured: `auto` resolves to the BROKEN provider.
-    assert semantic.resolve_provider("auto") == "fastembed"
-    assert semantic.extra_importable("fastembed") is False
-
-    diag = _check_embeddings_extra(cfg)
-
-    assert diag.status == "fail", diag
-    hint = diag.fix_hint or ""
-    # The retired sentence, in the spelling it had.
-    assert "which picks a working one" not in hint
-    assert "no working provider" in hint
-    assert "not a third option" in hint
-    # Both real repairs still named.
-    assert "embeddings]" in hint
-    assert "force-reinstall fastembed" in hint
-
-
 @pytest.mark.parametrize(
     ("search_mode", "semantic_dedup"),
     [("keyword", False), ("bm25", False)],
     ids=["keyword", "bm25"],
 )
-def test_embeddings_extra_warns_rather_than_failing_when_no_consumer_loads(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    search_mode: str,
-    semantic_dedup: bool,
-) -> None:
-    """`fail` asserts a degradation, so it has to check for one.
-
-    The branch escalated on the breakage alone and printed "Semantic
-    ranking and cosine dedup are silently degraded to keyword/BM25 and
-    Jaccard" without consulting either consumer. Under `keyword`/`bm25`
-    with `semantic_dedup = false` neither one ever loads a model —
-    `handlers.search` passes `semantic_model=None` regardless — so
-    nothing is degraded, and `_EXIT_CODE_BY_STATUS` was breaking CI with
-    exit 2 over an install whose configured behaviour is intact. The
-    breakage is still real dead weight, so it still warns.
-    """
-    _pin_extra_state(monkeypatch, torch="KeyError: frozenset()", fastembed=None)
-    cfg = _config_for(tmp_path, search_mode=search_mode, semantic_dedup=semantic_dedup)
-
-    diag = _check_embeddings_extra(cfg)
-
-    assert diag.status == "warn", diag
-    assert _EXIT_CODE_BY_STATUS[diag.status] == 1
-    # The claim that was never checked, gone.
-    assert "silently degraded" not in diag.message
-    # But the breakage itself must still be named, with its reason.
-    assert "INSTALLED but" in diag.message
-    assert "KeyError" in diag.message
-    assert "Reinstall" in (diag.fix_hint or "")
-    assert diag.details["wants_model"] is False
-
-
 @pytest.mark.parametrize(
     ("search_mode", "semantic_dedup"),
     [("hybrid", False), ("semantic", False), ("keyword", True)],
     ids=["hybrid-ranks", "semantic-ranks", "keyword-but-dedup-wants-cosine"],
 )
-def test_embeddings_extra_still_fails_when_some_consumer_wants_a_model(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    search_mode: str,
-    semantic_dedup: bool,
-) -> None:
-    """Counterweight: the de-escalation must not swallow the outage.
-
-    Same broken install as above; the only thing that moves is whether a
-    consumer would have loaded a model. Two arms want one from the
-    ranker, one from write-time dedup, and every arm has to keep the
-    `fail` — without this, gating on `wants_model` could be widened to
-    "any breakage warns" and the 2026-08-01 shape goes quiet again.
-    """
-    _pin_extra_state(monkeypatch, torch="KeyError: frozenset()", fastembed=None)
-    cfg = _config_for(tmp_path, search_mode=search_mode, semantic_dedup=semantic_dedup)
-
-    diag = _check_embeddings_extra(cfg)
-
-    assert diag.status == "fail", diag
-    assert _EXIT_CODE_BY_STATUS[diag.status] == 2
-    assert "silently degraded" in diag.message
-    assert diag.details["wants_model"] is True
-
-
 @pytest.mark.parametrize(
     ("torch", "fastembed", "provider", "search_mode", "semantic_dedup"),
     [
@@ -2081,235 +1583,19 @@ def test_embeddings_extra_still_fails_when_some_consumer_wants_a_model(
         "bare-install-under-semantic-mode",
     ],
 )
-def test_embeddings_extra_hints_name_the_package_not_the_working_directory(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    torch: str | None,
-    fastembed: str | None,
-    provider: str | None,
-    search_mode: str,
-    semantic_dedup: bool,
-) -> None:
-    """A fix_hint the reader cannot run is not a fix.
-
-    Every branch prescribed `uv pip install -e .[<extra>]` and
-    `uv pip install --force-reinstall <module>`. Both write to the
-    ACTIVE virtualenv, so neither repairs the `uv tool install` / `pipx`
-    install `docs/installation.md` documents and that doctor's own
-    binary-path and plugin checks assume — from an arbitrary directory
-    the first either errors or installs the reader's own project. The
-    unquoted `.[` is a second, independent breakage: `[` globs, so the
-    command is not pasteable into zsh even from a development clone.
-
-    Every row is a branch that offers an install or a reinstall, so the
-    package spelling has to appear in all of them.
-    """
-    _pin_extra_state(monkeypatch, torch=torch, fastembed=fastembed)
-    kwargs: dict[str, Any] = {
-        "search_mode": search_mode,
-        "semantic_dedup": semantic_dedup,
-    }
-    if provider is not None:
-        kwargs["semantic_provider"] = provider
-    cfg = _config_for(tmp_path, **kwargs)
-
-    diag = _check_embeddings_extra(cfg)
-    hint = diag.fix_hint or ""
-
-    assert diag.status in ("warn", "fail"), diag
-    assert "bettermemory[" in hint, hint
-    assert "uv tool install" in hint, hint
-    # The spelling that cannot repair a tool install, and the unquoted
-    # glob that zsh refuses, in the forms they had.
-    assert "install -e .[" not in hint, hint
-    assert "uv pip install --force-reinstall" not in hint.split("(")[0], hint
-
-
 @pytest.mark.parametrize(
     ("search_mode", "semantic_dedup"),
     [("keyword", False), ("bm25", False)],
     ids=["keyword", "bm25"],
 )
-def test_embeddings_extra_absent_provider_warns_when_no_consumer_loads(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    search_mode: str,
-    semantic_dedup: bool,
-) -> None:
-    """The `wants_model` gate's SECOND consumer.
-
-    `unusable_status` is read at two sites: the `if broken:` arm, and
-    the branch for a resolved provider whose extra is simply absent. The
-    pair above holds the extras state at "torch installed and broken",
-    so every row of it enters the first site — replacing the second
-    site's `status=unusable_status` with a literal `"fail"` left the
-    whole suite green, and that mutation flips `bettermemory doctor` to
-    exit 2 over an install whose configured behaviour is intact.
-
-    Nothing is installed-and-broken here: the config names an extra this
-    machine does not have, which is the config-typo class, and under
-    `keyword`/`bm25` with dedup off no consumer would have loaded a
-    model anyway.
-    """
-    _pin_extra_state(monkeypatch, torch=None, fastembed="ok")
-    cfg = _config_for(
-        tmp_path,
-        search_mode=search_mode,
-        semantic_dedup=semantic_dedup,
-        semantic_provider="torch",
-    )
-
-    # The premise, measured: the second call site, not the first.
-    assert semantic.extra_import_failure("fastembed") is None
-    assert semantic.resolve_provider(cfg.behavior.semantic_provider) == "torch"
-
-    diag = _check_embeddings_extra(cfg)
-
-    assert diag.status == "warn", diag
-    assert _EXIT_CODE_BY_STATUS[diag.status] == 1
-    assert diag.details["broken_modules"] == []
-    assert diag.details["wants_model"] is False
-    # The claim no consumer supports, gone; the misconfiguration itself
-    # still named, with when it will start to bite.
-    assert "silently degraded" not in diag.message
-    assert "Nothing is degraded today" in diag.message
-    assert "NOT installed" in diag.message
-
-
 @pytest.mark.parametrize(
     ("search_mode", "semantic_dedup"),
     [("hybrid", False), ("semantic", False), ("keyword", True)],
     ids=["hybrid-ranks", "semantic-ranks", "keyword-but-dedup-wants-cosine"],
 )
-def test_embeddings_extra_absent_provider_still_fails_when_a_consumer_wants_a_model(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    search_mode: str,
-    semantic_dedup: bool,
-) -> None:
-    """Counterweight on the same call site as the test above.
-
-    Same install — an explicit `semantic_provider` naming the extra this
-    machine lacks — and the only thing that moves is whether a consumer
-    would have loaded a model. Without this, the de-escalation could be
-    widened to "an absent resolved provider always warns" and a config
-    whose ranker really is lexical would stop failing.
-    """
-    _pin_extra_state(monkeypatch, torch=None, fastembed="ok")
-    cfg = _config_for(
-        tmp_path,
-        search_mode=search_mode,
-        semantic_dedup=semantic_dedup,
-        semantic_provider="torch",
-    )
-
-    diag = _check_embeddings_extra(cfg)
-
-    assert diag.status == "fail", diag
-    assert _EXIT_CODE_BY_STATUS[diag.status] == 2
-    assert "silently degraded" in diag.message
-    assert diag.details["wants_model"] is True
-
-
-@pytest.mark.parametrize(
-    ("torch", "fastembed", "provider"),
-    [
-        ("KeyError: frozenset()", "ok", None),
-        ("KeyError: frozenset()", "ok", "torch"),
-        ("KeyError: frozenset()", "ok", "fastembed"),
-        (None, "RuntimeError: onnx missing", "torch"),
-        ("KeyError: frozenset()", None, "fastembed"),
-        ("KeyError: frozenset()", "RuntimeError: onnx missing", None),
-        ("KeyError: frozenset()", None, None),
-        (None, "ok", "torch"),
-        ("ok", None, "fastembed"),
-        (None, None, "torch"),
-    ],
-    ids=[
-        "auto-falls-past-broken-torch",
-        "explicit-torch-broken",
-        "explicit-fastembed-healthy",
-        "explicit-torch-absent",
-        "explicit-fastembed-absent",
-        "both-broken",
-        "only-torch-installed-broken",
-        "nothing-broken-explicit-torch-absent",
-        "nothing-broken-explicit-fastembed-absent",
-        "nothing-installed-explicit-torch",
-    ],
-)
-def test_embeddings_extra_severity_tracks_the_resolved_provider_probe(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    torch: str | None,
-    fastembed: str | None,
-    provider: str | None,
-) -> None:
-    """One invariant behind all ten shapes, tied to the production
-    predicate rather than to a hand-copied verdict table.
-
-    `semantic_setup._resolved_provider_importable` is what decides
-    whether a semantic leg actually ranks anything, and this check's
-    `fail`/`warn` split is a claim about exactly that. Asserting they
-    agree — rather than listing expected statuses — means the two cannot
-    drift apart the way they did: a verdict table would have been
-    written to match whatever the check did that day.
-
-    The last three rows are the ones that make this an invariant rather
-    than a description. Every earlier row carries at least one
-    installed-and-BROKEN extra, so all seven landed inside the check's
-    `if broken:` arm — which is where the resolved-provider probe used
-    to live. The invariant was simply false outside that arm, and the
-    parametrization was quietly excluding the shapes that would have
-    shown it: `ok` came back for a config resolving to a provider that
-    imports nothing.
-
-    `search_mode` is held at the ranking default across every row on
-    purpose, so `wants_model` is constant-True and the status can only
-    move with the probe. The severity gate that reads `search_mode` is
-    pinned separately by
-    `test_embeddings_extra_warns_rather_than_failing_when_no_consumer_loads`
-    and its counterweight.
-
-    Contract of the table, since the `warn` arm is narrower than the
-    `fail` one: every row is a fault of some kind — a broken extra, an
-    unusable resolved provider, or both — so `ok` is never a correct
-    answer here. A row with NOTHING broken and a resolved provider that
-    imports would correctly return `ok` and does not belong; that shape
-    is pinned by `test_embeddings_extra_ok_when_nothing_is_broken`.
-    """
-    from bettermemory import semantic_setup
-
-    _pin_extra_state(monkeypatch, torch=torch, fastembed=fastembed)
-    kwargs: dict[str, Any] = {"search_mode": "hybrid", "semantic_dedup": False}
-    if provider is not None:
-        kwargs["semantic_provider"] = provider
-    cfg = _config_for(tmp_path, **kwargs)
-
-    leg_ranks = semantic_setup._resolved_provider_importable(cfg)
-    diag = _check_embeddings_extra(cfg)
-
-    assert diag.status == ("warn" if leg_ranks else "fail"), diag
-    assert diag.details["resolved_provider_importable"] is leg_ranks
-    assert ("silently degraded" in diag.message) is not leg_ranks
-
-
 # ---------------------------------------------------------------------------
 # retrieval_discrimination
 # ---------------------------------------------------------------------------
-
-
-def _force_no_embeddings(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Pin the machine to "no embeddings extra", so these tests measure
-    the lexical path on every CI leg.
-
-    Seeds the extras state rather than stubbing
-    `_semantic_rank_leg_active` itself: the check's `fix_hint` reads the
-    same probes to decide WHICH repair to name, so a stubbed predicate
-    would leave the hint describing whatever the runner happens to have
-    installed while the verdict described something else.
-    """
-    _pin_extra_state(monkeypatch, torch=None, fastembed=None)
 
 
 def _seed_scope(store: Store, scope: str, bodies: list[str]) -> None:
@@ -2324,7 +1610,6 @@ def test_retrieval_discrimination_warns_on_a_homogeneous_scope(
     """Every memory repeats the same topical vocabulary and carries one
     rare token. Rare-term queries should single each out; topical ones
     cannot, because the shared words are in every member."""
-    _force_no_embeddings(monkeypatch)
     from bettermemory.store import Store
 
     store = Store(tmp_path)
@@ -2344,7 +1629,13 @@ def test_retrieval_discrimination_warns_on_a_homogeneous_scope(
     # nothing about vocabulary mismatch, only that retrieval is broken.
     assert row["rare_term_recall_at_1"] >= 0.9
     assert row["topical_recall_at_1"] <= _DISCRIMINATION_WARN_AT
-    assert "embeddings" in (diag.fix_hint or "")
+    # The hint prescribes query discipline and names the ceiling as the
+    # standing retrieval-work target — never an install (the project
+    # ships no models).
+    assert "nothing here needs installing" in (diag.fix_hint or "")
+    assert "install" not in (diag.fix_hint or "").replace(
+        "nothing here needs installing", ""
+    )
 
 
 def _seed_homogeneous_scope(tmp_path: Path) -> None:
@@ -2366,106 +1657,6 @@ def _seed_homogeneous_scope(tmp_path: Path) -> None:
     )
 
 
-@pytest.mark.parametrize(
-    ("torch", "fastembed", "provider", "search_mode", "expected", "forbidden"),
-    [
-        (
-            "KeyError: frozenset()",
-            None,
-            None,
-            "hybrid",
-            "Repair it rather than install another",
-            "Install an embeddings extra",
-        ),
-        (
-            None,
-            "ok",
-            "torch",
-            "hybrid",
-            "Repoint `[behavior] semantic_provider`",
-            "Install an embeddings extra",
-        ),
-        (
-            "ok",
-            "ok",
-            None,
-            "keyword",
-            'Set `search_mode = "hybrid"`',
-            "Install an embeddings extra",
-        ),
-        (
-            None,
-            None,
-            None,
-            "hybrid",
-            "Install an embeddings extra",
-            "already installed",
-        ),
-    ],
-    ids=[
-        "installed-and-broken-wants-a-reinstall",
-        "config-names-the-absent-one-wants-repointing",
-        "two-healthy-extras-want-a-routing-search_mode",
-        "nothing-installed-wants-an-install",
-    ],
-)
-def test_retrieval_discrimination_hint_names_the_repair_this_install_needs(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    torch: str | None,
-    fastembed: str | None,
-    provider: str | None,
-    search_mode: str,
-    expected: str,
-    forbidden: str,
-) -> None:
-    """`fix_hint` is a claim and rots like one.
-
-    `_semantic_rank_leg_active` is false for three independent reasons,
-    and the hint used to open "Install an embeddings extra — that is now
-    the whole fix" on all of them. Row one is the 2026-08-01 shape: the
-    extra is installed and gutted, and `embeddings_extra` says "reinstall
-    it" three lines below in the same report — the wrong advice printed
-    first. Row two names an extra this machine does not have while a
-    healthy sibling sits beside it. Row three is the sharpest, because no
-    neighbouring check contradicts it: two working extras, `search_mode =
-    "keyword"`, and the only actionable line in a green report telling the
-    operator to install a several-hundred-megabyte package they already
-    have twice — while denying that the config flag which IS the fix is
-    involved.
-
-    Lesson 4 of
-    `docs/incidents/2026-07-25-doctor-false-green-on-importable-extra.md`.
-    Row four is the counterweight: where "install one" is the truth, it
-    must still be what the hint says.
-    """
-    from bettermemory import semantic_setup
-
-    _pin_extra_state(monkeypatch, torch=torch, fastembed=fastembed)
-    _seed_homogeneous_scope(tmp_path)
-    kwargs: dict[str, Any] = {"search_mode": search_mode, "semantic_dedup": False}
-    if provider is not None:
-        kwargs["semantic_provider"] = provider
-    cfg = _config_for(tmp_path, **kwargs)
-
-    # The premise: every row must reach the warn branch, i.e. no semantic
-    # leg ranks — otherwise the check skips and there is no hint at all.
-    assert semantic_setup._semantic_rank_leg_active(cfg) is False
-
-    diag = _check_retrieval_discrimination(tmp_path, cfg)
-    hint = diag.fix_hint or ""
-
-    assert diag.status == "warn", diag
-    assert expected in hint, hint
-    assert forbidden not in hint, hint
-    # The measurement that makes the advice worth acting on rides along
-    # on every branch; it is the reason this check reports at all.
-    assert "recall@1 35% -> 60%" in hint
-    # Same runnability bar as `embeddings_extra`'s hints: the package,
-    # not the working directory, and no unquoted `[` for zsh to reject.
-    assert "install -e .[" not in hint, hint
-
-
 def test_retrieval_discrimination_ok_on_a_heterogeneous_scope(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2474,7 +1665,6 @@ def test_retrieval_discrimination_ok_on_a_heterogeneous_scope(
     each memory has its own vocabulary, so even a topical query lands on
     exactly one member. A check that simply warned whenever it found a
     big-enough scope would pass the test above and fail this one."""
-    _force_no_embeddings(monkeypatch)
     from bettermemory.store import Store
 
     store = Store(tmp_path)
@@ -2538,7 +1728,6 @@ def test_retrieval_discrimination_skips_scopes_too_small_to_measure(
     """Under the pool floor a ratio describes the pool size, not
     discrimination, so the check declines to report rather than emitting
     a number that reads like evidence."""
-    _force_no_embeddings(monkeypatch)
     from bettermemory.store import Store
 
     store = Store(tmp_path)
@@ -2547,69 +1736,6 @@ def test_retrieval_discrimination_skips_scopes_too_small_to_measure(
     assert diag.status == "ok"
     assert "too small" in diag.message
     assert diag.details.get("scopes") is None
-
-
-def test_retrieval_discrimination_does_not_skip_on_a_merely_installed_extra(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """REGRESSION, now guarding the OTHER half of the same question.
-
-    The first shipped version skipped whenever an extra was importable,
-    which was wrong then: under `hybrid` with `semantic_dedup = false`
-    the factory returned None and ranking stayed lexical no matter what
-    was installed, so skipping reported `ok` for precisely the config
-    that most needed the warning.
-
-    Hybrid now DOES resolve a model once an extra is importable, so the
-    configuration in that old test no longer exists — an installed extra
-    IS a routed one. What still must not silence the check is a mode the
-    handler never hands a model to. `keyword` is that case: the extra is
-    importable and `semantic_dedup` is on, so a model loads for the WRITE
-    path, yet `handlers.search.memory_search` passes `semantic_model=None`
-    under keyword and ranking is lexical. The check must warn.
-
-    The invariant is unchanged and is the point: skip on whether a
-    semantic leg actually SCORES A SEARCH, never on whether a model
-    exists somewhere in the process.
-    """
-    from bettermemory import semantic_setup
-
-    # Pinned rather than stubbed, and pinned rather than inherited: the
-    # premise is an extra that really imports, and on the base CI leg
-    # there is none while on the others there are two.
-    _pin_extra_state(monkeypatch, torch="ok", fastembed=None)
-    assert semantic_setup._embeddings_extra_importable() is True
-
-    _seed_homogeneous_scope(tmp_path)
-    cfg = _config_for(tmp_path, search_mode="keyword", semantic_dedup=True)
-    diag = _check_retrieval_discrimination(tmp_path, cfg)
-    assert diag.status == "warn", (
-        "a model loaded for the write path must not silence the check — "
-        "keyword ranking never receives it, so retrieval is still lexical"
-    )
-    assert diag.details["scopes"], "the probe must actually have run"
-
-
-def test_retrieval_discrimination_short_circuits_when_semantic_available(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """With a non-lexical signal in play the lexical ceiling does not
-    bind, so the probe must not run — and must not spend its searches."""
-    monkeypatch.setattr(
-        "bettermemory.doctor._semantic_rank_leg_active",
-        lambda _cfg: True,
-    )
-
-    def explode(*_args: Any, **_kwargs: Any) -> Any:  # pragma: no cover
-        raise AssertionError("probe ran despite an importable embeddings extra")
-
-    monkeypatch.setattr("bettermemory.doctor._discrimination_probe", explode)
-    cfg = _config_for(tmp_path, search_mode="hybrid")
-    diag = _check_retrieval_discrimination(tmp_path, cfg)
-    assert diag.status == "ok"
-    assert "non-lexical" in diag.message
 
 
 # ---------------------------------------------------------------------------
