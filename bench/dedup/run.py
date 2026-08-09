@@ -171,7 +171,20 @@ def _scan(memories: list[Memory], *, floor: float) -> list[list[float]]:
 
 def _load_at(scan: list[list[float]], floor: float) -> dict[str, float | int]:
     counts = sorted(sum(1 for s in row if floor <= s < HIGH_SIMILARITY) for row in scan)
-    n = len(counts) or 1
+    if not counts:
+        # An empty scan (zero replayed writes) is a legitimate shape for
+        # a fresh corpus; the positional stats below would index into an
+        # empty list, so report explicit zeros instead.
+        return {
+            "related_pairs": 0,
+            "mean_per_write": 0.0,
+            "median_per_write": 0,
+            "p90_per_write": 0,
+            "max_per_write": 0,
+            "writes_with_zero": 0,
+            "writes_with_5_or_more": 0,
+        }
+    n = len(counts)
     return {
         # Each unordered pair is counted from both sides.
         "related_pairs": sum(counts) // 2,

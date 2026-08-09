@@ -21,8 +21,8 @@ specific to whatever hardware you run on; the value is the *shape* of
 the curve (does load_all stay roughly linear, does search latency
 stay below your acceptable ceiling) rather than absolute values.
 
-Disposable: the bench dir is created under /tmp by default and
-removed on exit unless you pass `--keep`. We deliberately avoid
+Disposable: the bench dir is created under /tmp and always removed
+on exit — there is deliberately no keep flag. We likewise avoid
 running this against the user's real `~/.claude-memory/` even with
 a flag — corpus sizes above a few thousand would stomp over weeks
 of legitimate writes if pointed at the wrong directory.

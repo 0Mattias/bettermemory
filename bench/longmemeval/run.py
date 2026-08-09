@@ -493,12 +493,13 @@ def main() -> int:
     ]
 
     notes.append(
-        "claude-mem arms are NOT implemented yet — this run measures "
-        "bettermemory only and licenses no comparative claim."
+        "this runner measures bettermemory only; the claude-mem arms run "
+        "through cm_run.py and publish their own artifacts — a "
+        "single-system artifact licenses no comparative claim by itself."
     )
     notes.append(
-        f"ingest bypasses memory_write guardrails by design (Store.write, "
-        f"src/bettermemory/store.py:411); stores hold ~245 items, below the "
+        f"ingest bypasses memory_write guardrails by design (Store.write in "
+        f"src/bettermemory/store.py); stores hold ~245 items, below the "
         f"{INDEX_THRESHOLD}-item index threshold, so bm25 prefiltering never "
         "engages and the full store is ranked."
     )
