@@ -7,6 +7,87 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.43.0 - 2026-08-08
+
+### Fixed — the whole-tree audit: thirty-five findings drained
+
+A maintainer-mandated whole-tree audit read every tracked source, doc,
+bench, and CI file end-to-end through thirteen domain lenses, with
+every candidate finding independently re-derived before it counted.
+Thirty-four survived, two severe, and this release drains all of them
+plus one carried side-finding. The severe pair sat in the product's
+two youngest lanes:
+
+- **`memory_search`'s expand-top block computed commit drift without
+  the memory's declared claims** — the pre-claims any-touch policy —
+  so the loudest retrieval surface could report a different
+  `staleness_verdict` than `memory_show` for the same memory in the
+  same turn. The web detail page and `_response`'s per-hit attach
+  carried the same divergence; all four surfaces now share one
+  claim-narrowed policy.
+- **`episode_handoff`'s prior-session auto-resolution admitted
+  transcript-id phantom sessions** written by the client-side hooks —
+  worktree-matching candidates that can never hold episodes — burying
+  the real predecessor's takeaway behind a zero-episode ghost. The
+  walk now applies the same `_OUT_OF_PROCESS_TRIGGERS` skip the
+  session bridge uses.
+
+The rest, by area: `memory_verify`'s optimistic-concurrency check
+fingerprints the (`last_verified_at`, `updated`) pair, closing the
+None-equals-None pass that let a concurrent edit get certified unread,
+and `$HOME`-spelled attestations are recognized as absolute. The
+retrieval shield matches the union of the anchored server session and
+the caller's own id, so a prompt-recall delivery outside a git
+checkout stops re-flagging its own turn; the recall block's cap now
+bounds the scope list its comment always claimed to guard. The index's
+first-touch schema stamp serialises on the migration branch's flock,
+ending a two-process IntegrityError cascade that could unlink a
+healthy index; the event recorder heals a crash-torn tail so the next
+fsynced event stays readable. BM25 corpus statistics cover the kebab
+parts the conjunctive fallback prices under the prefilter. Body edits
+run the transient-marker gate `memory_write` always had (the last
+laundering route into a committed record), user-inference pendings
+keep their veto ceremony under global confirmation, truncation
+overrides are recorded only when the gate fired, and literal-claim
+equality is order-insensitive for sets and dicts. Conflict verdicts
+claim their queue row under the flock before touching links, so a
+lost race mutates nothing. Doctor bounds its `Name:` search to the
+metadata header, tolerates a non-UTF8 client config as that file's
+finding, and health renders `no_signal` audits distinguishably from a
+hook that never fired. The web UI rejects untrusted Host headers on
+loopback binds (DNS rebinding reached every read route) and its
+detail page agrees with `memory_show` on claim-carrying memories.
+The `bettermemory ui` failure hint composes from the install-hint
+atoms with the tool form leading, and a new ratchet key pins the
+bare-pip spelling extinct. Commit-lint skips manual dispatch runs
+instead of green-lighting an empty range.
+
+### Changed — the benchmarks describe this engine again
+
+The published retrieval and LongMemEval artifacts measured 3.29.0 and
+3.30.0. Both suites re-ran unchanged at this release's engine: the
+retrieval headline reproduces (the semantic margin at recall@1 holds
+at the published size, control still tracks asked, and the prefilter
+still costs nothing at recall@5 in any cell), and LongMemEval comes
+back bit-for-bit identical on both arms at every k — the identity
+doubling as a harness determinism check. Both runners now stamp a
+`provenance` block (version, commit, dirty flag, date, machine) on
+every artifact, restoring what the retrieval runner's rewrite dropped;
+an artifact that cannot say what it measured is the failure both
+benchmarks exist to end. Dated sections in `bench/retrieval/README.md`
+and `bench/longmemeval/README.md` carry the fresh tables; the
+claude-mem comparison arm stays its dated 2026-07-27 artifact rather
+than pretending a live re-run that tooling no longer supports.
+
+### Docs
+
+Six prose surfaces stopped contradicting shipped state, including the
+LongMemEval README declaring its own published comparison unearned,
+CONTRIBUTING's opt-in value predating the shipped recall lanes, two
+"unreleased" fix-tracking lines for fixes that shipped in v3.26.0 and
+v3.31.0, and `docs/api.md` documenting the verify oracle's
+caller-checkout fallback for legacy origins.
+
 ## 3.42.0 - 2026-08-06
 
 ### Added — the standing tier: fresh-verified ambient bodies at session start
