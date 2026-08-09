@@ -26,7 +26,8 @@ two youngest lanes:
   carried the same divergence; all four surfaces now share one
   claim-narrowed policy.
 - **`episode_handoff`'s prior-session auto-resolution admitted
-  transcript-id phantom sessions** written by the client-side hooks —
+  hook phantoms** — transcript-id sessions written by the client-side
+  hooks,
   worktree-matching candidates that can never hold episodes — burying
   the real predecessor's takeaway behind a zero-episode ghost. The
   walk now applies the same `_OUT_OF_PROCESS_TRIGGERS` skip the
@@ -45,10 +46,10 @@ ending a two-process IntegrityError cascade that could unlink a
 healthy index; the event recorder heals a crash-torn tail so the next
 fsynced event stays readable. BM25 corpus statistics cover the kebab
 parts the conjunctive fallback prices under the prefilter. Body edits
-run the transient-marker gate `memory_write` always had (the last
-laundering route into a committed record), user-inference pendings
-keep their veto ceremony under global confirmation, truncation
-overrides are recorded only when the gate fired, and literal-claim
+now run the transient gate `memory_write` always had (the last
+laundering route into a committed record), with ordered pendings
+putting the user-inference veto ahead of global confirmation.
+Truncation overrides are recorded only when the gate fired, and literal-claim
 equality is order-insensitive for sets and dicts. Conflict verdicts
 claim their queue row under the flock before touching links, so a
 lost race mutates nothing. Doctor bounds its `Name:` search to the
@@ -57,8 +58,10 @@ finding, and health renders `no_signal` audits distinguishably from a
 hook that never fired. The web UI rejects untrusted Host headers on
 loopback binds (DNS rebinding reached every read route) and its
 detail page agrees with `memory_show` on claim-carrying memories.
-The `bettermemory ui` failure hint composes from the install-hint
-atoms with the tool form leading, and a new ratchet key pins the
+The `bettermemory ui` fallback hint composes from the install-hint
+atoms with the tool form leading, and the cli help texts tell the
+truth about the migrate fallback chain and the config cache that
+never existed, and a new ratchet key pins the
 bare-pip spelling extinct. Commit-lint skips manual dispatch runs
 instead of green-lighting an empty range.
 
