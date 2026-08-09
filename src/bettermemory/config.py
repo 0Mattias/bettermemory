@@ -1042,9 +1042,7 @@ def load_config(path: Path | None = None) -> Config:
             search_mode=_coerce_search_mode(
                 behavior_raw.get("search_mode"), config_path=config_path
             ),
-            rescue_expansion=_coerce_bool(
-                behavior_raw.get("rescue_expansion"), False
-            ),
+            rescue_expansion=_coerce_bool(behavior_raw.get("rescue_expansion"), False),
             recency_boost_half_life_days=_coerce_float(
                 behavior_raw.get("recency_boost_half_life_days"),
                 30.0,

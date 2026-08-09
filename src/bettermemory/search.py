@@ -1974,8 +1974,7 @@ def reciprocal_rank_fusion(
         raise ValueError(f"RRF k must be positive, got {k}")
     if weights is not None and len(weights) != len(ranking_lists):
         raise ValueError(
-            f"weights length {len(weights)} != rankings length "
-            f"{len(ranking_lists)}"
+            f"weights length {len(weights)} != rankings length {len(ranking_lists)}"
         )
     if not ranking_lists:
         return {}
@@ -2728,9 +2727,7 @@ def search(
         if rescue_expansion and not stopword_fallback:
             if scored:
                 top_matched = set(scored[0][2]) & set(query_tokens)
-                coverage = (
-                    len(top_matched) / query_unique if query_unique else 0.0
-                )
+                coverage = len(top_matched) / query_unique if query_unique else 0.0
             else:
                 coverage = 0.0
             if coverage < _RESCUE_COVERAGE_GATE:
