@@ -7,6 +7,49 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 5.0.0 - 2026-08-09
+
+### Removed — the web UI, whole
+
+An owner decision, same register as 4.0.0's: the store is markdown
+files plus your normal tools, and a bundled dashboard is surface area,
+not product. Removed rather than parked:
+
+- The `web` module and every route it served, the `bettermemory ui`
+  subcommand (`--tunnel` included), and the `[ui]` extra — `fastapi`
+  and `uvicorn` leave the dependency tree entirely. There are no
+  runtime extras left.
+- The web-only test surface and the CI installs that existed to
+  type-check it; the matrix now syncs `--extra dev` alone.
+
+Curation happens where the memories live: in-conversation via the MCP
+tools, `bettermemory health` / `bettermemory consolidate` on the CLI,
+or any editor pointed at the markdown. Internals that existed to keep
+the page honest survive where they earn per-turn keep — the shared
+ranking-input shape (`resolve_ranking_inputs`) stays so the next
+ranking surface starts threaded instead of drifted, and the 500-char
+`note` cap outlives the form it originally matched.
+
+### Migration
+
+- `bettermemory ui` now exits with argparse's unknown-command error;
+  there is nothing to configure away. An installed `bettermemory[ui]`
+  spec should drop the bracket. `fastapi` / `uvicorn` disappear from
+  the lock on the next sync.
+
+### Changed — the README stops carrying numbers
+
+The front page's "What it does" wall quoted dated measurements
+(a serialized tool-surface byte count measured at 3.32.0, benchmark
+precision figures with their artifact ceremony) that rot faster than
+anyone re-measures them — outdated the day after they were written
+down, and wrong-by-staleness on a project whose whole thesis is that
+stale claims get flagged. The README now states what the product does
+in timeless terms and carries ZERO measurements; the evidence lives in
+`bench/` and the docs, beside its dates and caveats, and the
+number-claims floor test enforces the new contract (a measurement
+appearing in README.md is a regression).
+
 ## 4.0.0 - 2026-08-09
 
 ### Removed — the embedding lane, whole
