@@ -250,8 +250,12 @@ would be misreading its own benchmark.
 
 ## What this does not measure
 
-- **Any competitor.** Not yet. The comparative claim is unearned until
-  the claude-mem arms exist.
+- **Any competitor inside `run.py`.** This runner scores bettermemory
+  alone; the claude-mem arms run through `cm_run.py` and publish their
+  own artifacts (the comparison quoted above). A single-system artifact
+  licenses no comparative claim by itself — the comparison rests on the
+  paired artifacts and the preregistered attribution rule, never on one
+  run's numbers.
 - **End-to-end capture.** Ingest bypasses `memory_write`'s dedup,
   transient screening and confirmation flow: `run.py` calls `Store.write`
   in `src/bettermemory/store.py` directly. This is store + retrieval.

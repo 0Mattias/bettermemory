@@ -166,7 +166,7 @@ Every major bump ships with:
 
 These are not rules so much as the trade-offs the project makes consistently. Use them to judge whether a change is in or out of scope:
 
-- **Memory is opt-in retrieval.** Anything that auto-injects context the model did not ask for is the failure mode this project exists to fix. Default-to-not-retrieve over default-to-include.
+- **Memory is opt-in retrieval, guarded where it is not.** Indiscriminate auto-injection is the failure mode this project exists to fix. Where the product does deliver context unasked — the score-gated prompt-recall pointer, the session-start standing tier — the license is a measured high bar (top-rank high relevance plus shields, firing on a small fraction of turns) with an off switch, not an open door. Default-to-not-retrieve over default-to-include.
 - **False negatives beat false positives.** Missed context the user supplies in one followup turn is much cheaper than irrelevant context cascading through a conversation.
 - **The on-disk format is the user's data.** It is plain markdown with YAML frontmatter so the user can `grep`, `git log`, and hand-edit it. Code that obfuscates the format (binary encoding, opaque hashing of the bodies, anything that requires the running server to interpret) is out.
 - **Disclosure beats caveats.** The "Limitations" section of [`docs/internals.md`](docs/internals.md) lists what the project does not do. New limitations land there explicitly when discovered, rather than being papered over in a footnote elsewhere.

@@ -2,7 +2,7 @@
 
 **Reported by:** self-found, hours after the commit that caused it, by the fresh-eyes write-path audit of 2026-07-30 — and confirmed by running it rather than by reading it.
 **bettermemory version at time of report:** 3.30.0 plus unreleased `main`. The defect existed only on `main`: it was introduced by `0073c70` (2026-07-30) and never reached a tag, so no released version ever carried it. `--force` behaved correctly in every version from v2.7.1 through v3.30.0.
-**Fixed in:** unreleased — `main`, this commit.
+**Fixed in:** v3.31.0 (`3b74b18`).
 **Status:** fixed
 
 ## Symptom
@@ -75,7 +75,7 @@ Each was checked against the unfixed code: reverting the CLI threading fails the
 ## What the surface should do differently
 
 1. **A test that asserts an intermediate artifact does not test the behaviour a flag promises.** A plan is a prediction. Pinning the prediction and calling it coverage is how a flag becomes decorative without a single test turning red — and the give-away was written down in the test itself, in a comment that claimed more than the assertion below it. Where a comment and an assertion disagree about what is being tested, the comment is the specification and the assertion is the bug.
-2. **Adding a policy layer under an existing one re-opens every flag that governed the old one.** `0073c70` moved ingest from "no write policy" to "the shared chain" and correctly reasoned about which gates should apply. What it did not enumerate is which *existing overrides* had to keep reaching the new layer — one flag, and it was in the CLI's own `--help`. That enumeration belongs in the checklist for any future path that adopts the shared chain: `accept_proposal` and `consolidate` are both still unconverted, and both carry override flags of their own.
+2. **Adding a policy layer under an existing one re-opens every flag that governed the old one.** `0073c70` moved ingest from "no write policy" to "the shared chain" and correctly reasoned about which gates should apply. What it did not enumerate is which *existing overrides* had to keep reaching the new layer — one flag, and it was in the CLI's own `--help`. That enumeration belongs in the checklist for any future path that adopts the shared chain: `accept_proposal` has since adopted it (its overrides enumerated, as `docs/api.md` documents); `consolidate` remains unconverted and carries override flags of its own.
 3. **One field governing two gates is a coupling, not a convenience.** `GateContext.force` reads naturally and means two different things to two different callers. Ingest needs half of it; the fix expresses that by choosing gates instead of setting flags, which is checkable by a type filter rather than by remembering. A flag whose two readers can diverge should be two flags, or the divergence should be expressed structurally — as it now is here.
 
 ## References

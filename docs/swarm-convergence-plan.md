@@ -441,8 +441,8 @@ rotation namespace by shard (`.events-{ts}-s{NN}`), probes the
 `.rotating` path as well as the archive, scopes orphan recovery to the
 owning shard under a store-wide `.events-rotate.lock`, decides window
 coverage per segment, and makes `iter_all_events` a real `heapq.merge`
-so the chronological guarantee is earned rather than asserted. At time
-of writing that fix is on `main` and **unreleased**.
+so the chronological guarantee is earned rather than asserted. That
+fix shipped in **v3.26.0** (`eace517`).
 
 The original per-session sketch, kept for the record:
 

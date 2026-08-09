@@ -1,6 +1,8 @@
 # claude-mem adapter — reconnaissance and design
 
-Notes for the unbuilt half of item (e). Everything here was read out of
+Notes for the claude-mem half of item (e), written while it was
+unbuilt; the arms have since been built and their published numbers
+live in this directory's README and results. Everything here was read out of
 the **published artifact** (`claude-mem@13.12.4`, Apache-2.0, npm
 tarball sha256 `de8b69ce7220a8b46e5fdec6304501f964c3a972c0c1c2a41efae4ea12bf3518`),
 not out of their git repository — so it describes what a user actually
@@ -300,8 +302,10 @@ not as their headline number, since Chroma-on is what ships by default.
 
 ## ~~OPEN BLOCKER~~ (resolved above): `/api/search` returned zero for every query
 
-This is unresolved and is the thing standing between here and a
-claude-mem number.
+This was unresolved at recon time and stood between here and a
+claude-mem number; the resolution above (probing the shipped Chroma-on
+path directly) unblocked the arms, whose numbers now sit in the
+sibling README. The probe record is kept as written:
 
 `GET /api/search?query=…&format=json` returns
 `{"observations":[],"sessions":[],"prompts":[],"totalResults":0}` for
