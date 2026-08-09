@@ -11,25 +11,16 @@ pip install bettermemory           # or plain pip into a venv
 Optional extras:
 
 ```sh
-uv tool install 'bettermemory[embeddings]'        # sentence-transformers (PyTorch, ~500 MB)
-uv tool install 'bettermemory[embeddings-fast]'   # fastembed (ONNX, ~50 MB)
 uv tool install 'bettermemory[ui]'                # FastAPI + uvicorn for `bettermemory ui`
 ```
 
-The two embeddings extras expose the same retrieval surface;
-`embeddings-fast` is the right pick on CI runners, small VMs, and
-air-gapped boxes. Installing either one is sufficient: the default
-`search_mode = "hybrid"` picks the model up on its own and fuses it as a
-third leg beside the two lexical ones. No config flag is required — in
-particular `semantic_dedup` is not one, and setting it to "activate"
-semantic search only flips write-time dedup from Jaccard to cosine.
-
-When both are installed, sentence-transformers wins unless
-`[behavior] semantic_provider = "fastembed"` is set — except that
-auto-detect skips a provider whose import is broken, so a damaged
-sentence-transformers falls through to a working fastembed rather than
-losing the semantic leg. `bettermemory doctor` names an extra that is
-installed but failing to import.
+(Pre-4.0 there were also `embeddings` / `embeddings-fast` extras that
+loaded a sentence-transformers or fastembed model into retrieval and
+write-time dedup. The 4.0.0 purist strip removed the embedding lane
+whole — every ranker is deterministic lexical code, and no extra brings
+a model back. If an old config file still says `search_mode =
+"semantic"`, it is normalised to `hybrid` with one loud warning; delete
+the line to silence it.)
 
 Python 3.11–3.14. From a development clone: `uv tool install .` (or
 `uv pip install -e .` for editable). Either path puts a `bettermemory`

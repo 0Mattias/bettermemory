@@ -52,7 +52,7 @@ One consequence worth recording, because it is the test of whether the fix was w
 
 ## Verification
 
-`test_retrieval_discrimination_does_not_skip_on_a_merely_installed_extra` in `tests/test_doctor.py`: the extra is patched importable, the config uses a mode the search handler never hands a model to, and the check must both `warn` **and** show that it ran — `assert diag.details["scopes"]`, "the probe must actually have run". Asserting on the status alone would have passed against a skip that guessed right for the wrong reason.
+Since removed with its check in 4.0.0; as shipped: `test_retrieval_discrimination_does_not_skip_on_a_merely_installed_extra` in `tests/test_doctor.py`: the extra is patched importable, the config uses a mode the search handler never hands a model to, and the check must both `warn` **and** show that it ran — `assert diag.details["scopes"]`, "the probe must actually have run". Asserting on the status alone would have passed against a skip that guessed right for the wrong reason.
 
 Its counterpart `test_retrieval_discrimination_short_circuits_when_semantic_available` pins the other direction by making the probe raise if it is called, so a legitimate skip cannot quietly start spending searches.
 
@@ -69,5 +69,5 @@ Its counterpart `test_retrieval_discrimination_short_circuits_when_semantic_avai
 - Fixed: `316781e`, "fix(doctor): an importable extra is not a semantic leg" — both in `## 3.29.0`, CHANGELOG section "Added — `doctor` can see whether retrieval still works" (the fix is folded into the "Reported, never auto-fixed. It skips only when a semantic leg would *actually score a search*" bullet, since neither commit had shipped yet).
 - Related change: `ba7e857`, "feat(search): installing an embeddings extra now enables semantic search" — same release, and the reason the regression test's configuration moved.
 - Superseded in part: `a3f5cbb`, "fix(extras): judge the semantic leg by the provider that will load", 3.35.0 — condition 3 became `_resolved_provider_importable`. This report's Root cause and Fix state the third condition as it shipped in 3.29.0.
-- Related code: `_check_retrieval_discrimination` in `src/bettermemory/doctor.py`; `_semantic_rank_leg_active`, `_resolved_provider_importable`, `_semantic_model_configured` and `_search_mode_needs_model` in `src/bettermemory/semantic_setup.py`.
+- Related code: `_check_retrieval_discrimination` in `src/bettermemory/doctor.py`; `_semantic_rank_leg_active`, `_resolved_provider_importable`, `_semantic_model_configured` and `_search_mode_needs_model` in `src/bettermemory/semantic_setup.py` — the latter module non-resolving at HEAD; the 4.0.0 purist strip removed the semantic lane whole.
 - Related incidents: [`2026-07-26-staleness-verdict-constant-function.md`](2026-07-26-staleness-verdict-constant-function.md) — the same failure class one day later, and measured rather than reasoned about; [`2026-08-01-broken-optional-extra-killed-retrieval.md`](2026-08-01-broken-optional-extra-killed-retrieval.md) — the same predicate one condition further in, and where its current form is documented.

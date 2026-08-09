@@ -60,11 +60,11 @@ declared claims on `memory_write` / `memory_verify` (3.40.0).
   each memory shaped; a turn-end probe flags retrievals the model
   should have made but didn't; `memory_health` and `memory_curate`
   report and act on the resulting rot.
-- Hybrid search (keyword + BM25), with plural-folding and CJK-capable
-  tokenization. An optional semantic leg fuses in as a third ranker
-  whenever an `embeddings` extra is installed — installing it is the
-  whole opt-in, no config flag. `semantic_dedup` governs WRITE-time dedup
-  only and does not gate retrieval.
+- Hybrid search (keyword + BM25 fused via RRF), with plural-folding and
+  CJK-capable tokenization. Every ranker is deterministic lexical code —
+  the project ships no embedding models. (Pre-4.0 an optional semantic
+  leg fused in from an `embeddings` extra; the 4.0.0 purist strip
+  removed that lane whole.)
 - Typed inter-memory links (`supersedes`, `contradicts`, `extends`,
   `depends_on`), surfaced as trust signals at retrieval.
 - Auto-scoping by repo and worktree; explicit cross-project queries.

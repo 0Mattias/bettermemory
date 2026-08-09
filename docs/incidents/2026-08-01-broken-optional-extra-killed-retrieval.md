@@ -139,7 +139,8 @@ that had every appearance of being the same fix.
 
 ## Verification
 
-`tests/test_broken_optional_extra.py`, 27 cases. The third state is simulated
+`tests/test_broken_optional_extra.py` — non-resolving at HEAD, removed with
+the lane it guarded in 4.0.0 — carried 27 cases as shipped. The third state is simulated
 with a `sys.meta_path` finder whose `find_spec` succeeds and whose
 `exec_module` raises — the shape of a half-installed package, and strictly
 better than `sys.modules` injection because `find_spec`-based probes then see
@@ -201,5 +202,5 @@ then no model at all.
 ## References
 
 - Related incidents: [`2026-07-25-doctor-false-green-on-importable-extra.md`](2026-07-25-doctor-false-green-on-importable-extra.md) (same predicate, one condition further out), [`2026-07-31-index-health-certified-a-stale-index.md`](2026-07-31-index-health-certified-a-stale-index.md) (a check certifying green over the wrong input)
-- Related code: `src/bettermemory/semantic.py`, `src/bettermemory/semantic_setup.py`, `src/bettermemory/doctor.py`
-- Tests: `tests/test_broken_optional_extra.py`
+- Related code: `src/bettermemory/doctor.py`; non-resolving at HEAD, removed with the lane in 4.0.0: `src/bettermemory/semantic.py`, `src/bettermemory/semantic_setup.py`
+- Tests: `tests/test_broken_optional_extra.py` — non-resolving at HEAD; the 4.0.0 strip removed the optional-extra surface, this suite with it
