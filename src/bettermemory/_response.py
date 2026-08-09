@@ -489,8 +489,9 @@ class ResponseBuilder:
         sorted timestamp list and `commit_drift_anchor_paths` (both pure
         CPU) — plus, for every hit that reaches
         `resolve_commit_drift_count` (unfiltered count > 0 AND at least one
-        claim anchor), one more git fork+exec, the path-filtered
-        `commit_author_timestamps_touching_pathspecs` log. The git-process
+        claim anchor or declared claim), one more git fork+exec, the
+        path-filtered `commit_author_timestamps_touching_pathspecs` log.
+        The git-process
         count is therefore ``2 + <drifting anchored hits>``, bounded above
         by ``2 + len(hits)`` (`max_results` caps that at 50 on the MCP
         surface, 30 on the web's). That third call buys the SAME
@@ -498,7 +499,7 @@ class ResponseBuilder:
         a cheaper per-surface shortcut here is precisely how the four
         surfaces used to disagree — and the two gates keep the ordinary
         shapes at zero extra forks: a caught-up memory (count == 0) and an
-        untethered one (no anchors) never reach it.
+        untethered one (no anchors, no declared claims) never reach it.
         ``tests/test_server_commit_drift.py::test_commit_drift_count_git_cost_shape``
         pins that arithmetic.
 
@@ -510,9 +511,10 @@ class ResponseBuilder:
         - the hit's memory's repo doesn't match the caller's,
         - the hit's memory has never been verified (no anchor to count from),
         - the hit's memory makes no claims this repo's commits could
-          invalidate — no cited/attested path anchors at all, or none
-          that resolve inside the caller's repo (the claim-anchored
-          drift policy; see `verify.resolve_commit_drift_count`).
+          invalidate — no cited/attested path anchors AND no declared
+          claims at all, or none that resolve inside the caller's repo
+          (the claim-anchored drift policy; see
+          `verify.resolve_commit_drift_count`).
 
         Absence-as-signal IS the right analogy to `path_drift` here — but
         only once the surface is named, because `path_drift` answers to two
@@ -566,13 +568,19 @@ class ResponseBuilder:
                 continue
             assert record is not None  # origin_repo non-None implies record
             # Claim-anchored gate: a memory with no cited/attested path
-            # anchors is exempt — a bare repo-wide commit count carries no
-            # information about a preference or lesson that merely
-            # ORIGINATED in this repo (measured 100% false-positive on the
-            # dogfood store). Derivation is pure CPU (bounded regex),
-            # mirroring `verify.compute_commit_drift`.
+            # anchors AND no declared claims is exempt — a bare repo-wide
+            # commit count carries no information about a preference or
+            # lesson that merely ORIGINATED in this repo (measured 100%
+            # false-positive on the dogfood store). A memory whose ONLY
+            # anchors are its declared claims is fully governed — the
+            # declaration is the anchor (`verify._resolve_with_claims`) —
+            # so the gate is two-term, the same condition
+            # `verify.compute_commit_drift` and both health rollups apply.
+            # Anchor derivation and stored-claim parsing are pure CPU
+            # (bounded regex; lenient parse).
             anchors = commit_drift_anchor_paths(record.body, record.verified_paths)
-            if not anchors:
+            parsed_claims = load_claims(record.claims) if record.claims else []
+            if not anchors and not parsed_claims:
                 continue
             since = hit.last_verified_at
             if since.tzinfo is None:
@@ -615,7 +623,7 @@ class ResponseBuilder:
                     since=since,
                     unfiltered=count,
                     anchors=anchors,
-                    claims=load_claims(record.claims),
+                    claims=parsed_claims,
                     toplevel=toplevel,
                 )
                 if resolved is None:

@@ -139,6 +139,51 @@ def _commit_split(
     )
 
 
+# Module body for claim-carrying fixtures: the write-side oracle checks the
+# declared binding holds, and the weak-tier drift evaluation reads the patch
+# hunks — so the file must be real parseable Python with claimable bindings.
+_CLAIMED_MODULE = '''\
+"""Module under claim."""
+
+TIMEOUT = 30
+
+
+def handler():
+    return 1
+
+
+def other():
+    return 1
+'''
+
+
+def _commit_file(
+    path: Path, rel: str, content: str, message: str, *, when: datetime
+) -> None:
+    """Commit `rel` with exact `content` — claim fixtures edit specific
+    bindings inside a module, which the append-only `_commit_touching`
+    cannot express."""
+    target = path / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content)
+    subprocess.run(["git", "add", rel], cwd=path, check=True, capture_output=True)
+    iso = when.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    env = os.environ.copy()
+    env["GIT_AUTHOR_DATE"] = iso
+    env["GIT_COMMITTER_DATE"] = iso
+    env["GIT_AUTHOR_NAME"] = "Test"
+    env["GIT_AUTHOR_EMAIL"] = "test@example.com"
+    env["GIT_COMMITTER_NAME"] = "Test"
+    env["GIT_COMMITTER_EMAIL"] = "test@example.com"
+    subprocess.run(
+        ["git", "commit", "-m", message],
+        cwd=path,
+        check=True,
+        capture_output=True,
+        env=env,
+    )
+
+
 @pytest.fixture
 def server_with_fake_origin(memory_dir: Path, monkeypatch: pytest.MonkeyPatch):
     """Build a server whose `capture_origin` returns whatever the test
@@ -372,6 +417,143 @@ async def test_memory_search_expand_top_includes_commit_drift_on_drift(
     assert "commit_drift" in hits[0]
     assert hits[0]["commit_drift"]["status"] == "drift"
     assert hits[0]["commit_drift"]["commits_since_verify"] == 1
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+async def test_memory_search_expand_top_claim_governed_churn_agrees_with_show(
+    server_with_fake_origin, tmp_path: Path
+) -> None:
+    """Claim-governed narrowing reaches the expanded top hit. A post-verify
+    commit churns an UNCLAIMED method body inside the claimed file — under
+    the claim policy that implicates nothing, and memory_show reads
+    clean/fresh. The expanded hit must agree on the whole triple
+    (`commit_drift` / `commit_drift_count` / `staleness_verdict`): the
+    expand block hands the memory's claims to `compute_commit_drift`
+    exactly as memory_show does, or its any-touch count would over-alarm
+    AND overwrite the claim-narrowed count `attach_commit_drift_counts`
+    just stamped — one JSON object, two policies."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    _commit_file(
+        repo,
+        "pkg/mod.py",
+        _CLAIMED_MODULE,
+        "initial",
+        when=datetime(2025, 1, 1, tzinfo=timezone.utc),
+    )
+
+    # `worktree_root` included: declaring claims requires it (the write-side
+    # oracle resolves the claimed paths against the origin worktree).
+    origin = Origin(cwd=str(repo), repo=_REMOTE, branch="main", worktree_root=str(repo))
+    server = server_with_fake_origin(origin)
+
+    written = await _call(
+        server,
+        "memory_write",
+        content="quagga drift ritual anchored in pkg/mod.py",
+        scopes=["tools"],
+        claims=["pkg/mod.py::handler"],
+    )
+    await _call(server, "memory_verify", id=written["id"])
+
+    # Touches the claimed file, implicates no claimed binding.
+    _commit_file(
+        repo,
+        "pkg/mod.py",
+        _CLAIMED_MODULE.replace(
+            "def other():\n    return 1", "def other():\n    return 2"
+        ),
+        "tweak other's body",
+        when=datetime(2099, 1, 1, tzinfo=timezone.utc),
+    )
+
+    shown = await _call(server, "memory_show", id=written["id"])
+    assert shown["commit_drift"]["status"] == "clean"
+    assert shown["staleness_verdict"] == "fresh"
+
+    raw = await _call(
+        server, "memory_search", query="quagga drift ritual", expand_top=True
+    )
+    hits = _unwrap(raw)
+    assert hits and hits[0]["relevance"] == "high"
+    top = hits[0]
+    assert top["id"] == written["id"]
+    assert "body" in top  # expansion fired
+    assert top["commit_drift"]["status"] == "clean"
+    assert top["commit_drift"]["commits_since_verify"] == 0
+    assert top["commit_drift_count"] == 0
+    assert top["staleness_verdict"] == "fresh"
+    # One evaluation, reported once: the block's claim report and the
+    # hit-level one stamped by `attach_commit_drift_counts` must match.
+    assert top["commit_drift"]["claim_drift"] == top["claim_drift"]
+    assert top["commit_drift"] == shown["commit_drift"]
+    assert top["staleness_verdict"] == shown["staleness_verdict"]
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+async def test_memory_search_expand_top_claims_only_drift_agrees_with_show(
+    server_with_fake_origin, tmp_path: Path
+) -> None:
+    """The fail-open direction: a memory whose ONLY anchors are its
+    declared claims (the body cites no paths). When the claimed binding
+    genuinely drifts, memory_show escalates and names the claim — and the
+    expanded top hit must escalate identically. Without the claims the
+    expand path sees no anchors at all, computes None, emits no
+    `commit_drift`, and re-derives the verdict as fresh on a memory whose
+    ground truth moved."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    _commit_file(
+        repo,
+        "pkg/mod.py",
+        _CLAIMED_MODULE,
+        "initial",
+        when=datetime(2025, 1, 1, tzinfo=timezone.utc),
+    )
+
+    origin = Origin(cwd=str(repo), repo=_REMOTE, branch="main", worktree_root=str(repo))
+    server = server_with_fake_origin(origin)
+
+    written = await _call(
+        server,
+        "memory_write",
+        content="zebrafish retry doctrine caps the gateway budget",
+        scopes=["tools"],
+        claims=["pkg/mod.py::handler"],
+    )
+    await _call(server, "memory_verify", id=written["id"])
+
+    # Genuine claim drift: the claimed binding's own signature changes.
+    _commit_file(
+        repo,
+        "pkg/mod.py",
+        _CLAIMED_MODULE.replace("def handler():", "def handler(flag=None):"),
+        "change handler signature",
+        when=datetime(2099, 1, 1, tzinfo=timezone.utc),
+    )
+
+    shown = await _call(server, "memory_show", id=written["id"])
+    assert shown["commit_drift"]["status"] == "drift"
+    assert shown["staleness_verdict"] == "spot_check_recommended"
+
+    raw = await _call(
+        server, "memory_search", query="zebrafish retry doctrine", expand_top=True
+    )
+    hits = _unwrap(raw)
+    assert hits and hits[0]["relevance"] == "high"
+    top = hits[0]
+    assert top["id"] == written["id"]
+    assert "body" in top  # expansion fired
+    assert "commit_drift" in top
+    assert top["commit_drift"]["status"] == "drift"
+    assert top["commit_drift"]["commits_since_verify"] == 1
+    assert top["commit_drift"]["claim_drift"]["drifted"] == ["pkg/mod.py::handler"]
+    assert top["commit_drift_count"] == 1
+    assert top["staleness_verdict"] == "spot_check_recommended"
+    assert top["commit_drift"] == shown["commit_drift"]
+    assert top["staleness_verdict"] == shown["staleness_verdict"]
 
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")

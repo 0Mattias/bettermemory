@@ -1134,12 +1134,18 @@ async def memory_search(
                 out[0]["path_drift"] = drift.to_dict()
             expanded_drift_missing = len(drift.missing)
             expanded_claim_anchored_missing = len(drift.claim_anchored_missing)
+            # `claims` rides along exactly as on memory_show's call: a
+            # count computed without the memory's claims is a different
+            # policy (any-touch), and the loudest retrieval surface would
+            # disagree with memory_show on the same memory in the same
+            # turn — see `resolve_commit_drift_count`'s docstring.
             commit_drift = compute_commit_drift(
                 memory.last_verified_at,
                 memory.origin.repo if memory.origin else None,
                 caller_origin=current_origin,
                 verified_paths=memory.verified_paths,
                 body=memory.body,
+                claims=memory.claims,
             )
             commit_drift_count_for_verdict: int | None = None
             if commit_drift is not None:
@@ -1153,9 +1159,10 @@ async def memory_search(
                 # inconsistent counts on its top hit. Both paths now share
                 # the author-timestamp + bisect_right source, so they agree
                 # on the unfiltered count; this keeps them aligned on the
-                # verified-paths-narrowed value too (compute_commit_drift
-                # applies the path filter, which the per-hit pass also does
-                # — but pinning the field to the block that also drives
+                # claim-narrowed value too (compute_commit_drift received
+                # the memory's claims above and applies the same anchor
+                # narrowing the per-hit pass does — but pinning the field
+                # to the block that also drives
                 # `commit_drift`/`staleness_verdict` here makes the
                 # top-hit triple provably consistent).
                 out[0]["commit_drift_count"] = commit_drift.commits_since_verify
