@@ -332,7 +332,6 @@ def run_arm(
     corpus: list[dict[str, Any]],
     *,
     arm: str,
-    semantic_model: Any | None,
     progress: bool,
 ) -> ArmResult:
     res = ArmResult(arm=arm)
@@ -359,7 +358,6 @@ def run_arm(
                 inst["question"],
                 max_results=RETRIEVAL_DEPTH,
                 mode="hybrid",
-                semantic_model=semantic_model,
             )
             ranked = distinct_sessions([h.id for h in hits], id_to_session)
         finally:
@@ -463,7 +461,7 @@ def main() -> int:
         description="Session-level retrieval recall on LongMemEval.",
     )
     p.add_argument("--corpus", default=str(DEFAULT_CORPUS))
-    p.add_argument("--arms", default="lexical,semantic")
+    p.add_argument("--arms", default="lexical")
     p.add_argument("--limit", type=int, default=None, help="First N instances (smoke).")
     p.add_argument("--json", action="store_true")
     p.add_argument("--quiet", action="store_true")
@@ -518,23 +516,17 @@ def main() -> int:
         )
 
     arms = [a.strip() for a in args.arms.split(",") if a.strip()]
-    semantic_model = None
     if "semantic" in arms:
-        from bettermemory.semantic import get_model, resolve_provider
-
-        semantic_model = get_model(provider=resolve_provider())
-        if semantic_model is None:
-            arms = [a for a in arms if a != "semantic"]
-            notes.append(
-                "semantic arm SKIPPED — no embeddings extra importable. "
-                "Install `bettermemory[embeddings]` to run it."
-            )
+        arms = [a for a in arms if a != "semantic"]
+        notes.append(
+            "semantic arm REMOVED in 4.0.0 — the product ships no "
+            "embedding models; pre-4.0 artifacts remain the dated record."
+        )
 
     rows = [
         run_arm(
             corpus,
             arm=arm,
-            semantic_model=semantic_model if arm == "semantic" else None,
             # Progress goes to stderr and the report to stdout, so a
             # --json run can still say where it is. Gating this on
             # `not args.json` bought nothing and made a 27-minute run

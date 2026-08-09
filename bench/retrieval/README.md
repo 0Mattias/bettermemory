@@ -12,6 +12,22 @@ venv/bin/python bench/retrieval/run.py --pad-to 600   # above-threshold corpus
 venv/bin/python bench/retrieval/run.py --pad-to 600 --prefilter both
 ```
 
+## 4.0.0 — the semantic arm is gone from the product, 2026-08-09
+
+The 4.0.0 purist strip removed the embedding lane from bettermemory: no
+extras, no models, every ranker deterministic lexical code. The runner
+follows the product — asking it for the `semantic` arm drops the arm
+with a note instead of measuring a lane that no longer exists. The
+semantic figures below stay as a dated record of the pre-4.0 engine,
+kept because the margin they measure is the honest size of the problem.
+
+What that record says the strip costs at this bench's scale: semantic /
+asked beat lexical / asked by 25 points at recall@1 (60% vs 35%
+unpadded; 60% vs 25% padded to 600), with the control arm tracking
+asked — the lift was vocabulary, not corpus size. That gap is the
+target of the deterministic-code retrieval campaign: closed in code, or
+reported as open. No figure in this file claims it closed.
+
 ## Why this exists
 
 bettermemory's strongest retrieval claim — recall@1 rising from 10% to

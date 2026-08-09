@@ -50,7 +50,24 @@ attribution rule, the metric, and five falsifiable predictions, and it
 was committed before the corpus was downloaded. Two of those predictions
 are scored **MISSED** below, one of them against a shipped default.
 
-## The headline: parity, not victory
+## 4.0.0 restatement — behind by 2.3, lexical-only, 2026-08-09
+
+The 4.0.0 purist strip removed the embedding lane from the product, and
+with it the `semantic` arm this file's best-arm-vs-best-arm comparison
+leaned on (the runner now drops a requested `semantic` arm with a note
+instead of measuring a lane that no longer exists). The comparative
+claim is restated without the tie:
+
+**bettermemory retrieves with deterministic lexical code only and scores
+89.3% macro recall@5 on this harness; claude-mem's embedding-native
+stack scores 91.6%. We are 2.3 points behind, by our own measurement.**
+
+The sections below stay as the dated record that earned the numbers.
+Their "parity" framing compared an arm the product no longer ships and
+must not be quoted as current. Closing those 2.3 points with code — no
+borrowed weights — is the standing retrieval campaign.
+
+## The pre-4.0 headline: parity, not victory (dated record)
 
 On third-party ground, against labels neither party authored,
 **bettermemory and claude-mem retrieve about equally well.**

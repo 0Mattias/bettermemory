@@ -100,10 +100,11 @@ containment. Checked rather than argued: the live store holds exactly one
 pair whose real Jaccard lands in [0.30, 0.40), and it carries a
 breadcrumb today (`target_band_already_surfaced`, 2 of 2 counting the
 pair from both sides). The lexical scorer cannot see those
-paraphrases at any floor that a store can afford; the knob that can is
-the semantic dedup leg (`[behavior] semantic_dedup`, cosine 0.85 / 0.65),
-which is scored on meaning rather than tokens. That is a separate
-decision with its own cost, not a threshold tweak.
+paraphrases at any floor that a store can afford; the knob that could
+was the pre-4.0 semantic dedup leg (`[behavior] semantic_dedup`, cosine
+0.85 / 0.65), scored on meaning rather than tokens — removed with the
+embedding lane in 4.0.0. Sub-floor paraphrase pairs are now squarely in
+the class the deterministic-code retrieval campaign has to win in code.
 
 The `removed_related` (tombstone) leg reads the same constants and shows
 the same flatness: 49 hits at 0.40, 49 at 0.30.
