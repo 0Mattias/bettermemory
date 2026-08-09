@@ -290,6 +290,56 @@ async def test_prefiltered_search_prices_a_rare_term_off_the_whole_corpus(
     )
 
 
+async def test_prefiltered_search_prices_kebab_parts_off_the_whole_corpus(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end: a joined query token that only matches via the
+    conjunctive fallback ('zephyr-quartz' against bodies spelling it
+    'zephyr quartz') is priced off corpus part rarity, not the pool's.
+
+    The fallback's body IDF is the min over the token's `_kebab_parts`,
+    and `compute_idf`'s corpus override only re-prices terms the fetch
+    covered — so the fetch must include the parts alongside the whole
+    token. Fetching whole tokens alone left the parts pool-collapsed
+    (every pool row carries them, by construction of the prefilter), so
+    within one result set hyphen-spelling bodies were priced at corpus
+    rarity while spaced-spelling bodies of the same intent earned a
+    near-zero contribution for the same term.
+    """
+    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
+    store = Store(tmp_path)
+    for i in range(60):
+        store.write(content=f"alpha common filler-{i}", scopes=["tools"])
+    for i in range(3):
+        store.write(content=f"zephyr quartz spaced-{i}", scopes=["tools"])
+    store.write(content="zephyr-quartz hyphenated", scopes=["tools"])
+
+    seen: list[dict[str, float]] = []
+    import bettermemory.search as search_module
+
+    real_compute_idf = search_module.compute_idf
+
+    def spy(memories: Any, **kwargs: Any) -> Any:
+        body_idf, scope_idf, avgdl = real_compute_idf(memories, **kwargs)
+        seen.append(body_idf)
+        return body_idf, scope_idf, avgdl
+
+    monkeypatch.setattr(search_module, "compute_idf", spy)
+
+    server = _build_server(tmp_path)
+    await _call(server, "memory_search", query="zephyr-quartz", max_results=5)
+
+    assert seen, "BM25 never ran"
+    zephyr_idf = max(m.get("zephyr", 0.0) for m in seen)
+    # 'zephyr' rides 4 of 64 documents — a whole-corpus IDF of ~2.7.
+    # Priced off the 4-row pool, where every row carries it, it is ~0.11.
+    # Anything above 2.0 can only have come from the corpus.
+    assert zephyr_idf > 2.0, (
+        f"part 'zephyr' priced at IDF {zephyr_idf:.3f} — that is a "
+        "pool-derived denominator; the corpus value for 4-of-64 is ~2.7"
+    )
+
+
 async def test_corpus_stats_are_not_consulted_below_the_prefilter_threshold(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

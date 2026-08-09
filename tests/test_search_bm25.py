@@ -878,3 +878,31 @@ def test_corpus_stats_ignore_a_zero_document_frequency() -> None:
     body_idf, _, _ = compute_idf(pool, corpus_stats=stats)
 
     assert body_idf["flock"] == pytest.approx(baseline_body_idf["flock"])
+
+
+def test_corpus_stats_fetch_covers_kebab_parts_of_joined_query_tokens() -> None:
+    """`search()` fetches corpus statistics for the `_kebab_parts`
+    components of each joined query token, not just the token itself.
+
+    The conjunctive fallback prices a joined token with no direct hit
+    ('zephyr-quartz' against a body spelling it 'zephyr quartz') off the
+    min component IDF, and `compute_idf`'s corpus override only re-prices
+    fetched terms — a whole-tokens-only fetch leaves the parts at the
+    pool-derived IDF the prefilter has collapsed toward zero for exactly
+    the terms the fallback is about to price: the same mispricing the
+    provider exists to remove, alive on the parts axis. The fetch stays
+    deduplicated: a part that is also a whole query token goes over once.
+    """
+    calls: list[list[str]] = []
+
+    def provider(terms: list[str]) -> None:
+        calls.append(list(terms))
+        return None
+
+    pool = [_memory("zephyr quartz spaced relay"), _memory("zephyr-quartz direct")]
+    search(pool, "zephyr-quartz zephyr", mode="bm25", corpus_stats_provider=provider)
+
+    assert len(calls) == 1
+    fetched = calls[0]
+    assert {"zephyr-quartz", "zephyr", "quartz"} <= set(fetched)
+    assert len(fetched) == len(set(fetched))

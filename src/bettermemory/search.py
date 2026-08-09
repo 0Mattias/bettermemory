@@ -2576,15 +2576,23 @@ def search(
     candidate_tokens = [_memory_tokens(m) for m in candidates]
 
     # Corpus-wide document frequencies for the BM25 rankers, resolved from
-    # the SAME `query_tokens` the scorer will look up. That parity is the
-    # whole reason this is a provider rather than a precomputed value: the
-    # caller knowing which terms to fetch would mean re-deriving this
+    # the SAME terms the scorer will look up: every query token plus the
+    # `_kebab_parts` components of each joined one. The conjunctive
+    # fallback prices a joined token with no direct hit off its parts (min
+    # component IDF), and `compute_idf`'s override only re-prices fetched
+    # terms — a whole-tokens-only fetch would leave those parts at the
+    # pool-collapsed IDF the provider exists to correct. That parity is
+    # the whole reason this is a provider rather than a precomputed value:
+    # the caller knowing which terms to fetch would mean re-deriving this
     # tokenisation outside `search()`, and a hand-mirrored token pipeline is
     # exactly the drift schema v4 removed. Only the BM25 branches consume
     # it, so a keyword/semantic-only search never pays the lookup.
     corpus_stats: CorpusStats | None = None
     if corpus_stats_provider is not None and mode in ("bm25", "hybrid"):
-        corpus_stats = corpus_stats_provider(query_tokens)
+        fetch_terms = list(query_tokens)
+        for tok in query_tokens:
+            fetch_terms.extend(_kebab_parts(tok))
+        corpus_stats = corpus_stats_provider(list(dict.fromkeys(fetch_terms)))
 
     if mode == "keyword":
         scored = _score_keyword(
