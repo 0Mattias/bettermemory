@@ -269,6 +269,14 @@ jobs:
   commit-lint:
     name: commit messages
     runs-on: ubuntu-latest
+    # Not on manual dispatch: `github.event.before` exists only on push
+    # events, so a dispatch run's RANGE degraded to `..<sha>` — the
+    # EMPTY range — and the job passed having graded zero commits while
+    # looking like it graded the tree. A dispatch re-fires the matrix
+    # for a dropped push event; its commits were graded on their
+    # original push, so the honest shape is a visible skip, not a
+    # hollow green.
+    if: github.event_name != 'workflow_dispatch'
     steps:
       # `fetch-depth: 0` is required: the linter grades a RANGE, and the
       # default shallow clone has neither the base commit nor the
