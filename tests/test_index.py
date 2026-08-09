@@ -12,6 +12,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -1436,6 +1437,143 @@ def test_migration_reread_newer_version_raises(
         check.close()
     assert row == ("newer-owned",), (
         "the losing migrator wiped tables that a newer-version index now owns"
+    )
+
+
+def test_concurrent_first_touch_stampers_loser_is_noop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two processes can both find a fresh index with no
+    `schema_version` row and race to stamp it — the Store flock is
+    per-memory-file, so writers of different memories don't serialise
+    here. `meta.key` is a PRIMARY KEY: an unserialised loser dies with
+    `IntegrityError: UNIQUE constraint failed: meta.key`, which the
+    best-effort Store hooks swallow at the cost of a dropped index
+    row, a concurrent `status()` reports as corrupt, and
+    `_open_for_rebuild` answers by unlinking the index the winner just
+    stamped. The first-touch flock + under-lock re-read must turn the
+    loser into a plain no-op instead.
+
+    The winner runs at whichever seam the loser crosses first, so the
+    lost race is deterministic in either shape: at the loser's flock
+    acquire (the serialised stamp), or — were no lock to guard the
+    branch — right before the loser's own stamp INSERT, where the
+    winner's committed row makes that INSERT raise."""
+    import contextlib
+
+    from bettermemory._fsutil import flock_excl as real_flock
+
+    db = tmp_path / "race.sqlite"
+    state = {"winner_ran": False}
+
+    def run_winner() -> None:
+        # Recursion guard: the winner's own `_ensure_schema` re-enters
+        # `racing_flock` and must go straight to the real, still-
+        # uncontended flock.
+        if state["winner_ran"]:
+            return
+        state["winner_ran"] = True
+        winner = sqlite3.connect(db)
+        try:
+            index._ensure_schema(winner, db)
+        finally:
+            winner.close()
+
+    @contextlib.contextmanager
+    def racing_flock(path: Path):
+        run_winner()
+        with real_flock(path):
+            yield
+
+    class StampRacingConn:
+        """Forwards to the real connection; the first-touch version
+        stamp INSERT additionally triggers the winner first."""
+
+        def __init__(self, real: sqlite3.Connection) -> None:
+            self._real = real
+
+        def execute(self, sql: str, *args: Any) -> sqlite3.Cursor:
+            if sql.startswith("INSERT INTO meta") and "schema_version" in sql:
+                run_winner()
+            return self._real.execute(sql, *args)
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self._real, name)
+
+    monkeypatch.setattr(index, "flock_excl", racing_flock)
+
+    loser = sqlite3.connect(db)
+    try:
+        index._ensure_schema(StampRacingConn(loser), db)  # type: ignore[arg-type]
+    finally:
+        loser.close()
+
+    assert state["winner_ran"], "neither seam fired — the race was never injected"
+    check = sqlite3.connect(db)
+    try:
+        version = check.execute(
+            "SELECT value FROM meta WHERE key = 'schema_version'"
+        ).fetchone()[0]
+        fingerprint = check.execute(
+            "SELECT value FROM meta WHERE key = 'tokenizer_fingerprint'"
+        ).fetchone()[0]
+    finally:
+        check.close()
+    from bettermemory.search import tokenizer_fingerprint
+
+    assert version == str(index.SCHEMA_VERSION)
+    assert fingerprint == tokenizer_fingerprint()
+
+
+def test_first_touch_reread_newer_version_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If a NEWER-build creator wins the first-touch race while we
+    wait on the flock, the under-lock re-read must hand the winner's
+    stamp to the version handling and raise `IndexVersionError` (the
+    primary check's contract) — never stamp over or silently accept a
+    version a newer reader owns."""
+    import contextlib
+
+    from bettermemory._fsutil import flock_excl as real_flock
+
+    db = tmp_path / "race.sqlite"
+    state = {"stamped": False}
+
+    @contextlib.contextmanager
+    def racing_flock(path: Path):
+        if not state["stamped"]:
+            state["stamped"] = True
+            winner = sqlite3.connect(db)
+            try:
+                winner.execute(
+                    "INSERT INTO meta(key, value) VALUES ('schema_version', ?)",
+                    (str(index.SCHEMA_VERSION + 1),),
+                )
+                winner.commit()
+            finally:
+                winner.close()
+        with real_flock(path):
+            yield
+
+    monkeypatch.setattr(index, "flock_excl", racing_flock)
+
+    loser = sqlite3.connect(db)
+    try:
+        with pytest.raises(index.IndexVersionError):
+            index._ensure_schema(loser, db)
+    finally:
+        loser.close()
+
+    check = sqlite3.connect(db)
+    try:
+        version = check.execute(
+            "SELECT value FROM meta WHERE key = 'schema_version'"
+        ).fetchone()[0]
+    finally:
+        check.close()
+    assert version == str(index.SCHEMA_VERSION + 1), (
+        "the losing first-toucher overwrote a stamp a newer reader owns"
     )
 
 

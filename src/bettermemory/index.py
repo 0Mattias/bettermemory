@@ -348,15 +348,19 @@ def _ensure_schema(
     """Apply the schema (CREATE IF NOT EXISTS everywhere) and stamp the
     meta table with the current schema_version and tokenizer
     fingerprint. Idempotent — repeat calls on the same connection are
-    safe. `path` is the index file `conn` is open on; the migration
-    serialises on a flock sidecar next to it.
+    safe. `path` is the index file `conn` is open on; the first-touch
+    stamp and the migration both serialise on a flock sidecar next to
+    it.
 
-    First-touch (no `schema_version` row yet): stamp version +
-    fingerprint, and — when the store root (`path.parent`) already
-    holds memory files — set `meta.needs_rebuild = '1'` in the SAME
-    transaction. A fresh index born inside a populated root (the user
-    deleted `.index.sqlite`, historically the recovery advice, or
-    restored a backup without the sidecar) is exactly as hollow as a
+    First-touch (no `schema_version` row yet): under the flock, re-read
+    and — still no row — stamp version + fingerprint, and, when the
+    store root (`path.parent`) already holds memory files, set
+    `meta.needs_rebuild = '1'` in the SAME transaction. A concurrent
+    creator that loses the stamp race finds the winner's row on the
+    re-read and falls through to the version handling below instead.
+    A fresh index born inside a populated root (the user deleted
+    `.index.sqlite`, historically the recovery advice, or restored a
+    backup without the sidecar) is exactly as hollow as a
     post-migration one: the incremental hooks refill only touched
     memories, so without the flag the prefilter would re-engage on
     `indexed_count` alone and every untouched legacy memory would
@@ -393,30 +397,51 @@ def _ensure_schema(
     live_fp = tokenizer_fingerprint()
     row = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
     if row is None:
-        # All stamps land in one implicit transaction — a reader never
-        # sees a version row without its fingerprint sibling (nor, on a
-        # populated root, without the rebuild flag below).
-        conn.execute(
-            "INSERT INTO meta(key, value) VALUES ('schema_version', ?)",
-            (str(SCHEMA_VERSION),),
-        )
-        conn.execute(
-            "INSERT INTO meta(key, value) VALUES ('tokenizer_fingerprint', ?)",
-            (live_fp,),
-        )
-        # Recall-hole guard, first-touch shape (see the docstring): a
-        # fresh index inside an already-populated store must not look
-        # trustworthy — flag it rebuild-pending exactly like the
-        # migration branch does, cleared only by `rebuild()`. The
-        # in-flight upsert's own file doesn't count as missing
-        # coverage; a store holding nothing else is genuinely new and
-        # stays unflagged.
-        if _root_has_memory_files(path.parent, exclude=inflight_filename):
-            conn.execute(
-                "INSERT OR REPLACE INTO meta(key, value) VALUES ('needs_rebuild', '1')"
-            )
-        conn.commit()
-        return
+        # Two processes creating the index concurrently can both read
+        # no-row here — the Store flock is per-memory-file, so writers
+        # of different memories don't serialise — and `meta.key` is a
+        # PRIMARY KEY, so an unserialised loser's stamp would die with
+        # IntegrityError: the best-effort hooks swallow it at the cost
+        # of a dropped index row, `status()` reports the healthy index
+        # corrupt, and `_open_for_rebuild` answers by unlinking the
+        # index the winner just stamped. Same discipline as the
+        # migration branch below: take the flock, re-read, and let the
+        # loser fall through to the version handling on whatever the
+        # winner wrote (equal build: no-op; newer: raise; older or
+        # fingerprint-skewed: migrate). Lock ordering is safe for the
+        # reasons given at the migration acquire.
+        with flock_excl(path):
+            row = conn.execute(
+                "SELECT value FROM meta WHERE key = 'schema_version'"
+            ).fetchone()
+            if row is None:
+                # All stamps land in one implicit transaction — a
+                # reader never sees a version row without its
+                # fingerprint sibling (nor, on a populated root,
+                # without the rebuild flag below).
+                conn.execute(
+                    "INSERT INTO meta(key, value) VALUES ('schema_version', ?)",
+                    (str(SCHEMA_VERSION),),
+                )
+                conn.execute(
+                    "INSERT INTO meta(key, value) VALUES ('tokenizer_fingerprint', ?)",
+                    (live_fp,),
+                )
+                # Recall-hole guard, first-touch shape (see the
+                # docstring): a fresh index inside an already-populated
+                # store must not look trustworthy — flag it
+                # rebuild-pending exactly like the migration branch
+                # does, cleared only by `rebuild()`. The in-flight
+                # upsert's own file doesn't count as missing coverage;
+                # a store holding nothing else is genuinely new and
+                # stays unflagged.
+                if _root_has_memory_files(path.parent, exclude=inflight_filename):
+                    conn.execute(
+                        "INSERT OR REPLACE INTO meta(key, value) "
+                        "VALUES ('needs_rebuild', '1')"
+                    )
+                conn.commit()
+                return
     on_disk = int(row[0])
     if on_disk > SCHEMA_VERSION:
         raise _newer_version_error(on_disk)

@@ -358,9 +358,12 @@ async def test_show_survives_unwritable_root_during_index_migration(
     idx_path = _index.index_path(root)
     lock_path = idx_path.with_suffix(idx_path.suffix + ".lock")
     # The sidecar must be absent so the flock's os.open has to O_CREAT
-    # it — an existing sidecar opens fine in a read-only dir. A fresh
-    # store never migrated, so nothing has created it yet.
-    assert not lock_path.exists()
+    # it — an existing sidecar opens fine in a read-only dir. The
+    # first-touch stamp now serialises on the same flock, so a fresh
+    # store is born WITH the sidecar; remove it to reconstruct the
+    # legacy shape this test guards (a pre-sidecar store whose root
+    # lost its write bit).
+    lock_path.unlink(missing_ok=True)
 
     conn = sqlite3.connect(str(idx_path))
     try:

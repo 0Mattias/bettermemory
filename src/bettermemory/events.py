@@ -428,8 +428,20 @@ class Recorder:
                 # negligible compared to the value of not losing audit
                 # records in a power-loss scenario.
                 first_write = not self.path.exists()
+                payload = line.encode("utf-8")
+                # The fsync makes the bytes durable; this keeps them
+                # READABLE. A predecessor append torn mid-line (power
+                # loss, or a short write swallowed by the except below)
+                # leaves no trailing newline, and bytes appended straight
+                # after it weld into ONE line that `_parse_event_line`
+                # drops — the torn (never-acknowledged) event's damage
+                # would swallow this acknowledged one. A leading
+                # separator isolates the torn fragment on its own
+                # (dropped) line instead.
+                if not first_write and self._tail_missing_newline():
+                    payload = b"\n" + payload
                 with self.path.open("ab") as f:
-                    f.write(line.encode("utf-8"))
+                    f.write(payload)
                     f.flush()
                     fsync_file(f.fileno())
                 # Tighten permissions on first write — without this, the
@@ -477,6 +489,31 @@ class Recorder:
             log.warning("event log write failed (kind=%s): %s", kind, exc)
 
     # ---- internals --------------------------------------------------------
+
+    def _tail_missing_newline(self) -> bool:
+        """True when the active segment is non-empty and its final byte
+        is not a newline — the signature of a torn append.
+
+        Probed on every append rather than cached per process: two
+        sessions can stripe onto one shard (crc32 mod 16), so the other
+        process's crash can tear this file's tail between our appends —
+        a cached "last append ended clean" goes stale exactly when the
+        guard matters. The caller holds the shard lock, so the probe
+        cannot race a live writer, and the cost — one open, one seek,
+        one 1-byte read — is noise next to the per-event fsync.
+
+        An unreadable tail counts as torn: a spurious separator costs
+        one blank line every reader already skips (`_parse_event_line`
+        returns None), while a missed one loses an acknowledged event.
+        """
+        try:
+            with self.path.open("rb") as f:
+                if f.seek(0, os.SEEK_END) == 0:
+                    return False
+                f.seek(-1, os.SEEK_END)
+                return f.read(1) != b"\n"
+        except OSError:
+            return True
 
     def _rotate_if_needed(self) -> None:
         """Gzip-rotate the active log if it has crossed `max_bytes`.

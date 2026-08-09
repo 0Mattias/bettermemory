@@ -118,6 +118,42 @@ def test_iter_events_skips_invalid_utf8_in_active_log(tmp_path: Path) -> None:
     assert [e["kind"] for e in events] == ["write", "show"]
 
 
+def test_record_after_crash_torn_tail_keeps_the_new_event_readable(
+    tmp_path: Path,
+) -> None:
+    """A crash mid-append leaves a partial line with no trailing newline
+    at EOF. The next `record()` must not glue its bytes onto that torn
+    fragment: welded together they form ONE unparseable line, and the
+    fully-written, fsync'd post-crash event vanishes from every reader —
+    the crash damage extends from the unacknowledged torn event
+    (acceptable) to the next acknowledged one (not). `record()` repairs
+    the tail with a leading separator, so only the torn fragment is
+    dropped.
+    """
+    rec = Recorder(root=tmp_path, session_id="sess_test")
+    rec.record("write", id="01HXYZ")
+    # Simulate power loss mid-append: a partial JSON prefix, no newline.
+    with _live_segment(rec).open("ab") as f:
+        f.write(b'{"ts":"2026-01-01T00:00:00Z","kind":"torn')
+    rec.record("use", id="01HXYZ")
+
+    assert [e["kind"] for e in iter_events(tmp_path)] == ["write", "use"]
+    assert [e["kind"] for e in iter_events_backward(tmp_path)] == ["use", "write"]
+    assert [e["kind"] for e in iter_all_events(tmp_path)] == ["write", "use"]
+
+
+def test_record_healthy_tail_gets_no_separator(tmp_path: Path) -> None:
+    """The torn-tail repair fires only on a missing terminator: normal
+    back-to-back appends stay one line per event, no blank lines."""
+    rec = Recorder(root=tmp_path, session_id="sess_test")
+    rec.record("write", id="01HXYZ")
+    rec.record("show", id="01HXYZ")
+
+    raw = _live_segment(rec).read_bytes()
+    assert b"\n\n" not in raw
+    assert len(raw.splitlines()) == 2
+
+
 # ---------------------------------------------------------------------------
 # Active-log sharding (swarm-convergence): the global append lock is
 # gone — writers stripe across per-shard files — and readers merge them.
