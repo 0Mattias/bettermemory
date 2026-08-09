@@ -2091,8 +2091,12 @@ def test_run_audit_legacy_semantic_config_file_audits_as_hybrid(
     _write_miss_memory(mem_dir)
 
     config_path = tmp_path / "config.toml"
+    # as_posix(): a Windows tmp_path's backslashes would be (invalid)
+    # escape sequences inside a TOML basic string; forward slashes are
+    # valid TOML and a path Windows Python opens fine.
     config_path.write_text(
-        f'[storage]\ndirectory = "{mem_dir}"\n\n[behavior]\nsearch_mode = "semantic"\n',
+        f'[storage]\ndirectory = "{mem_dir.as_posix()}"\n\n'
+        '[behavior]\nsearch_mode = "semantic"\n',
         encoding="utf-8",
     )
     cfg = load_config(config_path)
