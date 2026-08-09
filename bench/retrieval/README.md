@@ -291,6 +291,54 @@ Two more things worth stating precisely rather than rounding off:
   corpus of 600 genuinely contending documents is neither.
 - **Anything at finer than 5-point resolution.** Twenty questions.
 
+## Results — 3.43.0-engine re-run, 2026-08-08
+
+The sections above measured 3.29.0 (corpus tables) and 3.30.0 (the
+prefilter runs). Nine releases of engine change later — snippet
+windowing on the match, ranking-input threading, and the 2026-08-08
+repair that prices a compound query token's `_kebab_parts` off corpus
+IDF under the prefilter — the same four invocations were re-run
+unchanged at commit `7b63e07`, the engine the 3.43.0 release ships.
+Raw JSON in `results/` (`*-2026-08-08.json`); artifacts now carry a
+`provenance` block naming the version, commit, and machine that
+produced them.
+
+Unpadded corpus (`results/unpadded-2026-08-08.json`):
+
+| arm | probe | recall@1 | recall@5 |
+| --- | --- | --- | --- |
+| lexical | asked | 35% | 60% |
+| lexical | requery | 80% | 100% |
+| lexical | control | 35% | 60% |
+| semantic | asked | 60% | 75% |
+| semantic | requery | 90% | 100% |
+| semantic | control | 60% | 70% |
+
+Padded to 600 (`results/padded600-2026-08-08.json`): `semantic / asked`
+holds 60% at recall@1 while `lexical / asked` drops to 25%, so the
+semantic margin widens there.
+
+What held and what moved — read against n=20 per cell, where one
+question is five points:
+
+- **The headline margin reproduces exactly.** `semantic / asked` beats
+  `lexical / asked` at recall@1 by **+25 points (60% vs 35%)** on the
+  unpadded corpus — the same +25 the 2026-07-26 artifacts measured —
+  and `control` still tracks `asked` in both arms, so the lift remains
+  VOCABULARY, not phrasing, now as then.
+- **The prefilter still costs zero recall@5, six cells of six**
+  (`results/prefilter-above-threshold-2026-08-08.json`): every
+  `recall_loss_at_5` reads 0.0, every `recall_loss_at_1` stays within
+  one question, and `gold_nomination_rate` spans 0.9 to 1.0. The
+  forced-regime run (`results/prefilter-forced-180-2026-08-08.json`)
+  reads 0.0 at `recall_loss_at_5` in every cell as well.
+- **Individual cells drifted by one to three questions.** The largest:
+  `lexical / requery` recall@1 gave back three questions (95% in
+  `results/unpadded-2026-07-26.json`, 80% now). recall@5 moved at most
+  one question in any cell. Movement of this size on n=20 is single
+  questions changing rank, not a regime change; every pre-registered
+  verdict above keeps its grade.
+
 ## Results — v1 corpus (superseded), 2026-07-26
 
 bettermemory 3.29.0, corpus of 188 (20 gold + 168 distractors), 12-core

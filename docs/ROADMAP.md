@@ -402,7 +402,7 @@ enough to earn its own entry above.
   sees ages that differ by microseconds across the whole store. Every
   published number therefore describes ranking with that factor held
   flat. (ii) **The corpus cannot exercise `auto_scope`.** `build_store`
-  (`bench/retrieval/run.py:213-221`) writes every memory with no
+  (`bench/retrieval/run.py:266-281`) writes every memory with no
   `Origin`, and `should_include_for_caller`
   (`src/bettermemory/origin.py:449-472`) treats a null memory origin as
   global, so every published recall figure describes a store where

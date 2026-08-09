@@ -125,6 +125,19 @@ two or more evidence sessions and only one slot exists. So lexical@1 is
 Cost: lexical 328 s, semantic 1,286 s — the embedding arm is **~4×**
 slower for +2.5 points pooled.
 
+### Re-run at the 3.43.0 engine, 2026-08-08
+
+The identical invocation at commit `7b63e07` reproduces every figure
+above **bit-for-bit** — macro, micro, and ceilings, both arms, all k
+(`results/baseline-both-arms-2026-08-08.json`, provenance-stamped;
+per-question records under `results/per-question/`). Nine releases of
+engine change did not move session-level recall on this corpus, and
+the identity doubles as a determinism check on the harness. The
+claude-mem side of the comparison is unchanged and stays dated: those
+artifacts remain the 2026-07-27 measurements of `claude-mem@13.12.4`
+(the tooling is no longer installed here), so the headline table reads
+current bettermemory against claude-mem as of 2026-07-27.
+
 ## Predictions scored
 
 | # | prediction | outcome |
