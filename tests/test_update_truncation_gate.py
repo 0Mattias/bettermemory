@@ -27,7 +27,12 @@ What these pin beyond "the gate fires":
   ends mid-sentence commits, and a shrinking edit that ends on a terminal
   character commits. Delete the `len(...) < len(...)` conjunct and both go
   red; delete `looks_truncated` and the second one does. Neither would be
-  caught by testing the refusal alone.
+  caught by testing the refusal alone. The conjunct binds the override
+  RECORD too: `truncation_acknowledged` stamps only edits all three
+  conjuncts would have refused, so a flag re-passed defensively on a
+  growing edit does not inflate the override rate — the one number that
+  would ever reopen the predicate. Drop the shrink conjunct from the
+  record line alone and a third test goes red.
 - BODY edits only. A metadata edit on a record whose body already reads
   truncated has to stay possible, or the records that predate the gate —
   the exact ones `doctor` is pointing at — become uncurateable.
@@ -261,6 +266,42 @@ async def test_the_field_is_present_on_unacknowledged_commits_too(
         for e in iter_events(memory_dir)
         if e["kind"] == "update" and e.get("status") is None
     ]
+    assert commits[-1]["truncation_acknowledged"] is False
+
+
+async def test_a_defensive_flag_on_a_growing_edit_records_no_override(
+    server_with_events: tuple[Any, Path],
+) -> None:
+    """The numerator half of the same contract: the field must record
+    gate-fired-and-overridden, not flag-was-present.
+
+    After a refusal, the natural retry is a LONGER complete body with
+    `acknowledge_truncation=True` left in defensively. When that body ends
+    on a bare identifier — the 0.4% class — the gate cannot fire (nothing
+    shrank), so stamping `truncation_acknowledged=True` would count an
+    override for an edit that was never refused. The record has to be the
+    exact complement of the refusal, all three conjuncts, the way
+    `credentials_acknowledged` and `user_claims_acknowledged` are for
+    theirs."""
+    server, memory_dir = server_with_events
+    memory_id = await _seed(server)
+
+    res = await _call(
+        server,
+        "memory_update",
+        id=memory_id,
+        content=_GREW_ENDING_BARE,
+        acknowledge_truncation=True,
+    )
+
+    assert res["status"] == "committed", res
+
+    commits = [
+        e
+        for e in iter_events(memory_dir)
+        if e["kind"] == "update" and e.get("status") is None
+    ]
+    assert commits, "no committed update event recorded"
     assert commits[-1]["truncation_acknowledged"] is False
 
 

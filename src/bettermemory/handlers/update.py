@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any
 
 from .._response import isoformat
 from ..credentials import find_credential_markers
+from ..durability import find_transient_markers
 from ..models import (
     Category,
     Confidence,
@@ -80,7 +81,9 @@ DESC_MEMORY_UPDATE = (
     "call memory_verify again after, re-declaring claims). A body that reads as a claim "
     "ABOUT THE USER returns `user_claim_warning` unless the record "
     "is already `user-inference`; pass `acknowledge_user_claim=True` "
-    "if the subject is someone else. An edit that SHRINKS the body and "
+    "if the subject is someone else. A transient-state body returns "
+    "`transient_warning`; `acknowledge_transient=True` overrides. "
+    "An edit that SHRINKS the body and "
     "leaves it ending mid-sentence returns `truncation_warning`; pass "
     "`acknowledge_truncation=True` when the cut is deliberate.\n"
     "- `scopes` / `links`: REPLACE semantics — pass the full new "
@@ -104,6 +107,7 @@ async def memory_update(
     category: str | None = None,
     links: list[dict[str, Any]] | None = None,
     acknowledge_credential: bool = False,
+    acknowledge_transient: bool = False,
     acknowledge_user_claim: bool = False,
     acknowledge_truncation: bool = False,
     ctx: Context | None = None,
@@ -229,6 +233,10 @@ async def memory_update(
     # because, unlike the other two, there is nothing to enumerate — the body
     # either reads cut off or it does not.
     truncation_acknowledged = False
+    # Fourth gate's override evidence, spelled `markers_acknowledged` because
+    # that is the field the write path already records and health.py already
+    # consumes — one grep covers both surfaces.
+    markers_acknowledged: list[str] = []
     if content is not None:
         new_body = content.strip() + "\n"
         # Credential gate — mirror CredentialGate on the write path so a
@@ -269,6 +277,41 @@ async def memory_update(
         credentials_acknowledged = (
             [h.kind for h in credential_hits]
             if credential_hits and acknowledge_credential
+            else []
+        )
+        # Transient-marker gate — the last of memory_write's body gates
+        # without an update mirror: a body the write path hard-refuses as
+        # transient state ("currently", "as of <date>") could be committed
+        # by EDITING an existing record. Sits after the credential gate for
+        # the reason the user-claim gate does — a secret is refused before
+        # any other gate records body-derived data (here, marker phrases)
+        # in the event log. Same markers, same escape, same hint as the
+        # write side, so the two surfaces refuse and release identically.
+        transient_hits = find_transient_markers(new_body)
+        if transient_hits and not acknowledge_transient:
+            deps.recorder.record(
+                "update",
+                id=id,
+                status="transient_warning",
+                markers=[h.marker for h in transient_hits],
+            )
+            return {
+                "status": "transient_warning",
+                "markers": [
+                    deps.responses.transient_to_dict(h) for h in transient_hits
+                ],
+                "hint": (
+                    "The updated body contains transient-state markers that "
+                    "won't be true in a week. Either rephrase to the durable "
+                    "level-up version (extract the architectural decision, "
+                    "the why, what-was-built — discard the timestamp/state) "
+                    "or pass acknowledge_transient=True if the marker is "
+                    "genuinely durable in context."
+                ),
+            }
+        markers_acknowledged = (
+            [h.marker for h in transient_hits]
+            if transient_hits and acknowledge_transient
             else []
         )
         # User-claim gate — mirror `UserClaimGate` (handlers/write.py) so a
@@ -414,8 +457,17 @@ async def memory_update(
                     "identifier is a legitimate ending)."
                 ),
             }
-        truncation_acknowledged = bool(acknowledge_truncation) and looks_truncated(
-            new_body
+        # Past the gate → the edit is benign OR the caller overrode. True
+        # only when the gate WOULD have fired but for the flag — all three
+        # conjuncts, the exact complement of the refusal above, the same
+        # relationship the two acknowledged lists keep with their gates. A
+        # flag re-passed defensively on an edit the gate could not refuse
+        # (grew, or ends terminal) is not an override and must not inflate
+        # the rate this predicate's reopening decision reads.
+        truncation_acknowledged = (
+            len(new_body.strip()) < len(existing.body.strip())
+            and looks_truncated(new_body)
+            and bool(acknowledge_truncation)
         )
 
     # `links` is REPLACE semantics — the caller passes the full new
@@ -557,6 +609,7 @@ async def memory_update(
         credentials_acknowledged=credentials_acknowledged,
         user_claims_acknowledged=user_claims_acknowledged,
         truncation_acknowledged=truncation_acknowledged,
+        markers_acknowledged=markers_acknowledged,
     )
     return deps.responses.committed(updated)
 

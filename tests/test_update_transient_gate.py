@@ -65,9 +65,7 @@ async def test_write_refuses_and_update_used_to_launder(
     refuses `_TRANSIENT`, and the update path now refuses the identical
     body instead of committing it into an existing record."""
     server, root = server_with_events
-    written = await _call(
-        server, "memory_write", content=_TRANSIENT, scopes=["tools"]
-    )
+    written = await _call(server, "memory_write", content=_TRANSIENT, scopes=["tools"])
     assert written["status"] == "transient_warning"
 
     mid = await _seed_fact(server)

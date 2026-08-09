@@ -34,7 +34,7 @@ from typing import Any
 
 import pytest
 
-from bettermemory.config import Config, StorageConfig
+from bettermemory.config import BehaviorConfig, Config, StorageConfig
 from bettermemory.events import Recorder, iter_events
 from bettermemory.handlers.write import (
     CONTENT_GATES,
@@ -263,6 +263,44 @@ async def test_user_inference_category_stages_instead_of_warning(
     )
     assert res["status"] == "pending"
     assert res["pending_reason"] == "user-inference"
+
+
+async def test_user_inference_reason_wins_over_global_confirmation(
+    memory_dir: Path,
+) -> None:
+    """Ordering INSIDE PendingGate: when `category='user-inference'`
+    and `require_write_confirmation=true` both apply, the category's
+    reason must win. The hint dispatched on `pending_reason` is the
+    only enforcement of the ask-the-user veto — a `config` reason
+    hands the model the generic self-confirm hint, so the stricter
+    global setting would silently drop the ceremony the category
+    structurally promises."""
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(require_write_confirmation=True),
+    )
+    state = SessionState()
+    rec = Recorder(root=memory_dir, session_id=state.session_id)
+    server = build_server(
+        config=cfg,
+        store=Store(memory_dir),
+        state=state,
+        recorder=rec,
+    )
+    res = await _call(
+        server,
+        "memory_write",
+        content="Mattias prefers tabs over spaces.",
+        scopes=["learning-style"],
+        category="user-inference",
+    )
+    assert res["status"] == "pending"
+    assert res["pending_reason"] == "user-inference"
+    assert "ask the user" in res["hint"].lower()
+    # The event log carries the same attribution the response does.
+    event = _write_events(memory_dir)[-1]
+    assert event["pending_reason"] == "user-inference"
+    assert event["category"] == "user-inference"
 
 
 async def test_user_claim_beats_duplicate_on_a_mis_filed_parent(

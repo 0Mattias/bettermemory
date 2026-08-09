@@ -698,14 +698,16 @@ class PendingGate(WriteGate):
     config flag (`require_write_confirmation`) OR
     `category=='user-inference'` requires it. User-inference is
     structurally enforced regardless of config: misattribution sticks
-    and the user gets the veto."""
+    and the user gets the veto. The category check runs first because
+    `pending_reason` is what selects the confirm hint — the ask-the-user
+    ceremony must survive the config flag also applying."""
 
     def evaluate(self, deps: "GateDeps", gc: GateContext) -> GateResult:
         category_enum: Category = gc.payload["category"]
-        if deps.config.behavior.require_write_confirmation:
-            return Pending(pending_reason="config")
         if category_enum == Category.USER_INFERENCE:
             return Pending(pending_reason="user-inference")
+        if deps.config.behavior.require_write_confirmation:
+            return Pending(pending_reason="config")
         return Continue()
 
 
