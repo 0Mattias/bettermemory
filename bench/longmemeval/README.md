@@ -67,6 +67,83 @@ Their "parity" framing compared an arm the product no longer ships and
 must not be quoted as current. Closing those 2.3 points with code — no
 borrowed weights — is the standing retrieval campaign.
 
+## 5.1 rescue-expansion lane — the held-out check fired its kill, 2026-08-09
+
+The campaign's first lane (filler df-floor + confidence-gated
+vocabulary leg; developed and tuned entirely on `bench/retrieval`,
+which its README states in bold) was checked here against predictions
+committed before the run — PREREGISTRATION.md addendum 3. **The kill
+criterion fired. The lane ships opt-in
+(`[behavior] rescue_expansion`, default off), and this section is the
+record of why.**
+
+All runs at the 5.0.0 engine plus the lane commit (`d78a620`), same
+corpus and harness as the baseline, raw JSON in `results/`:
+
+| configuration | macro@1 | macro@5 | macro@10 | artifact |
+| --- | --- | --- | --- | --- |
+| baseline (lane absent) | 0.5246 | 0.8935 | 0.9443 | `baseline-reproduced-2026-08-09.json` |
+| lane, both mechanisms | 0.4752 | **0.8770** | 0.9471 | `rescue-expansion-2026-08-09.json` |
+| filler df-floor only | 0.5226 | **0.8935** | 0.9463 | `rescue-expansion-ablate-fcap-only-2026-08-09.json` |
+| expansion leg only | 0.4732 | 0.8790 | 0.9471 | `rescue-expansion-ablate-leg-only-2026-08-09.json` |
+
+### Predictions scored
+
+| # | prediction | outcome |
+| --- | --- | --- |
+| P6 | macro@5 ≥ 0.8900 or the lane does not ship default-on | **KILL FIRED — 0.8770.** The default did not ship. |
+| P7 | transfer small but real: macro@5 in [0.8930, 0.9050] | **MISSED, low** — the lane transferred harm, not help |
+| P8 | the gate protects recall@1: within ±2 points of 0.5246 | **MISSED — −4.9 points.** The gate's dev-set calibration did not transfer: colloquial questions are low-coverage by nature, so the leg engaged broadly here |
+
+### The ablation, and what it isolates
+
+The two mechanisms were rerun separately through the identical
+harness (a two-line driver patches the imported engine: the coverage
+gate to never-engage for the floor-only arm; the filler table to
+empty, with the leg forced on at the `search()` call site, for the
+leg-only arm — the force matters, see the discard note below).
+
+- **The filler df-floor is corpus-shape-neutral**: macro@5 identical
+  to baseline to four decimals, macro@1 within a question. The
+  mechanism's premise ("memory bodies are technical prose, filler is
+  corpus-rare") simply stops mattering on conversational bodies where
+  filler is genuinely common — `max(real df, floor)` converges on the
+  real statistics.
+- **The expansion leg carries the entire regression.** Per-question:
+  25 questions moved down, 9 up; four `single-session-assistant`
+  questions fell from 1.00 to 0.00 — the evidence session pushed
+  clean out of the top five. The mechanism is legible in the queries:
+  "…the hostel you *recommended* last time" engages the gate (long
+  colloquial questions are low-coverage), and the leg's inflection
+  variants ("recommended" → "recommend", "planning" → "plan") are
+  PROMISCUOUS matchers in a store where hundreds of rounds contain
+  those verbs — the exact inverse of the technical gold set, where
+  expansion vocabulary is rare and discriminating. The cleanest
+  single proof is question `a89d7624`, which contains no filler-list
+  word at all (the floor cannot touch it) and still fell 1.00 → 0.00.
+
+One discard, recorded rather than hidden: the first leg-only run was
+invalidated before publication — it raced a concurrent working-tree
+edit that flipped the engine's default, imported the flipped module,
+and measured pure baseline while claiming to measure the leg (its
+provenance carried the `tree_dirty` flag and baseline-identical
+numbers across all three k's, which is what gave it away). The
+published leg-only artifact is the rerun with the leg forced at the
+call site, generated from the clean committed tree.
+
+### What this buys the campaign
+
+The lane stays shipped, opt-in, for stores shaped like the gold set —
+technical prose queried casually, where it is worth +15/+30
+recall@1/@5 as-asked. The default stays off until an experiment earns
+it: the promiscuous-variant failure class is DETECTABLE IN CODE
+(an emitted expansion term's document frequency in the pool is known
+before it gets a single vote), so the named next experiment is
+df-gating the emitted terms, re-preregistered on both instruments.
+macro@10 IMPROVING under the lane (0.9443 → 0.9471) while @1/@5 fall
+is the shape of a recall mechanism with a precision problem — the
+vocabulary reach is real; the votes land too bluntly.
+
 ## The pre-4.0 headline: parity, not victory (dated record)
 
 On third-party ground, against labels neither party authored,

@@ -234,6 +234,7 @@ def test_rescue_surfaces_paraphrase_via_synonyms_with_honest_labels() -> None:
         "do we ever rip the old toggles back out",
         max_results=3,
         matched_leg_out=legs,
+        rescue_expansion=True,
     )
     assert hits, "rescue produced no hits at all"
     top = hits[0]
@@ -266,7 +267,9 @@ def test_rescue_expansion_only_hit_reports_expansion_leg() -> None:
         _memory("The reconciliation job runs at 0300 UTC.", created=now),
     ]
     legs: dict[str, str] = {}
-    hits = search(memories, "creds", max_results=2, matched_leg_out=legs)
+    hits = search(
+        memories, "creds", max_results=2, matched_leg_out=legs, rescue_expansion=True
+    )
     assert hits
     top = hits[0]
     assert top.id == memories[0].id
@@ -281,7 +284,12 @@ def test_confident_base_ranking_skips_the_rescue() -> None:
     precise queries precise (requery stayed 80/100 on the bench because
     of exactly this)."""
     memories = _corpus()
-    on = search(memories, "feature flag removal owner deadline", max_results=3)
+    on = search(
+        memories,
+        "feature flag removal owner deadline",
+        max_results=3,
+        rescue_expansion=True,
+    )
     off = search(
         memories,
         "feature flag removal owner deadline",
@@ -290,6 +298,31 @@ def test_confident_base_ranking_skips_the_rescue() -> None:
     )
     assert [h.id for h in on] == [h.id for h in off]
     assert [h.score for h in on] == [h.score for h in off]
+
+
+def test_default_is_off_and_byte_stable() -> None:
+    """The product default is rescue_expansion=False — the lane's own
+    preregistered LongMemEval check killed default-on (kill line
+    macro@5 0.8900; the run read 0.8770). A bare search() call must be
+    byte-identical to an explicit False and must never report an
+    expansion leg. Flipping the default back is earned by a fresh
+    preregistration on both bench instruments, not by editing this
+    test."""
+    memories = _corpus()
+    legs_default: dict[str, str] = {}
+    legs_off: dict[str, str] = {}
+    query = "do we ever rip the old toggles back out"
+    default = search(memories, query, max_results=3, matched_leg_out=legs_default)
+    off = search(
+        memories,
+        query,
+        max_results=3,
+        matched_leg_out=legs_off,
+        rescue_expansion=False,
+    )
+    assert [h.id for h in default] == [h.id for h in off]
+    assert [h.score for h in default] == [h.score for h in off]
+    assert "expansion" not in legs_default.values()
 
 
 def test_kill_switch_restores_two_leg_hybrid() -> None:
@@ -332,7 +365,7 @@ def test_filler_df_floor_stops_filler_outranking_content() -> None:
     memories = [gold, distractor, *filler_dense]
     query = "i remember getting paged, who is supposed to ack escalation"
 
-    with_floor = search(memories, query, max_results=2)
+    with_floor = search(memories, query, max_results=2, rescue_expansion=True)
     assert with_floor[0].id == gold.id
 
     without = search(memories, query, max_results=2, rescue_expansion=False)
@@ -346,7 +379,9 @@ def test_filler_df_floor_stops_filler_outranking_content() -> None:
 def test_bm25_and_keyword_modes_are_untouched_by_the_flag() -> None:
     memories = _corpus()
     for mode in ("bm25", "keyword"):
-        on = search(memories, "creds toggles", max_results=3, mode=mode)
+        on = search(
+            memories, "creds toggles", max_results=3, mode=mode, rescue_expansion=True
+        )
         off = search(
             memories,
             "creds toggles",

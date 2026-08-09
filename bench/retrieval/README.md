@@ -355,23 +355,44 @@ question is five points:
   questions changing rank, not a regime change; every pre-registered
   verdict above keeps its grade.
 
-## Results — 5.1 rescue-expansion engine, 2026-08-09
+## Results — 5.1 rescue-expansion lane, 2026-08-09 (ships OPT-IN)
 
 The campaign lane the 4.0.0 section above promised ("closed in code,
-or reported as open"), first installment: hybrid ranking gains a
-document-frequency floor for listed discourse-filler words and a
-confidence-gated, down-weighted BM25 leg over synthesized vocabulary
-(committed tables — `src/bettermemory/expansion.py`). Same four
-invocations, re-run unchanged; raw JSON in `results/`
-(`*-2026-08-09.json`).
+or reported as open"), first installment — and the honest verdict up
+front: **the lane ships opt-in, not default-on. Its own preregistered
+held-out check killed the default.** What follows is the dev-set
+record; the kill and its ablations live in `bench/longmemeval/`.
+
+The lane: a document-frequency floor for listed discourse-filler
+words plus a confidence-gated, down-weighted BM25 leg over synthesized
+vocabulary (committed tables — `src/bettermemory/expansion.py`),
+enabled per store via `[behavior] rescue_expansion = true`. Same four
+invocations, re-run with the lane on; raw JSON in `results/`
+(`*-2026-08-09.json`):
+
+```sh
+.venv/bin/python bench/retrieval/run.py --rescue-expansion on
+.venv/bin/python bench/retrieval/run.py --rescue-expansion on --pad-to 600 --prefilter both
+```
 
 **This gold set was the lane's DEVELOPMENT set, stated plainly.**
 Every parameter — the 0.60 confidence gate, the 0.7 leg weight, the
 half-the-collection df floor, the 3-character expansion-term floor,
 every word in every table — was tuned against these 20 questions, so
 the numbers below are a dev-set fit, not a generalization claim. The
-held-out check is `bench/longmemeval/`: predictions committed before
-the run (PREREGISTRATION.md addendum 3), result published beside them.
+held-out check was `bench/longmemeval/`: predictions committed before
+the run (PREREGISTRATION.md addendum 3), and the kill criterion fired
+— macro recall@5 0.8770 against a 0.8935 baseline and a 0.8900 kill
+line. The ablations split the lane cleanly: the filler df-floor alone
+reproduces the LongMemEval baseline to four decimals (0.8935 — the
+mechanism is corpus-shape-neutral), while the expansion leg carries
+the entire regression: inflection variants of common chat verbs
+("recommended" → "recommend") are promiscuous matchers in
+conversational stores, the exact inverse of this corpus, where
+expansion vocabulary is rare and discriminating. The experiment that
+could earn the default back is named and unrun: df-gate the EMITTED
+expansion terms against the pool (the promiscuous-variant class is
+detectable in code), then re-preregister on both instruments.
 
 Unpadded corpus (`results/unpadded-2026-08-09.json`):
 

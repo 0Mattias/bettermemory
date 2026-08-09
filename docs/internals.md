@@ -64,13 +64,16 @@ declared claims on `memory_write` / `memory_verify` (3.40.0).
   CJK-capable tokenization. Every ranker is deterministic lexical code —
   the project ships no embedding models. (Pre-4.0 an optional semantic
   leg fused in from an `embeddings` extra; the 4.0.0 purist strip
-  removed that lane whole.) Since 5.1 hybrid also runs rescue
-  expansion: discourse-filler words price at a df floor, and when the
-  base ranking is not confident a down-weighted third leg over
-  committed vocabulary tables (inflection variants, clippings,
-  dev-domain synonyms — `expansion.py`) joins the fusion. Tables are
-  readable source, derivation-free, query-side only — the persisted
-  index stream never changes.
+  removed that lane whole.) 5.1 adds rescue expansion, OFF by default:
+  discourse-filler words price at a df floor, and when the base
+  ranking is not confident a down-weighted third leg over committed
+  vocabulary tables (inflection variants, clippings, dev-domain
+  synonyms — `expansion.py`) joins the fusion. Tables are readable
+  source, derivation-free, query-side only — the persisted index
+  stream never changes. Off by default because its preregistered
+  held-out check killed default-on: strong on technical-prose stores
+  (bench/retrieval), net-negative on conversational ones
+  (bench/longmemeval carries the kill and the ablations).
 - Typed inter-memory links (`supersedes`, `contradicts`, `extends`,
   `depends_on`), surfaced as trust signals at retrieval.
 - Auto-scoping by repo and worktree; explicit cross-project queries.

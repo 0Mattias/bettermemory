@@ -126,6 +126,13 @@ PREFILTER_CAP = _PREFILTER_CAP
 # the prefilter regime into every other test in the session.
 INDEX_THRESHOLD_ENV = "BETTERMEMORY_INDEX_THRESHOLD"
 
+# Whether the arms rank with the 5.1 rescue-expansion repairs
+# (`search.search(rescue_expansion=...)`). Module-level and defaulting
+# to the PRODUCT default (off) so a bare invocation measures what a
+# default install ranks with; `--rescue-expansion on` reproduces the
+# 2026-08-09 lane artifacts. Set inside `main()` from the flag.
+RESCUE_EXPANSION = False
+
 # Digest of the corpus the four committed artifacts ran against. The
 # `off` half of a `--prefilter both` run re-measures exactly what
 # `v2-padded600-2026-07-26.json` already recorded, which is what turns it
@@ -376,6 +383,7 @@ def run_arm(
             query,
             max_results=max(K_VALUES),
             mode="hybrid",
+            rescue_expansion=RESCUE_EXPANSION,
         )
         ranked = [h.id for h in hits]
         result.n += 1
@@ -453,6 +461,7 @@ def run_arm_prefiltered(
             query,
             max_results=max(K_VALUES),
             mode="hybrid",
+            rescue_expansion=RESCUE_EXPANSION,
             # The part `run_arm` cannot pass. Without it a capped pool is
             # scored with pool-derived document frequencies, which prices
             # a term that is rare in the store as common in the slice —
@@ -680,8 +689,25 @@ def main() -> int:
             "corpus-v1.jsonl to reproduce the superseded first-run figures."
         ),
     )
+    parser.add_argument(
+        "--rescue-expansion",
+        choices=("on", "off"),
+        default="off",
+        help=(
+            "Rank with the 5.1 rescue-expansion repairs (filler df-floor + "
+            "gated vocabulary leg). Default off — the product default, after "
+            "the lane's preregistered LongMemEval check killed default-on. "
+            "'on' reproduces the *-2026-08-09 lane artifacts."
+        ),
+    )
     parser.add_argument("--json", action="store_true", help="Emit JSON.")
     args = parser.parse_args()
+
+    # Module-level so the two arm runners read one flag without a
+    # signature change (`run_arm`'s signature is pinned by the committed
+    # artifacts' reproducibility note above it).
+    global RESCUE_EXPANSION
+    RESCUE_EXPANSION = args.rescue_expansion == "on"
 
     corpus_path = Path(args.corpus).expanduser()
     if not corpus_path.is_absolute():
@@ -716,6 +742,14 @@ def main() -> int:
         notes.append(
             "semantic arm REMOVED in 4.0.0 — the product ships no "
             "embedding models; pre-4.0 artifacts remain the dated record."
+        )
+
+    if RESCUE_EXPANSION:
+        notes.append(
+            "rescue-expansion repairs ON (the 5.1 lane: filler df-floor + "
+            "coverage-gated vocabulary leg). The product DEFAULT is off — "
+            "the lane's preregistered held-out check killed default-on; "
+            "see the README's 5.1 section and bench/longmemeval/."
         )
 
     root = Path(tempfile.mkdtemp(prefix="bm-retrieval-"))
@@ -815,6 +849,7 @@ def main() -> int:
                     "padded": bool(args.pad_to),
                     "prefilter_mode": args.prefilter,
                     "prefilter_cap": PREFILTER_CAP,
+                    "rescue_expansion": RESCUE_EXPANSION,
                     "notes": notes,
                     "results": [
                         {

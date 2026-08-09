@@ -73,11 +73,14 @@ search_mode = "hybrid"
 # content terms), and when the base ranking is not confident about its
 # top hit, one extra down-weighted BM25 leg over synthesized vocabulary
 # (inflection variants, clipping full-forms, synonym mates — see
-# src/bettermemory/expansion.py) joins the fusion. Measured on
-# bench/retrieval: recall@1/@5 as-asked 35%/60% -> 50%/90% with the
-# requery probe byte-stable. Set false to reproduce pre-5.1 hybrid
-# ranking exactly.
-rescue_expansion = true
+# src/bettermemory/expansion.py) joins the fusion. OFF BY DEFAULT: the
+# lane's preregistered held-out check killed default-on (worth +15/+30
+# recall@1/@5 as-asked on the technical-prose gold set; cost 1.65
+# macro@5 points on conversational stores — bench/retrieval and
+# bench/longmemeval carry the artifacts and the scoring). Set true if
+# your store is technical prose queried casually — that is the shape
+# the gains were measured on.
+rescue_expansion = false
 
 # Usage-aware ranking. When true, a bounded "endorsement" factor (the same
 # shape as the recency boost — capped at +10%, so it only breaks near-ties,
@@ -347,13 +350,15 @@ class BehaviorConfig:
     # Hybrid-mode query repairs from the retrieval campaign: the
     # discourse-filler df-floor plus the coverage-gated rescue-expansion
     # leg (see `search.search`'s `rescue_expansion` parameter and
-    # `expansion.py` for the committed tables). Default on — it is the
-    # measured product improvement (bench/retrieval 2026-08-09:
-    # recall@1/@5 as-asked 35%/60% -> 50%/90%, requery byte-stable).
-    # The switch exists so an operator can reproduce pre-5.1 ranking
-    # exactly while diagnosing a surprising result, not because the
-    # feature is experimental.
-    rescue_expansion: bool = True
+    # `expansion.py` for the committed tables). DEFAULT OFF — its own
+    # preregistered held-out check killed default-on: +15/+30
+    # recall@1/@5 as-asked on the technical-prose gold set
+    # (bench/retrieval, 2026-08-09), −1.65 macro@5 on LongMemEval's
+    # conversational stores (kill line was −0.35; the scoring lives in
+    # bench/longmemeval/). True is supported and documented for stores
+    # shaped like the gold set; the DEFAULT flips only via a fresh
+    # preregistration on both instruments.
+    rescue_expansion: bool = False
     # Retrieval ranker for `memory_search`. One of `keyword` (the
     # original TF + coverage + recency scorer; legacy), `bm25` (Okapi
     # BM25), or `hybrid` (RRF fusion of both; default since 2.6.8 —
@@ -1038,7 +1043,7 @@ def load_config(path: Path | None = None) -> Config:
                 behavior_raw.get("search_mode"), config_path=config_path
             ),
             rescue_expansion=_coerce_bool(
-                behavior_raw.get("rescue_expansion"), True
+                behavior_raw.get("rescue_expansion"), False
             ),
             recency_boost_half_life_days=_coerce_float(
                 behavior_raw.get("recency_boost_half_life_days"),

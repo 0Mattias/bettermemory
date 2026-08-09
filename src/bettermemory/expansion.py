@@ -24,9 +24,17 @@ tables for ranking — one build site is what keeps query-side and
 test-side views identical.
 
 Measurement provenance for every constant here: the probe grid recorded
-in bench/retrieval/README.md (2026-08-09). Ship gate: recall@1/@5
-as-asked 35%/60% -> 50%/90% with the requery and control probes held
-(requery byte-stable at 80%/100%).
+in bench/retrieval/README.md (2026-08-09) — recall@1/@5 as-asked
+35%/60% -> 50%/90% with requery byte-stable at 80%/100% on the
+technical-prose gold set. The lane ships OPT-IN (`[behavior]
+rescue_expansion`, default off): its preregistered held-out check on
+LongMemEval's conversational stores killed default-on — inflection
+variants of common chat verbs are promiscuous matchers there, the
+inverse of a technical corpus where expansion vocabulary is rare and
+discriminating. The kill, the ablation that isolated it to the
+expansion leg, and the experiment that could earn the default back
+(df-gating the EMITTED terms) live in bench/longmemeval/ and the
+bench/retrieval README's 5.1 section.
 """
 
 from __future__ import annotations

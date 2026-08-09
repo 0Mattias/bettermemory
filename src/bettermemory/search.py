@@ -2424,7 +2424,7 @@ def search(
     allow_empty_query: bool = False,
     corpus_stats_provider: Callable[[list[str]], CorpusStats | None] | None = None,
     matched_leg_out: dict[str, str] | None = None,
-    rescue_expansion: bool = True,
+    rescue_expansion: bool = False,
 ) -> list[MemoryHit]:
     """Rank `memories` against `query` and return up to `max_results` hits.
 
@@ -2491,7 +2491,7 @@ def search(
       bookkeeping entirely, so every existing caller is byte-stable in
       both output and cost. Browse-mode hits get no entry — nothing
       ranked them.
-    - `rescue_expansion`: hybrid-mode only. When True (the default),
+    - `rescue_expansion`: hybrid-mode only, DEFAULT OFF. When True,
       two query-time repairs from the retrieval campaign run:
       (a) listed discourse-filler words (`expansion.QUERY_FILLER_WORDS`)
       get a document-frequency FLOOR in the BM25 legs, so corpus-rare
@@ -2503,13 +2503,29 @@ def search(
       the fusion at `_RESCUE_LEG_WEIGHT`. Hits surfaced only by that
       leg report `matched_leg="expansion"` with `match_terms` still an
       honest subset of the caller's own tokens (possibly empty — the
-      same shape pure-paraphrase hits always had). False restores the
-      pre-5.1 two-leg behavior byte for byte. `keyword` and `bm25`
-      modes are explicit instrument choices and are never touched.
-      Above the index threshold the FTS prefilter nominates the pool
-      from the CALLER's tokens, so there the rescue re-ranks the
-      nominated pool rather than widening it — a documented limit, not
-      a silent one.
+      same shape pure-paraphrase hits always had). False (the default)
+      is the pre-5.1 two-leg behavior byte for byte.
+
+      Why the default is off: the lane's own preregistered held-out
+      check killed default-on. On the technical-prose gold set the
+      repairs are worth +15/+30 recall@1/@5 as-asked
+      (bench/retrieval, 2026-08-09 artifacts); on LongMemEval's
+      conversational stores the same mechanisms cost 1.65 macro@5
+      points — inflection variants of common chat verbs are
+      promiscuous matchers there, the inverse of the technical corpus
+      where expansion vocabulary is rare and discriminating. Kill
+      criterion and ablations: bench/longmemeval/PREREGISTRATION.md
+      addendum 3 and its README. Flipping the default back on is
+      earned by a fresh preregistration on both instruments, not by an
+      operator's hunch — but `[behavior] rescue_expansion = true` is a
+      supported, documented choice for stores that look like the gold
+      set (technical prose, casual queries).
+
+      `keyword` and `bm25` modes are explicit instrument choices and
+      are never touched. Above the index threshold the FTS prefilter
+      nominates the pool from the CALLER's tokens, so there the rescue
+      re-ranks the nominated pool rather than widening it — a
+      documented limit, not a silent one.
 
     Score semantics vary by mode: keyword/BM25 scores live on
     different scales and are not comparable across modes. Hybrid scores

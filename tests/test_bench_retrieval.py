@@ -469,6 +469,12 @@ def test_the_prefilter_really_engages_on_every_committed_question(
     prefiltered. It also re-derives the committed artifact's prefiltered
     rows, so those numbers stay a measurement rather than a memory.
     """
+    # `main()` writes the module-level RESCUE_EXPANSION via `global` when
+    # the flag below is parsed; registering the attr with monkeypatch
+    # first means teardown restores the module default (off) even after
+    # that write, so no later test in this session measures rescue-on
+    # by leakage — the same containment INDEX_THRESHOLD_ENV gets.
+    monkeypatch.setattr(runner, "RESCUE_EXPANSION", False)
     monkeypatch.setattr(
         sys,
         "argv",
@@ -480,6 +486,8 @@ def test_the_prefilter_really_engages_on_every_committed_question(
             "on",
             "--arms",
             "lexical",
+            "--rescue-expansion",
+            "on",
             "--json",
         ],
     )
