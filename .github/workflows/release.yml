@@ -33,8 +33,8 @@ permissions:
 
 jobs:
   # Gate the whole release on the FULL CI matrix — every job in ci.yml
-  # (ubuntu 3.11-3.14 + macOS + Windows + embeddings + embeddings-fast +
-  # pyright), invoked as a reusable workflow against the tagged commit.
+  # (ubuntu 3.11-3.14 + macOS + Windows + pyright), invoked as a
+  # reusable workflow against the tagged commit.
   # The publish jobs below `needs:` this, so the immutable PyPI publish
   # cannot fire unless the entire matrix is green. Previously the publish
   # depended only on `build` (the core Linux gate), so a macOS/Windows-

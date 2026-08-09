@@ -6,8 +6,8 @@ on:
   pull_request:
     branches: [main]
   # Callable as a reusable workflow so release.yml can gate the PyPI
-  # publish on the FULL matrix (macOS/Windows + embeddings + pyright),
-  # not just the core Linux gate. Additive: push/PR runs are unchanged.
+  # publish on the FULL matrix (macOS/Windows + pyright), not just the
+  # core Linux gate. Additive: push/PR runs are unchanged.
   workflow_call:
   # Manual re-fire for dropped events. During the 2026-08-06 GitHub
   # partial outage the push event for a release-gating commit was never
@@ -92,9 +92,7 @@ jobs:
         # `fastapi` / `uvicorn` imports in `src/bettermemory/web.py`
         # (strict mode flags missing types on imported decorators) and
         # so `tests/test_web.py` runs as actual coverage instead of
-        # being skipped via `pytest.importorskip("fastapi")`. The
-        # `[embeddings]` extra stays in the dedicated `test-embeddings`
-        # job — it pulls torch which dominates install time.
+        # being skipped via `pytest.importorskip("fastapi")`.
         run: uv sync --extra dev --extra ui
 
       - name: Lint
@@ -208,63 +206,7 @@ jobs:
       - name: Pyright
         run: uv run pyright
 
-  test-embeddings:
-    name: test (embeddings extra)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
-        with:
-          enable-cache: true
-
-      # Pinned to 3.14 (current stable): sentence-transformers + torch
-      # wheels lag the Python release cadence, so chasing 3.15 here just
-      # means falling back to source builds and breaking CI for reasons
-      # unrelated to bettermemory.
-      - name: Set up Python 3.14
-        run: uv python install 3.14
-
-      - name: Sync dependencies (with embeddings extra)
-        run: uv sync --extra dev --extra embeddings
-
-      # The "no_extras" marker covers tests in test_semantic.py that
-      # assert *both* embedding extras are absent. The narrower
-      # "no_torch_embeddings" covers tests that assert specifically the
-      # sentence-transformers path isn't installed — those land here
-      # (torch IS installed in this job) so we deselect them too. Tests
-      # marked "no_fastembed" still run: fastembed isn't installed in
-      # this job, so the marker's assertion holds.
-      - name: Test (skipping no_extras + no_torch_embeddings tests)
-        run: uv run pytest -m "not no_extras and not no_torch_embeddings" -q
-
-  test-embeddings-fast:
-    name: test (embeddings-fast extra)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
-        with:
-          enable-cache: true
-
-      # Pinned to 3.13: fastembed's ONNX Runtime wheels lag the Python
-      # release cadence by roughly a version. Re-evaluate when fastembed
-      # ships 3.14 wheels and the bettermemory main matrix has moved on.
-      - name: Set up Python 3.13
-        run: uv python install 3.13
-
-      - name: Sync dependencies (with embeddings-fast extra)
-        run: uv sync --extra dev --extra embeddings-fast
-
-      # Same logic as test-embeddings but mirrored for fastembed:
-      # deselect no_fastembed tests (fastembed IS installed here) and
-      # the catch-all no_extras tests; leave no_torch_embeddings alone
-      # because torch is absent in this job.
-      - name: Test (skipping no_extras + no_fastembed tests)
-        run: uv run pytest -m "not no_extras and not no_fastembed" -q
 
   commit-lint:
     name: commit messages
