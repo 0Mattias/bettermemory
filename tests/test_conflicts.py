@@ -1015,3 +1015,69 @@ async def test_e2e_applying_curate_feeds_queue(memory_dir: Path) -> None:
 
     overview = _unwrap(await _call(server, "memory_scope_overview"))
     assert overview["curation_pending"]["conflicts"] == 1
+
+
+async def test_lost_verdict_race_mutates_nothing(
+    memory_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two concurrent opposite verdicts serialise on the queue flock, and
+    the loser must mutate NOTHING. Pre-fix, the loser's pending check ran
+    on an unlocked read and its link mutation ran before the row claim,
+    so a losing `compatible` verdict un-wrote the winning verdict's
+    `contradicts` link on its way to `already_resolved` — the queue said
+    confirmed while the link layer said nothing, permanently.
+
+    The race is reconstructed deterministically: the winner resolves
+    first, then the loser runs with a `pending()` view patched to the
+    stale read it would have taken before the winner's stamp landed.
+
+    Mutation-soundness: reverting the `before_stamp` ordering (link
+    mutation back outside `resolve`'s lock) makes `links_cleared`
+    non-empty and deletes the winner's link — both assertions fail.
+    """
+    import copy
+
+    server = _build(memory_dir)
+    await _seed_conflicting_pair(server)
+    res = _unwrap(await _call(server, "memory_conflicts", scan=True))
+    row = res["pending"][0]
+    cid = row["id"]
+    a_id, b_id = row["a"]["id"], row["b"]["id"]
+
+    # Winner: contradiction — writes the link, stamps the row.
+    won = _unwrap(
+        await _call(server, "memory_conflicts", resolve=cid, verdict="contradiction")
+    )
+    assert won["resolved"]["status"] == "confirmed"
+    assert won["resolved"]["link_written"] is True
+
+    # Loser: its pre-lock pending() read predates the winner's stamp.
+    real_pending = ConflictQueue.pending
+
+    def stale_pending(self: ConflictQueue) -> list:
+        rows = real_pending(self)
+        if not any(c.id == cid for c in rows):
+            resolved_row = next((c for c in self.load() if c.id == cid), None)
+            if resolved_row is not None:
+                ghost = copy.copy(resolved_row)
+                ghost.status = "pending"
+                rows = [*rows, ghost]
+        return rows
+
+    monkeypatch.setattr(ConflictQueue, "pending", stale_pending)
+    lost = _unwrap(
+        await _call(server, "memory_conflicts", resolve=cid, verdict="compatible")
+    )
+    monkeypatch.undo()
+
+    assert lost["resolved"]["status"] == "already_resolved"
+    assert lost["resolved"]["links_cleared"] == [], (
+        "a losing verdict must not have cleared the winner's links"
+    )
+
+    # The winner's link survived: queue and link layer agree.
+    shown = _unwrap(await _call(server, "memory_show", id=a_id))
+    assert any(
+        link.get("type") == "contradicts" and link.get("target_id") == b_id
+        for link in (shown.get("links") or [])
+    ), "the confirmed verdict's contradicts link must survive the lost race"

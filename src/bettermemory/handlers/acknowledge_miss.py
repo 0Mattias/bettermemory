@@ -91,12 +91,15 @@ DESC_MEMORY_ACKNOWLEDGE_MISS = (
     "same `event_id` returns the success shape without emitting a "
     'duplicate `miss_ack`. Returns `{"status": "not_found", '
     '"event_id", "hint"}` when no `search_miss` with the given '
-    "id is in the active event log (it may have rotated to archive "
-    "or never existed); check `memory_health.recent_silent_misses` "
-    'for live ids. Returns `{"status": "wrong_kind", ...}` when '
+    "id exists anywhere in the event log — the lookup covers "
+    "rotated archives too, so a not_found id is mistyped, stale, "
+    "or predates per-event ids; check "
+    "`memory_health.recent_silent_misses` for live ids. "
+    'Returns `{"status": "wrong_kind", ...}` when '
     "the id is found but the event is not a `search_miss`. The ack "
     "persists in the event log — once written, all future health "
-    "rollups exclude the miss until the log is rotated past it."
+    "rollups exclude the miss; the rollups read rotated archives "
+    "too, so rotation does not undo an ack."
 )
 
 
@@ -191,14 +194,14 @@ async def memory_acknowledge_miss(
             "status": "not_found",
             "event_id": target_event_id,
             "hint": (
-                "No search_miss event with this id is in the active log. "
-                "The event may have rotated to archive (the active log "
-                "rotates at ~10MB by default); check "
-                "memory_health.recent_silent_misses for live ids. Note "
-                "that search_miss events written before T4 lack an "
-                "event_id field and cannot be acknowledged individually "
-                "— use `bettermemory consolidate "
-                "--acknowledge-misses-before <ts>` for the bulk hatch."
+                "No search_miss event with this id anywhere in the event "
+                "log — the lookup covers rotated archives as well as the "
+                "active log. Either the id is mistyped or stale (check "
+                "memory_health.recent_silent_misses for live ids) or the "
+                "event predates per-event ids: search_miss events written "
+                "before T4 lack an event_id field and cannot be "
+                "acknowledged individually — use `bettermemory consolidate "
+                "--acknowledge-misses-before <ts>` for those."
             ),
         }
 

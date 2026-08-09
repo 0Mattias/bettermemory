@@ -446,13 +446,20 @@ def _resolve_verdict(
         # memory_update) would leave them permanently disagreeing: the
         # queue calls the pair settled while every retrieval keeps
         # flagging it, and nothing ever re-raises it for arbitration.
-        # Clear BEFORE stamping, matching the confirm path's ordering:
-        # with body fingerprints recorded the clear's `updated` bump can
-        # no longer resurrect this row whichever way round it lands, but
-        # a row that falls back to the timestamp rule still needs it.
-        cleared = _clear_contradicts_links(deps, candidate.a_id, candidate.b_id)
+        # The clear runs INSIDE the queue flock via `before_stamp`
+        # (pending re-check first, stamp last — see `resolve`): a
+        # verdict that loses the race to a concurrent opposite verdict
+        # finds the row already resolved and clears nothing, instead of
+        # un-writing the winner's link on its way to `already_resolved`.
+        cleared: list[dict[str, str]] = []
         resolved = queue.resolve(
-            candidate_id, status="dismissed", note=note, member_bodies=bodies
+            candidate_id,
+            status="dismissed",
+            note=note,
+            member_bodies=bodies,
+            before_stamp=lambda: cleared.extend(
+                _clear_contradicts_links(deps, candidate.a_id, candidate.b_id)
+            ),
         )
         # Same event the contradiction branch records, and for the same
         # reason: this branch rewrote up to two memories and retired a
@@ -481,8 +488,11 @@ def _resolve_verdict(
             )
         return out
 
-    # contradiction: write the link FIRST (its `updated` bump must land
-    # before the verdict timestamp — see conflicts.py), then stamp.
+    # contradiction: the link write runs inside the queue flock via
+    # `before_stamp` (pending re-check first, stamp last — see
+    # conflicts.py `resolve`), so its `updated` bump still lands before
+    # the verdict timestamp, and a verdict that lost the race to a
+    # concurrent opposite verdict writes nothing at all.
     # BOTH members must still be active, not just the link's source: a
     # link whose target is tombstoned resolves to nothing at annotation
     # time (`_response._resolve` skips missing/tombstoned targets) and
@@ -494,7 +504,12 @@ def _resolve_verdict(
         link.type == LinkType.CONTRADICTS and link.target_id == candidate.b_id
         for link in source.links
     )
-    if not already:
+    link_written = False
+
+    def _write_link_under_lock() -> None:
+        nonlocal link_written
+        if already:
+            return
         new_link = MemoryLink(
             type=LinkType.CONTRADICTS,
             target_id=candidate.b_id,
@@ -510,14 +525,17 @@ def _resolve_verdict(
                 f"memory {candidate.a_id} changed concurrently; re-fetch via "
                 f"memory_show and retry the verdict ({exc})"
             ) from exc
-    # `source.body` is pre-link-write, which is the same body: the write
-    # above only replaces `links`. Recorded for symmetry and forensics —
+        link_written = True
+
+    # `source.body` is pre-link-write, which is the same body: the hook
+    # only replaces `links`. Recorded for symmetry and forensics —
     # `confirmed` is terminal, so no scan ever consults these hashes.
     resolved = queue.resolve(
         candidate_id,
         status="confirmed",
         note=note,
         member_bodies={candidate.a_id: source.body, candidate.b_id: target.body},
+        before_stamp=_write_link_under_lock,
     )
     deps.recorder.record(
         "conflict_verdict",
@@ -525,13 +543,13 @@ def _resolve_verdict(
         verdict="contradiction",
         a=candidate.a_id,
         b=candidate.b_id,
-        link_written=not already,
+        link_written=link_written,
     )
     return {
         "id": candidate_id,
         "verdict": "contradiction",
         "status": "confirmed" if resolved else "already_resolved",
-        "link_written": not already,
+        "link_written": link_written,
         "hint": (
             "The pair is now linked contradicts-wise and both sides "
             "surface it at retrieval. Resolve the substance next: "

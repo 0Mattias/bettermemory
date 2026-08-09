@@ -533,6 +533,7 @@ class ConflictQueue:
         status: str,
         note: str | None = None,
         member_bodies: dict[str, str] | None = None,
+        before_stamp: Callable[[], None] | None = None,
     ) -> ConflictCandidate | None:
         """Stamp a verdict on a PENDING candidate. Returns the updated
         row, or None when no pending row has that id.
@@ -545,12 +546,29 @@ class ConflictQueue:
         `updated > verdict_ts` fallback, so pass it whenever the bodies
         are in hand.
 
-        `verdict_ts` is stamped HERE, after the caller's side effects by
-        contract: the handler writes or clears the `contradicts` link
-        BEFORE resolving. With hashes recorded that ordering no longer
-        carries the resurrect rule — a link edit does not touch the body
-        — but it still keeps the fallback correct for rows that predate
-        them."""
+        `before_stamp` runs the caller's side effects (the `contradicts`
+        link write or clear) INSIDE the queue flock, after the pending
+        re-check and before the stamp. The three orderings that fall out
+        are each load-bearing:
+
+        - re-check before side effects: two concurrent opposite verdicts
+          serialise on the flock, and the loser's re-check finds the row
+          already resolved — so it mutates NOTHING. The pre-hook shape
+          re-checked only at stamp time, after the loser's link mutation
+          had already landed, leaving the queue and the link layer
+          permanently disagreeing (a refusal that fires after the
+          mutation is not a refusal).
+        - side effects before the stamp: a hook that raises (e.g. a
+          concurrent memory edit tripping W2) leaves the row PENDING and
+          the file unwritten, so the caller can retry the whole verdict.
+        - stamp last also keeps `verdict_ts` after the link's `updated`
+          bump for hashless legacy rows on the timestamp fallback.
+
+        Lock order: this is the one site that holds the queue flock
+        while taking per-memory file locks (inside the hook's
+        `Store.update`). Nothing takes them in the other order — scan
+        reads memories lock-free before its queue write — so the
+        nesting cannot invert."""
         if status not in ("confirmed", "dismissed"):
             raise ValueError(
                 f"verdict status must be 'confirmed' or 'dismissed', got {status!r}"
@@ -558,19 +576,21 @@ class ConflictQueue:
         bodies = member_bodies or {}
         with flock_excl(self.path):
             current = self.load()
-            hit: ConflictCandidate | None = None
-            for c in current:
-                if c.id == candidate_id and c.status == "pending":
-                    c.status = status
-                    c.verdict_ts = utcnow().isoformat()
-                    c.note = note
-                    body_a, body_b = bodies.get(c.a_id), bodies.get(c.b_id)
-                    c.verdict_hash_a = None if body_a is None else _body_hash(body_a)
-                    c.verdict_hash_b = None if body_b is None else _body_hash(body_b)
-                    hit = c
-                    break
-            if hit is not None:
-                self._write_all_locked(current)
+            hit = next(
+                (c for c in current if c.id == candidate_id and c.status == "pending"),
+                None,
+            )
+            if hit is None:
+                return None
+            if before_stamp is not None:
+                before_stamp()
+            hit.status = status
+            hit.verdict_ts = utcnow().isoformat()
+            hit.note = note
+            body_a, body_b = bodies.get(hit.a_id), bodies.get(hit.b_id)
+            hit.verdict_hash_a = None if body_a is None else _body_hash(body_a)
+            hit.verdict_hash_b = None if body_b is None else _body_hash(body_b)
+            self._write_all_locked(current)
             return hit
 
     def _write_all_locked(self, rows: list[ConflictCandidate]) -> None:

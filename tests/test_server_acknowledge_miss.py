@@ -1,6 +1,6 @@
 """Integration tests for the `memory_acknowledge_miss` MCP tool — T4.
 
-Three layers of behaviour:
+Four layers of behaviour:
 
 - **Registration / discoverability.** The tool registers via
   `build_server`, the DESC enumerates `event_id`, `reason`, and the
@@ -11,6 +11,9 @@ Three layers of behaviour:
   the miss; a second ack is idempotent.
 - **Error shapes.** Unknown event_id, non-search_miss event_id, and
   short-reason rejection.
+- **Search scope.** The lookup covers rotated archives, and the
+  not_found hint + DESC describe that scope rather than an
+  active-log-only search.
 
 Each test goes through the public MCP surface (`server.call_tool`)
 rather than poking the handler directly so the wire shape stays pinned.
@@ -19,6 +22,8 @@ rather than poking the handler directly so the wire shape stays pinned.
 from __future__ import annotations
 from ._mcp import call_tool as _mcp_call
 
+import gzip
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -261,8 +266,8 @@ async def test_acknowledge_miss_surfaces_in_recent_silent_misses_pre_ack(
 async def test_acknowledge_miss_returns_not_found_for_unknown_event_id(
     server_with_events: tuple[Any, Path, SessionState],
 ) -> None:
-    """An event_id that doesn't appear in the active log returns the
-    structured `{"status": "not_found", ...}` shape. Distinguishable
+    """An event_id that doesn't appear anywhere in the event log returns
+    the structured `{"status": "not_found", ...}` shape. Distinguishable
     from validation errors (which raise ValueError) by the absence of
     an exception."""
     server, _, _ = server_with_events
@@ -406,3 +411,85 @@ async def test_acknowledge_miss_rejects_overlong_reason(
         reason="y" * _MAX_REASON_LENGTH,
     )
     assert res["status"] == "acknowledged"
+
+
+# ---------------------------------------------------------------------------
+# Search scope — the lookup covers rotated archives, and the contract
+# text says so
+# ---------------------------------------------------------------------------
+
+
+async def test_acknowledge_miss_finds_search_miss_in_rotated_archive(
+    server_with_events: tuple[Any, Path, SessionState],
+) -> None:
+    """A search_miss living ONLY in a rotated archive is found and
+    acked. The handler walks `iter_all_events`, which merges rotated
+    `.jsonl.gz` segments with the active log, and archives are never
+    auto-pruned — so rotation can never be the cause of a `not_found`.
+    Grounds the text contract the two tests below pin."""
+    server, memory_dir, _ = server_with_events
+    archived = {
+        "kind": "search_miss",
+        "ts": "2026-01-01T00:00:00+00:00",
+        "session": "sess_archived",
+        "event_id": "01JARCHIVED_MISS_EVENT_X",
+    }
+    (memory_dir / ".events-20260101T000000Z.jsonl.gz").write_bytes(
+        gzip.compress(json.dumps(archived).encode("utf-8") + b"\n")
+    )
+
+    res = await _call(
+        server,
+        "memory_acknowledge_miss",
+        event_id="01JARCHIVED_MISS_EVENT_X",
+        reason="archived miss, still a false positive",
+    )
+    assert res["status"] == "acknowledged"
+    acks = [e for e in _events(memory_dir) if e["kind"] == "miss_ack"]
+    assert len(acks) == 1
+    assert acks[0]["event_id"] == "01JARCHIVED_MISS_EVENT_X"
+
+
+async def test_acknowledge_miss_not_found_hint_names_true_search_scope(
+    server_with_events: tuple[Any, Path, SessionState],
+) -> None:
+    """The not_found hint must describe the search the handler actually
+    performs — the whole log, rotated archives included — so a
+    not_found diagnoses a bad id (mistyped, stale, or pre-T4), never
+    rotation. A hint offering "may have rotated to archive" as the
+    cause names an impossible explanation and steers the caller toward
+    the wipe-everything bulk cutoff for an id that was simply wrong."""
+    server, _, _ = server_with_events
+    res = await _call(
+        server,
+        "memory_acknowledge_miss",
+        event_id="01JFAKE_NEVER_EXISTED_XX",
+        reason="testing hint wording",
+    )
+    assert res["status"] == "not_found"
+    hint = res["hint"]
+    # The impossible cause is gone...
+    assert "rotated to archive" not in hint
+    # ...the true search scope is stated...
+    assert "rotated archives" in hint
+    # ...and the two real causes remain diagnosable.
+    assert "recent_silent_misses" in hint
+    assert "acknowledge-misses-before" in hint
+
+
+async def test_acknowledge_miss_desc_names_true_search_scope(
+    server_with_events: tuple[Any, Path, SessionState],
+) -> None:
+    """Same contract on the DESC: not_found is documented as a
+    whole-log (active + rotated archives) verdict, and the ack's
+    exclusion is documented as surviving rotation — the health rollups
+    read archives through the same `iter_all_events` walk the handler
+    uses."""
+    server, _, _ = server_with_events
+    tools = await server.list_tools()
+    desc = next(t.description for t in tools if t.name == "memory_acknowledge_miss")
+    assert desc is not None
+    assert "rotated to archive" not in desc
+    assert "rotated archives" in desc
+    # Rotation does not undo an ack — no rotation caveat on persistence.
+    assert "until the log is rotated" not in desc
