@@ -7932,3 +7932,46 @@ def test_session_start_hook_ok_when_an_INSTALLED_plugin_carries_the_binding(
     assert diag.status == "ok", diag.message
     assert diag.details["wired_in"] == str(installed)
     assert len(diag.details["stale_bindings"]) == 1
+
+
+def test_distinfo_metadata_body_name_does_not_greenlight_missing_header_name(
+    tmp_path: Path,
+) -> None:
+    """`Name:` must live in the RFC-822 HEADER section. A METADATA whose
+    header lacks the field but whose body carries a `Name:` line (a
+    long_description echoing packaging fields) used to pass: the chunked
+    read stops at the blank-line terminator, but the terminator chunk's
+    trailing body bytes stayed in the searched buffer, so body text
+    green-lit a header the loader cannot answer `version()` from."""
+    _make_distinfo(
+        tmp_path,
+        "noheader-1.0.dist-info",
+        files={
+            "METADATA": (
+                "Metadata-Version: 2.4\nVersion: 1.0\n\n"
+                "Body echoing packaging fields:\nName: noheader\n"
+            )
+        },
+    )
+    diag = _check_distinfo_metadata(site_packages=[tmp_path])
+    assert diag.status == "warn"
+    assert "noheader-1.0.dist-info" in diag.message
+
+
+def test_mcp_client_configs_non_utf8_config_is_that_files_finding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A client config with a non-UTF8 byte degrades to that FILE's
+    `unreadable` finding, like a permission error or broken JSON does.
+    Pre-fix the UnicodeDecodeError escaped the per-file catch entirely,
+    and `_safe` converted it into a whole-check `fail` labeled a
+    bettermemory bug (exit 2) — this call raised instead of returning."""
+    target = tmp_path / "fake_config.json"
+    target.write_bytes(b"\xff\xfe not utf-8 json")
+    monkeypatch.setattr("bettermemory.doctor.KNOWN_CLIENTS", _tmp_clients(tmp_path))
+    monkeypatch.setattr(
+        "bettermemory.doctor.find_binary", lambda: "/usr/local/bin/bettermemory"
+    )
+    diag = _check_mcp_client_configs()
+    assert diag.status != "fail"

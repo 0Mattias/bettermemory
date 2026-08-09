@@ -4070,7 +4070,11 @@ def _check_mcp_client_configs() -> Diagnosis:
             try:
                 text = path.read_text(encoding="utf-8")
                 data = json.loads(text) if text.strip() else {}
-            except (OSError, json.JSONDecodeError) as exc:
+            # UnicodeDecodeError sits beside the other two: one client
+            # config with a non-UTF8 byte is that FILE's finding, not a
+            # doctor crash — without it, `_safe` converted the escape
+            # into a whole-check "file an issue" fail.
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
                 findings.append(
                     {
                         "client": client_name,
@@ -4456,7 +4460,29 @@ def _check_distinfo_metadata(site_packages: list[Path] | None = None) -> Diagnos
                             joined = b"".join(chunks)
                             if b"\n\n" in joined or b"\r\n\r\n" in joined:
                                 break
-                    header_section = b"".join(chunks).decode("utf-8", errors="replace")
+                    joined = b"".join(chunks)
+                    # Cut at the terminator before searching: the chunk
+                    # that contains the blank line also carries the
+                    # first body bytes (or, capped with no terminator,
+                    # the buffer is body-heavy), and a `Name:` line in
+                    # the BODY — a long_description echoing metadata —
+                    # must not green-light a header that lacks the
+                    # field. Earliest of the two spellings wins; pure
+                    # CRLF text never contains bare `\n\n`.
+                    cut = min(
+                        (
+                            idx
+                            for idx in (
+                                joined.find(b"\n\n"),
+                                joined.find(b"\r\n\r\n"),
+                            )
+                            if idx != -1
+                        ),
+                        default=-1,
+                    )
+                    if cut != -1:
+                        joined = joined[:cut]
+                    header_section = joined.decode("utf-8", errors="replace")
                     header_ok = bool(re.search(r"(?m)^Name:\s*\S", header_section))
                 except OSError:
                     header_ok = False

@@ -2208,9 +2208,12 @@ def compute_widening_detail(
     for name, rule in rules_in_use.items():
         turns = flagged_by_rule[name]
         # Newest first; undated rows sink to the end in stream order.
+        # Under reverse=True the LOWEST key lands last, so undated rows
+        # take rank 0 and dated ones rank 1 — the (0, ...) spelling put
+        # undated rows at the TOP of a "newest first" list.
         turns_sorted = sorted(
             turns,
-            key=lambda t: (0, t.ts) if t.ts is not None else (1, ""),
+            key=lambda t: (1, t.ts) if t.ts is not None else (0, ""),
             reverse=True,
         )
         rollup: dict[str, WideningMemoryRollup] = {}

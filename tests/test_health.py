@@ -3891,3 +3891,25 @@ def test_every_production_dead_weight_call_arms_the_telemetry_gate() -> None:
         f"the measurement to the callee's own walk) — leaving it at the "
         f"default ships that surface reporting a missing Stop hook as rot."
     )
+
+
+def test_render_text_distinguishes_no_signal_only_from_never_audited() -> None:
+    """The render half of the round-88 split: `no_signal_total` must be
+    VISIBLE, not just counted. Pre-fix `render_text` gated the section on
+    `audited_total > 0 or miss_total > 0` and printed `no_signal_total`
+    nowhere, so an all-no-signal store (probe ran, nothing measurable)
+    rendered byte-identically to a store whose audit hook never fired —
+    the exact indistinguishability the stats docstring promises the
+    field eliminates."""
+    events = [
+        _event("turn_audited", ts=_utc(2026, 4, d), verdict="no_signal")
+        for d in range(1, 6)
+    ]
+    report = compute_health([], events, now=_utc(2026, 5, 1))
+    text = render_text(report)
+    assert "no_signal=5" in text
+    assert "no measurable audits" in text
+
+    never_audited = render_text(compute_health([], [], now=_utc(2026, 5, 1)))
+    assert "Silent misses" not in never_audited
+    assert text != never_audited

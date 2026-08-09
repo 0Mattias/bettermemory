@@ -2540,15 +2540,26 @@ def render_text(report: HealthReport) -> str:
             lines.append(f"  ... and {ce.total - len(ce.rows)} more")
 
     sm = report.silent_misses
-    if sm.audited_total > 0 or sm.miss_total > 0:
+    if sm.audited_total > 0 or sm.miss_total > 0 or sm.no_signal_total > 0:
         lines.append("")
+        # `no_signal` rides the header so the two shapes the stats
+        # docstring promises to distinguish actually render apart: a
+        # store whose every audit stopped at the no-signal branch used
+        # to print byte-identically to one whose audit hook never fired.
         lines.append(
             f"Silent misses — audited={sm.audited_total}  "
             f"miss={sm.miss_total}  "
+            f"no_signal={sm.no_signal_total}  "
             f"unique_memories={sm.unique_miss_memories}  "
             f"(emit via memory_audit_turn from a client-side end-of-turn hook):"
         )
-        if sm.miss_total == 0:
+        if sm.audited_total == 0 and sm.no_signal_total > 0:
+            lines.append(
+                "  (no measurable audits — every audited turn stopped at "
+                "the no-signal branch: empty store, empty query, or an "
+                "unavailable semantic model)"
+            )
+        elif sm.miss_total == 0:
             lines.append("  (none — audit ran and found no misses)")
         else:
             miss_rate_pct: float | None = (
