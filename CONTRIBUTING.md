@@ -42,7 +42,7 @@ pyright                           # secondary type gate (scoped to src/)
 python bench/storage.py --sizes 1000,10000,50000
 ```
 
-CI runs `uv sync --extra dev --extra ui` followed by `ruff check . && ruff format --check . && mypy && pytest -q` on Python 3.11, 3.12, 3.13, and 3.14 (Ubuntu) plus 3.14 macOS and Windows slots, with an 80% coverage floor enforced via `--cov-fail-under`. A separate job runs `pyright` (the secondary type gate, scoped to `src/`) on 3.14. The `[ui]` extra is installed alongside `[dev]` so mypy and pyright can resolve the `fastapi` / `uvicorn` imports in `src/bettermemory/web.py` (strict mode flags missing types on imported decorators) and so `tests/test_web.py` runs as actual coverage. Anything that fails CI is blocking on merge.
+CI runs `uv sync --extra dev` followed by `ruff check . && ruff format --check . && mypy && pytest -q` on Python 3.11, 3.12, 3.13, and 3.14 (Ubuntu) plus 3.14 macOS and Windows slots, with an 80% coverage floor enforced via `--cov-fail-under`. A separate job runs `pyright` (the secondary type gate, scoped to `src/`) on 3.14. Anything that fails CI is blocking on merge.
 
 Note the scopes differ: `mypy` type-checks `src/` **and** `tests/`, `pyright` only `src/`. So a type error in a test file goes red via mypy, not pyright.
 

@@ -74,9 +74,9 @@ declared claims on `memory_write` / `memory_verify` (3.40.0).
 - Scales past ~500 memories via a derived SQLite FTS5 index. The
   markdown files stay canonical; upgrades rebuild it automatically,
   and `bettermemory reindex` rebuilds on demand.
-- Cross-machine sync over your own git remote, a local web UI, and an
-  eval CLI (`memory_helped_rate` / `endorsement_rate` /
-  `silent_miss_rate`, see [eval.md](eval.md)).
+- Cross-machine sync over your own git remote, and an eval CLI
+  (`memory_helped_rate` / `endorsement_rate` / `silent_miss_rate`,
+  see [eval.md](eval.md)).
 
 ## Storage
 
@@ -154,8 +154,6 @@ bettermemory consolidate      # dedup/demote pass (dry-run; --llm for more)
 bettermemory eval             # the three metrics, with CIs
 bettermemory eval --report    # same telemetry as publishable markdown
 bettermemory sync push|pull   # git-based cross-host sync
-bettermemory ui               # local curation UI ([ui] extra)
-bettermemory ui --tunnel      # share it read-only (tailnet by default)
 ```
 
 `bettermemory <command> --help` for flags; `reindex`, `ingest`,
@@ -174,7 +172,6 @@ Defaults are sensible; most installs never edit it. See
 - No encryption at rest. Don't store secrets (a write-time check
   refuses secret-shaped tokens); use disk encryption if you need it.
 - Sync conflicts are git merge conflicts; there is no auto-resolution.
-- The web UI is read-mostly; writes happen in-conversation.
 - Multi-process file locking works on Windows, but not identically to
   POSIX. Both platforms lock a persistent sidecar lockfile next to the
   target; POSIX takes a blocking whole-file `fcntl.flock(LOCK_EX)`,

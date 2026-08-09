@@ -1190,7 +1190,6 @@ def surface_claim_counts() -> dict[str, int]:
 # the claims down. README additionally folded its input-schema figure into
 # the internals paragraph, which is why the two surfaces now differ.
 _CLAIM_FLOORS = {
-    "README.md": 2,
     "docs/internals.md": 3,
 }
 
@@ -1205,15 +1204,15 @@ def test_coverage_floor_the_known_claim_bearing_surfaces_still_match() -> None:
     extractor's reach — that turns a green run into no run.
 
     Recorded at the time of writing, for a reader chasing a change here:
-    the README bullet and the internals paragraph each state the serialized
-    tool-surface cost in four figures. (The doctor fix hint used to state
-    the lexical-to-semantic recall lift in four more; the 4.0.0 purist
-    strip removed that check, hint and all, so doctor dropped out of the
-    floor table legitimately.) The descriptions and the instructions
-    block state no measurement at all, by design — the truth-sync pass
-    moved the one they carried into a module docstring, because a rate is
-    only honest beside its caveat and an always-resident string should
-    not spend characters on one.
+    the internals paragraph states the serialized tool-surface cost in
+    four figures. (The doctor fix hint dropped out with the 4.0.0 purist
+    strip; README.md dropped out at 5.0.0 by owner directive — the README
+    carries NO measurements at all now, because dated numbers in a
+    front page rot faster than anyone re-measures them. Evidence lives in
+    bench/ and docs, where it sits beside its caveats and dates.) The
+    descriptions and the instructions block state no measurement at all,
+    by design — a rate is only honest beside its caveat and an
+    always-resident string should not spend characters on one.
     """
     counts = surface_claim_counts()
     for source, floor in _CLAIM_FLOORS.items():
@@ -1223,6 +1222,27 @@ def test_coverage_floor_the_known_claim_bearing_surfaces_still_match() -> None:
             f"(fine — update this floor) or the extractor stopped reaching "
             f"them (not fine — the guard is now blind there)."
         )
+
+
+def test_readme_carries_no_measurement_claims() -> None:
+    """The front page carries ZERO measurements — a 5.0.0 owner decision.
+
+    Dated numbers on a front page rot faster than anyone re-measures
+    them: the pre-5.0 README quoted a tool-surface byte count measured
+    three minor versions earlier as if current, on a project whose
+    thesis is that stale claims get flagged. Evidence lives in bench/
+    and the docs, beside its dates and caveats; the README states what
+    the product does in timeless terms. A measurement claim appearing
+    in README.md is a regression, not an addition — move it to the doc
+    that can carry its date.
+    """
+    counts = surface_claim_counts()
+    assert counts.get("README.md", 0) == 0, (
+        f"README.md now states {counts['README.md']} measurement "
+        "claim(s). The front page carries no numbers by design — put "
+        "the figure in bench/ or docs/ next to its date and artifact, "
+        "and link it."
+    )
 
 
 def test_resident_descriptions_state_no_measurement() -> None:

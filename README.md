@@ -40,43 +40,31 @@ Offline, throwaway store.
 
 ## What it does
 
-- Every hit carries a staleness verdict — calendar age, the paths it
-  cites, commits landed since it was last confirmed.
-- That verdict is measured, not asserted. A preregistered benchmark
-  ([bench/rot][rot]) grades the shipped staleness code against git
-  ground truth on 30 repositories it did not choose — 37,635 claims
-  (the artifact's `pooled_claims`), every prediction filed before the
-  run and the misses published as retractions rather than
-  renegotiated. The claim-level tier reads 94% precision at 1.1
-  alerts per catch against the file-level signal's 3.4
-  ([artifact][rot-artifact]); declared claims on `memory_write` /
-  `memory_verify` are that detector shipped (3.40.0).
-- Retrieval is a deliberate tool call, with one score-gated exception:
-  on the rare prompts where the silent-miss probe says memory was
-  needed (the measured rate lives in [docs/eval-results.md][eval-results]),
-  the recall hook injects the top hit's id + snippet — a
-  pointer, never a body, so verification still runs through
-  `memory_show` (`[behavior] prompt_recall`; off = purely opt-in). A
-  second exception ships default-off: `[behavior] standing_tier`
-  delivers the repository's fresh-verified `ambient` memories whole at
-  session start (capped at ~1 KB, truncated only at memory
-  boundaries), because
-  opt-in retrieval cannot serve knowledge whose trigger condition is
-  not knowing you need it — and verification is the admission ticket,
-  so a stale ambient memory is never delivered, only named in an
-  aggregate verify-to-restore line. The
-  18 default tools still charge schema every turn: a serialized
-  `tools/list` of 33,960 bytes, 27,092 of it names and descriptions,
-  measured 2026-07-31 at 3.32.0 ([bench/toolcost][toolcost]). CI caps
-  the descriptions.
-- Write gates: transient state, secret-shaped tokens and near-duplicates
-  bounce; claims about *you* stage for confirmation.
-- One markdown file per memory. Greppable, git-syncable. Markdown is
-  canonical; the SQLite index next to it is a derived cache you can
-  delete. No cloud, no account.
-- `bettermemory eval` measures whether memory helped, against your own
-  log. [Ours is published][eval-results] — one store, one user, misses
-  included.
+- **Checks memory before believing it.** Every hit carries a staleness
+  verdict: calendar age, whether the paths it cites still exist, and
+  the commits landed since it was last confirmed. Declared claims
+  (`path`, `path::symbol`, `path::NAME=literal`) are re-checked
+  against the working tree; a claim that stops being true blocks the
+  stamp instead of riding along.
+- **Retrieval is deliberate.** Memory is a tool call, not an
+  injection. Write gates bounce transient state, secret-shaped tokens
+  and near-duplicates; claims about *you* stage for confirmation.
+- **The code is the model.** Search is deterministic lexical ranking —
+  keyword + BM25, fused — over your own vocabulary. No embedding
+  models, no downloads, nothing to warm up, same answer every time.
+- **Plain files.** One markdown file per memory. Greppable,
+  git-syncable, no cloud, no account. The SQLite index beside the
+  files is a derived cache you can delete; `bettermemory reindex`
+  rebuilds it.
+- **Rot gets acted on, not accumulated.** Episodes journal per-session
+  run-state without polluting durable search; health telemetry and
+  curation tools surface what drifted, what went cold, and what
+  contradicts what.
+- **Receipts, not adjectives.** The claims above are measured by
+  preregistered benchmarks with published artifacts — misses included
+  — in [bench/][bench], and `bettermemory eval` scores whether memory
+  actually helped against your own log ([ours is
+  published][eval-results]).
 
 ## For agents
 
@@ -116,6 +104,7 @@ postmortems in [incidents][incidents]; release history in
 MIT licensed — see [LICENSE][license].
 
 [api]: https://github.com/0Mattias/bettermemory/blob/main/docs/api.md
+[bench]: https://github.com/0Mattias/bettermemory/tree/main/bench
 [changelog]: https://github.com/0Mattias/bettermemory/blob/main/CHANGELOG.md
 [clients]: https://github.com/0Mattias/bettermemory/blob/main/docs/clients.md
 [clients-continue]: https://github.com/0Mattias/bettermemory/blob/main/docs/clients.md#continue-legacy-shape--see-caveat
@@ -126,6 +115,3 @@ MIT licensed — see [LICENSE][license].
 [installation]: https://github.com/0Mattias/bettermemory/blob/main/docs/installation.md
 [internals]: https://github.com/0Mattias/bettermemory/blob/main/docs/internals.md
 [license]: https://github.com/0Mattias/bettermemory/blob/main/LICENSE
-[rot]: https://github.com/0Mattias/bettermemory/blob/main/bench/rot/README.md
-[rot-artifact]: https://github.com/0Mattias/bettermemory/blob/main/bench/rot/results/multirepo-anchored-2026-07-30.json
-[toolcost]: https://github.com/0Mattias/bettermemory/blob/main/bench/toolcost/README.md

@@ -8,19 +8,15 @@ pipx install bettermemory          # or pipx
 pip install bettermemory           # or plain pip into a venv
 ```
 
-Optional extras:
-
-```sh
-uv tool install 'bettermemory[ui]'                # FastAPI + uvicorn for `bettermemory ui`
-```
-
-(Pre-4.0 there were also `embeddings` / `embeddings-fast` extras that
-loaded a sentence-transformers or fastembed model into retrieval and
-write-time dedup. The 4.0.0 purist strip removed the embedding lane
-whole — every ranker is deterministic lexical code, and no extra brings
-a model back. If an old config file still says `search_mode =
-"semantic"`, it is normalised to `hybrid` with one loud warning; delete
-the line to silence it.)
+There are no runtime extras. (Pre-4.0, `embeddings` /
+`embeddings-fast` extras loaded a sentence-transformers or fastembed
+model into retrieval and write-time dedup — the 4.0.0 purist strip
+removed the embedding lane whole; every ranker is deterministic
+lexical code, and no extra brings a model back. If an old config file
+still says `search_mode = "semantic"`, it is normalised to `hybrid`
+with one loud warning; delete the line to silence it. Pre-5.0 a `ui`
+extra served a local web UI; 5.0.0 removed it — the store is markdown
+plus your normal tools, and curation happens in-conversation.)
 
 Python 3.11–3.14. From a development clone: `uv tool install .` (or
 `uv pip install -e .` for editable). Either path puts a `bettermemory`
