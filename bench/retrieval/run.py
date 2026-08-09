@@ -210,6 +210,59 @@ def corpus_fingerprint(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _provenance() -> dict[str, object]:
+    """Version + commit + platform stamp for the emitted artifact.
+
+    An artifact that cannot say which engine produced it ages into a
+    number nobody can re-derive — the exact failure this benchmark was
+    built to end. Best-effort: outside a git checkout the commit reads
+    None rather than failing the run. `tree_dirty` counts tracked
+    modifications only, so a run's own freshly written result files
+    (untracked) don't mark it dirty.
+    """
+    import platform
+    import subprocess
+    from datetime import date
+
+    import bettermemory
+
+    commit: str | None = None
+    tree_dirty: bool | None = None
+    try:
+        commit = (
+            subprocess.run(
+                ["git", "rev-parse", "--short", "HEAD"],
+                capture_output=True,
+                text=True,
+                cwd=str(_HERE),
+                timeout=10,
+            ).stdout.strip()
+            or None
+        )
+        tree_dirty = bool(
+            subprocess.run(
+                ["git", "status", "--porcelain", "--untracked-files=no"],
+                capture_output=True,
+                text=True,
+                cwd=str(_HERE),
+                timeout=10,
+            ).stdout.strip()
+        )
+    except OSError:
+        pass
+    return {
+        "bettermemory_version": bettermemory.__version__,
+        "commit": commit,
+        "tree_dirty": tree_dirty,
+        "date": date.today().isoformat(),
+        "machine": {
+            "os": f"{platform.system()} {platform.release()}",
+            "machine": platform.machine(),
+            "python": platform.python_version(),
+        },
+    }
+
+
 def build_store(
     root: Path, corpus_path: Path, *, pad_to: int | None
 ) -> tuple[dict[str, str], int]:
@@ -765,6 +818,7 @@ def main() -> int:
         print(
             json.dumps(
                 {
+                    "provenance": _provenance(),
                     "corpus": corpus_path.name,
                     "corpus_sha256": corpus_fingerprint(corpus_path),
                     "corpus_size": corpus_n,
