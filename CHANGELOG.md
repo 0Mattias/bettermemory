@@ -13,7 +13,7 @@ spells out exactly what's stable.
 
 An owner decision, same register as 4.0.0's: the store is markdown
 files plus your normal tools, and a bundled dashboard is surface area,
-not product. Removed rather than parked:
+not product. Removed rather than parked (`66e302f`):
 
 - The `web` module and every route it served, the `bettermemory ui`
   subcommand (`--tunnel` included), and the `[ui]` extra — `fastapi`
