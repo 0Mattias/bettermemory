@@ -2406,8 +2406,8 @@ def test_mark_verified_does_not_itself_check_path_existence(store: Store) -> Non
     Two reasons, and both bite if someone "helpfully" moves the check down
     here. First, `Store.mark_verified` is the persistence primitive, matching
     `Store.write`'s split: the store enforces structural limits, policy sits
-    above it — and exactly one production caller passes attestations at all
-    (`web.py` passes none), so there is no second attesting caller for a
+    above it — and no production caller besides the handler passes
+    attestations at all, so there is no second attesting caller for a
     handler-level check to miss. Second, the concurrency and cap suites use
     `verified_paths` as an opaque marker to exercise CAS and size seams;
     enforcing existence here breaks four concurrency tests and roughly

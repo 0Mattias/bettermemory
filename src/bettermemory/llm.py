@@ -388,9 +388,9 @@ class OllamaProvider:
     egress beyond localhost; no API key required.
 
     Lazy-imports `httpx` so the consolidate module loads even when the
-    HTTP client isn't installed. (`httpx` ships with `[dev]` for tests
-    and with `[ui]` for FastAPI's TestClient, so it's almost always
-    available; the lazy guard handles the rare clean-install case.)
+    HTTP client isn't installed. (`httpx` ships with `[dev]` for tests;
+    the lazy guard handles the clean runtime install, where the call
+    site degrades with an install hint.)
     """
 
     name: str = "ollama"

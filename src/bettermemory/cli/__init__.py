@@ -49,7 +49,6 @@ from . import (
     sync,
     tombstones,
     try_cmd,
-    ui,
 )
 
 # Round-3 audit fix: the CLI modules for the ``health`` and
@@ -119,7 +118,6 @@ def _build_parser() -> tuple[
         "export": export.add_subparser(sub),
         "tombstones": tombstones.add_subparser(sub),
         "episodes": episodes.add_subparser(sub),
-        "ui": ui.add_subparser(sub),
         "sync": sync.add_subparser(sub),
         "reindex": reindex.add_subparser(sub),
         "audit-turn": audit_turn_cmd.add_subparser(sub),
@@ -173,9 +171,6 @@ def main() -> None:
         return
     if cmd == "episodes":
         episodes.run(args, sub_parser=subparsers["episodes"])
-        return
-    if cmd == "ui":
-        ui.run(args)
         return
     if cmd == "sync":
         sync.run(args, sub_parser=subparsers["sync"])

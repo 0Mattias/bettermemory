@@ -1561,9 +1561,8 @@ def test_multi_process_concurrent_disjoint_updates_no_silent_clobber(
 # rebase action is "re-fetch via memory_show and retry," same as W2,
 # regardless of which field actually moved). The `memory_verify`
 # handler loads its snapshot first and opts in; legacy direct-store
-# callers (web.py verify form, no-arg slide-forward use cases, the
-# existing test suite) keep the back-compat `check_expected=False`
-# default.
+# callers (no-arg slide-forward use cases, the existing test suite)
+# keep the back-compat `check_expected=False` default.
 #
 # Fingerprint choice: `updated` doesn't move on a `mark_verified` call
 # (verification is orthogonal to content edits), so checking `updated`
@@ -1715,8 +1714,8 @@ def test_mark_verified_cas_happy_path_passthrough(tmp_path: Path) -> None:
 
 def test_mark_verified_check_expected_false_bypasses_cas(tmp_path: Path) -> None:
     """`check_expected=False` (the default) is the back-compat path —
-    legacy callers without a snapshot (web.py verify form, no-arg
-    slide-forward, direct in-process tooling) must continue to work
+    legacy callers without a snapshot (no-arg slide-forward, direct
+    in-process tooling) must continue to work
     without triggering the CAS.
     """
     store = Store(tmp_path)

@@ -1535,10 +1535,10 @@ def _normalize_candidate(raw: str) -> str | None:
         # carry an extension (`/foo.txt`). The narrowing also filters
         # bare top-level dirs (`/etc`, `/usr`, `/var`) — those always
         # exist on the systems this runs on, so no real drift signal is
-        # lost. Concrete bite this fixes: the canonical bettermemory
-        # body cites `/verify` (the web UI POST route) and the
-        # extractor was reading it as a missing filesystem path,
-        # producing a phantom `path_drift_missing=1` on every retrieval.
+        # lost. Concrete bite this fixed: a memory body cited `/verify`
+        # (a POST route of the since-removed web UI) and the extractor
+        # was reading it as a missing filesystem path, producing a
+        # phantom `path_drift_missing=1` on every retrieval.
         if _is_single_segment_routelike(s):
             return None
         return s

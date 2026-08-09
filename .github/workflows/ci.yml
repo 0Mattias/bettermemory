@@ -88,12 +88,7 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Sync dependencies
-        # `[ui]` is installed alongside `[dev]` so mypy can resolve the
-        # `fastapi` / `uvicorn` imports in `src/bettermemory/web.py`
-        # (strict mode flags missing types on imported decorators) and
-        # so `tests/test_web.py` runs as actual coverage instead of
-        # being skipped via `pytest.importorskip("fastapi")`.
-        run: uv sync --extra dev --extra ui
+        run: uv sync --extra dev
 
       - name: Lint
         run: uv run ruff check .
@@ -197,11 +192,9 @@ jobs:
         run: uv python install 3.14
 
       - name: Sync dependencies
-        # `[ui]` is installed so pyright resolves the fastapi / uvicorn
-        # imports in web.py, mirroring the mypy step in the test job. The
-        # `[tool.pyright]` config pins `venv = ".venv"`, which `uv sync`
-        # populates here.
-        run: uv sync --extra dev --extra ui
+        # The `[tool.pyright]` config pins `venv = ".venv"`, which
+        # `uv sync` populates here.
+        run: uv sync --extra dev
 
       - name: Pyright
         run: uv run pyright

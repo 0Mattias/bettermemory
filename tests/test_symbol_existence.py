@@ -527,8 +527,9 @@ def test_mark_verified_does_not_itself_check_symbols(
     """The LAYER SPLIT, pinned for this check the same way it is pinned
     for the attestation-existence refusal: policy sits in the handler,
     the store stays a persistence primitive. A store that grew opinions
-    about body content would apply them to `web.py`'s verify endpoint
-    and every test that uses the primitive as a fixture."""
+    about body content would apply them to every caller that uses the
+    primitive as a fixture — and, pre-5.0, to the web UI's verify
+    endpoint, which is where the split was first defended."""
     store = Store(memory_dir)
     mid = _plant(memory_dir, "`vanished_helper` in `pkg/mod.py` does the work.", tree)
     verified = store.mark_verified(mid)

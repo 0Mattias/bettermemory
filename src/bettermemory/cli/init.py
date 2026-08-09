@@ -99,8 +99,8 @@ def run(args: argparse.Namespace) -> None:
         # atomic_write_bytes) can fail on an unwritable or non-directory
         # --config-path parent (PermissionError / NotADirectoryError /
         # ENOSPC). Render a clean error + exit 2 instead of a raw
-        # traceback, mirroring the ImportError -> exit-2 pattern in
-        # `bettermemory ui`. (A plain nonexistent path does NOT reach here
+        # traceback, matching the sibling subcommands' error style.
+        # (A plain nonexistent path does NOT reach here
         # — mkdir(parents=True) creates the tree; only a genuinely
         # unwritable or non-directory ancestor raises.)
         #

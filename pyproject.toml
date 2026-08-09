@@ -69,12 +69,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# The web UI imports `fastapi` and `uvicorn` directly — that's the
-# whole runtime surface. `httpx` is *not* a runtime dep; it's only
-# needed by FastAPI's TestClient (lives in `dev`). Shipping it in
-# `[ui]` made every `pip install bettermemory[ui]` drag an extra dep
-# with no runtime use.
-ui = ["fastapi>=0.110", "uvicorn>=0.27"]
 dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.21",
@@ -87,8 +81,10 @@ dev = [
     # Pinned only on the lower bound; any reasonably modern hypothesis
     # has the strategies we use.
     "hypothesis>=6.0",
-    # FastAPI's TestClient is implemented on top of httpx — needed
-    # for tests/test_web.py only. Not a runtime dep of `[ui]`.
+    # `llm.OllamaProvider` lazy-imports httpx at call time; dev carries
+    # it so the provider's tests exercise the real client. Not a runtime
+    # dependency — a clean install without dev degrades with an install
+    # hint at the call site.
     "httpx>=0.27",
 ]
 
@@ -161,7 +157,7 @@ warn_return_any = false
 disable_error_code = ["type-arg", "no-untyped-def", "no-untyped-call"]
 
 [[tool.mypy.overrides]]
-# Optional runtime SDKs. `httpx` is in the [dev] extra (FastAPI's TestClient depends on it) but
+# Optional runtime SDKs. `httpx` ships in the [dev] extra but
 # `bettermemory.llm` reaches for it inside `OllamaProvider.propose()` so we
 # don't crash imports on a clean install missing dev. `anthropic` / `openai`
 # are runtime-optional SDKs guarded by the same lazy-import pattern.
@@ -196,7 +192,7 @@ ignore_missing_imports = true
 include = ["src/bettermemory"]
 extraPaths = ["src"]
 # Type-check against the uv-managed dev venv at `.venv`, which CI's
-# `uv sync --extra dev --extra ui` populates in-repo.
+# `uv sync --extra dev` populates in-repo.
 #
 # On a checkout inside a cloud-synced folder the venv lives OUTSIDE the
 # repo (see `.envrc`), so there is no in-repo `.venv` for pyright to find

@@ -364,7 +364,7 @@ class Recorder:
     # event. Lets cross-session consumers (`episode_handoff`) worktree-
     # match a prior session even when it wrote NO episodes, only events
     # (queue #28). None when the process isn't inside a git checkout or
-    # the construction site didn't supply it (web UI, legacy callers);
+    # the construction site didn't supply it (legacy callers);
     # downstream treats an absent field as "unknown worktree" and stays
     # conservative.
     worktree_root: str | None = None

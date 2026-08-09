@@ -1778,10 +1778,10 @@ def test_divergence_warning_is_independent_per_root(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     """Two distinct diverged roots each get their own warning — the
-    one-shot guard is per-root, not global. Otherwise a process that
-    serves multiple memory directories (testing, a long-lived
-    `bettermemory ui` instance pointing at swapped configs) would
-    suppress the second root's warning silently."""
+    one-shot guard is per-root, not global. Otherwise a long-lived
+    process that serves multiple memory directories (testing, a server
+    re-pointed across configs) would suppress the second root's
+    warning silently."""
     from bettermemory import store as _store
 
     root_a = tmp_path / "root_a"

@@ -670,9 +670,9 @@ class Store:
         the contract is "reread + reattest," not "silent merge."
 
         `check_expected=False` (the default) is the back-compat escape
-        hatch for callers that don't have a snapshot — e.g. the web UI
-        verify form, the legacy direct-store callers in tests, the
-        no-arg slide-the-timestamp-forward use case. Not exposed through
+        hatch for callers that don't have a snapshot — the legacy
+        direct-store callers in tests and the no-arg
+        slide-the-timestamp-forward use case. Not exposed through
         the MCP `memory_verify` handler boundary; that handler always
         loads its snapshot first and opts in.
 
@@ -773,10 +773,10 @@ class Store:
             # store enforces structural limits; policy lives above it).
             # Refusing an unstattable `verified_paths` entry is the
             # `memory_verify` HANDLER's job — see `handlers/verify.py`.
-            # Exactly one production caller passes attestations at all
-            # (`web.py` calls this with none), so the chokepoint argument
-            # that justified `apply_write_gates` does not apply: there is
-            # no second attesting caller to bypass the handler.
+            # No production caller besides that handler passes
+            # attestations, so the chokepoint argument that justified
+            # `apply_write_gates` does not apply: there is no second
+            # attesting caller to bypass the handler.
             update: dict[str, object] = {"last_verified_at": utcnow()}
             if verified_paths is not None:
                 update["verified_paths"] = list(verified_paths)

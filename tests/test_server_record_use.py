@@ -266,9 +266,10 @@ async def test_record_use_with_telemetry_disabled_is_noop(
 async def test_record_use_rejects_oversized_note(
     server_with_events: tuple[Any, Path],
 ) -> None:
-    """The web UI caps `note` at 500 chars on /verify. The MCP entry
-    point now matches: a hostile client (or a runaway model) can't
-    inflate the JSONL event log with multi-megabyte notes."""
+    """`note` caps at 500 chars so a hostile client (or a runaway
+    model) can't inflate the JSONL event log with multi-megabyte
+    notes. (The cap predates 5.0: it matched the since-removed web
+    UI's /verify form so both entry points refused alike.)"""
     server, _ = server_with_events
     written = await _call(
         server, "memory_write", content="durable fact", scopes=["tools"]

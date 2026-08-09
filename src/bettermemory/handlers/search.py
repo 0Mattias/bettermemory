@@ -282,20 +282,19 @@ class RankingInputs(NamedTuple):
 
     One shape so the surfaces that rank memories cannot drift apart on
     THESE inputs: a knob lands in `resolve_ranking_inputs` once and every
-    caller threads it. Three consume it — this handler, the web UI's
-    `/memories` search, and (through both audit producers) the
-    silent-miss probe. Before this existed the web ran the same ranker
+    caller threads it. Two consume it — this handler and (through both
+    audit producers) the silent-miss probe. The helper earned its keep
+    when a third surface existed: the pre-5.0 web UI ran the same ranker
     with the config inputs dropped, so `endorsement_boost` /
     `outcome_demotion` / `corroboration_boost` / a tuned
     `recency_boost_half_life_days` reordered results for the model and
-    did nothing for the human reading the curation page.
+    did nothing for the human reading the curation page. The shape stays
+    so the next ranking surface starts threaded instead of drifted.
 
     Scope note: this covers the `[behavior]` knobs only, NOT the
     candidate pool or its BM25 corpus statistics — those are a separate
     decision with a separate helper (`resolve_search_pool`) and a
-    smaller reach. `web.py` deliberately ranks `store.load_all()` with
-    no `corpus_stats_provider` (the full corpus IS its own statistics),
-    so it threads this shape but not that one.
+    smaller reach.
 
     `events` is the raw windowed event read the two tallies shared —
     `None` when neither tally ran. Exposed so a caller that needs the
@@ -811,8 +810,8 @@ async def memory_search(
         corpus_stats_provider = pool.corpus_stats_provider
 
     # Config-driven ranking inputs (usage tallies + the boost/half-life
-    # knobs), resolved through the shared helper the web UI's /memories
-    # search calls too — see `resolve_ranking_inputs` for what each one
+    # knobs), resolved through the shared helper the audit producers
+    # call too — see `resolve_ranking_inputs` for what each one
     # does and why the event read is windowed. The event list it returns
     # is reused below for `recent_negative_outcomes`, so enabling either
     # tally adds no extra I/O on a hit-producing search.

@@ -594,13 +594,3 @@ def test_cli_tombstones_direct_import() -> None:
     with pytest.raises(SystemExit) as exc:
         subparser.parse_args(["--help"])
     assert exc.value.code == 0
-
-
-def test_cli_ui_direct_import() -> None:
-    from bettermemory.cli import ui
-
-    subparser = _registered_parser(ui, "ui")
-    assert callable(ui.run)
-    with pytest.raises(SystemExit) as exc:
-        subparser.parse_args(["--help"])
-    assert exc.value.code == 0

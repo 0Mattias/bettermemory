@@ -856,8 +856,9 @@ def test_tmp_foo_test_fixture_still_valid_path(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # Single-segment routes / identifiers (URL routes mistaken for fs paths)
 #
-# The canonical bite: a memory body documenting `/verify` (the web UI
-# POST route, NOT a filesystem path) was being extracted as a path
+# The canonical bite: a memory body documenting `/verify` (a POST
+# route of the since-removed web UI, NOT a filesystem path) was being
+# extracted as a path
 # candidate, stat'd, and surfaced as `path_drift_missing=1` on every
 # retrieval. The class is broader than `/verify` — any single-segment
 # absolute path without an extension is almost always a URL route or
@@ -4042,13 +4043,12 @@ def test_no_verdict_site_escalates_on_the_full_missing_set() -> None:
     reads the argument's SOURCE at every call site, which is the level
     the mistake happens on.
 
-    No file is excluded. `web.py` used to be: its `_render_memory_detail`
-    passed the full set while claiming the page "cannot disagree with
-    what the model sees for the same memory", and the carve-out existed
-    to record that known divergence rather than to bless it. The
-    divergence is gone, so the carve-out is too — the behavioural half of
-    that repair (the detail page and `memory_show` returning the same
-    verdict for a prose-only miss) is pinned in `test_web.py`.
+    No file is excluded. The since-removed web UI used to be: its
+    memory-detail renderer passed the full set while claiming the page
+    "cannot disagree with what the model sees for the same memory", and
+    the carve-out existed to record that known divergence rather than
+    to bless it. The divergence was repaired before 5.0 removed the
+    page whole; no carve-out remains.
     """
     import ast
 

@@ -21,19 +21,18 @@ Two arguments carry every spelling choice below, hoisted here from
   to. The virtualenv and development-clone forms follow as parenthetical
   variants, never lead.
 - **The extras spec is quoted.** ``[`` is a glob character, and zsh —
-  macOS's default shell — refuses an unquoted ``bettermemory[ui]``
+  macOS's default shell — refuses an unquoted ``bettermemory[dev]``
   outright ("no matches found"), so an unquoted spelling is a repair
   instruction that does not run.
 
-Import-free on purpose (pinned by test): ``doctor``, ``web``, ``llm``,
-and ``cli.ui`` all import this at module level, and a module with no
-imports of its own keeps every placement unconditionally cheap.
+Import-free on purpose (pinned by test): ``doctor`` and ``llm`` import
+this at module level, and a module with no imports of its own keeps
+every placement unconditionally cheap.
 
 The atoms are bare of backticks — the caller owns the prose around a
-command, and the surfaces deliberately compose different prose (the
-``ui`` CLI stacks the command on its own line; the web banner inlines
-it backticked mid-sentence). The two ``*_command`` forms at the bottom
-are the fully-backticked compositions ``doctor`` binds.
+command, and each surface composes its own. The two ``*_command``
+forms at the bottom are the fully-backticked compositions ``doctor``
+binds.
 """
 
 
@@ -79,7 +78,7 @@ def dev_clone_editable(extra: str) -> str:
     """Editable install of the extra from a development clone.
 
     The spec is quoted here too — ``".[<extra>]"`` — for the reason
-    `extras_spec` documents: an unquoted ``.[ui]`` is not pasteable
+    `extras_spec` documents: an unquoted ``.[dev]`` is not pasteable
     into zsh.
     """
     return f'uv pip install -e ".[{extra}]"'

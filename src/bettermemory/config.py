@@ -778,19 +778,15 @@ def _coerce_search_mode(value: object, *, config_path: Path | None) -> str:
 
     Unlike the scalars above this does NOT raise, and unlike the old bare
     `str(...)` it does not pass the value through untouched. Both of those
-    were wrong for this knob, because three consumers read it and each one
-    made a different assumption about what it holds:
-
-    - `handlers.search.memory_search` passes `search_mode or "hybrid"`
-      through unnormalised, and `search.search` raises on anything outside
-      the three literals.
-    - the web UI normalises an unrecognised value to `hybrid` and ranks
-      with it, because a page cannot 500 on a config typo.
-
-    Historically a config saying `search_mode = "Semantic"` loaded an
-    embedding model, made EVERY `memory_search` call raise, and served
-    a working lexical web page — three behaviours from one string.
-    Normalising here makes every consumer agree. Falling back rather
+    were wrong for this knob, because its consumers each made a different
+    assumption about what it holds: `handlers.search.memory_search` passed
+    `search_mode or "hybrid"` through unnormalised, `search.search` raises
+    on anything outside the three literals, and the since-removed web UI
+    silently ranked with its own hybrid fallback. Historically a config
+    saying `search_mode = "Semantic"` loaded an embedding model, made
+    EVERY `memory_search` call raise, and served a working lexical web
+    page — three behaviours from one string. Normalising here makes every
+    consumer agree. Falling back rather
     than raising follows `default_max_results`' rule that a bad value in
     one knob must not take the server down — and the fallback is loud.
     The legacy pre-4.0 value `"semantic"` lands here too: the lane was

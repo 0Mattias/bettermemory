@@ -9,9 +9,10 @@ its update silently clobbered when the original caller wrote back
 the stale body.
 
 With stdio MCP as the only consumer the race was hidden behind a
-single-writer assumption, but the web UI (web.py) and the sync
-wrapper (sync.py) shipped in 2.0 — each of them runs alongside the
-stdio server and can mutate the same files. The fix moves the read
+single-writer assumption, but 2.0 shipped writers that run alongside
+the stdio server and mutate the same files — the sync wrapper
+(sync.py) still does, as does any second server on the same store
+(the since-removed web UI was the original second writer). The fix moves the read
 inside the lock; these tests assert that invariant structurally by
 tracing `_load_path` / `_locked` / `frontmatter.load` events.
 """

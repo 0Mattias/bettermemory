@@ -500,14 +500,15 @@ def test_the_volume_gauge_has_exactly_one_call_site_in_the_package() -> None:
     )
 
 
-def test_report_for_directory_callers_are_the_three_curation_surfaces() -> None:
+def test_report_for_directory_callers_are_the_curation_surfaces() -> None:
     """The gauge's cost is bounded by who calls `report_for_directory`.
 
-    All three are deliberate curation passes — the `memory_health` MCP
-    tool (whose own DESC says "don't call on every turn"), `bettermemory
-    health`, and the local web dashboard. Notably NOT
-    `memory_scope_overview`, which every session calls at start-up and
-    which computes its `curation_pending` rollup without this function.
+    Both are deliberate curation passes — the `memory_health` MCP
+    tool (whose own DESC says "don't call on every turn") and
+    `bettermemory health`. (The pre-5.0 web dashboard was the third;
+    it went with the web UI.) Notably NOT `memory_scope_overview`,
+    which every session calls at start-up and which computes its
+    `curation_pending` rollup without this function.
     """
     src = Path(__file__).resolve().parents[1] / "src" / "bettermemory"
     callers = set()
@@ -527,7 +528,6 @@ def test_report_for_directory_callers_are_the_three_curation_surfaces() -> None:
     assert callers == {
         str(Path("handlers") / "health.py"),
         str(Path("cli") / "health_cmd.py"),
-        "web.py",
     }, (
         "the caller set of `report_for_directory` changed: "
         f"{sorted(callers)}. It now carries an episode-subtree walk — a "
