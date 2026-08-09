@@ -7,6 +7,74 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 5.1.0 - 2026-08-09
+
+### Added — rescue expansion, shipped opt-in; its preregistered check killed the default, and that verdict ships with it
+
+The retrieval campaign's first lane. Hybrid search learns two
+query-time repairs, deterministic code under the WaC rules — committed
+readable tables, no models, no downloads, query-side only
+(`src/bettermemory/expansion.py`; the persisted index stream and its
+fingerprint never move):
+
+- **a document-frequency floor for discourse filler**: memory bodies
+  are technical prose, so "supposed"/"remember" are corpus-rare, and
+  Okapi IDF priced them like discriminating terms — a distractor
+  matching two filler words could outrank the right memory matching
+  two content words. Listed filler prices at df ≥ half the collection:
+  deflated, never stripped.
+- **a confidence-gated rescue leg**: when the fused base ranking's top
+  hit covers less than 0.60 of the query's unique tokens, one extra
+  BM25 leg over synthesized vocabulary — rule -ing/-ed variants
+  ("splitting" meets "split"), clipping full-forms ("creds" meets
+  "credentials"), dev-domain synonym groups ("toggles" meets "flags")
+  — joins the fusion at 0.7 weight via weighted RRF. Hits only this
+  leg surfaced report the new `matched_leg="expansion"`, and
+  `match_terms` stays an honest subset of the caller's own words.
+
+On the blind-authored gold set (the lane's development set —
+`bench/retrieval/README.md` says so in bold) the lane is worth
+recall@1/@5 as-asked **35%/60% → 50%/90%**, control 45%/85%, requery
+byte-stable at 80%/100%.
+
+**And the default is OFF**, because the lane's preregistered held-out
+check (`bench/longmemeval/PREREGISTRATION.md` addendum 3, committed
+before the run) fired its kill criterion: macro recall@5 0.8770
+against the 0.8935 baseline, under the 0.8900 kill line. The
+ablations, published beside it, split the verdict cleanly — the
+filler floor reproduces the LongMemEval baseline to four decimals;
+the expansion leg carries the entire regression (inflection variants
+of common chat verbs are promiscuous matchers in conversational
+stores, the inverse of the technical corpus). A dev-set win paid for
+by the held-out set is overfitting to twenty questions, so the
+default did not ship; `[behavior] rescue_expansion = true` enables
+the lane for stores shaped like the gold set — technical prose
+queried casually — with both instruments' numbers documented where
+the flag is.
+
+Also measured and killed on the way, per the bench house rules:
+RM3-shaped pseudo-relevance feedback as an equal-weight third leg
+(ten recall@1 points worse than baseline — cluster-level expansion
+boosts a gold document's near-duplicate siblings exactly as much as
+the gold), and a 2-character expansion term ('go', from went→go)
+whose promiscuous matching cost five points at recall@1 and @5 by
+itself — the minimum-length floor that pins it out is now a tested
+invariant.
+
+`bench/retrieval/run.py` grows `--rescue-expansion on|off` (default
+follows the product default) so both engines stay one command away;
+the `*-2026-08-09.json` artifacts are lane-on runs and say so in
+their payload.
+
+### The campaign ledger after round one
+
+The 25-point recall@1 gap the 4.0.0 strip left open is closed to 10
+on the gold set by an opt-in lane, and the next two experiments are
+named in the bench READMEs: df-gating the emitted expansion terms
+(the promiscuous-variant class is detectable in code, and detecting
+it is what could earn the default back), and store-derived
+co-occurrence expansion, which no static table reaches.
+
 ## 5.0.0 - 2026-08-09
 
 ### Removed — the web UI, whole
