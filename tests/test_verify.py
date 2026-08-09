@@ -3588,6 +3588,72 @@ class TestUnverifiableAttestations:
         gone = "C:/Users/nobody/definitely-not-here.toml"
         assert unverifiable_attestations([gone]) == [gone]
 
+    def test_home_env_spellings_are_treated_as_absolute(self) -> None:
+        """`$HOME/...` and `${HOME}/...` are the env-var spellings of
+        `~/...` — `_normalize_candidate` canonicalizes them to `~` before
+        validating, so the mirror obligation in
+        `_is_absolute_attestation`'s docstring covers them too. Classified
+        RELATIVE instead, they get joined onto the worktree root (refusing
+        an attestation of a path that exists) or, with no root, silently
+        skipped (the fabricated-attestation gate never runs)."""
+        from bettermemory.verify import _is_absolute_attestation
+
+        for anchored in ("$HOME/Documents/notes.md", "${HOME}/Documents/notes.md"):
+            assert _is_absolute_attestation(anchored), anchored
+
+    def test_fabricated_home_env_attestation_is_refused_unanchored(self) -> None:
+        """A `$HOME/...` attestation needs no worktree to resolve, so a
+        fabricated one must be refused even with no worktree_root —
+        exactly the drive-path rule above, for the spelling `_BARE_RE`
+        extracts from bodies. Reported in the canonical `~/` form, the
+        spelling the read side stores and compares."""
+        from bettermemory.verify import unverifiable_attestations
+
+        assert unverifiable_attestations(["$HOME/bm-not-here-xyz/c.toml"]) == [
+            "~/bm-not-here-xyz/c.toml"
+        ]
+
+    def test_braced_home_attestation_is_not_laundered_as_template(
+        self, tmp_path: Path
+    ) -> None:
+        """`${HOME}/...` classified relative gets root-joined into
+        `<root>/${HOME}/...`, whose braces hit `_normalize_candidate`'s
+        template exemption — a fabricated attestation would be silently
+        skipped instead of refused. Classified as anchored, the `$HOME`
+        canonicalization runs first and the braces never reach the
+        template gate."""
+        from bettermemory.verify import unverifiable_attestations
+
+        refused = unverifiable_attestations(
+            ["${HOME}/bm-not-here-xyz/c.toml"], worktree_root=str(tmp_path)
+        )
+        assert refused == ["~/bm-not-here-xyz/c.toml"]
+
+    def test_existing_home_env_path_passes_with_worktree_root(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The false-refusal direction: attesting a real `$HOME/...` path
+        must pass even when a worktree root is present. Joined onto the
+        root instead, the check stats `<root>/$HOME/...` and refuses a
+        path the attester genuinely checked."""
+        from bettermemory.verify import unverifiable_attestations
+
+        home = tmp_path / "AttestHome"
+        real = home / "attested-dir" / "real.toml"
+        real.parent.mkdir(parents=True)
+        real.write_text("x = 1\n", encoding="utf-8")
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))
+        root = tmp_path / "repo"
+        root.mkdir()
+
+        assert (
+            unverifiable_attestations(
+                ["$HOME/attested-dir/real.toml"], worktree_root=str(root)
+            )
+            == []
+        )
+
     def test_relative_attestation_needs_an_anchor(self, tmp_path: Path) -> None:
         """Unanchored means "could not ask", and could-not-ask must never
         manufacture a negative verdict — the same rule

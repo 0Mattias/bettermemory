@@ -62,7 +62,9 @@ async def test_verify_cas_trips_on_concurrent_edit_of_never_verified_memory(
         snap = real_load_one(memory_id)
         if memory_id == mid and "done" not in raced:
             raced["done"] = True
-            edited = snap.model_copy(update={"body": "deploy target is the GREEN cluster"})
+            edited = snap.model_copy(
+                update={"body": "deploy target is the GREEN cluster"}
+            )
             store.update(edited)
         return snap
 

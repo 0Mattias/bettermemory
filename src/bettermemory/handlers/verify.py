@@ -287,6 +287,12 @@ async def memory_verify(
             verified_absent_paths=verified_absent_paths,
             claims=normalized_claims,
             expected_last_verified_at=snapshot.last_verified_at,
+            # Both snapshot fields ride the CAS: `last_verified_at`
+            # alone is None == None on a never-verified memory, so a
+            # concurrent edit between `load_one` above and the store's
+            # under-lock compare would let this stamp land on prose
+            # the caller never checked. `updated` moves on the edit.
+            expected_updated=snapshot.updated,
             check_expected=True,
         )
     except TombstonedError as exc:

@@ -1102,6 +1102,11 @@ def _is_absolute_attestation(s: str) -> bool:
     """
     if s.startswith(("/", "~")):
         return True
+    # `$HOME/` / `${HOME}/` — the env-var spellings of `~/`, which
+    # `_normalize_candidate` canonicalizes to `~` before validating.
+    # Home-anchored, so no worktree is needed to resolve them.
+    if s.startswith(("$HOME/", "${HOME}/")):
+        return True
     # Windows drive-absolute, both separators — the same test
     # `_normalize_candidate` applies in its own trailing branch.
     return len(s) >= 3 and s[0].isalpha() and s[1] == ":" and s[2] in "/\\"

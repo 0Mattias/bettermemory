@@ -625,6 +625,7 @@ class Store:
         verified_absent_paths: list[str] | None = None,
         claims: list[str] | None = None,
         expected_last_verified_at: datetime | None = None,
+        expected_updated: datetime | None = None,
         check_expected: bool = False,
     ) -> Memory:
         """Bump `last_verified_at` to now without touching `updated`.
@@ -650,12 +651,19 @@ class Store:
 
         Optimistic concurrency (W8): when `check_expected=True`, the
         caller's `expected_last_verified_at` is the snapshot value they
-        READ when they decided to attest (via `load_one(id).last_verified_at`).
-        Under the lock, after the C2 recheck, we compare the on-disk
-        `last_verified_at` to the caller's snapshot. On mismatch we raise
-        `ConcurrentUpdateError` so the caller can re-fetch, reassess
-        their attestation against the now-current state, and retry —
-        rather than silently clobbering whoever attested in the interim.
+        READ when they decided to attest (via `load_one(id).last_verified_at`),
+        and `expected_updated` (when supplied) is the same snapshot's
+        `updated`. Under the lock, after the C2 recheck, we compare the
+        on-disk values to the caller's snapshot. `last_verified_at`
+        alone cannot fingerprint a never-verified memory: an edit
+        CLEARS the field, so None == None passes vacuously and the
+        stamp would land on prose the verifier never read — `updated`
+        is the field that moves on the edit, and the pair detects both
+        the concurrent-verify and the concurrent-update race. On
+        mismatch we raise `ConcurrentUpdateError` so the caller can
+        re-fetch, reassess their attestation against the now-current
+        state, and retry — rather than silently clobbering whoever
+        attested (or edited) in the interim.
         REPLACE semantics for `verified_*` lists makes this race especially
         nasty: agent A attesting path #1 and agent B attesting path #2
         simultaneously would otherwise lose one of the attestations, and
@@ -736,23 +744,27 @@ class Store:
                     f"concurrent tombstone or rename)"
                 )
             existing = self._load_path(existing_path)
-            # W8: optimistic-concurrency CAS on `last_verified_at`. The
-            # field that moves on every successful `mark_verified` is
-            # `last_verified_at` (not `updated` — verification doesn't
-            # bump `updated` by design), so it's the cheapest correct
-            # fingerprint for detecting a concurrent attestation. Mirror
-            # of W2 in shape: compare the on-disk snapshot fingerprint
-            # to the caller's; on mismatch raise `ConcurrentUpdateError`
-            # with the on-disk `updated` so the caller's rebase action
-            # is identical to the W2 retry flow (re-fetch via
-            # `memory_show`, retry on top). The on-disk `updated` is
-            # used as the error's `current_updated` payload to keep the
-            # exception's contract uniform with W2 — what the caller
-            # needs is "something changed, re-fetch," not the specific
-            # field that moved.
-            if (
-                check_expected
-                and existing.last_verified_at != expected_last_verified_at
+            # W8: optimistic-concurrency CAS on the pair
+            # (`last_verified_at`, `updated`). A concurrent attestation
+            # moves `last_verified_at`; a concurrent EDIT clears it —
+            # which on a never-verified memory is None == None, a
+            # vacuous pass that would stamp the verify onto prose the
+            # verifier never read. `updated` is the field the edit
+            # moves, so the pair covers both races. Mirror of W2 in
+            # shape: compare the on-disk snapshot fingerprint to the
+            # caller's; on mismatch raise `ConcurrentUpdateError` with
+            # the on-disk `updated` so the caller's rebase action is
+            # identical to the W2 retry flow (re-fetch via
+            # `memory_show`, retry on top). `expected_updated` is
+            # optional for back-compat with direct callers that only
+            # snapshotted the verify half; the MCP handler always
+            # passes both.
+            if check_expected and (
+                existing.last_verified_at != expected_last_verified_at
+                or (
+                    expected_updated is not None
+                    and existing.updated != expected_updated
+                )
             ):
                 raise ConcurrentUpdateError(memory_id, existing.updated)
             # NOTE on where the attestation-existence check lives: NOT here.
