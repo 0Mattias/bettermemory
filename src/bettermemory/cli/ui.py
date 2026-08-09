@@ -85,7 +85,7 @@ def _cli_ui(*, host: str, port: int, tunnel: str | None = None) -> None:
     except ImportError as exc:
         sys.stderr.write(
             "bettermemory ui requires the [ui] extra. Install with:\n"
-            "  pip install 'bettermemory[ui]'\n"
+            f"  {tool_reinstall('ui')}\n"
             f"(original error: {exc})\n"
         )
         raise SystemExit(2) from exc

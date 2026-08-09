@@ -41,8 +41,9 @@ def cli_context() -> CliContext:
     Replaces the ``config = load_config(); directory =
     config.resolved_directory(); store = Store(directory)`` triple that
     appeared in every CLI handler. Callers that only need a subset still
-    pay the same one-time config load — ``load_config`` reads the TOML
-    once per process so the cost is amortised.
+    pay the full triple — ``load_config`` re-reads the TOML on every
+    call (it holds no cache), which is one small file parse per CLI
+    invocation, nowhere near a hot path.
     """
     config = load_config()
     directory = config.resolved_directory()

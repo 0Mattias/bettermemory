@@ -122,6 +122,13 @@ def test_doctor_binds_the_composed_forms_not_copies() -> None:
 #: and a paste lands contiguous.
 _SPELLING_HOMES: dict[str, dict[str, int]] = {
     "uv tool install --reinstall": {_CANONICAL: 1},
+    # The bare-pip spelling appears NOWHERE in shipped source: it writes
+    # to the active virtualenv, so it repairs nothing for the
+    # `uv tool install` / pipx population these messages talk to (the
+    # module docstring's tool-form-leads argument). The last hand-spelled
+    # copy — the `bettermemory ui` failure-path hint — was composed onto
+    # the atoms; an empty pin keeps the spelling extinct.
+    "pip install 'bettermemory": {},
     "pipx install --force": {_CANONICAL: 1},
     "--force-reinstall": {
         _CANONICAL: 1,
@@ -137,7 +144,13 @@ _SPELLING_HOMES: dict[str, dict[str, int]] = {
 @pytest.mark.parametrize(
     ("literal", "expected"),
     sorted(_SPELLING_HOMES.items()),
-    ids=["force-reinstall-flag", "dev-clone-editable", "pipx-force", "tool-reinstall"],
+    ids=[
+        "force-reinstall-flag",
+        "dev-clone-editable",
+        "bare-pip-extra",
+        "pipx-force",
+        "tool-reinstall",
+    ],
 )
 def test_each_spelling_lives_only_in_its_pinned_homes(
     literal: str, expected: dict[str, int]

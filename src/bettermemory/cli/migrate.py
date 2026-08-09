@@ -52,9 +52,12 @@ def add_subparser(
             "(e.g. --scope-repo projects:foo=git@github.com:me/foo.git "
             "--scope-repo projects:bar=git@github.com:me/bar.git). "
             "Memories whose scopes match nothing in the map fall through "
-            "to --repo (if given) or are left untagged. The right tool "
+            "to --repo, then to the auto-inferred parent-repo origin "
+            "(when the memory dir sits inside a checkout); only when no "
+            "rule applies is the memory left untagged. The right tool "
             "for a global memory dir whose memories already use "
-            "projects:<name> tags."
+            "projects:<name> tags — on a global dir there is no parent "
+            "to infer, so unmatched memories genuinely stay untagged."
         ),
     )
     origin_parser.add_argument(
