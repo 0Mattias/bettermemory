@@ -1,8 +1,8 @@
 {
   "provenance": {
     "bettermemory_version": "5.0.0",
-    "commit": "d78a620",
-    "tree_dirty": true,
+    "commit": "fe57f05",
+    "tree_dirty": false,
     "date": "2026-08-09",
     "machine": {
       "os": "Darwin 25.5.0",
@@ -19,7 +19,9 @@
   "padded": true,
   "prefilter_mode": "off",
   "prefilter_cap": 50,
+  "rescue_expansion": true,
   "notes": [
+    "rescue-expansion repairs ON (the 5.1 lane: filler df-floor + coverage-gated vocabulary leg). The product DEFAULT is off \u2014 the lane's preregistered held-out check killed default-on; see the README's 5.1 section and bench/longmemeval/.",
     "corpus is above the index threshold, but this runner ranks the full corpus \u2014 production would prefilter through SQLite bm25 first. Treat this as an upper bound."
   ],
   "results": [

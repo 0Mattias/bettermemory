@@ -1,8 +1,8 @@
 {
   "provenance": {
     "bettermemory_version": "5.0.0",
-    "commit": "d78a620",
-    "tree_dirty": true,
+    "commit": "fe57f05",
+    "tree_dirty": false,
     "date": "2026-08-09",
     "machine": {
       "os": "Darwin 25.5.0",
@@ -19,8 +19,10 @@
   "padded": false,
   "prefilter_mode": "both",
   "prefilter_cap": 50,
+  "rescue_expansion": true,
   "notes": [
     "BETTERMEMORY_INDEX_THRESHOLD forced to 100 for this run, so the prefilter regime was reached without padding. Production's threshold is 500.",
+    "rescue-expansion repairs ON (the 5.1 lane: filler df-floor + coverage-gated vocabulary leg). The product DEFAULT is off \u2014 the lane's preregistered held-out check killed default-on; see the README's 5.1 section and bench/longmemeval/.",
     "prefilter=on drives the production handler path (handlers.search.resolve_search_pool): the FTS5 candidate slice capped at 50, ranked with the corpus-IDF provider. Every question was checked for engagement; the run exits non-zero if any pool came back un-prefiltered.",
     "scope, repo, worktree and excluded-scope filters are all unset, so the cap-starvation guard cannot reload the full corpus and silently turn the on-arm into the off-arm.",
     "the prefilter=off half re-measures v2-unpadded-2026-07-26.json on the same corpus digest, so its rows double as a regression check on the harness itself."

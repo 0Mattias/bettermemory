@@ -1,8 +1,8 @@
 {
   "provenance": {
     "bettermemory_version": "5.0.0",
-    "commit": "d78a620",
-    "tree_dirty": true,
+    "commit": "fe57f05",
+    "tree_dirty": false,
     "date": "2026-08-09",
     "machine": {
       "os": "Darwin 25.5.0",
@@ -19,7 +19,10 @@
   "padded": false,
   "prefilter_mode": "off",
   "prefilter_cap": 50,
-  "notes": [],
+  "rescue_expansion": true,
+  "notes": [
+    "rescue-expansion repairs ON (the 5.1 lane: filler df-floor + coverage-gated vocabulary leg). The product DEFAULT is off \u2014 the lane's preregistered held-out check killed default-on; see the README's 5.1 section and bench/longmemeval/."
+  ],
   "results": [
     {
       "arm": "lexical",
