@@ -382,3 +382,50 @@ orphans), and every turn carries exactly `role` / `content` /
   it is predictions specific enough to be embarrassing, plus a committed
   runner and a pinned corpus checksum so a third party can replicate.
   **Replication is the actual evidence.**
+
+## Addendum 3 — declared before the 5.1 rescue-expansion arm runs, 2026-08-09
+
+The 5.1 engine adds the retrieval campaign's first lane to hybrid
+ranking: a document-frequency floor for listed discourse-filler words,
+plus a confidence-gated, down-weighted BM25 leg over synthesized
+vocabulary (committed tables — inflection variants, clipping
+full-forms, dev-domain synonym groups; `src/bettermemory/expansion.py`).
+
+**Development and tuning happened entirely on `bench/retrieval/`, and
+that has to be said in the same breath as any number.** Every
+parameter — the 0.60 confidence gate, the 0.7 leg weight, the
+half-the-collection df floor, the minimum expansion-term length, every
+word in every table — was chosen against those twenty questions. That
+gold set is the lane's development set, openly. THIS corpus is the
+held-out check: untouched during lane development, and the predictions
+below are committed before the first 5.1-engine run against it.
+
+Baseline being defended: the committed
+`results/baseline-both-arms-2026-08-08.json`, lexical arm — macro
+recall@5 0.8935, macro recall@1 0.5246 — reproduced bit-for-bit at the
+5.0.0 engine before lane work began.
+
+**P6 — no regression, and this is the kill criterion.** With the lane
+on, macro recall@5 lands at or above 0.8900. Below that the lane does
+not ship, regardless of its gold-set numbers — a dev-set win paid for
+by the held-out set is the definition of overfitting to twenty
+questions.
+
+**P7 — the transfer is small but real.** macro recall@5 lands between
+0.8930 and 0.9050. Mechanism named: LongMemEval questions are
+colloquial, so the filler df-floor should help; the synonym table is
+dev-domain vocabulary and should mostly not fire on personal-life
+chat; rule-generated inflection variants fire everywhere but add only
+near-spellings. **MISSED if** below 0.8930 (the lane transferred
+nothing — and if P6 failed too, it transferred harm) or above 0.9050
+(filler mispricing was costing chat-style retrieval far more than the
+gold set suggested, and the gold set's difficulty caveats need
+re-reading in that light).
+
+**P8 — the gate protects confident questions here too.** macro
+recall@1 moves by less than two points in either direction from
+0.5246. Mechanism: recall@1 is dominated by questions the base
+ranking already answers confidently, and the coverage gate should
+keep the rescue leg out of exactly those. **MISSED if** the move is
+two points or larger either way — the gate's dev-set calibration did
+not transfer.

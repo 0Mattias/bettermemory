@@ -67,6 +67,18 @@ recency_boost_half_life_days = 30
 #       overrides this per-call.
 search_mode = "hybrid"
 
+# Hybrid-mode query repairs from the retrieval campaign (5.1): listed
+# discourse-filler words get a document-frequency floor in the BM25 legs
+# (so corpus-rare filler like "supposed"/"remember" can't outprice real
+# content terms), and when the base ranking is not confident about its
+# top hit, one extra down-weighted BM25 leg over synthesized vocabulary
+# (inflection variants, clipping full-forms, synonym mates — see
+# src/bettermemory/expansion.py) joins the fusion. Measured on
+# bench/retrieval: recall@1/@5 as-asked 35%/60% -> 50%/90% with the
+# requery probe byte-stable. Set false to reproduce pre-5.1 hybrid
+# ranking exactly.
+rescue_expansion = true
+
 # Usage-aware ranking. When true, a bounded "endorsement" factor (the same
 # shape as the recency boost — capped at +10%, so it only breaks near-ties,
 # never overrides relevance) nudges memories the model has DELIBERATELY
@@ -332,6 +344,16 @@ class BehaviorConfig:
     # so an out-of-range knob cannot move one without the other.
     default_max_results: int = 5
     recency_boost_half_life_days: float = 30.0
+    # Hybrid-mode query repairs from the retrieval campaign: the
+    # discourse-filler df-floor plus the coverage-gated rescue-expansion
+    # leg (see `search.search`'s `rescue_expansion` parameter and
+    # `expansion.py` for the committed tables). Default on — it is the
+    # measured product improvement (bench/retrieval 2026-08-09:
+    # recall@1/@5 as-asked 35%/60% -> 50%/90%, requery byte-stable).
+    # The switch exists so an operator can reproduce pre-5.1 ranking
+    # exactly while diagnosing a surprising result, not because the
+    # feature is experimental.
+    rescue_expansion: bool = True
     # Retrieval ranker for `memory_search`. One of `keyword` (the
     # original TF + coverage + recency scorer; legacy), `bm25` (Okapi
     # BM25), or `hybrid` (RRF fusion of both; default since 2.6.8 —
@@ -1014,6 +1036,9 @@ def load_config(path: Path | None = None) -> Config:
             ),
             search_mode=_coerce_search_mode(
                 behavior_raw.get("search_mode"), config_path=config_path
+            ),
+            rescue_expansion=_coerce_bool(
+                behavior_raw.get("rescue_expansion"), True
             ),
             recency_boost_half_life_days=_coerce_float(
                 behavior_raw.get("recency_boost_half_life_days"),

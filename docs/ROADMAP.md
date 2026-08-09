@@ -395,10 +395,10 @@ enough to earn its own entry above.
   derived while auditing something else — recorded here so they are not
   re-derived. (i) **The recency knob is out of scope by construction.**
   The corpus is written in a single pass, so `_recency_factor` in
-  `src/bettermemory/search.py` (`src/bettermemory/search.py:1255-1261`)
+  `src/bettermemory/search.py` (`src/bettermemory/search.py:1352-1358`)
   — the one ranking knob live by default, applied in three scorers and
   configured by `recency_boost_half_life_days` in
-  `src/bettermemory/config.py` (`src/bettermemory/config.py:383`) —
+  `src/bettermemory/config.py` (`src/bettermemory/config.py:346`) —
   sees ages that differ by microseconds across the whole store. Every
   published number therefore describes ranking with that factor held
   flat. (ii) **The corpus cannot exercise `auto_scope`.** `build_store`

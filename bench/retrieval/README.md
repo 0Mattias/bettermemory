@@ -355,6 +355,98 @@ question is five points:
   questions changing rank, not a regime change; every pre-registered
   verdict above keeps its grade.
 
+## Results — 5.1 rescue-expansion engine, 2026-08-09
+
+The campaign lane the 4.0.0 section above promised ("closed in code,
+or reported as open"), first installment: hybrid ranking gains a
+document-frequency floor for listed discourse-filler words and a
+confidence-gated, down-weighted BM25 leg over synthesized vocabulary
+(committed tables — `src/bettermemory/expansion.py`). Same four
+invocations, re-run unchanged; raw JSON in `results/`
+(`*-2026-08-09.json`).
+
+**This gold set was the lane's DEVELOPMENT set, stated plainly.**
+Every parameter — the 0.60 confidence gate, the 0.7 leg weight, the
+half-the-collection df floor, the 3-character expansion-term floor,
+every word in every table — was tuned against these 20 questions, so
+the numbers below are a dev-set fit, not a generalization claim. The
+held-out check is `bench/longmemeval/`: predictions committed before
+the run (PREREGISTRATION.md addendum 3), result published beside them.
+
+Unpadded corpus (`results/unpadded-2026-08-09.json`):
+
+| arm | probe | recall@1 | recall@5 |
+| --- | --- | --- | --- |
+| lexical | asked | **50%** | **90%** |
+| lexical | requery | 80% | 100% |
+| lexical | control | 45% | 85% |
+
+Against the 35%/60% this corpus has measured since v2: +15 at
+recall@1 and +30 at recall@5 on the casual probe, control moving with
+it (+10/+25) — and requery byte-stable at 80%/100%, which is the gate
+doing its one job: a query the base ranking already answers
+confidently never sees the rescue leg.
+
+What moved, in the failure classes the misses were diagnosed into:
+
+- **The filler class** — false winners riding "supposed"/"remember"/
+  "know" matches that corpus rarity priced like discriminating terms.
+  The df floor deflates them without deleting anything: hard-strip
+  variants were measured first and rejected because filler words are
+  sometimes the only hooks a casual query has.
+- **The morphology class** — "splitting the repos" against a body
+  that says "split"; the shipped stemmer folds plurals only, on
+  purpose. Rule-generated -ing/-ed variants ride the rescue leg
+  instead of widening the index.
+- **The vocabulary class** — "toggles" vs "feature flags", "creds"
+  vs "credentials", "hash" vs "digest". Clipping and synonym tables,
+  small and general enough to read as ordinary engineering
+  vocabulary.
+- **Still open** — the deep paraphrase chasms (the billing-cutover
+  and monorepo questions) where query and body share nothing any
+  static table reaches, plus the within-cluster discrimination the
+  near-duplicate corpus design makes brutal. These are the
+  store-derived co-occurrence (P1a) and learned-rerank (P2) targets.
+
+Padded to 600 (`results/padded600-2026-08-09.json`): asked 45%/85%
+against the old engine's 25%/60% — the dilution regime keeps most of
+the gain. The cost worth stating in the same breath: requery reads
+70%/**95%** there, giving back one question at recall@5 that the old
+engine's padded run held (IDF shifts under dilution push one query's
+top-hit coverage below the gate, and the engaged rescue jostles a
+previously-safe hit out of the top five). One question on n=20, in
+the artificial-dilution regime only — the unpadded contract stays
+byte-stable — but it is a real edge of the gate calibration, recorded
+rather than rounded away.
+
+The prefilter pairs (`results/prefilter-above-threshold-2026-08-09.json`,
+`results/prefilter-forced-180-2026-08-09.json`) measure a new,
+sharper version of the threshold caveat: **above the index threshold
+the rescue re-ranks the bm25-nominated pool, and nomination still
+runs on the caller's words** — a document only the synthesized
+vocabulary would find never reaches the pool. Measured: the prefilter
+now costs **15 points of recall@5 on the casual probes** (85% → 70%
+above threshold; 90% → 75% forced-180) where the old engine measured
+zero, while recall@1 survives intact in every cell and requery is
+unchanged. The pre-5.1 "prefilter costs zero recall@5" finding was a
+property of a ranker whose reach ended at the caller's vocabulary; the
+rescue's reach is wider than the nominator's, and the gap is now the
+measured size of the next increment (nominate on query + expansion
+variants), not a surprise waiting in a large store.
+
+### Measured and killed on the way: RM3 as an equal leg
+
+Pseudo-relevance feedback — top-k first-pass documents contributing
+expansion terms, fused as an equal-weight third leg — measured
+**25% recall@1 as-asked against the 35% base**, a ten-point
+regression, while gaining five at recall@5. On a corpus built of
+near-duplicate distractors the mechanism is legible: feedback
+vocabulary is cluster-level, so the gold document's eight
+same-subsystem siblings gain exactly as much as it does, and
+whichever sibling is densest in subsystem vocabulary wins the leg.
+What survived the kill is the shape constraint the shipped lane obeys:
+expansion must be a gated, down-weighted RESCUE, never a peer ranker.
+
 ## Results — v1 corpus (superseded), 2026-07-26
 
 bettermemory 3.29.0, corpus of 188 (20 gold + 168 distractors), 12-core

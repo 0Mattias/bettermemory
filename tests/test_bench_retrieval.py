@@ -487,7 +487,7 @@ def test_the_prefilter_really_engages_on_every_committed_question(
     live = json.loads(capsys.readouterr().out)
 
     committed = json.loads(
-        (_RESULTS / "prefilter-above-threshold-2026-07-30.json").read_text()
+        (_RESULTS / "prefilter-above-threshold-2026-08-09.json").read_text()
     )
     published = {
         (r["arm"], r["probe"]): r for r in committed["results"] if r["prefilter"]

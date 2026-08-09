@@ -820,7 +820,7 @@ async def memory_search(
     applied_by_id = ranking.applied_by_id
     negative_by_id = ranking.negative_by_id
 
-    # Filled by `run_search` with `{memory_id: lexical|semantic|both}` for
+    # Filled by `run_search` with `{memory_id: lexical|expansion}` for
     # the returned hits — see `search.search`'s `matched_leg_out` note for
     # why the leg travels as an out-parameter rather than a `MemoryHit`
     # field.
@@ -846,6 +846,7 @@ async def memory_search(
         allow_empty_query=since_prior_session,
         corpus_stats_provider=corpus_stats_provider,
         matched_leg_out=matched_leg,
+        rescue_expansion=deps.config.behavior.rescue_expansion,
     )
     # Pin one `now` for the whole response so the verification verdict
     # is consistent across hits — the alternative (let each helper

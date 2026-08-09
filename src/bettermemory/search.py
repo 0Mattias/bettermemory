@@ -36,6 +36,11 @@ from datetime import datetime, timezone
 from functools import lru_cache
 from typing import Any, Callable, Literal, NamedTuple
 
+from .expansion import (
+    ExpansionTables,
+    build_tables as _build_expansion_tables,
+    expansion_terms as _expansion_terms_impl,
+)
 from .models import (
     Memory,
     MemoryHit,
@@ -1029,28 +1034,142 @@ def _strip_stopwords(tokens: list[str]) -> list[str]:
     return [t for t in tokens if t not in _STOPWORDS]
 
 
+# ---------------------------------------------------------------------------
+# Query-time rescue expansion (retrieval campaign, Phase 1)
+# ---------------------------------------------------------------------------
+#
+# The measured enemy is vocabulary: the query says "toggles", the memory
+# says "feature flags", and on bench/retrieval that class of miss is the
+# whole 25-point recall@1 gap the removed embedding arm used to cover.
+# The rescue is three committed word tables (expansion.py) feeding one
+# extra, down-weighted BM25 leg — engaged only when the base ranking is
+# not confident. Every constant below is measured on the gold set
+# (bench/retrieval/README.md, 2026-08-09 grid), not chosen by taste.
+
+# Tables built once through the live stemmer so lookups and emitted
+# terms share the rankers' post-stem token space. A stemmer rule change
+# re-stems the tables automatically at import — stemmed literals in the
+# tables would drift silently instead.
+_EXPANSION_TABLES: ExpansionTables = _build_expansion_tables(_stem_token)
+
+# The rescue leg engages only when the fused base ranking is NOT
+# confident: top-hit coverage below this bar. Measured, not derived: on
+# the gold set every requery-probe top hit covers >= 0.60 of its query
+# (the leg never engages; requery stays byte-stable at 80%/100%) while
+# every rescued asked-probe case covers below it. At 0.65 requery gives
+# back a question; at 0.75 two. The value sits between the relevance
+# bands' 0.40/0.75 because it is the same signal those bands read —
+# coverage as ranking confidence.
+_RESCUE_COVERAGE_GATE = 0.60
+
+# Weight of the expansion leg in weighted RRF; base legs stay at 1.0.
+# Expansion is a rescue, never a peer: at weight 1.0 the leg overrules
+# confident base-leg agreement (measured: two rank-0 hits lost to
+# variant noise), at 0.5 two rescued cases stall short of the top-5. At
+# 0.7 every measured rescue lands and no base-leg agreement is
+# overturned.
+_RESCUE_LEG_WEIGHT = 0.7
+
+# Document-frequency floor for the QUERY_FILLER_WORDS list, as a
+# fraction of the priced collection. Memory bodies are technical prose,
+# so conversational filler is corpus-RARE, and Okapi IDF prices it like
+# a discriminating term — a distractor matching "supposed" + "remember"
+# outranked the right memory matching "paged" + "wake". The floor says:
+# a word this common in QUESTIONS is common, full stop. df >= half the
+# collection puts its IDF at ~log(2), ~14% of a genuinely-rare term's
+# weight — deflated, never deleted (hard-stripping was measured to
+# delete the only hooks some queries have). A floor (max with the real
+# df), never a ceiling: filler genuinely common in a store keeps its
+# honest pricing.
+_FILLER_DF_FLOOR_RATIO = 0.5
+
+
+def _filler_floor_stats(
+    base: CorpusStats | None, terms: list[str], pool_n: int
+) -> CorpusStats | None:
+    """CorpusStats with the filler df-floor applied for `terms`.
+
+    Returns `base` untouched when no term is on the filler list — the
+    common path stays allocation-free and byte-stable. Otherwise the
+    floor entries OVERRIDE per term through `compute_idf`'s existing
+    corpus-stats mechanism, which only ever re-prices terms the pool
+    actually carries — filler absent from every candidate body matches
+    nothing and needs no cap. `max(real df, floor)` keeps the honest
+    direction: the floor can only make filler look common, never make
+    a genuinely common word look rare.
+    """
+    filler_present = [t for t in terms if t in _EXPANSION_TABLES.filler_stems]
+    if not filler_present:
+        return base
+    size = base.size if base is not None else pool_n
+    if size <= 0:
+        return base
+    floor = max(1, int(size * _FILLER_DF_FLOOR_RATIO))
+    body_df = dict(base.body_df) if base is not None else {}
+    scope_df = dict(base.scope_df) if base is not None else {}
+    for t in filler_present:
+        body_df[t] = max(body_df.get(t, 0), floor)
+        scope_df[t] = max(scope_df.get(t, 0), floor)
+    return CorpusStats(size=size, body_df=body_df, scope_df=scope_df)
+
+
+def _merge_corpus_stats(
+    a: CorpusStats | None, b: CorpusStats | None
+) -> CorpusStats | None:
+    """Union of two stats over the SAME collection; `b` wins per term.
+
+    Used to fold a second provider fetch (expansion terms) into the
+    already-floored query-term stats. Sizes describe the same admitted
+    collection by construction; `b.size` is preferred with `a.size` as
+    the fallback so a defensive zero can't zero the Okapi denominator.
+    """
+    if a is None:
+        return b
+    if b is None:
+        return a
+    body_df = dict(a.body_df)
+    body_df.update(b.body_df)
+    scope_df = dict(a.scope_df)
+    scope_df.update(b.scope_df)
+    return CorpusStats(
+        size=b.size if b.size > 0 else a.size, body_df=body_df, scope_df=scope_df
+    )
+
+
 # `matched_leg` vocabulary: WHICH RANKER surfaced a hit. Reported per hit
 # alongside `relevance` so the caller can read the label in the light of
 # how the hit was found — evidence about the retrieval, not a second
 # verdict about the memory.
 #
 # Since 4.0.0 every ranker is lexical (keyword, BM25, their fusion), so
-# the label's live value is `lexical`; the field survives so callers
-# keyed on it keep parsing, and so the vocabulary has somewhere to grow
-# if a future CODE ranker earns a leg of its own.
+# the base label's live value is `lexical`; the field survives so
+# callers keyed on it keep parsing, and so the vocabulary has somewhere
+# to grow if a future CODE ranker earns a leg of its own. The rescue-
+# expansion leg (still deterministic lexical code, but matching
+# SYNTHESIZED vocabulary rather than the caller's words) is that
+# growth: a hit surfaced ONLY by it reports `expansion`, which is what
+# keeps `relevance` readable — coverage of the caller's own tokens is
+# legitimately "low" for a hit found through a synonym, and the leg
+# says so instead of leaving the label looking broken.
 LEG_LEXICAL = "lexical"
+LEG_EXPANSION = "expansion"
 
 
-def _matched_leg(*, lexical: bool) -> str:
+def _matched_leg(*, lexical: bool, expansion: bool = False) -> str:
     """Leg label for one hit; `""` when no ranker ran at all.
 
-    The empty case is browse mode (`allow_empty_query` with no query
-    tokens): candidates are filtered and date-sorted, never ranked, so
-    there is no leg to report and the field is omitted rather than
-    guessed. The leg reports what RAN, not what was requested.
+    `lexical` wins when both are set — the base legs matched the
+    caller's own words, which is the stronger statement; `expansion`
+    is reported only for hits NO base leg scored. The empty case is
+    browse mode (`allow_empty_query` with no query tokens): candidates
+    are filtered and date-sorted, never ranked, so there is no leg to
+    report and the field is omitted rather than guessed. The leg
+    reports what RAN, not what was requested.
     """
     if lexical:
         return LEG_LEXICAL
+    if expansion:
+        return LEG_EXPANSION
     return ""
 
 
@@ -1828,6 +1947,7 @@ def reciprocal_rank_fusion(
     ranking_lists: list[list[str]],
     *,
     k: int = _RRF_K_DEFAULT,
+    weights: list[float] | None = None,
 ) -> dict[str, float]:
     """Fuse multiple ranked id-lists into one score-per-id map.
 
@@ -1839,16 +1959,30 @@ def reciprocal_rank_fusion(
     wins for that ranker; later duplicates are ignored, matching the
     "one rank per (ranker, doc)" reading of the original paper.
 
+    `weights` (optional) is index-aligned with `ranking_lists`: ranker
+    i contributes `weights[i] / (k + rank)` instead of `1 / (k + rank)`.
+    None means all-1.0 and is byte-identical to the pre-weights output
+    — the rescue-expansion leg is the reason this exists (a rescue
+    contributes at reduced strength; base legs stay at 1.0). Length
+    mismatch raises: a silently-recycled weight would misweight a leg
+    without anything looking wrong.
+
     Empty `ranking_lists` returns an empty dict. `k` must be positive;
     the default (60) matches the Cormack et al. paper.
     """
     if k <= 0:
         raise ValueError(f"RRF k must be positive, got {k}")
+    if weights is not None and len(weights) != len(ranking_lists):
+        raise ValueError(
+            f"weights length {len(weights)} != rankings length "
+            f"{len(ranking_lists)}"
+        )
     if not ranking_lists:
         return {}
 
     fused: dict[str, float] = {}
-    for ranking in ranking_lists:
+    for i, ranking in enumerate(ranking_lists):
+        w = weights[i] if weights is not None else 1.0
         # Iterate with 1-indexed rank — the original formula assumes
         # rank starts at 1. `seen` guards the dedup contract above.
         seen: set[str] = set()
@@ -1856,7 +1990,7 @@ def reciprocal_rank_fusion(
             if memory_id in seen:
                 continue
             seen.add(memory_id)
-            fused[memory_id] = fused.get(memory_id, 0.0) + 1.0 / (k + rank)
+            fused[memory_id] = fused.get(memory_id, 0.0) + w / (k + rank)
     return fused
 
 
@@ -2232,13 +2366,17 @@ def _hybrid_fuse(
     rankings: list[list[tuple[Memory, float, list[str]]]],
     *,
     rrf_k: int,
+    weights: list[float] | None = None,
 ) -> list[tuple[Memory, float, list[str]]]:
     """Fuse multiple ranker outputs into one ranked list via RRF.
 
     Each input is a per-ranker `[(memory, score, matched), ...]` list.
     Output is `[(memory, rrf_score, matched_union), ...]` ordered desc
     by RRF score. `matched_union` is the union of matched terms across
-    rankers that surfaced the memory, sorted for stability.
+    rankers that surfaced the memory, sorted for stability. `weights`
+    (optional, index-aligned) passes through to
+    `reciprocal_rank_fusion`; None is byte-identical to before the
+    parameter existed.
     """
     if not rankings:
         return []
@@ -2252,7 +2390,7 @@ def _hybrid_fuse(
             by_id.setdefault(memory.id, memory)
             matched_by_id.setdefault(memory.id, set()).update(matched)
 
-    fused = reciprocal_rank_fusion(ranking_id_lists, k=rrf_k)
+    fused = reciprocal_rank_fusion(ranking_id_lists, k=rrf_k, weights=weights)
     if not fused:
         return []
 
@@ -2286,6 +2424,7 @@ def search(
     allow_empty_query: bool = False,
     corpus_stats_provider: Callable[[list[str]], CorpusStats | None] | None = None,
     matched_leg_out: dict[str, str] | None = None,
+    rescue_expansion: bool = True,
 ) -> list[MemoryHit]:
     """Rank `memories` against `query` and return up to `max_results` hits.
 
@@ -2342,16 +2481,35 @@ def search(
       (see the fallback note in the body), so stopword curation can
       never make a non-empty query unanswerable.
     - `matched_leg_out`: optional dict the function fills with
-      `{memory_id: "lexical"}` for the hits it
+      `{memory_id: "lexical" | "expansion"}` for the hits it
       returns — WHICH RANKER surfaced each one. An out-parameter rather
       than a `MemoryHit` field because the leg is a property of THIS
       CALL's ranker configuration, not of the memory, and every other
-      consumer of `MemoryHit` (memory_show, memory_list, the web detail
-      page) has no legs to report; the MCP search handler is the one
+      consumer of `MemoryHit` (memory_show, memory_list, the detail
+      surfaces) has no legs to report; the MCP search handler is the one
       surface where it is actionable. `None` (the default) skips the
       bookkeeping entirely, so every existing caller is byte-stable in
       both output and cost. Browse-mode hits get no entry — nothing
       ranked them.
+    - `rescue_expansion`: hybrid-mode only. When True (the default),
+      two query-time repairs from the retrieval campaign run:
+      (a) listed discourse-filler words (`expansion.QUERY_FILLER_WORDS`)
+      get a document-frequency FLOOR in the BM25 legs, so corpus-rare
+      conversational filler can't outprice real content terms; and
+      (b) when the fused base ranking's top hit covers less than
+      `_RESCUE_COVERAGE_GATE` of the query's unique tokens, one extra
+      BM25 leg over SYNTHESIZED vocabulary (inflection variants,
+      clipping full-forms, synonym group mates — `expansion.py`) joins
+      the fusion at `_RESCUE_LEG_WEIGHT`. Hits surfaced only by that
+      leg report `matched_leg="expansion"` with `match_terms` still an
+      honest subset of the caller's own tokens (possibly empty — the
+      same shape pure-paraphrase hits always had). False restores the
+      pre-5.1 two-leg behavior byte for byte. `keyword` and `bm25`
+      modes are explicit instrument choices and are never touched.
+      Above the index threshold the FTS prefilter nominates the pool
+      from the CALLER's tokens, so there the rescue re-ranks the
+      nominated pool rather than widening it — a documented limit, not
+      a silent one.
 
     Score semantics vary by mode: keyword/BM25 scores live on
     different scales and are not comparable across modes. Hybrid scores
@@ -2430,8 +2588,13 @@ def search(
     # `matched_leg` bookkeeping. Populated only when the caller asked for
     # it, so the default path pays nothing; the sets are the ids each leg
     # actually SCORED, which is what makes the reported leg a statement
-    # about the run rather than about `mode`.
+    # about the run rather than about `mode`. `expansion_ids` is the one
+    # exception to the only-when-asked rule: the rescue block fills it
+    # while it has the leg in hand (a set build over an already-scored
+    # list), because re-deriving it at the trim would mean re-running
+    # the leg.
     lexical_ids: set[str] = set()
+    expansion_ids: set[str] = set()
 
     # Tokenize each candidate exactly once per call and thread the streams
     # through every consumer below — the keyword scorer, compute_idf, BM25,
@@ -2496,6 +2659,16 @@ def search(
         if matched_leg_out is not None:
             lexical_ids = {memory.id for memory, _, _ in scored}
     else:  # mode == "hybrid"
+        # The filler df-floor applies to the BM25 legs of the default
+        # hybrid path only — `bm25` and `keyword` modes are explicit
+        # instrument choices and stay pure. With `rescue_expansion`
+        # off, the raw stats pass through and the branch is
+        # byte-identical to pre-5.1.
+        hybrid_stats = (
+            _filler_floor_stats(corpus_stats, query_tokens, len(candidates))
+            if rescue_expansion
+            else corpus_stats
+        )
         rankings: list[list[tuple[Memory, float, list[str]]]] = [
             _score_keyword(
                 candidates,
@@ -2517,22 +2690,89 @@ def search(
                 corroboration_boost=corroboration_boost,
                 candidate_tokens=candidate_tokens,
                 stopword_fallback=stopword_fallback,
-                corpus_stats=corpus_stats,
+                corpus_stats=hybrid_stats,
             ),
         ]
         # Snapshot the leg membership from the working list by name,
         # not position, so a future ranker joining `rankings` can't
-        # silently change what "lexical" means here.
+        # silently change what "lexical" means here — the rescue leg
+        # below joins the FUSION but deliberately never this snapshot.
         if matched_leg_out is not None:
             lexical_ids = {
                 memory.id for ranking in rankings for memory, _, _ in ranking
             }
         scored = _hybrid_fuse(rankings, rrf_k=rrf_k)
 
+        # Rescue expansion: one extra, down-weighted BM25 leg over
+        # synthesized vocabulary, engaged only when the base fusion is
+        # not confident about its own top hit. Skipped on the stopword
+        # fallback (an all-filler query has no content tokens worth
+        # expanding, and the fallback already runs a special TF stream
+        # the expansion leg does not share).
+        if rescue_expansion and not stopword_fallback:
+            if scored:
+                top_matched = set(scored[0][2]) & set(query_tokens)
+                coverage = (
+                    len(top_matched) / query_unique if query_unique else 0.0
+                )
+            else:
+                coverage = 0.0
+            if coverage < _RESCUE_COVERAGE_GATE:
+                exp_terms = _expansion_terms_impl(
+                    list(dict.fromkeys(query_tokens)),
+                    _EXPANSION_TABLES,
+                    _stem_token,
+                )
+                if exp_terms:
+                    exp_stats = hybrid_stats
+                    if corpus_stats_provider is not None:
+                        # Above the threshold the floored query-term
+                        # stats say nothing about the synthesized
+                        # terms; fetch those too so a store-rare
+                        # synonym prices off the store, not the slice.
+                        exp_stats = _merge_corpus_stats(
+                            hybrid_stats, corpus_stats_provider(exp_terms)
+                        )
+                    exp_leg = _score_bm25(
+                        candidates,
+                        exp_terms,
+                        now=now,
+                        half_life_days=half_life_days,
+                        applied_by_id=applied_by_id,
+                        negative_by_id=negative_by_id,
+                        corroboration_boost=corroboration_boost,
+                        candidate_tokens=candidate_tokens,
+                        corpus_stats=exp_stats,
+                    )
+                    if exp_leg:
+                        expansion_ids = {m.id for m, _, _ in exp_leg}
+                        scored = _hybrid_fuse(
+                            rankings + [exp_leg],
+                            rrf_k=rrf_k,
+                            weights=[1.0, 1.0, _RESCUE_LEG_WEIGHT],
+                        )
+                        # `match_terms` stays a subset of the CALLER's
+                        # tokens — synthesized terms explain the leg,
+                        # not the caller's query, and letting them into
+                        # the matched list would inflate the coverage
+                        # `relevance` is computed from. An
+                        # expansion-only hit therefore reads
+                        # relevance="low", match_terms=[] with
+                        # matched_leg="expansion" — the exact shape
+                        # pure-paraphrase hits have always had.
+                        qset = set(query_tokens)
+                        scored = [
+                            (m, s, [t for t in matched if t in qset])
+                            for m, s, matched in scored
+                        ]
+
     trimmed = scored[:max_results]
     if matched_leg_out is not None:
         for memory, _, _ in trimmed:
-            leg = _matched_leg(lexical=memory.id in lexical_ids)
+            leg = _matched_leg(
+                lexical=memory.id in lexical_ids,
+                expansion=memory.id in expansion_ids,
+            )
             if leg:
                 matched_leg_out[memory.id] = leg
     return [
