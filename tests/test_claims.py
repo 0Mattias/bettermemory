@@ -60,6 +60,41 @@ def test_parse_literal_claim_is_type_sensitive() -> None:
     assert parse_claim("m.py::X=30").value != parse_claim("m.py::X=30.0").value
 
 
+def test_parse_set_claim_canonicalizes_element_order() -> None:
+    """A set literal is one claim however the caller orders the elements
+    — and however the process's hash seed lays the set out. `{8, 16}`
+    and `{16, 8}` are equal sets whose plain `repr`s differ (colliding
+    small ints keep insertion order; string sets reorder per seed), so
+    the stored form sorts elements by their canonical repr."""
+    a = parse_claim("m.py::ALLOWED={8, 16}")
+    b = parse_claim("m.py::ALLOWED={16, 8}")
+    assert a == b
+    assert a.value == "{16, 8}"
+    # Seed-independent spelling: what one server process stores, the
+    # next re-parses to the identical claim.
+    spelled = parse_claim("m.py::S={'gamma', 'beta', 'alpha'}")
+    assert spelled.value == "{'alpha', 'beta', 'gamma'}"
+    assert parse_claim(a.render()) == a
+
+
+def test_parse_dict_claim_canonicalizes_key_order() -> None:
+    a = parse_claim("m.py::CFG={'b': 2, 'a': 1}")
+    b = parse_claim("m.py::CFG={'a': 1, 'b': 2}")
+    assert a == b
+    assert a.value == "{'a': 1, 'b': 2}"
+    assert parse_claim(a.render()) == a
+
+
+def test_canonical_form_recurses_and_keeps_types_distinct() -> None:
+    nested = parse_claim("m.py::X=[{2, 1}, {'b': {4, 3}, 'a': 0}]")
+    assert nested.value == "[{1, 2}, {'a': 0, 'b': {3, 4}}]"
+    assert parse_claim(nested.render()) == nested
+    assert parse_claim("m.py::E=set()").value == "set()"
+    # Repr space still separates `{30}` from `{30.0}` even though the
+    # sets compare equal — same rule as bare `30` vs `30.0`.
+    assert parse_claim("m.py::X={30}").value != parse_claim("m.py::X={30.0}").value
+
+
 @pytest.mark.parametrize(
     "bad",
     [
@@ -184,6 +219,18 @@ def test_oracle_refuses_wrong_literal_and_reports_current(tree: Path) -> None:
     reason = _reason(tree, "pkg/mod.py::TIMEOUT=60")
     assert reason is not None
     assert "`30`" in reason and "`60`" in reason
+
+
+def test_oracle_accepts_unordered_literals_in_any_spelling(tree: Path) -> None:
+    """A true set/dict claim must not be refused over element or key
+    order: the source's layout and the claim's spelling both pass
+    through the same canonicalization, so equal values compare equal
+    in any process."""
+    (tree / "pkg" / "unordered.py").write_text(
+        'ALLOWED = {16, 8}\nLABELS = {"b": 2, "a": 1}\n'
+    )
+    assert _reason(tree, "pkg/unordered.py::ALLOWED={8, 16}") is None
+    assert _reason(tree, "pkg/unordered.py::LABELS={'a': 1, 'b': 2}") is None
 
 
 def test_oracle_first_binding_wins_on_rebound_name(tree: Path) -> None:

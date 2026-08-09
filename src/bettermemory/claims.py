@@ -33,8 +33,10 @@ One string per claim, three shapes — the same three kinds
 - ``src/pkg/mod.py::name`` — a SYMBOL claim: `name` is a top-level
   `def`/`class` in that module.
 - ``src/pkg/mod.py::NAME=value`` — a LITERAL claim: module-level
-  constant `NAME` is assigned that literal (compared in `repr` space
-  after `ast.literal_eval`, so `30` and `30.0` stay distinct).
+  constant `NAME` is assigned that literal (compared in canonical
+  `repr` space after `ast.literal_eval`: `30` and `30.0` stay
+  distinct, while `{8, 16}` and `{16, 8}` are one claim — see
+  `_canonical_repr`).
 
 Paths are stored repo-relative with forward slashes. `::` was chosen
 because coding agents already read it as file-scoped addressing
@@ -146,7 +148,8 @@ class Claim:
     Field-compatible with the bench's `Citation` on purpose — the bench
     now constructs THIS class, so the detector the corpus measured and
     the detector production runs cannot drift apart structurally.
-    `value` is `repr`-normalized for literal claims and `""` otherwise.
+    `value` is `_canonical_repr`-normalized for literal claims and `""`
+    otherwise.
     """
 
     kind: str
@@ -161,6 +164,36 @@ class Claim:
         if self.kind == "symbol":
             return f"{self.rel_path}::{self.name}"
         return f"{self.rel_path}::{self.name}={self.value}"
+
+
+def _canonical_repr(value: Any) -> str:
+    """`repr`, with unordered containers rendered in one fixed order.
+
+    Plain `repr` is not canonical for sets (iteration order follows the
+    per-process hash seed and insertion/collision layout) or dicts (key
+    insertion order), so the same value can render two ways — refusing a
+    true claim at declaration and flapping a stored claim at verify once
+    a new server process rolls a new seed. Sets render their elements
+    sorted by canonical repr, dicts sort items the same way, sequences
+    keep their order (it is semantic) and recurse. Scalars stay bare
+    `repr`, so `30` and `30.0` remain distinct claims.
+    """
+    if isinstance(value, set):
+        if not value:
+            return "set()"
+        return "{" + ", ".join(sorted(_canonical_repr(v) for v in value)) + "}"
+    if isinstance(value, dict):
+        items = sorted(
+            (_canonical_repr(k), _canonical_repr(v)) for k, v in value.items()
+        )
+        return "{" + ", ".join(f"{k}: {v}" for k, v in items) + "}"
+    if isinstance(value, tuple):
+        if len(value) == 1:
+            return "(" + _canonical_repr(value[0]) + ",)"
+        return "(" + ", ".join(_canonical_repr(v) for v in value) + ")"
+    if isinstance(value, list):
+        return "[" + ", ".join(_canonical_repr(v) for v in value) + "]"
+    return repr(value)
 
 
 def parse_claim(raw: str) -> Claim:
@@ -209,7 +242,7 @@ def parse_claim(raw: str) -> Claim:
             "quoting strings (`path::NAME='foo'`)"
         )
     try:
-        normalized = repr(ast.literal_eval(value))
+        normalized = _canonical_repr(ast.literal_eval(value))
     except Exception:
         raise ValueError(
             f"claim value {value!r} is not a Python literal — quote "
@@ -349,7 +382,7 @@ def check_claim(claim: Claim, root: Path) -> str | None:
             targ = node.targets[0]
             if isinstance(targ, ast.Name) and targ.id == claim.name:
                 try:
-                    current = repr(ast.literal_eval(node.value))
+                    current = _canonical_repr(ast.literal_eval(node.value))
                 except Exception:
                     return (
                         f"`{claim.name}` in {claim.rel_path!r} is not a "
@@ -390,17 +423,18 @@ def _binding_token(content: str) -> tuple[str, str] | None:
 
 
 def _rhs_repr(content: str) -> str | None:
-    """The assignment's right-hand side, normalised to `repr()` form.
+    """The assignment's right-hand side, normalised to canonical repr.
 
-    Matching `Claim.value`, which is itself `repr(ast.literal_eval(...))`,
-    is what makes the comparison type-sensitive: `30` and `30.0` must
-    not compare equal — the bench treats that change as genuine drift.
+    Matching `Claim.value`, which is itself
+    `_canonical_repr(ast.literal_eval(...))`, is what makes the
+    comparison type-sensitive: `30` and `30.0` must not compare equal —
+    the bench treats that change as genuine drift.
     """
     _, sep, rhs = content.partition("=")
     if not sep:
         return None
     try:
-        return repr(ast.literal_eval(rhs.strip()))
+        return _canonical_repr(ast.literal_eval(rhs.strip()))
     except Exception:
         return None
 
