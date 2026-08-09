@@ -969,6 +969,11 @@ def _render_memory_detail(
         caller_origin=capture_origin(),
         verified_paths=memory.verified_paths,
         body=memory.body,
+        # Same call shape as `handlers/show.py`: without the declared
+        # claims the count falls back to the un-narrowed any-touch
+        # policy and this page disagrees with memory_show on the same
+        # claim-carrying memory.
+        claims=memory.claims,
     )
     verdict = compute_staleness_verdict(
         verification=verification,
@@ -1582,7 +1587,11 @@ def _same_origin(origin: str | None, referer: str | None) -> bool:
 
 
 def build_app(
-    config: Config, store: Store | None = None, *, read_only: bool = False
+    config: Config,
+    store: Store | None = None,
+    *,
+    read_only: bool = False,
+    trusted_hosts: frozenset[str] | None = None,
 ) -> "FastAPI":
     """Build a FastAPI app wired to the given store. The factory
     pattern lets tests inject a hermetic store; production code uses
@@ -1595,12 +1604,27 @@ def build_app(
     tunnel is a transport, not a policy, and the policy must hold
     even if the operator points a different tunnel at the port.
 
+    ``trusted_hosts`` (a set of lowercase hostnames, port stripped)
+    enables the DNS-rebinding guard: requests whose Host header names
+    anything else answer 400 before any route runs. A loopback bind
+    is only local-only against callers that dial the IP — a browser
+    resolving an attacker's domain to 127.0.0.1 sends that domain in
+    Host and gets same-origin reads over every route. `serve` passes
+    the loopback names exactly when the bind is loopback with no
+    tunnel; a tunnel fronts the app under its public hostname and a
+    non-loopback bind is the operator explicitly widening exposure,
+    so both leave the guard off (None).
+
     Raises ImportError when the ``[ui]`` extra isn't installed — the
     CLI catches this and renders a clean install hint.
     """
     try:
         from fastapi import FastAPI, Form, Header, HTTPException
-        from fastapi.responses import HTMLResponse, RedirectResponse
+        from fastapi.responses import (
+            HTMLResponse,
+            PlainTextResponse,
+            RedirectResponse,
+        )
     except ImportError as exc:
         raise ImportError(
             "FastAPI is required for the web UI. Install with "
@@ -1609,6 +1633,18 @@ def build_app(
 
     store = store or Store(config.resolved_directory())
     app = FastAPI(title="bettermemory")
+
+    if trusted_hosts is not None:
+        allowed_hosts = trusted_hosts
+
+        @app.middleware("http")
+        async def _reject_untrusted_host(request, call_next):  # type: ignore[no-untyped-def]
+            if _host_header_name(request.headers.get("host", "")) not in allowed_hosts:
+                return PlainTextResponse(
+                    "Host header not allowed on a local-only bind.",
+                    status_code=400,
+                )
+            return await call_next(request)
 
     # audit H4 — per-process random CSRF token. Generated once at
     # app-build time, served in every page's <meta name="csrf-token">
@@ -2317,7 +2353,17 @@ def serve(
         log.info("read-only mode: mutations are disabled while tunneling")
         tunnel_proc = _start_tunnel(provider, binary, port)
 
-    app = build_app(config, read_only=tunnel is not None)
+    # The rebinding guard rides exactly the local-only claim: loopback
+    # bind, no tunnel. A tunnel's requests arrive under its public
+    # hostname, and a non-loopback bind is the operator explicitly
+    # widening exposure — both postures leave it off.
+    app = build_app(
+        config,
+        read_only=tunnel is not None,
+        trusted_hosts=(
+            _LOOPBACK_HOST_NAMES if tunnel is None and _is_loopback_bind(host) else None
+        ),
+    )
     _warn_if_non_loopback_bind(host)
     log.info("bettermemory ui starting on http://%s:%d", host, port)
     # `provider` is bound exactly when `tunnel_proc` is — the one branch
@@ -2454,6 +2500,27 @@ def _warn_if_non_loopback_bind(host: str) -> bool:
         "front with TLS for sensitive deployments."
     )
     return True
+
+
+# The Host-header names a browser can legitimately send at a loopback
+# bind. What `build_app`'s rebinding guard admits when `serve` arms it.
+_LOOPBACK_HOST_NAMES: frozenset[str] = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def _host_header_name(value: str) -> str:
+    """The lowercase hostname of a Host header, port stripped.
+
+    Handles the three shapes a real header takes: `name:port`,
+    bracketed IPv6 `[::1]:port`, and a bare name. A malformed
+    multi-colon unbracketed value is returned as-is — it fails the
+    allowlist, which is the safe direction for a guard.
+    """
+    v = value.strip().lower()
+    if v.startswith("["):
+        return v.split("]", 1)[0].lstrip("[")
+    if v.count(":") == 1:
+        return v.rsplit(":", 1)[0]
+    return v
 
 
 def _is_loopback_bind(host: str) -> bool:

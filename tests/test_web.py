@@ -2470,3 +2470,30 @@ def test_serve_without_tunnel_stays_mutable(monkeypatch: Any, memory_dir: Path) 
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
     web.serve(cfg, host="127.0.0.1", port=8124)
     assert served_apps and served_apps[0].state.read_only is False
+
+
+def test_loopback_trusted_hosts_reject_dns_rebinding_host(memory_dir: Path) -> None:
+    """The DNS-rebinding guard: a loopback bind is only local-only
+    against callers that dial the IP — a browser resolving an
+    attacker's domain to 127.0.0.1 sends that domain in Host and gets
+    same-origin reads over every route. With `trusted_hosts` armed
+    (what `serve` passes for a loopback bind with no tunnel), a
+    foreign Host answers 400 before any route runs; the loopback
+    spellings — port-suffixed and bracketed-IPv6 included — pass.
+    Default construction (tests, tunnel posture, non-loopback binds)
+    keeps no guard, so every existing caller is unaffected."""
+    from bettermemory.web import build_app
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    store = Store(memory_dir)
+    app = build_app(
+        cfg, store, trusted_hosts=frozenset({"localhost", "127.0.0.1", "::1"})
+    )
+    client = TestClient(app)
+    assert client.get("/", headers={"host": "localhost:8765"}).status_code == 200
+    assert client.get("/", headers={"host": "127.0.0.1"}).status_code == 200
+    assert client.get("/", headers={"host": "[::1]:8765"}).status_code == 200
+    assert client.get("/", headers={"host": "evil.example:8765"}).status_code == 400
+
+    open_client = TestClient(build_app(cfg, store))
+    assert open_client.get("/", headers={"host": "evil.example"}).status_code == 200
