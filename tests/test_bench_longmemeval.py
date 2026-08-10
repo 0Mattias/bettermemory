@@ -426,6 +426,86 @@ def test_coverage_probe_summary_survives_an_empty_population() -> None:
     assert probe.summarise([only_complete])["dropped_sessions"] == 0
 
 
+def _synthetic_corpus() -> list[dict]:
+    """Two instances in the shape `build_question_store` reads.
+
+    Small enough to run in-process, real enough to exercise the whole
+    run path: build a per-question store, search it, collapse the
+    ranking to sessions, score. The 265 MB corpus is not committed, so
+    the run path can only be covered by a fixture like this one.
+    """
+    return [
+        {
+            "question_id": "synthetic-1",
+            "question": "which database did we pick for the metrics store",
+            "answer_session_ids": ["s1", "s2"],
+            "haystack_session_ids": ["s1", "s2", "s3"],
+            "haystack_dates": ["2023/05/01", "2023/05/02", "2023/05/03"],
+            "haystack_sessions": [
+                [
+                    {"role": "user", "content": "we picked postgres for metrics"},
+                    {"role": "assistant", "content": "noted, postgres it is"},
+                ],
+                [
+                    {"role": "user", "content": "the metrics store rollout is staged"},
+                    {"role": "assistant", "content": "staged over three weeks"},
+                ],
+                [
+                    {"role": "user", "content": "lunch options near the office"},
+                    {"role": "assistant", "content": "there is a taco place"},
+                ],
+            ],
+        },
+        {
+            "question_id": "synthetic-2",
+            "question": "nothing in this haystack answers this",
+            "answer_session_ids": [],
+            "haystack_session_ids": ["s4"],
+            "haystack_sessions": [[{"role": "user", "content": "unrelated chatter"}]],
+        },
+    ]
+
+
+def test_coverage_probe_main_runs_its_search_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The probe's own scoring loop, end to end.
+
+    Every other test in this section drives the pure helpers, so the
+    call into `search()` was uncovered — and it drifted: the 4.0.0
+    embedding strip removed `semantic_model=`, `run.py` was cleaned and
+    this probe was not, so every run died with `TypeError` on its first
+    scored instance while the suite stayed green. `bench/` is outside
+    both mypy's and pyright's file sets, so a test that actually calls
+    the thing is the only guard available.
+    """
+    corpus_path = tmp_path / "synthetic.json"
+    corpus_path.write_text(json.dumps(_synthetic_corpus()), encoding="utf-8")
+    out_path = tmp_path / "probe.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "coverage_probe.py",
+            "--corpus",
+            str(corpus_path),
+            "--out",
+            str(out_path),
+        ],
+    )
+    assert probe.main() == 0
+    capsys.readouterr()
+
+    payload = json.loads(out_path.read_text(encoding="utf-8"))
+    # Instance 2 has no evidence and is skipped; instance 1 is scored,
+    # which is only reachable through the live `search()` call.
+    assert payload["scored"] == 1
+    assert payload["instances"] == 2
+    assert payload["arm"] == "lexical"
+    assert payload["summary"]["questions"] == 1
+    assert any("UNPINNED CORPUS" in n for n in payload["notes"])
+
+
 # ---------------------------------------------------------------------------
 # Guards that exist because a specific bug happened
 # ---------------------------------------------------------------------------

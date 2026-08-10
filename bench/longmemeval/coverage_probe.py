@@ -316,7 +316,6 @@ def main() -> int:
                 inst["question"],
                 max_results=UNBOUNDED,
                 mode="hybrid",
-                semantic_model=None,
             )
             ranked_hits = [(id_to_session.get(h.id, ""), h.match_terms) for h in hits]
         finally:
