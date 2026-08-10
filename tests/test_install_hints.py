@@ -78,7 +78,10 @@ def test_composed_forms_keep_doctors_exact_shipped_shape() -> None:
 
     The prose shape (tool form leading, parentheticals following) was
     won in `doctor`'s fix hints pre-extraction and is pinned
-    byte-for-byte so a future consumer inherits it unchanged.
+    byte-for-byte so a future consumer inherits it unchanged. No
+    surface composes them today — the extras they instructed on went
+    out with the 4.0.0 and 5.0.0 removals — so this is the shape held
+    in escrow for the next extra, not a live spelling.
     """
     assert _install_hints.install_extra_command("dev") == (
         "`uv tool install --reinstall 'bettermemory[dev]'` "
@@ -91,19 +94,6 @@ def test_composed_forms_keep_doctors_exact_shipped_shape() -> None:
         "inside the virtualenv that runs bettermemory: "
         "`uv pip install --force-reinstall httpx`)"
     )
-
-
-def test_doctor_binds_the_composed_forms_not_copies() -> None:
-    """`doctor`'s historical private names are the same function objects.
-
-    Identity, not equality: a reintroduced local wrapper could stay
-    string-equal today and drift tomorrow, which is the failure mode
-    this module exists to end.
-    """
-    from bettermemory import doctor
-
-    assert doctor._install_extra_command is _install_hints.install_extra_command
-    assert doctor._reinstall_extra_command is _install_hints.reinstall_extra_command
 
 
 # ---------------------------------------------------------------------------
@@ -170,10 +160,9 @@ def test_each_spelling_lives_only_in_its_pinned_homes(
 def test_install_hints_stays_import_free() -> None:
     """Zero imports, `__future__` included — pinned because it is relied on.
 
-    `doctor` and `llm` import the module at module level; those
-    placements were justified by the import being
-    unconditionally cheap, which only holds while this module pulls in
-    nothing at all.
+    `llm` imports the module at module level; that placement was
+    justified by the import being unconditionally cheap, which only
+    holds while this module pulls in nothing at all.
     """
     source = (_REPO_ROOT / _CANONICAL).read_text(encoding="utf-8")
     imports = [

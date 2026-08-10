@@ -1752,18 +1752,6 @@ class TestScopeAllowlistPlanMatchesApply:
         assert [r.action for r in plan.rows] == ["write"]
 
 
-class _FixedVectorModel:
-    """Stub embedding model: every body encodes to the same normalized
-    vector, so every pair scores cosine 1.0 regardless of shared tokens.
-
-    Same shape as the stub in `tests/test_consolidate.py` — the scorer
-    only calls `.encode`, so the semantic path is exercisable on the
-    default leg where the embeddings extra isn't installed."""
-
-    def encode(self, text: str, normalize_embeddings: bool = True) -> list[float]:
-        return [1.0, 0.0]
-
-
 # ---------------------------------------------------------------------------
 # apply_ingest_plan — origin capture (honest-evidence gate)
 # ---------------------------------------------------------------------------

@@ -1,8 +1,9 @@
 # Mirrors the cheap CI checks so they fail locally before push.
 #
 # mypy and pytest are intentionally omitted — both want a configured
-# Python env (the embeddings stub world, in mypy's case) and are slow
-# enough that running them on every commit is friction. CI catches them.
+# Python env (mypy runs strict against the `dev` extra's stubs) and are
+# slow enough that running them on every commit is friction. CI catches
+# them.
 #
 # Usage:
 #   uv tool install pre-commit  # once per machine

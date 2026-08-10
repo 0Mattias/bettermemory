@@ -3,9 +3,13 @@
 
 One file per audit round keeps the sweep's verification cohesive and
 reviewable. Each test reproduces the confirmed finding's failure mode and
-asserts the fix: the two 🔴 findings (frontmatter read-path DoS,
-embedding-encode fail-open) get live reproductions; the 🟡 findings get
-behavioural guards.
+asserts the fix: the 🔴 findings get live reproductions, the 🟡 findings
+get behavioural guards.
+
+Finding 2 (embedding-encode fail-open) is absent: its reproduction went
+out with the embedding lane in 4.0.0, along with the stub model it
+drove. The numbering keeps the hole rather than renumbering, so the
+round's own record still reads against the original sweep.
 """
 
 from __future__ import annotations
@@ -60,15 +64,6 @@ def _memory(body: str, scopes: list[str] | None = None) -> Memory:
     )
 
 
-class _RaisingSemanticModel:
-    """Loads fine, but raises at encode() time — models a runtime device /
-    OOM / tokenizer fault on an otherwise-healthy model. The search and
-    write-dedup paths must degrade to lexical, never crash."""
-
-    def encode(self, text: str, *, normalize_embeddings: bool = False) -> list[float]:
-        raise RuntimeError("simulated encode-time device fault")
-
-
 # --------------------------------------------------------------------------
 # Finding 1 (🔴) — _frontmatter read-path RecursionError fail-open
 # --------------------------------------------------------------------------
@@ -112,7 +107,12 @@ def test_store_skips_nesting_bomb_file_and_stays_readable(tmp_path: Path) -> Non
 
 
 # --------------------------------------------------------------------------
-# Finding 2 (🔴) — embedding encode() not fail-soft on live paths
+# Finding 3 (🔴) — FTS prefilter dropped the only in-scope match
+#
+# Finding 2 of this round (embedding encode() not fail-soft) had its
+# reproduction here too; the 4.0.0 strip removed the lane it exercised,
+# so the test and its stub model went with it. The gap in the numbering
+# is the record.
 # --------------------------------------------------------------------------
 
 

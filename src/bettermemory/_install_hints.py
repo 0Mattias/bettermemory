@@ -25,14 +25,16 @@ Two arguments carry every spelling choice below, hoisted here from
   outright ("no matches found"), so an unquoted spelling is a repair
   instruction that does not run.
 
-Import-free on purpose (pinned by test): ``doctor`` and ``llm`` import
-this at module level, and a module with no imports of its own keeps
-every placement unconditionally cheap.
+Import-free on purpose (pinned by test): ``llm`` imports this at module
+level, and a module with no imports of its own keeps every placement
+unconditionally cheap.
 
 The atoms are bare of backticks — the caller owns the prose around a
-command, and each surface composes its own. The two ``*_command``
-forms at the bottom are the fully-backticked compositions ``doctor``
-binds.
+command, and each surface composes its own. The two ``*_command`` forms
+at the bottom are the fully-backticked compositions ``doctor`` used to
+bind; the extras they instructed on went out with the 4.0.0 and 5.0.0
+removals, so they are the shape held for the next extra rather than a
+live spelling.
 """
 
 
@@ -88,8 +90,9 @@ def install_extra_command(extra: str) -> str:
     """The full ADD-an-extra instruction, backticked for prose.
 
     Tool form leading, pipx and development-clone variants in the
-    parenthetical. ``doctor`` binds this as ``_install_extra_command``
-    and ships it verbatim in fix hints.
+    parenthetical. ``doctor`` bound this as ``_install_extra_command``
+    and shipped it verbatim in fix hints until the extras it named were
+    removed; no surface composes it today.
     """
     return (
         f"`{tool_reinstall(extra)}` "
@@ -103,8 +106,9 @@ def reinstall_extra_command(module: str, extra: str) -> str:
 
     Same shape as `install_extra_command`, but the second parenthetical
     variant repairs the damaged ``module`` itself: the broken thing is a
-    dependency of the extra, not the package. ``doctor`` binds this as
-    ``_reinstall_extra_command``.
+    dependency of the extra, not the package. ``doctor`` bound this as
+    ``_reinstall_extra_command``; like its sibling it has no live
+    consumer since the extras were removed.
     """
     return (
         f"`{tool_reinstall(extra)}` "

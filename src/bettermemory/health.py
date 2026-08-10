@@ -851,12 +851,14 @@ class SilentMissStats:
     `no_signal_total` (additive, round 88) counts the audits the probe
     declined to evaluate (`verdict == "no_signal"`). They used to land
     in `audited_total`, which made a deployment whose probe can NEVER
-    measure a miss — `search_mode = "semantic"` under the Stop hook,
-    which hardcodes `semantic_model=None`, turns 100% of its audits
-    into permanent no_signals — read as the healthy "audited heavily,
-    model behaved" signature (audited climbing, misses pinned at 0).
-    Splitting them out keeps the rate denominator honest and makes the
-    structurally-unmeasured cohort visible.
+    measure a miss read as the healthy "audited heavily, model behaved"
+    signature (audited climbing, misses pinned at 0). The worked
+    example was a pre-4.0 `search_mode = "semantic"` install under the
+    Stop hook, which hardcoded `semantic_model=None` and turned 100% of
+    its audits into permanent no_signals; that configuration went out
+    with the embedding lane, but the split it motivated stands — any
+    future structurally-blind probe lands in the same bucket instead of
+    diluting the rate denominator.
 
     Empty bucket (audited and miss both zero) means the audit hook
     either wasn't invoked in the window or every audit it fired stopped
@@ -1073,8 +1075,9 @@ class HealthReport:
     # miss rate; we keep them as raw counts so the consumer chooses how
     # to render. `audited_total` counts MISS-CAPABLE audits only;
     # `no_signal` verdicts land in the separate `no_signal_total` so a
-    # probe that structurally can't measure (semantic mode under the
-    # Stop hook) doesn't masquerade as "audited heavily, no misses
+    # probe that structurally can't measure (pre-4.0 semantic mode
+    # under the Stop hook was the worked case) doesn't masquerade as
+    # "audited heavily, no misses
     # found." Audited and miss both zero means the audit hook hasn't
     # fired in the window or every audit stopped at the no-signal
     # branch — `no_signal_total` tells those apart.
@@ -1546,11 +1549,13 @@ class _StatsAccumulator:
         # audited). The verdict rides along (round 88) so `no_signal`
         # audits — which structurally cannot flag a miss — land in
         # `no_signal_total` instead of inflating `audited_total`: a
-        # `search_mode="semantic"` deployment's Stop hook no_signals
-        # EVERY turn forever (hook.py hardcodes semantic_model=None),
-        # and counting those as the denominator produced a perpetual
-        # false-green 0% miss rate. Missing/legacy verdicts read as
-        # None and stay in the miss-capable denominator (conservative).
+        # pre-4.0 `search_mode="semantic"` deployment's Stop hook
+        # no_signalled EVERY turn forever, and counting those as the
+        # denominator produced a perpetual false-green 0% miss rate.
+        # That config is gone; the split is not, because any
+        # structurally-blind probe repeats the shape. Legacy verdicts
+        # read as None and stay in the miss-capable denominator
+        # (conservative).
         #
         # Coverage bookkeeping runs BEFORE the repeat early-out: a
         # deduped re-audit is still proof the Stop hook fired, and the
@@ -2556,8 +2561,8 @@ def render_text(report: HealthReport) -> str:
         if sm.audited_total == 0 and sm.no_signal_total > 0:
             lines.append(
                 "  (no measurable audits — every audited turn stopped at "
-                "the no-signal branch: empty store, empty query, or an "
-                "unavailable semantic model)"
+                "the no-signal branch: empty store, empty query, or no "
+                "hits at all)"
             )
         elif sm.miss_total == 0:
             lines.append("  (none — audit ran and found no misses)")
@@ -2643,9 +2648,9 @@ def _silent_miss_stats(
     from `turn_audited` events. Audits whose verdict is ``"no_signal"``
     are counted into `no_signal_total` rather than `audited_total` —
     they structurally cannot flag a miss, so leaving them in the rate
-    denominator dilutes it (and for a semantic-config Stop hook, whose
-    audits are ALL permanent no_signals, manufactured a perpetual
-    false-green 0% miss rate). A None verdict (missing/legacy field)
+    denominator dilutes it (and for the pre-4.0 semantic-config Stop
+    hook, whose audits were ALL permanent no_signals, manufactured a
+    perpetual false-green 0% miss rate). A None verdict (missing/legacy field)
     counts as miss-capable, the conservative read. The cutoff filter
     below applies to BOTH buckets.
 

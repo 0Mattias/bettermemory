@@ -51,7 +51,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
-from . import _install_hints, search
+from . import search
 from .config import Config, TelemetryConfig, load_config
 from .eval import is_admin_recorded_event
 from .events import EVENT_LOG_FILENAME, iter_all_events
@@ -3305,16 +3305,6 @@ def _read_text_or_none(path: Path) -> str | None:
         return path.read_text(encoding="utf-8", errors="replace")
     except OSError:  # pragma: no cover - defensive
         return None
-
-
-# The install/repair command spellings live in `_install_hints`, along
-# with the two arguments that shaped them (the tool form leads; the
-# extras spec is quoted) — one module owns them so the surfaces cannot
-# drift apart again (`tests/test_install_hints.py` pins the literals
-# there). Bound under the historical private names so the
-# doctor-internal call sites read unchanged.
-_install_extra_command = _install_hints.install_extra_command
-_reinstall_extra_command = _install_hints.reinstall_extra_command
 
 
 def _check_retrieval_discrimination(directory: Path, cfg: Config) -> Diagnosis:

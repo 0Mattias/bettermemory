@@ -1531,69 +1531,6 @@ def test_audit_turn_cadence_only_old_events_skips_warn(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# embeddings_extra
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# embeddings_extra — WHICH extra is broken decides the severity
-#
-# Two extras exist so one can cover for the other: `resolve_provider`
-# asks about HEALTH, not presence, so a broken sentence-transformers
-# beside a working fastembed resolves to fastembed and the semantic leg
-# goes on ranking. The check used to return on the FIRST broken module
-# without asking what got resolved, so that install was told "Semantic
-# ranking and cosine dedup are silently degraded to keyword/BM25 and
-# Jaccard" while a semantic leg was demonstrably scoring its searches.
-#
-# The counterweights below matter as much as the downgrade: the `fail`
-# has to survive for every shape where the leg really IS lost, or this
-# repair trades a false alarm for a silent one.
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("search_mode", "semantic_dedup"),
-    [("keyword", False), ("bm25", False)],
-    ids=["keyword", "bm25"],
-)
-@pytest.mark.parametrize(
-    ("search_mode", "semantic_dedup"),
-    [("hybrid", False), ("semantic", False), ("keyword", True)],
-    ids=["hybrid-ranks", "semantic-ranks", "keyword-but-dedup-wants-cosine"],
-)
-@pytest.mark.parametrize(
-    ("torch", "fastembed", "provider", "search_mode", "semantic_dedup"),
-    [
-        ("KeyError: frozenset()", None, None, "hybrid", False),
-        ("KeyError: frozenset()", "ok", None, "hybrid", False),
-        (None, "RuntimeError: onnx missing", "torch", "hybrid", False),
-        (None, "ok", "torch", "hybrid", False),
-        (None, None, "torch", "hybrid", False),
-        (None, None, None, "hybrid", True),
-        (None, None, None, "semantic", False),
-    ],
-    ids=[
-        "only-extra-broken",
-        "broken-sibling-is-dead-weight",
-        "named-absent-and-sibling-broken",
-        "named-absent-sibling-healthy",
-        "named-absent-nothing-installed",
-        "bare-install-wants-cosine-dedup",
-        "bare-install-under-semantic-mode",
-    ],
-)
-@pytest.mark.parametrize(
-    ("search_mode", "semantic_dedup"),
-    [("keyword", False), ("bm25", False)],
-    ids=["keyword", "bm25"],
-)
-@pytest.mark.parametrize(
-    ("search_mode", "semantic_dedup"),
-    [("hybrid", False), ("semantic", False), ("keyword", True)],
-    ids=["hybrid-ranks", "semantic-ranks", "keyword-but-dedup-wants-cosine"],
-)
-# ---------------------------------------------------------------------------
 # retrieval_discrimination
 # ---------------------------------------------------------------------------
 

@@ -5,9 +5,10 @@ reaches the sibling episode tier for its size gauge
 (`EpisodeStore.volume`). That gauge walks `<root>/episodes` with a bare
 `iterdir` in `iter_session_ids`, so the subtree arriving in a shape the
 process cannot walk raises out of the LAST line of a function whose
-other twenty rollups already succeeded — and out of all three of its
-callers: the `memory_health` MCP tool, `bettermemory health`, and the
-web dashboard.
+other twenty rollups already succeeded — and out of both of its
+callers: the `memory_health` MCP tool and `bettermemory health`. (A
+third, the web dashboard, was the reason this said "all three" until
+5.0.0 removed it.)
 
 Two shapes reach it, and neither is exotic in a store that syncs:
 

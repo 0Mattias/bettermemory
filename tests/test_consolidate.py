@@ -329,16 +329,6 @@ def test_dedup_skips_opposite_polarity_pair() -> None:
     assert len(candidates) == 1
 
 
-class _FixedVectorModel:
-    """Stub embedding model: every body encodes to the same normalized
-    vector, so every pair scores cosine 1.0 — above any threshold. The
-    polarity guard is then the only thing between an opposite-polarity
-    pair and a tombstone proposal."""
-
-    def encode(self, text: str, normalize_embeddings: bool = True) -> list[float]:
-        return [1.0, 0.0]
-
-
 def test_polarity_guard_surfaces_skipped_pair_on_report(store: Store) -> None:
     """Regression (round-88): the polarity guard dropped above-threshold
     pairs with a bare `continue` — no log, counter, or report field —
@@ -474,24 +464,6 @@ def test_dedup_still_flags_genuine_duplicates_sharing_stamp() -> None:
     assert candidates[0].keeper_id == b.id
     assert candidates[0].duplicate_id == a.id
     assert candidates[0].similarity >= 0.75
-
-
-class _StampAwareModel:
-    """Stub embedding model that records every text it encodes and
-    returns vectors keyed on content: anything still carrying the
-    provenance stamp (or the dotfiles claim) encodes to [1, 0]; the
-    zsh claim encodes to the orthogonal [0, 1]. If the dedup pass
-    embeds raw stamped bodies — or reuses a stale full-body cache
-    entry — the two DISTINCT facts collapse to cosine 1.0."""
-
-    def __init__(self) -> None:
-        self.seen: list[str] = []
-
-    def encode(self, text: str, normalize_embeddings: bool = True) -> list[float]:
-        self.seen.append(text)
-        if "consolidate --llm" in text or "stow" in text:
-            return [1.0, 0.0]
-        return [0.0, 1.0]
 
 
 def test_dedup_pairs_sorted_by_similarity_desc() -> None:
@@ -1810,12 +1782,15 @@ def test_consolidate_empty_store_returns_empty_report(store: Store) -> None:
     assert not report.applied
 
 
-def test_consolidate_returns_method_label_when_no_semantic_model(
+def test_consolidate_reports_the_jaccard_dedup_method_label(
     store: Store,
 ) -> None:
-    """Without a semantic model, the dedup method label must be
-    `"jaccard"` so the consumer knows which threshold was used and
-    what the false-positive profile looks like."""
+    """The dedup method label must read `"jaccard"` so the consumer
+    knows which threshold was used and what the false-positive profile
+    looks like. It was a conditional label while the cosine path
+    existed; 4.0.0 removed that path, so `"jaccard"` is now the only
+    value the field can carry and the pin is on the field, not the
+    branch."""
     store.write(content="anything", scopes=["tools"])
     report = consolidate(store)
     assert report.dedup_method == "jaccard"

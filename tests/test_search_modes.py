@@ -1,10 +1,10 @@
-"""Tests for the `mode` parameter on search() — dispatch across keyword,
-bm25, semantic, and hybrid rankers.
+"""Tests for the `mode` parameter on search() — dispatch across the
+keyword, bm25, and hybrid rankers.
 
-Semantic mode tests use a stub model (no sentence-transformers dependency)
-so this file runs in the default test suite. The stub follows the same
-contract — `encode(text, normalize_embeddings=True) -> vector` — and
-returns deterministic vectors based on token overlap.
+A fourth arm, `"semantic"`, was dispatched here until 4.0.0 removed the
+embedding lane; its tests drove a stub model rather than a real one so
+the file could run without the extra installed. Both are gone — `mode`
+is now a three-value closed set and `search()` raises on anything else.
 """
 
 from __future__ import annotations
@@ -39,8 +39,7 @@ def _memory(
 def test_mode_default_is_hybrid() -> None:
     """Calling search() with no `mode` should use the hybrid scorer
     (default since 2.6.8). Pin the default so a future flip is an
-    obvious diff. Hybrid degrades to keyword+BM25 fusion when no
-    semantic_model is provided, so this works without the extras."""
+    obvious diff."""
     a = _memory("python list comprehension")
     b = _memory("kubernetes networking notes")
     default = search([a, b], "python list")
@@ -60,11 +59,13 @@ def test_mode_bm25_returns_hits() -> None:
     assert all(h.score > 0 for h in hits)
 
 
-def test_mode_hybrid_runs_without_semantic_model() -> None:
-    """Hybrid mode degrades gracefully when no semantic model is provided:
-    it fuses keyword + BM25 only. The "I asked for the best, but I don't
-    have the embeddings extra installed" case — should still beat
-    single-ranker quality in practice without hard-erroring."""
+def test_mode_hybrid_fuses_the_two_lexical_legs() -> None:
+    """Hybrid is the fusion of keyword + BM25 and nothing else.
+
+    It was written as a degradation case — "the embeddings extra is not
+    installed, so fuse what is left" — but 4.0.0 made two legs the whole
+    definition, so the condition can no longer vary. What is still worth
+    pinning is that the fusion beats neither leg alone into silence."""
     a = _memory("python list comprehension")
     b = _memory("rust borrow checker")
     hits = search([a, b], "python", mode="hybrid")
