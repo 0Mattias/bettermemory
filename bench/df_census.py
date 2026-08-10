@@ -288,7 +288,17 @@ def main() -> int:
     p = argparse.ArgumentParser(description="Emitted-term df census. No recall.")
     p.add_argument("--instrument", choices=("retrieval", "longmemeval"), required=True)
     p.add_argument("--limit", type=int, default=None, help="First N instances (smoke).")
-    p.add_argument("--out", default=None, metavar="PATH")
+    p.add_argument(
+        "--out",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Write the census here. A RELATIVE path resolves against this "
+            "script's own directory (bench/), matching the other runners — "
+            "so pass `longmemeval/results/x.json`, not "
+            "`bench/longmemeval/results/x.json`, or give an absolute path."
+        ),
+    )
     args = p.parse_args()
 
     started = time.time()

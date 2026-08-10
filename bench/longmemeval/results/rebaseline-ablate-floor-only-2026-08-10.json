@@ -1,0 +1,100 @@
+{
+  "provenance": {
+    "bettermemory_version": "5.1.1",
+    "commit": "6dfc960",
+    "tree_dirty": false,
+    "date": "2026-08-10",
+    "machine": {
+      "os": "Darwin 25.5.0",
+      "machine": "arm64",
+      "python": "3.13.13"
+    }
+  },
+  "corpus": "longmemeval_s_cleaned.json",
+  "corpus_sha256": "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442",
+  "instances": 500,
+  "scored": 500,
+  "retrieval_depth": 200,
+  "k_values": [
+    1,
+    5,
+    10
+  ],
+  "rescue_expansion": true,
+  "ablation": "floor-only",
+  "notes": [
+    "ABLATION floor-only \u2014 the coverage gate is patched to never engage, so the rescue leg never runs and this arm measures the filler df-floor alone. Committed patch, not a working-tree edit; see apply_ablation in run.py.",
+    "this runner measures bettermemory only; the claude-mem arms run through cm_run.py and publish their own artifacts \u2014 a single-system artifact licenses no comparative claim by itself.",
+    "ingest bypasses memory_write guardrails by design (Store.write in src/bettermemory/store.py); stores hold ~245 items, below the 500-item index threshold, so bm25 prefiltering never engages and the full store is ranked."
+  ],
+  "results": [
+    {
+      "arm": "lexical",
+      "n": 500,
+      "seconds": 335.2,
+      "items_written": 124361,
+      "rounds_offered": 124361,
+      "dup_session_questions": 13,
+      "macro": {
+        "1": 0.5226,
+        "5": 0.8935,
+        "10": 0.9463
+      },
+      "micro": {
+        "1": 0.4346,
+        "5": 0.8671,
+        "10": 0.9335
+      },
+      "ceiling": {
+        "1": 0.6442,
+        "5": 0.999,
+        "10": 1.0
+      },
+      "depth_truncated": {
+        "1": 0,
+        "5": 2,
+        "10": 9
+      },
+      "by_type": {
+        "knowledge-update": {
+          "1": 0.4615,
+          "5": 0.9808,
+          "10": 0.9872
+        },
+        "multi-session": {
+          "1": 0.3605,
+          "5": 0.8487,
+          "10": 0.9301
+        },
+        "single-session-assistant": {
+          "1": 1.0,
+          "5": 1.0,
+          "10": 1.0
+        },
+        "single-session-preference": {
+          "1": 0.2333,
+          "5": 0.7333,
+          "10": 0.9
+        },
+        "single-session-user": {
+          "1": 0.8714,
+          "5": 0.9714,
+          "10": 0.9857
+        },
+        "temporal-reasoning": {
+          "1": 0.401,
+          "5": 0.8372,
+          "10": 0.9055
+        }
+      },
+      "type_n": {
+        "single-session-user": 70,
+        "multi-session": 133,
+        "single-session-preference": 30,
+        "temporal-reasoning": 133,
+        "knowledge-update": 78,
+        "single-session-assistant": 56
+      }
+    }
+  ]
+}

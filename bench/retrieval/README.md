@@ -401,6 +401,20 @@ could earn the default back is named and unrun: df-gate the EMITTED
 expansion terms against the pool (the promiscuous-variant class is
 detectable in code), then re-preregister on both instruments.
 
+**Round 2 preregistered that experiment and its pre-run kill fired.**
+`bench/longmemeval/PREREGISTRATION.md` addendum 4 (2026-08-10) binds
+both instruments and fixes τ from a df census alone — no recall input
+at any stage. Its Gate 0 asks, before any gate exists in code, whether
+an emitted term's document frequency separates the class that helps
+this corpus from the class that harms the conversational one. It does
+not: on the held-out set's regressed questions the emitted terms are
+RARER than this gold set's (median df/N 0.027 against 0.036, a 0.74x
+ratio where 5x was required). The two populations occupy the same
+band, so no threshold can tell them apart. See that addendum and
+`results/df-census-2026-08-10.json` for the distributions, and the
+round-2 results section in `bench/longmemeval/README.md` for the
+scored verdict.
+
 Unpadded corpus (`results/unpadded-2026-08-09.json`):
 
 | arm | probe | recall@1 | recall@5 |
