@@ -26,6 +26,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import pytest
 
@@ -223,7 +224,7 @@ def test_summary_separates_live_terms_from_zero_df_noise() -> None:
 
 def test_summary_survives_an_empty_population() -> None:
     assert census.summarise([])["emitted_terms"] == 0
-    empty = [
+    empty: list[dict[str, Any]] = [
         {"emitted": 0, "engaged": False, "median_df_ratio_live": None, "terms": []}
     ]
     assert census.summarise(empty)["emitted_terms_with_df_gt0"] == 0

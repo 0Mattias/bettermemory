@@ -19,7 +19,6 @@ skip cleanly when it is absent, which is the normal state in CI.
 
 from __future__ import annotations
 
-import importlib
 import importlib.util
 import inspect
 import json
@@ -560,7 +559,8 @@ def test_every_ablation_arm_is_a_committed_patch() -> None:
     assert bm.ABLATIONS == ("none", "floor-only", "leg-only")
     assert bm.ABLATION == "none", "the runner default must be the unablated lane"
 
-    engine = importlib.import_module("bettermemory.search")
+    import bettermemory.search as engine
+
     gate_before = engine._RESCUE_COVERAGE_GATE
     filler_before = engine._EXPANSION_TABLES.filler_stems
     assert filler_before, "the filler table is empty before any ablation"
