@@ -7,6 +7,72 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## Unreleased
+
+### Fixed — two holes in the rescue lane, both inside the opt-in flag
+
+The 5.1 lane shipped with a leak and a parity gap. Neither moves a
+default install's ranking — `[behavior] rescue_expansion` is off — but
+both bear on the experiment that could earn the default back.
+
+- **The rescue expansion no longer re-emits discourse filler.**
+  `expansion_terms` unions four sources and only three were curated
+  against the filler list; the fourth, `morph_variants`, is a rule, so
+  "wondering" regenerated 'wonder'/'wondered' and "thinking"
+  regenerated 'think'. The df-floor that deflates filler is applied to
+  the caller's tokens only, so a synthesized filler stem reached the
+  leg at full corpus-rare IDF — 7.1x its own floored sibling, and
+  above the genuine expansion vocabulary the lane exists to add.
+  Measured on a 33-memory store with the flag on, that floated a body
+  of pure filler (`match_terms []`) over the memory the rescue was
+  engaged to reach. The disjointness invariant was already stated and
+  tested; the test asserted only over the three hand-curated tables,
+  which is exactly where the violation was not.
+- **The silent-miss probe ranks the way production ranks again.** The
+  flag was read directly off `deps.config.behavior` at the search
+  handler's own call site rather than through `RankingInputs`, the
+  shape that exists so ranking surfaces cannot drift apart on
+  `[behavior]` inputs — so `probe_for_miss` could not see it and
+  scored a two-leg fusion against production's three. The miss probe
+  reads only the rank-1 hit, so on a lane-on store a query production
+  serves read `no_signal`. Both audit producers thread it now.
+- Two smaller lane repairs: the expansion leg's corpus-statistics
+  fetch omitted the `_kebab_parts` components the base fetch asks for,
+  leaving a joined synthesized term ("split-testing" emits
+  "split-test") priced off pool-collapsed IDF; and
+  `IRREGULAR_PAST["came"]` emitted 'com', a live body token in every
+  memory citing a `.com` host, which is the promiscuous short term the
+  length floor exists to block.
+- The shipped `[behavior] rescue_expansion` key had no behavioural
+  test from loader to ranker. It has one now, on both settings.
+
+### Fixed — the version contract, the strip residue, and the bench receipts
+
+- The contract docs never moved across two majors. `docs/api.md`
+  called itself the 3.x surface and promised removals wait for 4.0 in
+  the same file that records a 4.0 removal; `CONTRIBUTING.md` declared
+  the current major to be 3 and listed `mode="semantic"` in the stable
+  enum set the code rejects; `SECURITY.md` capped support at 3.x and
+  documented two controls whose code was deleted. All of it reads
+  against 5.x, with 4.0 and 5.0 as the worked examples of what forces
+  a major. The `origin.py` deprecation messages named a 4.0 that
+  shipped twice over and now name 6.0 — the removal itself stays a 6.0
+  decision.
+- Test-suite residue from the 4.0.0 and 5.0.0 strips: five orphaned
+  parametrize stacks decorating a plain helper, an orphan test file
+  with no tests, four unused embedding stub classes, an empty markers
+  table, a documented pytest marker that no test carries, and two dead
+  `doctor` aliases whose comment claimed call sites that do not exist.
+- Bench receipts now say what the artifacts show. The LongMemEval
+  runner grew `--rescue-expansion`, without which the row that fired
+  the 5.1 kill was unreachable from its own harness; the READMEs'
+  commit attribution, clean-tree claim, preregistered-P6 wording and
+  the "15 points on the casual probes" figure are each corrected in
+  place with a dated note. No published artifact was edited.
+- `bench/longmemeval/coverage_probe.py` passed a `semantic_model=`
+  kwarg removed in 4.0.0, so every documented invocation died on its
+  first scored instance.
+
 ## 5.1.0 - 2026-08-09
 
 ### Added — rescue expansion, shipped opt-in; its preregistered check killed the default, and that verdict ships with it
