@@ -822,11 +822,27 @@ def main() -> int:
                 None: "v2-unpadded-2026-07-26.json",
                 600: "v2-padded600-2026-07-26.json",
             }.get(args.pad_to)
-        if baseline is not None:
+        # Gated on the LANE as well as the corpus, for the reason the
+        # index-threshold note above is gated: the reference artifacts
+        # were measured before 5.1 and are lane-off by construction, so
+        # under `--rescue-expansion on` the off half ranks with repairs
+        # the reference never had and reproduces nothing. The three
+        # committed `prefilter-*-2026-08-09.json` files carry this note
+        # in error — their own rows falsify it (asked 0.45/0.85 against
+        # v2-padded600's 0.25/0.60). They are receipts and are left as
+        # measured; the erratum is in README.md and the claim is gated
+        # here so it cannot be emitted again.
+        if baseline is not None and not RESCUE_EXPANSION:
             notes.append(
                 f"the prefilter=off half re-measures {baseline} on the same "
                 f"corpus digest, so its rows double as a regression check on "
                 f"the harness itself."
+            )
+        elif baseline is not None:
+            notes.append(
+                f"the prefilter=off half ranks with the rescue-expansion "
+                f"repairs, which {baseline} predates — it is a fresh "
+                f"lane-on measurement, NOT a reproduction of that artifact."
             )
         else:
             notes.append(

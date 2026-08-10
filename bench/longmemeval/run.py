@@ -115,16 +115,34 @@ K_VALUES = (1, 5, 10)
 # Item-level retrieval depth, collapsed afterwards to distinct sessions.
 # Must exceed max(K_VALUES) by enough that k distinct sessions are
 # reachable even when a single session monopolises the head of the
-# ranking. Median haystack is 245 rounds across 48 sessions, so ~5 rounds
-# per session; 200 gives a distinct-session yield far above k=10 while
-# staying well under the smallest haystack (198 rounds). Questions that
-# still fail to yield k distinct sessions are reported as
-# depth-truncated, never silently scored as misses.
+# ranking. Median haystack is 247 rounds across 48 sessions, so ~5 rounds
+# per session; 200 gives a distinct-session yield far above k=10. The
+# smallest haystack in the pinned corpus is 199 rounds, so on that one
+# instance the depth is the whole store rather than a window of it —
+# which is the conservative direction (nothing is withheld from the
+# ranking), and the reason the claim is stated as measured rather than
+# as a bound. Questions that still fail to yield k distinct sessions
+# are reported as depth-truncated, never silently scored as misses.
 RETRIEVAL_DEPTH = 200
 
 INDEX_THRESHOLD = 500  # mirrors `_handlers._INDEX_THRESHOLD_DEFAULT`
 
 SCOPE = ["longmemeval"]
+
+# Whether the arms rank with the 5.1 rescue-expansion repairs
+# (`search.search(rescue_expansion=...)`). Module-level and defaulting
+# to the PRODUCT default (off), same shape as `bench/retrieval/run.py`.
+#
+# This instrument is the one that KILLED default-on, so its lane
+# artifacts are the receipts for the shipped default and have to stay
+# reproducible. They were generated at `6e87fad`, where the engine
+# default was still on and a bare invocation was therefore a lane-on
+# run; `fe57f05` flipped the default, which left the published rows
+# unreachable from this runner at any later commit. The flag restores
+# them, and `rescue_expansion` now rides in the payload so an artifact
+# states its own lane setting instead of leaving a reader to date it
+# against a commit.
+RESCUE_EXPANSION = False
 
 
 def corpus_fingerprint(path: Path) -> str:
@@ -358,6 +376,7 @@ def run_arm(
                 inst["question"],
                 max_results=RETRIEVAL_DEPTH,
                 mode="hybrid",
+                rescue_expansion=RESCUE_EXPANSION,
             )
             ranked = distinct_sessions([h.id for h in hits], id_to_session)
         finally:
@@ -466,6 +485,17 @@ def main() -> int:
     p.add_argument("--json", action="store_true")
     p.add_argument("--quiet", action="store_true")
     p.add_argument(
+        "--rescue-expansion",
+        choices=("on", "off"),
+        default="off",
+        help=(
+            "Rank with the 5.1 rescue-expansion repairs (filler df-floor + "
+            "gated vocabulary leg). Default off — the product default, which "
+            "this instrument's own preregistered check set. 'on' reproduces "
+            "rescue-expansion-2026-08-09.json."
+        ),
+    )
+    p.add_argument(
         "--per-question",
         default=None,
         metavar="PATH",
@@ -477,6 +507,11 @@ def main() -> int:
         ),
     )
     args = p.parse_args()
+
+    # Module-level so the arm runner reads one flag without a signature
+    # change — same reason `bench/retrieval/run.py` does it.
+    global RESCUE_EXPANSION
+    RESCUE_EXPANSION = args.rescue_expansion == "on"
 
     corpus_path = Path(args.corpus).expanduser()
     if not corpus_path.is_absolute():
@@ -557,6 +592,7 @@ def main() -> int:
         "scored": rows[0].n if rows else 0,
         "retrieval_depth": RETRIEVAL_DEPTH,
         "k_values": list(K_VALUES),
+        "rescue_expansion": RESCUE_EXPANSION,
         "notes": notes,
     }
 

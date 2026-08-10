@@ -523,6 +523,12 @@ def test_the_prefilter_really_engages_on_every_committed_question(
     [
         "prefilter-above-threshold-2026-07-30.json",
         "prefilter-forced-180-2026-07-30.json",
+        # The 5.1 lane pair. Left uncovered when they landed, which is
+        # backwards: `test_prefilter_live_run_matches_the_committed_artifact`
+        # uses the above-threshold file as its GOLDEN, so the artifact the
+        # suite trusts most was the one nothing checked.
+        "prefilter-above-threshold-2026-08-09.json",
+        "prefilter-forced-180-2026-08-09.json",
     ],
 )
 def test_prefilter_artifacts_are_internally_consistent(name: str) -> None:
@@ -555,6 +561,42 @@ def test_prefilter_artifacts_are_internally_consistent(name: str) -> None:
             expected = off[f"recall_at_{k}"] - on[f"recall_at_{k}"]
             assert delta[f"recall_loss_at_{k}"] == pytest.approx(expected)
         assert delta["gold_nomination_rate"] == on["gold_nominated"]
+
+
+def test_the_harness_self_check_note_is_gated_on_the_lane() -> None:
+    """The `both` run's off half re-measures a committed 2026-07-26
+    artifact — but only lane-off. Those references predate 5.1 and are
+    lane-off by construction, so under `--rescue-expansion on` the off
+    half ranks with repairs they never had and reproduces nothing.
+
+    The three committed `prefilter-*-2026-08-09.json` files carry the
+    self-check note in error and their own rows falsify it (as-asked
+    45%/85% against v2-padded600's 25%/60%). They are receipts and stay
+    as measured; the erratum is in README.md. This pins the gate so the
+    claim cannot be emitted from a lane-on run again."""
+    source = (_HERE / "run.py").read_text(encoding="utf-8")
+    assert "if baseline is not None and not RESCUE_EXPANSION:" in source, (
+        "the harness self-check note is no longer gated on the lane"
+    )
+
+    published = json.loads(
+        (_RESULTS / "prefilter-above-threshold-2026-08-09.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert published["rescue_expansion"] is True
+    reference = json.loads(
+        (_RESULTS / "v2-padded600-2026-07-26.json").read_text(encoding="utf-8")
+    )
+    off = {
+        (r["arm"], r["probe"]): r for r in published["results"] if not r["prefilter"]
+    }
+    before = {(r["arm"], r["probe"]): r for r in reference["results"]}
+    key = ("lexical", "asked")
+    assert off[key]["recall_at_5"] != before[key]["recall_at_5"], (
+        "the lane-on off half now matches the pre-5.1 reference, which "
+        "would make the erratum in README.md wrong — re-read both"
+    )
 
 
 def test_the_padded_prefilter_artifact_reproduces_its_predecessor() -> None:

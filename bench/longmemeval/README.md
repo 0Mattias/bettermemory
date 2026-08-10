@@ -77,8 +77,11 @@ criterion fired. The lane ships opt-in
 (`[behavior] rescue_expansion`, default off), and this section is the
 record of why.**
 
-All runs at the 5.0.0 engine plus the lane commit (`d78a620`), same
-corpus and harness as the baseline, raw JSON in `results/`:
+Provenance, from the artifacts rather than from memory: the three
+lane rows ran at `6e87fad` (the 5.0.0 engine with the lane commit
+`d78a620` in its history) and the baseline row at `9b68e74`, the
+pre-lane engine — same corpus digest and harness throughout. Raw JSON
+in `results/`:
 
 | configuration | macro@1 | macro@5 | macro@10 | artifact |
 | --- | --- | --- | --- | --- |
@@ -89,9 +92,16 @@ corpus and harness as the baseline, raw JSON in `results/`:
 
 ### Predictions scored
 
+Predictions are quoted verbatim from addendum 3. Correction
+(2026-08-10): this table previously restated P6 as "or the lane does
+not ship **default-on**", which is not what was preregistered — the
+original says "the lane does not ship", full stop. The weaker wording
+is restored to the committed text and the gap between it and what
+shipped is stated in the row rather than written out of the criterion.
+
 | # | prediction | outcome |
 | --- | --- | --- |
-| P6 | macro@5 ≥ 0.8900 or the lane does not ship default-on | **KILL FIRED — 0.8770.** The default did not ship. |
+| P6 | macro@5 ≥ 0.8900 or the lane does not ship | **KILL FIRED — 0.8770.** Partially honoured: the DEFAULT did not ship, but the lane shipped behind `[behavior] rescue_expansion`. That opt-in compromise was chosen after seeing the number and is a deviation from P6 as written, recorded here rather than folded into the criterion. |
 | P7 | transfer small but real: macro@5 in [0.8930, 0.9050] | **MISSED, low** — the lane transferred harm, not help |
 | P8 | the gate protects recall@1: within ±2 points of 0.5246 | **MISSED — −4.9 points.** The gate's dev-set calibration did not transfer: colloquial questions are low-coverage by nature, so the leg engaged broadly here |
 
@@ -125,11 +135,34 @@ leg-only arm — the force matters, see the discard note below).
 One discard, recorded rather than hidden: the first leg-only run was
 invalidated before publication — it raced a concurrent working-tree
 edit that flipped the engine's default, imported the flipped module,
-and measured pure baseline while claiming to measure the leg (its
-provenance carried the `tree_dirty` flag and baseline-identical
-numbers across all three k's, which is what gave it away). The
-published leg-only artifact is the rerun with the leg forced at the
-call site, generated from the clean committed tree.
+and measured pure baseline while claiming to measure the leg
+(baseline-identical numbers across all three k's are what gave it
+away). The published leg-only artifact is the rerun with the leg
+forced at the call site.
+
+Correction (2026-08-10): this paragraph previously said the rerun was
+"generated from the clean committed tree", and named the `tree_dirty`
+flag as what exposed the discarded run. Both published ablation
+artifacts carry `tree_dirty: true`, so neither claim survives contact
+with the files. They are dirty BY CONSTRUCTION — an ablation is a
+two-line driver patch on the imported engine, and that patch is not
+committed, so a clean-tree ablation is not a thing this harness can
+produce. What actually exposed the discarded run was the numbers, not
+the flag. The two ablation rows are therefore the one place in this
+directory where a reader is asked to trust a working-tree edit; the
+patch is described in full above so it can be reapplied, and the
+`tree_dirty: true` in each payload is the honest marker that it was.
+
+Reproducing the lane row: `--rescue-expansion on` (added 2026-08-10 —
+the artifacts predate it, and were lane-on because `6e87fad` still
+shipped the lane default-on; `fe57f05` flipped that, which left the
+published row unreachable from this runner until the flag existed).
+Note that the 5.1 filler-stem fix changed what the leg emits: the
+rule source no longer regenerates listed filler words, which is a
+different engine from the one these rows measured. A re-run therefore
+measures the CURRENT lane, not this kill — and re-earning the default
+needs a fresh preregistration on both instruments, not a better
+number from a changed engine.
 
 ### What this buys the campaign
 

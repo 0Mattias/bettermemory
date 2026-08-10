@@ -20,6 +20,7 @@ skip cleanly when it is absent, which is the normal state in CI.
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import json
 import sys
 from pathlib import Path
@@ -40,6 +41,8 @@ def _load(name: str, path: Path) -> ModuleType:
     spec.loader.exec_module(module)
     return module
 
+
+from bettermemory.search import search  # noqa: E402
 
 bm = _load("bench_lme_run", _HERE / "run.py")
 cm = _load("bench_lme_cm_run", _HERE / "cm_run.py")
@@ -509,6 +512,55 @@ def test_coverage_probe_main_runs_its_search_call(
 # ---------------------------------------------------------------------------
 # Guards that exist because a specific bug happened
 # ---------------------------------------------------------------------------
+
+
+def test_the_runner_can_still_produce_the_lane_arm_it_published() -> None:
+    """`rescue-expansion-2026-08-09.json` is the receipt for the 5.1
+    kill — the number that set the shipped default. It was produced at
+    `6e87fad`, where the engine default was still ON, so a bare
+    invocation was a lane-on run; `fe57f05` flipped that default and
+    left the published row unreachable from this runner. The flag is
+    what makes the receipt reproducible, and the payload key is what
+    lets an artifact state its own lane instead of being dated against
+    a commit."""
+    assert "--rescue-expansion" in (_HERE / "run.py").read_text(encoding="utf-8")
+    assert bm.RESCUE_EXPANSION is False, (
+        "the runner default must be the product default"
+    )
+
+    sig = inspect.signature(search)
+    assert "rescue_expansion" in sig.parameters
+    assert sig.parameters["rescue_expansion"].default is False
+
+    # The published lane artifact predates the payload key, so it is
+    # dated by its commit; every artifact written from here on states it.
+    published = json.loads(
+        (_HERE / "results" / "rescue-expansion-2026-08-09.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert published["provenance"]["commit"] == "6e87fad"
+    assert published["provenance"]["tree_dirty"] is False
+
+
+def test_the_ablation_artifacts_declare_their_dirty_tree() -> None:
+    """An ablation is a working-tree patch on the imported engine and
+    cannot be anything else — the patch is not committed. The README
+    said the published leg-only rerun came "from the clean committed
+    tree"; it did not, and the corrected text now says so. Pinned
+    because the honest marker is the only thing standing between a
+    reader and a claim the files contradict."""
+    for name in (
+        "rescue-expansion-ablate-fcap-only-2026-08-09.json",
+        "rescue-expansion-ablate-leg-only-2026-08-09.json",
+    ):
+        art = json.loads((_HERE / "results" / name).read_text(encoding="utf-8"))
+        assert art["provenance"]["tree_dirty"] is True, name
+    readme = (_HERE / "README.md").read_text(encoding="utf-8")
+    # The phrase survives only inside the dated correction that retracts
+    # it, so pin the retraction rather than the absence of the words.
+    assert "Both published ablation\nartifacts carry `tree_dirty: true`" in readme
+    assert "dirty BY CONSTRUCTION" in readme
 
 
 def test_oracle_variant_is_pinned_and_flagged_unpublishable() -> None:

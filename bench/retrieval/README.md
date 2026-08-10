@@ -446,10 +446,26 @@ sharper version of the threshold caveat: **above the index threshold
 the rescue re-ranks the bm25-nominated pool, and nomination still
 runs on the caller's words** — a document only the synthesized
 vocabulary would find never reaches the pool. Measured: the prefilter
-now costs **15 points of recall@5 on the casual probes** (85% → 70%
-above threshold; 90% → 75% forced-180) where the old engine measured
-zero, while recall@1 survives intact in every cell and requery is
-unchanged. The pre-5.1 "prefilter costs zero recall@5" finding was a
+now costs **15 points of recall@5 on the as-asked probe** (85% → 70%
+above threshold; 90% → 75% forced-180) and **10 on the control probe**
+(85% → 75% in both runs) where the old engine measured zero, while
+recall@1 survives intact in every cell and requery is unchanged.
+(Correction, 2026-08-10: this read "15 points on the casual probes",
+plural, while quoting only the as-asked cells. Control lost 10, not
+15 — the artifacts' own `prefilter_delta` rows say so.)
+
+Two of these artifacts also carry a note in error, left in place
+because they are receipts. `prefilter-above-threshold-2026-08-09.json`
+and `prefilter-forced-180-2026-08-09.json` say "the prefilter=off half
+re-measures v2-padded600-2026-07-26.json … so its rows double as a
+regression check on the harness itself." With the lane on it does no
+such thing: the off half ranks with the repairs and reads 45%/85%
+as-asked against v2-padded600's 25%/60%. The reference artifacts
+predate 5.1 and are lane-off by construction, so nothing in a lane-on
+run reproduces them. `run.py` now gates that claim on the lane and
+emits an explicit not-a-reproduction note instead; the published files
+are unchanged, because editing a receipt to match a later reading is
+the failure this directory exists to refuse. The pre-5.1 "prefilter costs zero recall@5" finding was a
 property of a ranker whose reach ended at the caller's vocabulary; the
 rescue's reach is wider than the nominator's, and the gap is now the
 measured size of the next increment (nominate on query + expansion
