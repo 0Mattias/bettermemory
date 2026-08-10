@@ -1,0 +1,2233 @@
+{
+  "instrument": "retrieval",
+  "corpus": "corpus.jsonl",
+  "corpus_sha256": "c40acee95ce1bb70ac6ea788e0fb4a9a1c6eff1fc55fe4569b651b5b156ea2ea",
+  "collection_size": 180,
+  "coverage_gate": 0.6,
+  "seconds": 5.2,
+  "note": "STATISTICS ONLY \u2014 emitted-term document frequencies. No recall, no labels, no ranking outcome. Declared in bench/longmemeval/PREREGISTRATION.md addendum 4 as the whole of what round 2 reads from the held-out corpus before it runs.",
+  "summary": {
+    "questions": 60,
+    "questions_engaging_the_leg": 43,
+    "emitted_terms": 296,
+    "emitted_terms_with_df_gt0": 183,
+    "df_ratio_bands_live": {
+      "[0,0.01)": 17,
+      "[0.01,0.02)": 48,
+      "[0.02,0.05)": 39,
+      "[0.05,0.1)": 48,
+      "[0.1,0.2)": 21,
+      "[0.2,0.35)": 8,
+      "[0.35,0.5)": 2
+    },
+    "df_ratio_live": {
+      "min": 0.005556,
+      "p50": 0.033333,
+      "p75": 0.083333,
+      "p90": 0.15,
+      "p95": 0.194444,
+      "max": 0.383333
+    },
+    "per_question_median_df_ratio": {
+      "p50": 0.033333,
+      "questions": 53
+    }
+  },
+  "records": [
+    {
+      "probe": "asked",
+      "slug": "how-database-migrations-are-rolled-back",
+      "n_collection": 180,
+      "emitted": 3,
+      "emitted_with_df_gt0": 3,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "production",
+          "df": 35,
+          "df_ratio": 0.194444
+        },
+        {
+          "term": "revert",
+          "df": 3,
+          "df_ratio": 0.016667
+        },
+        {
+          "term": "rollback",
+          "df": 6,
+          "df_ratio": 0.033333
+        }
+      ],
+      "max_df_ratio": 0.194444,
+      "median_df_ratio_live": 0.033333
+    },
+    {
+      "probe": "requery",
+      "slug": "how-database-migrations-are-rolled-back",
+      "n_collection": 180,
+      "emitted": 2,
+      "emitted_with_df_gt0": 1,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "production",
+          "df": 35,
+          "df_ratio": 0.194444
+        },
+        {
+          "term": "undo",
+          "df": 0,
+          "df_ratio": 0.0
+        }
+      ],
+      "max_df_ratio": 0.194444,
+      "median_df_ratio_live": 0.194444
+    },
+    {
+      "probe": "control",
+      "slug": "how-database-migrations-are-rolled-back",
+      "n_collection": 180,
+      "emitted": 3,
+      "emitted_with_df_gt0": 3,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "production",
+          "df": 35,
+          "df_ratio": 0.194444
+        },
+        {
+          "term": "revert",
+          "df": 3,
+          "df_ratio": 0.016667
+        },
+        {
+          "term": "rollback",
+          "df": 6,
+          "df_ratio": 0.033333
+        }
+      ],
+      "max_df_ratio": 0.194444,
+      "median_df_ratio_live": 0.033333
+    },
+    {
+      "probe": "asked",
+      "slug": "how-feature-flags-get-cleaned-up",
+      "n_collection": 180,
+      "emitted": 4,
+      "emitted_with_df_gt0": 4,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "flag",
+          "df": 15,
+          "df_ratio": 0.083333
+        },
+        {
+          "term": "legaci",
+          "df": 5,
+          "df_ratio": 0.027778
+        },
+        {
+          "term": "remov",
+          "df": 5,
+          "df_ratio": 0.027778
+        },
+        {
+          "term": "removal",
+          "df": 3,
+          "df_ratio": 0.016667
+        }
+      ],
+      "max_df_ratio": 0.083333,
+      "median_df_ratio_live": 0.027778
+    },
+    {
+      "probe": "requery",
+      "slug": "how-feature-flags-get-cleaned-up",
+      "n_collection": 180,
+      "emitted": 2,
+      "emitted_with_df_gt0": 1,
+      "engaged": false,
+      "terms": [
+        {
+          "term": "remov",
+          "df": 5,
+          "df_ratio": 0.027778
+        },
+        {
+          "term": "rip",
+          "df": 0,
+          "df_ratio": 0.0
+        }
+      ],
+      "max_df_ratio": 0.027778,
+      "median_df_ratio_live": 0.027778
+    },
+    {
+      "probe": "control",
+      "slug": "how-feature-flags-get-cleaned-up",
+      "n_collection": 180,
+      "emitted": 4,
+      "emitted_with_df_gt0": 4,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "flag",
+          "df": 15,
+          "df_ratio": 0.083333
+        },
+        {
+          "term": "legaci",
+          "df": 5,
+          "df_ratio": 0.027778
+        },
+        {
+          "term": "remov",
+          "df": 5,
+          "df_ratio": 0.027778
+        },
+        {
+          "term": "removal",
+          "df": 3,
+          "df_ratio": 0.016667
+        }
+      ],
+      "max_df_ratio": 0.083333,
+      "median_df_ratio_live": 0.027778
+    },
+    {
+      "probe": "asked",
+      "slug": "how-nightly-backups-are-verified-not-just-taken",
+      "n_collection": 180,
+      "emitted": 6,
+      "emitted_with_df_gt0": 3,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "backup",
+          "df": 10,
+          "df_ratio": 0.055556
+        },
+        {
+          "term": "restor",
+          "df": 15,
+          "df_ratio": 0.083333
+        },
+        {
+          "term": "run",
+          "df": 69,
+          "df_ratio": 0.383333
+        },
+        {
+          "term": "runed",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "runn",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "runned",
+          "df": 0,
+          "df_ratio": 0.0
+        }
+      ],
+      "max_df_ratio": 0.383333,
+      "median_df_ratio_live": 0.083333
+    },
+    {
+      "probe": "requery",
+      "slug": "how-nightly-backups-are-verified-not-just-taken",
+      "n_collection": 180,
+      "emitted": 4,
+      "emitted_with_df_gt0": 4,
+      "engaged": false,
+      "terms": [
+        {
+          "term": "digest",
+          "df": 5,
+          "df_ratio": 0.027778
+        },
+        {
+          "term": "dump",
+          "df": 6,
+          "df_ratio": 0.033333
+        },
+        {
+          "term": "hash",
+          "df": 8,
+          "df_ratio": 0.044444
+        },
+        {
+          "term": "sha256",
+          "df": 1,
+          "df_ratio": 0.005556
+        }
+      ],
+      "max_df_ratio": 0.044444,
+      "median_df_ratio_live": 0.030556
+    },
+    {
+      "probe": "control",
+      "slug": "how-nightly-backups-are-verified-not-just-taken",
+      "n_collection": 180,
+      "emitted": 6,
+      "emitted_with_df_gt0": 3,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "backup",
+          "df": 10,
+          "df_ratio": 0.055556
+        },
+        {
+          "term": "restor",
+          "df": 15,
+          "df_ratio": 0.083333
+        },
+        {
+          "term": "run",
+          "df": 69,
+          "df_ratio": 0.383333
+        },
+        {
+          "term": "runed",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "runn",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "runned",
+          "df": 0,
+          "df_ratio": 0.0
+        }
+      ],
+      "max_df_ratio": 0.383333,
+      "median_df_ratio_live": 0.083333
+    },
+    {
+      "probe": "asked",
+      "slug": "how-oncall-escalation-actually-works-here",
+      "n_collection": 180,
+      "emitted": 5,
+      "emitted_with_df_gt0": 2,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "pag",
+          "df": 15,
+          "df_ratio": 0.083333
+        },
+        {
+          "term": "paging",
+          "df": 3,
+          "df_ratio": 0.016667
+        },
+        {
+          "term": "suppo",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "suppos",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "supposing",
+          "df": 0,
+          "df_ratio": 0.0
+        }
+      ],
+      "max_df_ratio": 0.083333,
+      "median_df_ratio_live": 0.05
+    },
+    {
+      "probe": "requery",
+      "slug": "how-oncall-escalation-actually-works-here",
+      "n_collection": 180,
+      "emitted": 5,
+      "emitted_with_df_gt0": 4,
+      "engaged": false,
+      "terms": [
+        {
+          "term": "approval",
+          "df": 12,
+          "df_ratio": 0.066667
+        },
+        {
+          "term": "bar",
+          "df": 2,
+          "df_ratio": 0.011111
+        },
+        {
+          "term": "criteria",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "pag",
+          "df": 15,
+          "df_ratio": 0.083333
+        },
+        {
+          "term": "paged",
+          "df": 2,
+          "df_ratio": 0.011111
+        }
+      ],
+      "max_df_ratio": 0.083333,
+      "median_df_ratio_live": 0.038889
+    },
+    {
+      "probe": "control",
+      "slug": "how-oncall-escalation-actually-works-here",
+      "n_collection": 180,
+      "emitted": 5,
+      "emitted_with_df_gt0": 2,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "pag",
+          "df": 15,
+          "df_ratio": 0.083333
+        },
+        {
+          "term": "paging",
+          "df": 3,
+          "df_ratio": 0.016667
+        },
+        {
+          "term": "suppo",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "suppos",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "supposing",
+          "df": 0,
+          "df_ratio": 0.0
+        }
+      ],
+      "max_df_ratio": 0.083333,
+      "median_df_ratio_live": 0.05
+    },
+    {
+      "probe": "asked",
+      "slug": "how-rate-limiting-is-tuned-for-the-public-api",
+      "n_collection": 180,
+      "emitted": 2,
+      "emitted_with_df_gt0": 1,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "pick",
+          "df": 3,
+          "df_ratio": 0.016667
+        },
+        {
+          "term": "picking",
+          "df": 0,
+          "df_ratio": 0.0
+        }
+      ],
+      "max_df_ratio": 0.016667,
+      "median_df_ratio_live": 0.016667
+    },
+    {
+      "probe": "requery",
+      "slug": "how-rate-limiting-is-tuned-for-the-public-api",
+      "n_collection": 180,
+      "emitted": 2,
+      "emitted_with_df_gt0": 2,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "tun",
+          "df": 2,
+          "df_ratio": 0.011111
+        },
+        {
+          "term": "tuned",
+          "df": 2,
+          "df_ratio": 0.011111
+        }
+      ],
+      "max_df_ratio": 0.011111,
+      "median_df_ratio_live": 0.011111
+    },
+    {
+      "probe": "control",
+      "slug": "how-rate-limiting-is-tuned-for-the-public-api",
+      "n_collection": 180,
+      "emitted": 2,
+      "emitted_with_df_gt0": 1,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "pick",
+          "df": 3,
+          "df_ratio": 0.016667
+        },
+        {
+          "term": "picking",
+          "df": 0,
+          "df_ratio": 0.0
+        }
+      ],
+      "max_df_ratio": 0.016667,
+      "median_df_ratio_live": 0.016667
+    },
+    {
+      "probe": "asked",
+      "slug": "how-secrets-reach-containers-at-runtime",
+      "n_collection": 180,
+      "emitted": 5,
+      "emitted_with_df_gt0": 2,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "credential",
+          "df": 10,
+          "df_ratio": 0.055556
+        },
+        {
+          "term": "secret",
+          "df": 7,
+          "df_ratio": 0.038889
+        },
+        {
+          "term": "wir",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "wire",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "wiring",
+          "df": 0,
+          "df_ratio": 0.0
+        }
+      ],
+      "max_df_ratio": 0.055556,
+      "median_df_ratio_live": 0.047222
+    },
+    {
+      "probe": "requery",
+      "slug": "how-secrets-reach-containers-at-runtime",
+      "n_collection": 180,
+      "emitted": 5,
+      "emitted_with_df_gt0": 3,
+      "engaged": false,
+      "terms": [
+        {
+          "term": "cred",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "credential",
+          "df": 10,
+          "df_ratio": 0.055556
+        },
+        {
+          "term": "environment",
+          "df": 23,
+          "df_ratio": 0.127778
+        },
+        {
+          "term": "mount",
+          "df": 3,
+          "df_ratio": 0.016667
+        },
+        {
+          "term": "mounting",
+          "df": 0,
+          "df_ratio": 0.0
+        }
+      ],
+      "max_df_ratio": 0.127778,
+      "median_df_ratio_live": 0.055556
+    },
+    {
+      "probe": "control",
+      "slug": "how-secrets-reach-containers-at-runtime",
+      "n_collection": 180,
+      "emitted": 5,
+      "emitted_with_df_gt0": 2,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "credential",
+          "df": 10,
+          "df_ratio": 0.055556
+        },
+        {
+          "term": "secret",
+          "df": 7,
+          "df_ratio": 0.038889
+        },
+        {
+          "term": "wir",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "wire",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "wiring",
+          "df": 0,
+          "df_ratio": 0.0
+        }
+      ],
+      "max_df_ratio": 0.055556,
+      "median_df_ratio_live": 0.047222
+    },
+    {
+      "probe": "asked",
+      "slug": "the-agreement-about-code-review-turnaround",
+      "n_collection": 180,
+      "emitted": 9,
+      "emitted_with_df_gt0": 2,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "agr",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "agree",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "agreing",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "agring",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "pull",
+          "df": 38,
+          "df_ratio": 0.211111
+        },
+        {
+          "term": "request",
+          "df": 59,
+          "df_ratio": 0.327778
+        },
+        {
+          "term": "suppo",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "suppos",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "supposing",
+          "df": 0,
+          "df_ratio": 0.0
+        }
+      ],
+      "max_df_ratio": 0.327778,
+      "median_df_ratio_live": 0.269444
+    },
+    {
+      "probe": "requery",
+      "slug": "the-agreement-about-code-review-turnaround",
+      "n_collection": 180,
+      "emitted": 0,
+      "emitted_with_df_gt0": 0,
+      "engaged": false,
+      "terms": [],
+      "max_df_ratio": 0.0,
+      "median_df_ratio_live": null
+    },
+    {
+      "probe": "control",
+      "slug": "the-agreement-about-code-review-turnaround",
+      "n_collection": 180,
+      "emitted": 9,
+      "emitted_with_df_gt0": 2,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "agr",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "agree",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "agreing",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "agring",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "pull",
+          "df": 38,
+          "df_ratio": 0.211111
+        },
+        {
+          "term": "request",
+          "df": 59,
+          "df_ratio": 0.327778
+        },
+        {
+          "term": "suppo",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "suppos",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "supposing",
+          "df": 0,
+          "df_ratio": 0.0
+        }
+      ],
+      "max_df_ratio": 0.327778,
+      "median_df_ratio_live": 0.269444
+    },
+    {
+      "probe": "asked",
+      "slug": "the-convention-for-naming-background-jobs",
+      "n_collection": 180,
+      "emitted": 4,
+      "emitted_with_df_gt0": 4,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "exist",
+          "df": 24,
+          "df_ratio": 0.133333
+        },
+        {
+          "term": "existed",
+          "df": 2,
+          "df_ratio": 0.011111
+        },
+        {
+          "term": "nam",
+          "df": 21,
+          "df_ratio": 0.116667
+        },
+        {
+          "term": "named",
+          "df": 13,
+          "df_ratio": 0.072222
+        }
+      ],
+      "max_df_ratio": 0.133333,
+      "median_df_ratio_live": 0.094444
+    },
+    {
+      "probe": "requery",
+      "slug": "the-convention-for-naming-background-jobs",
+      "n_collection": 180,
+      "emitted": 1,
+      "emitted_with_df_gt0": 1,
+      "engaged": false,
+      "terms": [
+        {
+          "term": "named",
+          "df": 13,
+          "df_ratio": 0.072222
+        }
+      ],
+      "max_df_ratio": 0.072222,
+      "median_df_ratio_live": 0.072222
+    },
+    {
+      "probe": "control",
+      "slug": "the-convention-for-naming-background-jobs",
+      "n_collection": 180,
+      "emitted": 4,
+      "emitted_with_df_gt0": 4,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "exist",
+          "df": 24,
+          "df_ratio": 0.133333
+        },
+        {
+          "term": "existed",
+          "df": 2,
+          "df_ratio": 0.011111
+        },
+        {
+          "term": "nam",
+          "df": 21,
+          "df_ratio": 0.116667
+        },
+        {
+          "term": "named",
+          "df": 13,
+          "df_ratio": 0.072222
+        }
+      ],
+      "max_df_ratio": 0.133333,
+      "median_df_ratio_live": 0.094444
+    },
+    {
+      "probe": "asked",
+      "slug": "the-cutover-plan-for-the-legacy-billing-service",
+      "n_collection": 180,
+      "emitted": 15,
+      "emitted_with_df_gt0": 8,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "bil",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "biled",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "bill",
+          "df": 3,
+          "df_ratio": 0.016667
+        },
+        {
+          "term": "billed",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "cutover",
+          "df": 1,
+          "df_ratio": 0.005556
+        },
+        {
+          "term": "decommission",
+          "df": 1,
+          "df_ratio": 0.005556
+        },
+        {
+          "term": "legaci",
+          "df": 5,
+          "df_ratio": 0.027778
+        },
+        {
+          "term": "phas",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "phased",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "shutdown",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "stag",
+          "df": 4,
+          "df_ratio": 0.022222
+        },
+        {
+          "term": "staging",
+          "df": 22,
+          "df_ratio": 0.122222
+        },
+        {
+          "term": "switch",
+          "df": 5,
+          "df_ratio": 0.027778
+        },
+        {
+          "term": "switched",
+          "df": 2,
+          "df_ratio": 0.011111
+        },
+        {
+          "term": "switchover",
+          "df": 0,
+          "df_ratio": 0.0
+        }
+      ],
+      "max_df_ratio": 0.122222,
+      "median_df_ratio_live": 0.019444
+    },
+    {
+      "probe": "requery",
+      "slug": "the-cutover-plan-for-the-legacy-billing-service",
+      "n_collection": 180,
+      "emitted": 14,
+      "emitted_with_df_gt0": 6,
+      "engaged": false,
+      "terms": [
+        {
+          "term": "bil",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "biled",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "bill",
+          "df": 3,
+          "df_ratio": 0.016667
+        },
+        {
+          "term": "billed",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "decommission",
+          "df": 1,
+          "df_ratio": 0.005556
+        },
+        {
+          "term": "old",
+          "df": 21,
+          "df_ratio": 0.116667
+        },
+        {
+          "term": "phased",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "revert",
+          "df": 3,
+          "df_ratio": 0.016667
+        },
+        {
+          "term": "shutdown",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "stag",
+          "df": 4,
+          "df_ratio": 0.022222
+        },
+        {
+          "term": "staged",
+          "df": 1,
+          "df_ratio": 0.005556
+        },
+        {
+          "term": "switching",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "switchover",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "undo",
+          "df": 0,
+          "df_ratio": 0.0
+        }
+      ],
+      "max_df_ratio": 0.116667,
+      "median_df_ratio_live": 0.016667
+    },
+    {
+      "probe": "control",
+      "slug": "the-cutover-plan-for-the-legacy-billing-service",
+      "n_collection": 180,
+      "emitted": 15,
+      "emitted_with_df_gt0": 8,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "bil",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "biled",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "bill",
+          "df": 3,
+          "df_ratio": 0.016667
+        },
+        {
+          "term": "billed",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "cutover",
+          "df": 1,
+          "df_ratio": 0.005556
+        },
+        {
+          "term": "decommission",
+          "df": 1,
+          "df_ratio": 0.005556
+        },
+        {
+          "term": "legaci",
+          "df": 5,
+          "df_ratio": 0.027778
+        },
+        {
+          "term": "phas",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "phased",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "shutdown",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "stag",
+          "df": 4,
+          "df_ratio": 0.022222
+        },
+        {
+          "term": "staging",
+          "df": 22,
+          "df_ratio": 0.122222
+        },
+        {
+          "term": "switch",
+          "df": 5,
+          "df_ratio": 0.027778
+        },
+        {
+          "term": "switched",
+          "df": 2,
+          "df_ratio": 0.011111
+        },
+        {
+          "term": "switchover",
+          "df": 0,
+          "df_ratio": 0.0
+        }
+      ],
+      "max_df_ratio": 0.122222,
+      "median_df_ratio_live": 0.019444
+    },
+    {
+      "probe": "asked",
+      "slug": "the-decision-to-stop-using-a-monorepo",
+      "n_collection": 180,
+      "emitted": 7,
+      "emitted_with_df_gt0": 3,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "land",
+          "df": 13,
+          "df_ratio": 0.072222
+        },
+        {
+          "term": "landing",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "repositori",
+          "df": 16,
+          "df_ratio": 0.088889
+        },
+        {
+          "term": "split",
+          "df": 17,
+          "df_ratio": 0.094444
+        },
+        {
+          "term": "splited",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "splitt",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "splitted",
+          "df": 0,
+          "df_ratio": 0.0
+        }
+      ],
+      "max_df_ratio": 0.094444,
+      "median_df_ratio_live": 0.088889
+    },
+    {
+      "probe": "requery",
+      "slug": "the-decision-to-stop-using-a-monorepo",
+      "n_collection": 180,
+      "emitted": 1,
+      "emitted_with_df_gt0": 1,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "repositori",
+          "df": 16,
+          "df_ratio": 0.088889
+        }
+      ],
+      "max_df_ratio": 0.088889,
+      "median_df_ratio_live": 0.088889
+    },
+    {
+      "probe": "control",
+      "slug": "the-decision-to-stop-using-a-monorepo",
+      "n_collection": 180,
+      "emitted": 7,
+      "emitted_with_df_gt0": 3,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "land",
+          "df": 13,
+          "df_ratio": 0.072222
+        },
+        {
+          "term": "landing",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "repositori",
+          "df": 16,
+          "df_ratio": 0.088889
+        },
+        {
+          "term": "split",
+          "df": 17,
+          "df_ratio": 0.094444
+        },
+        {
+          "term": "splited",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "splitt",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "splitted",
+          "df": 0,
+          "df_ratio": 0.0
+        }
+      ],
+      "max_df_ratio": 0.094444,
+      "median_df_ratio_live": 0.088889
+    },
+    {
+      "probe": "asked",
+      "slug": "the-policy-on-adding-new-runtime-dependencies",
+      "n_collection": 180,
+      "emitted": 12,
+      "emitted_with_df_gt0": 6,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "approval",
+          "df": 12,
+          "df_ratio": 0.066667
+        },
+        {
+          "term": "criteria",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "dependenci",
+          "df": 35,
+          "df_ratio": 0.194444
+        },
+        {
+          "term": "packag",
+          "df": 16,
+          "df_ratio": 0.088889
+        },
+        {
+          "term": "polici",
+          "df": 20,
+          "df_ratio": 0.111111
+        },
+        {
+          "term": "pul",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "puled",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "pull",
+          "df": 38,
+          "df_ratio": 0.211111
+        },
+        {
+          "term": "pulled",
+          "df": 2,
+          "df_ratio": 0.011111
+        },
+        {
+          "term": "suppo",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "suppos",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "supposing",
+          "df": 0,
+          "df_ratio": 0.0
+        }
+      ],
+      "max_df_ratio": 0.211111,
+      "median_df_ratio_live": 0.1
+    },
+    {
+      "probe": "requery",
+      "slug": "the-policy-on-adding-new-runtime-dependencies",
+      "n_collection": 180,
+      "emitted": 2,
+      "emitted_with_df_gt0": 2,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "bar",
+          "df": 2,
+          "df_ratio": 0.011111
+        },
+        {
+          "term": "librari",
+          "df": 8,
+          "df_ratio": 0.044444
+        }
+      ],
+      "max_df_ratio": 0.044444,
+      "median_df_ratio_live": 0.027778
+    },
+    {
+      "probe": "control",
+      "slug": "the-policy-on-adding-new-runtime-dependencies",
+      "n_collection": 180,
+      "emitted": 12,
+      "emitted_with_df_gt0": 6,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "approval",
+          "df": 12,
+          "df_ratio": 0.066667
+        },
+        {
+          "term": "criteria",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "dependenci",
+          "df": 35,
+          "df_ratio": 0.194444
+        },
+        {
+          "term": "packag",
+          "df": 16,
+          "df_ratio": 0.088889
+        },
+        {
+          "term": "polici",
+          "df": 20,
+          "df_ratio": 0.111111
+        },
+        {
+          "term": "pul",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "puled",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "pull",
+          "df": 38,
+          "df_ratio": 0.211111
+        },
+        {
+          "term": "pulled",
+          "df": 2,
+          "df_ratio": 0.011111
+        },
+        {
+          "term": "suppo",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "suppos",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "supposing",
+          "df": 0,
+          "df_ratio": 0.0
+        }
+      ],
+      "max_df_ratio": 0.211111,
+      "median_df_ratio_live": 0.1
+    },
+    {
+      "probe": "asked",
+      "slug": "the-reason-log-retention-is-only-14-days",
+      "n_collection": 180,
+      "emitted": 6,
+      "emitted_with_df_gt0": 0,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "dig",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "diged",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "digg",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "digged",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "noth",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "nothed",
+          "df": 0,
+          "df_ratio": 0.0
+        }
+      ],
+      "max_df_ratio": 0.0,
+      "median_df_ratio_live": null
+    },
+    {
+      "probe": "requery",
+      "slug": "the-reason-log-retention-is-only-14-days",
+      "n_collection": 180,
+      "emitted": 0,
+      "emitted_with_df_gt0": 0,
+      "engaged": false,
+      "terms": [],
+      "max_df_ratio": 0.0,
+      "median_df_ratio_live": null
+    },
+    {
+      "probe": "control",
+      "slug": "the-reason-log-retention-is-only-14-days",
+      "n_collection": 180,
+      "emitted": 6,
+      "emitted_with_df_gt0": 0,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "dig",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "diged",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "digg",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "digged",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "noth",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "nothed",
+          "df": 0,
+          "df_ratio": 0.0
+        }
+      ],
+      "max_df_ratio": 0.0,
+      "median_df_ratio_live": null
+    },
+    {
+      "probe": "asked",
+      "slug": "the-rule-about-never-force-pushing-shared-branches",
+      "n_collection": 180,
+      "emitted": 2,
+      "emitted_with_df_gt0": 2,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "push",
+          "df": 13,
+          "df_ratio": 0.072222
+        },
+        {
+          "term": "pushed",
+          "df": 10,
+          "df_ratio": 0.055556
+        }
+      ],
+      "max_df_ratio": 0.072222,
+      "median_df_ratio_live": 0.063889
+    },
+    {
+      "probe": "requery",
+      "slug": "the-rule-about-never-force-pushing-shared-branches",
+      "n_collection": 180,
+      "emitted": 7,
+      "emitted_with_df_gt0": 5,
+      "engaged": false,
+      "terms": [
+        {
+          "term": "approval",
+          "df": 12,
+          "df_ratio": 0.066667
+        },
+        {
+          "term": "bar",
+          "df": 2,
+          "df_ratio": 0.011111
+        },
+        {
+          "term": "criteria",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "rewrit",
+          "df": 6,
+          "df_ratio": 0.033333
+        },
+        {
+          "term": "rewrited",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "shar",
+          "df": 10,
+          "df_ratio": 0.055556
+        },
+        {
+          "term": "sharing",
+          "df": 2,
+          "df_ratio": 0.011111
+        }
+      ],
+      "max_df_ratio": 0.066667,
+      "median_df_ratio_live": 0.033333
+    },
+    {
+      "probe": "control",
+      "slug": "the-rule-about-never-force-pushing-shared-branches",
+      "n_collection": 180,
+      "emitted": 2,
+      "emitted_with_df_gt0": 2,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "push",
+          "df": 13,
+          "df_ratio": 0.072222
+        },
+        {
+          "term": "pushed",
+          "df": 10,
+          "df_ratio": 0.055556
+        }
+      ],
+      "max_df_ratio": 0.072222,
+      "median_df_ratio_live": 0.063889
+    },
+    {
+      "probe": "asked",
+      "slug": "why-error-tracking-ignores-a-specific-exception-class",
+      "n_collection": 180,
+      "emitted": 6,
+      "emitted_with_df_gt0": 4,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "reason",
+          "df": 27,
+          "df_ratio": 0.15
+        },
+        {
+          "term": "reasoned",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "report",
+          "df": 12,
+          "df_ratio": 0.066667
+        },
+        {
+          "term": "reported",
+          "df": 6,
+          "df_ratio": 0.033333
+        },
+        {
+          "term": "silenc",
+          "df": 4,
+          "df_ratio": 0.022222
+        },
+        {
+          "term": "silencing",
+          "df": 0,
+          "df_ratio": 0.0
+        }
+      ],
+      "max_df_ratio": 0.15,
+      "median_df_ratio_live": 0.05
+    },
+    {
+      "probe": "requery",
+      "slug": "why-error-tracking-ignores-a-specific-exception-class",
+      "n_collection": 180,
+      "emitted": 4,
+      "emitted_with_df_gt0": 4,
+      "engaged": false,
+      "terms": [
+        {
+          "term": "filter",
+          "df": 9,
+          "df_ratio": 0.05
+        },
+        {
+          "term": "filtering",
+          "df": 2,
+          "df_ratio": 0.011111
+        },
+        {
+          "term": "track",
+          "df": 2,
+          "df_ratio": 0.011111
+        },
+        {
+          "term": "tracked",
+          "df": 4,
+          "df_ratio": 0.022222
+        }
+      ],
+      "max_df_ratio": 0.05,
+      "median_df_ratio_live": 0.016667
+    },
+    {
+      "probe": "control",
+      "slug": "why-error-tracking-ignores-a-specific-exception-class",
+      "n_collection": 180,
+      "emitted": 6,
+      "emitted_with_df_gt0": 4,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "reason",
+          "df": 27,
+          "df_ratio": 0.15
+        },
+        {
+          "term": "reasoned",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "report",
+          "df": 12,
+          "df_ratio": 0.066667
+        },
+        {
+          "term": "reported",
+          "df": 6,
+          "df_ratio": 0.033333
+        },
+        {
+          "term": "silenc",
+          "df": 4,
+          "df_ratio": 0.022222
+        },
+        {
+          "term": "silencing",
+          "df": 0,
+          "df_ratio": 0.0
+        }
+      ],
+      "max_df_ratio": 0.15,
+      "median_df_ratio_live": 0.05
+    },
+    {
+      "probe": "asked",
+      "slug": "why-integration-tests-run-serially",
+      "n_collection": 180,
+      "emitted": 0,
+      "emitted_with_df_gt0": 0,
+      "engaged": false,
+      "terms": [],
+      "max_df_ratio": 0.0,
+      "median_df_ratio_live": null
+    },
+    {
+      "probe": "requery",
+      "slug": "why-integration-tests-run-serially",
+      "n_collection": 180,
+      "emitted": 2,
+      "emitted_with_df_gt0": 2,
+      "engaged": false,
+      "terms": [
+        {
+          "term": "shar",
+          "df": 10,
+          "df_ratio": 0.055556
+        },
+        {
+          "term": "sharing",
+          "df": 2,
+          "df_ratio": 0.011111
+        }
+      ],
+      "max_df_ratio": 0.055556,
+      "median_df_ratio_live": 0.033333
+    },
+    {
+      "probe": "control",
+      "slug": "why-integration-tests-run-serially",
+      "n_collection": 180,
+      "emitted": 0,
+      "emitted_with_df_gt0": 0,
+      "engaged": false,
+      "terms": [],
+      "max_df_ratio": 0.0,
+      "median_df_ratio_live": null
+    },
+    {
+      "probe": "asked",
+      "slug": "why-postgres-connection-pooling-was-moved-out-of-the-app",
+      "n_collection": 180,
+      "emitted": 8,
+      "emitted_with_df_gt0": 7,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "chang",
+          "df": 61,
+          "df_ratio": 0.338889
+        },
+        {
+          "term": "changing",
+          "df": 2,
+          "df_ratio": 0.011111
+        },
+        {
+          "term": "handl",
+          "df": 2,
+          "df_ratio": 0.011111
+        },
+        {
+          "term": "handling",
+          "df": 5,
+          "df_ratio": 0.027778
+        },
+        {
+          "term": "pool",
+          "df": 16,
+          "df_ratio": 0.088889
+        },
+        {
+          "term": "pooled",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "remov",
+          "df": 5,
+          "df_ratio": 0.027778
+        },
+        {
+          "term": "removal",
+          "df": 3,
+          "df_ratio": 0.016667
+        }
+      ],
+      "max_df_ratio": 0.338889,
+      "median_df_ratio_live": 0.027778
+    },
+    {
+      "probe": "requery",
+      "slug": "why-postgres-connection-pooling-was-moved-out-of-the-app",
+      "n_collection": 180,
+      "emitted": 0,
+      "emitted_with_df_gt0": 0,
+      "engaged": false,
+      "terms": [],
+      "max_df_ratio": 0.0,
+      "median_df_ratio_live": null
+    },
+    {
+      "probe": "control",
+      "slug": "why-postgres-connection-pooling-was-moved-out-of-the-app",
+      "n_collection": 180,
+      "emitted": 8,
+      "emitted_with_df_gt0": 7,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "chang",
+          "df": 61,
+          "df_ratio": 0.338889
+        },
+        {
+          "term": "changing",
+          "df": 2,
+          "df_ratio": 0.011111
+        },
+        {
+          "term": "handl",
+          "df": 2,
+          "df_ratio": 0.011111
+        },
+        {
+          "term": "handling",
+          "df": 5,
+          "df_ratio": 0.027778
+        },
+        {
+          "term": "pool",
+          "df": 16,
+          "df_ratio": 0.088889
+        },
+        {
+          "term": "pooled",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "remov",
+          "df": 5,
+          "df_ratio": 0.027778
+        },
+        {
+          "term": "removal",
+          "df": 3,
+          "df_ratio": 0.016667
+        }
+      ],
+      "max_df_ratio": 0.338889,
+      "median_df_ratio_live": 0.027778
+    },
+    {
+      "probe": "asked",
+      "slug": "why-the-frontend-build-is-not-cached-in-ci",
+      "n_collection": 180,
+      "emitted": 1,
+      "emitted_with_df_gt0": 1,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "turning",
+          "df": 2,
+          "df_ratio": 0.011111
+        }
+      ],
+      "max_df_ratio": 0.011111,
+      "median_df_ratio_live": 0.011111
+    },
+    {
+      "probe": "requery",
+      "slug": "why-the-frontend-build-is-not-cached-in-ci",
+      "n_collection": 180,
+      "emitted": 2,
+      "emitted_with_df_gt0": 1,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "disabl",
+          "df": 3,
+          "df_ratio": 0.016667
+        },
+        {
+          "term": "disabling",
+          "df": 0,
+          "df_ratio": 0.0
+        }
+      ],
+      "max_df_ratio": 0.016667,
+      "median_df_ratio_live": 0.016667
+    },
+    {
+      "probe": "control",
+      "slug": "why-the-frontend-build-is-not-cached-in-ci",
+      "n_collection": 180,
+      "emitted": 1,
+      "emitted_with_df_gt0": 1,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "turning",
+          "df": 2,
+          "df_ratio": 0.011111
+        }
+      ],
+      "max_df_ratio": 0.011111,
+      "median_df_ratio_live": 0.011111
+    },
+    {
+      "probe": "asked",
+      "slug": "why-the-staging-environment-shares-one-database",
+      "n_collection": 180,
+      "emitted": 8,
+      "emitted_with_df_gt0": 4,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "databas",
+          "df": 33,
+          "df_ratio": 0.183333
+        },
+        {
+          "term": "isolat",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "isolating",
+          "df": 2,
+          "df_ratio": 0.011111
+        },
+        {
+          "term": "stag",
+          "df": 4,
+          "df_ratio": 0.022222
+        },
+        {
+          "term": "staged",
+          "df": 1,
+          "df_ratio": 0.005556
+        },
+        {
+          "term": "suppo",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "suppos",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "supposing",
+          "df": 0,
+          "df_ratio": 0.0
+        }
+      ],
+      "max_df_ratio": 0.183333,
+      "median_df_ratio_live": 0.016667
+    },
+    {
+      "probe": "requery",
+      "slug": "why-the-staging-environment-shares-one-database",
+      "n_collection": 180,
+      "emitted": 4,
+      "emitted_with_df_gt0": 4,
+      "engaged": false,
+      "terms": [
+        {
+          "term": "shar",
+          "df": 10,
+          "df_ratio": 0.055556
+        },
+        {
+          "term": "sharing",
+          "df": 2,
+          "df_ratio": 0.011111
+        },
+        {
+          "term": "stag",
+          "df": 4,
+          "df_ratio": 0.022222
+        },
+        {
+          "term": "staged",
+          "df": 1,
+          "df_ratio": 0.005556
+        }
+      ],
+      "max_df_ratio": 0.055556,
+      "median_df_ratio_live": 0.016667
+    },
+    {
+      "probe": "control",
+      "slug": "why-the-staging-environment-shares-one-database",
+      "n_collection": 180,
+      "emitted": 8,
+      "emitted_with_df_gt0": 4,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "databas",
+          "df": 33,
+          "df_ratio": 0.183333
+        },
+        {
+          "term": "isolat",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "isolating",
+          "df": 2,
+          "df_ratio": 0.011111
+        },
+        {
+          "term": "stag",
+          "df": 4,
+          "df_ratio": 0.022222
+        },
+        {
+          "term": "staged",
+          "df": 1,
+          "df_ratio": 0.005556
+        },
+        {
+          "term": "suppo",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "suppos",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "supposing",
+          "df": 0,
+          "df_ratio": 0.0
+        }
+      ],
+      "max_df_ratio": 0.183333,
+      "median_df_ratio_live": 0.016667
+    },
+    {
+      "probe": "asked",
+      "slug": "why-we-pin-the-base-image-by-digest",
+      "n_collection": 180,
+      "emitted": 4,
+      "emitted_with_df_gt0": 4,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "checksum",
+          "df": 1,
+          "df_ratio": 0.005556
+        },
+        {
+          "term": "digest",
+          "df": 5,
+          "df_ratio": 0.027778
+        },
+        {
+          "term": "sha256",
+          "df": 1,
+          "df_ratio": 0.005556
+        },
+        {
+          "term": "writ",
+          "df": 29,
+          "df_ratio": 0.161111
+        }
+      ],
+      "max_df_ratio": 0.161111,
+      "median_df_ratio_live": 0.016667
+    },
+    {
+      "probe": "requery",
+      "slug": "why-we-pin-the-base-image-by-digest",
+      "n_collection": 180,
+      "emitted": 9,
+      "emitted_with_df_gt0": 6,
+      "engaged": false,
+      "terms": [
+        {
+          "term": "approval",
+          "df": 12,
+          "df_ratio": 0.066667
+        },
+        {
+          "term": "bar",
+          "df": 2,
+          "df_ratio": 0.011111
+        },
+        {
+          "term": "checksum",
+          "df": 1,
+          "df_ratio": 0.005556
+        },
+        {
+          "term": "criteria",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "hash",
+          "df": 8,
+          "df_ratio": 0.044444
+        },
+        {
+          "term": "pin",
+          "df": 3,
+          "df_ratio": 0.016667
+        },
+        {
+          "term": "pining",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "pinn",
+          "df": 0,
+          "df_ratio": 0.0
+        },
+        {
+          "term": "pinning",
+          "df": 6,
+          "df_ratio": 0.033333
+        }
+      ],
+      "max_df_ratio": 0.066667,
+      "median_df_ratio_live": 0.025
+    },
+    {
+      "probe": "control",
+      "slug": "why-we-pin-the-base-image-by-digest",
+      "n_collection": 180,
+      "emitted": 4,
+      "emitted_with_df_gt0": 4,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "checksum",
+          "df": 1,
+          "df_ratio": 0.005556
+        },
+        {
+          "term": "digest",
+          "df": 5,
+          "df_ratio": 0.027778
+        },
+        {
+          "term": "sha256",
+          "df": 1,
+          "df_ratio": 0.005556
+        },
+        {
+          "term": "writ",
+          "df": 29,
+          "df_ratio": 0.161111
+        }
+      ],
+      "max_df_ratio": 0.161111,
+      "median_df_ratio_live": 0.016667
+    },
+    {
+      "probe": "asked",
+      "slug": "why-we-stopped-using-a-shared-dev-server",
+      "n_collection": 180,
+      "emitted": 6,
+      "emitted_with_df_gt0": 6,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "happen",
+          "df": 16,
+          "df_ratio": 0.088889
+        },
+        {
+          "term": "happening",
+          "df": 2,
+          "df_ratio": 0.011111
+        },
+        {
+          "term": "mov",
+          "df": 17,
+          "df_ratio": 0.094444
+        },
+        {
+          "term": "moving",
+          "df": 6,
+          "df_ratio": 0.033333
+        },
+        {
+          "term": "shar",
+          "df": 10,
+          "df_ratio": 0.055556
+        },
+        {
+          "term": "sharing",
+          "df": 2,
+          "df_ratio": 0.011111
+        }
+      ],
+      "max_df_ratio": 0.094444,
+      "median_df_ratio_live": 0.044444
+    },
+    {
+      "probe": "requery",
+      "slug": "why-we-stopped-using-a-shared-dev-server",
+      "n_collection": 180,
+      "emitted": 4,
+      "emitted_with_df_gt0": 4,
+      "engaged": false,
+      "terms": [
+        {
+          "term": "retir",
+          "df": 1,
+          "df_ratio": 0.005556
+        },
+        {
+          "term": "retiring",
+          "df": 1,
+          "df_ratio": 0.005556
+        },
+        {
+          "term": "shar",
+          "df": 10,
+          "df_ratio": 0.055556
+        },
+        {
+          "term": "sharing",
+          "df": 2,
+          "df_ratio": 0.011111
+        }
+      ],
+      "max_df_ratio": 0.055556,
+      "median_df_ratio_live": 0.008333
+    },
+    {
+      "probe": "control",
+      "slug": "why-we-stopped-using-a-shared-dev-server",
+      "n_collection": 180,
+      "emitted": 6,
+      "emitted_with_df_gt0": 6,
+      "engaged": true,
+      "terms": [
+        {
+          "term": "happen",
+          "df": 16,
+          "df_ratio": 0.088889
+        },
+        {
+          "term": "happening",
+          "df": 2,
+          "df_ratio": 0.011111
+        },
+        {
+          "term": "mov",
+          "df": 17,
+          "df_ratio": 0.094444
+        },
+        {
+          "term": "moving",
+          "df": 6,
+          "df_ratio": 0.033333
+        },
+        {
+          "term": "shar",
+          "df": 10,
+          "df_ratio": 0.055556
+        },
+        {
+          "term": "sharing",
+          "df": 2,
+          "df_ratio": 0.011111
+        }
+      ],
+      "max_df_ratio": 0.094444,
+      "median_df_ratio_live": 0.044444
+    }
+  ]
+}

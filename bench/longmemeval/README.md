@@ -177,6 +177,113 @@ macro@10 IMPROVING under the lane (0.9443 → 0.9471) while @1/@5 fall
 is the shape of a recall mechanism with a precision problem — the
 vocabulary reach is real; the votes land too bluntly.
 
+## Round 2 — the df gate was preregistered and its pre-run kill fired, 2026-08-10
+
+Round 1 closed by naming one experiment: df-gate the EMITTED expansion
+terms, the class detectable in code, and re-preregister on both
+instruments. That experiment was preregistered
+(`PREREGISTRATION.md` addendum 4, τ = 0.05 fixed from corpus
+statistics with no recall input) and **it is dead. No gate was
+implemented and no gated arm ran, because the pre-run check said the
+mechanism cannot work.**
+
+### What Gate 0 asked, before any gate existed
+
+The hypothesis was that an emitted term's document frequency separates
+the vocabulary that helps a technical store from the vocabulary that
+harms a conversational one — that `"planning" → "plan"` is common here
+and the gold set's synonyms are rare there. That is checkable from
+corpus structure alone, so it was checked first
+(`results/df-census-2026-08-10.json`, statistics only; verdict in
+`results/gate0-2026-08-10.json`, recomputable by `gate0.py` from
+committed artifacts).
+
+**Gate 0a — separability: FAILED, and the sign is backwards.**
+
+| population | median df/N | n terms |
+| --- | --- | --- |
+| the 25 regressed held-out questions | **0.0268** | 76 |
+| dev set, leg-engaging asked probes | **0.0361** | 66 |
+
+Required: ≥ 5×. Measured: **0.74×**. The terms that broke this corpus
+are *rarer* than the ones that carry the gold-set win, not five times
+more common. All four readings of "the dev set's rescued questions"
+were computed so the flattering one could not be chosen afterwards;
+they span 0.74×–0.80× and every one fails.
+
+**Gate 0b — reachability: FAILED.** At τ = 0.05 the gate alters the
+emitted set on **17 of 25** regressed questions; ≥ 20 was required. It
+does change `a89d7624`, the question round 1 called the cleanest single
+proof — that one emits `plan` at df/N 0.1235 — but the poster child is
+necessary, not sufficient.
+
+**And no τ rescues it.** The sweep is the substance of the kill:
+
+| τ | regressed questions altered (of 25) | dev-set engaged probes altered (of 38) |
+| --- | --- | --- |
+| 0.02 | 24 | 35 |
+| 0.05 | 17 | 34 |
+| 0.10 | 7 | 21 |
+| 0.20 | 1 | 8 |
+| 0.35 | 0 | 2 |
+
+Every τ that reaches the failure hits the dev set at least as hard.
+The two populations occupy the same df/N band, which is precisely the
+"DEAD ON ARRIVAL" condition addendum 4 declared in advance.
+
+### What this retires, and what it does not
+
+**Retired: document frequency as the separating variable for emitted
+expansion terms.** Not "untuned" — measured, on both corpora, with the
+threshold fixed beforehand. The promiscuity story in the round-1
+section above is a good description of the *mechanism* (`plan` really
+does match many rounds here) and a bad *predictor*: promiscuity in a
+chat store is not what df measures, because the harmful terms are
+individually rare and the damage comes from how the leg VOTES rather
+than from how common its vocabulary is. `_hybrid_fuse` fuses by rank,
+so a leg built of rare-but-wrong terms still emits a confident rank-1
+and still gets 0.7 of a vote — the argument addendum 4 makes for why
+df-gating could help is the same argument for why df-gating cannot.
+
+**Not retired: the lane.** `rescue_expansion` stays opt-in and
+unchanged; nothing here touches a shipped default.
+
+**Not retired: the campaign.** What the census does say is that the
+next mechanism has to key on something other than a term's corpus
+frequency — the leg's *influence* rather than its vocabulary. Two
+candidates the data points at, neither preregistered here: capping the
+leg's rank contribution when its own top candidate is weak, and
+nominating on query + expansion terms above the index threshold (the
+increment addendum 4 explicitly scopes out, since it changes the pool
+rather than the votes).
+
+### One correction to the round-1 record
+
+That section says the leg "engaged broadly" on conversational
+questions. Measured by the census, the coverage gate opens on **165 of
+500** questions here — 33%, not most — against 43 of 60 dev probes.
+The lane's damage is concentrated, not diffuse, which is consistent
+with 25 questions moving down and 9 up.
+
+### The 5.1.1 re-baseline underneath all of this
+
+Every round-1 constant was re-measured on the current engine rather
+than copied, through the new committed `--ablate` flags:
+
+| arm | macro@1 | macro@5 | macro@10 | vs round 1 |
+| --- | --- | --- | --- | --- |
+| baseline, lane off | 0.5246 | 0.8935 | 0.9443 | identical |
+| lane on | **0.4772** | 0.8770 | 0.9471 | @1 was 0.4752 |
+| filler df-floor only | 0.5226 | 0.8935 | 0.9463 | identical |
+| expansion leg only | 0.4732 | 0.8790 | 0.9471 | identical |
+
+The 5.1.1 filler-emission repair is worth **+0.0020 macro@1** here and
+nothing at @5 — directionally right, nowhere near the 0.8900 kill
+line. The leg-only arm reproducing round 1 exactly is the internal
+check that says so honestly: that arm empties the filler table, which
+neutralises the 5.1.1 filter by construction, so identity is what a
+correct ablation had to produce. Every dev-set cell is unchanged too.
+
 ## The pre-4.0 headline: parity, not victory (dated record)
 
 On third-party ground, against labels neither party authored,
