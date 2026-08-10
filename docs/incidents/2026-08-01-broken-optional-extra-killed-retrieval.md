@@ -127,10 +127,11 @@ serving a different one would make the embedding cache's provider namespacing a
 lie. `_semantic_rank_leg_active`'s condition 3 became
 `_resolved_provider_importable`.
 
-`web._lexical_only_note` was NOT given the same narrowing, and the attempt is
-worth recording because the two gates look identical. Applying it there fails
-`test_lexical_only_note_fires_exactly_when_a_semantic_leg_ranks`, which injects
-a working model and spies on which scorers actually run: the note describes what
+`web._lexical_only_note` — non-resolving at HEAD; the web module went whole in
+5.0.0 — was NOT given the same narrowing, and the attempt is
+worth recording because the two gates look identical. Applying it there failed
+`test_lexical_only_note_fires_exactly_when_a_semantic_leg_ranks`, which injected
+a working model and spied on which scorers actually ran: the note described what
 the HANDLER does, so gating it on whether an extra imports in the ambient
 process couples a description of handler behaviour to a probe the handler need
 not have used. That is the substance of the "must not be merged" note the

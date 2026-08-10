@@ -6,17 +6,18 @@ body:
     attributes:
       value: |
         bettermemory has a per-major-line compatibility contract (the
-        current major is 3) — see
+        current major is 5) — see
         [CONTRIBUTING.md](https://github.com/0Mattias/bettermemory/blob/main/CONTRIBUTING.md#versioning-and-the-compatibility-contract)
-        for what's pinned within 3.x. Additive features (new tools,
+        for what's pinned within 5.x. Additive features (new tools,
         new optional arguments) land easily; renames, removals, and
-        semantic redefinitions are 4.0 material.
+        semantic redefinitions are 6.0 material.
 
         Before opening: scan
         [docs/api.md](https://github.com/0Mattias/bettermemory/blob/main/docs/api.md)
         and the [closed issues](https://github.com/0Mattias/bettermemory/issues?q=is%3Aissue+is%3Aclosed)
-        — many "rejected on purpose" design choices live in the README's
-        *Limitations* and *What's out of scope* sections.
+        — many "rejected on purpose" design choices live in the
+        *Limitations* section of
+        [docs/internals.md](https://github.com/0Mattias/bettermemory/blob/main/docs/internals.md#limitations).
 
   - type: textarea
     id: problem
@@ -44,7 +45,7 @@ body:
     attributes:
       label: Alternatives considered
       description: |
-        Have you tried any workarounds with the current 3.x surface?
+        Have you tried any workarounds with the current 5.x surface?
         Why are they insufficient? This is the section that most
         clearly distinguishes "needs a feature" from "needs a docs
         clarification".
@@ -54,7 +55,7 @@ body:
     attributes:
       label: Compatibility
       description: |
-        Is this additive (compatible within 3.x) or does it require
+        Is this additive (compatible within 5.x) or does it require
         breaking an existing behavior?
       options:
         - Additive (new tool, new optional argument, new config)

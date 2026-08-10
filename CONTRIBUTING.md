@@ -30,7 +30,6 @@ Inside a synced folder the rename is not enough, because syncing itself damages 
 ```sh
 pytest -q                         # the whole suite
 pytest tests/test_store.py        # one file
-pytest -m "not no_extras"         # skip the embeddings-required slot
 
 ruff check .
 ruff format --check .
@@ -94,18 +93,18 @@ git config core.hooksPath .githooks
 
 ## Versioning and the compatibility contract
 
-The project uses semver with the conventions below. The headline: **within a major line, the surface defined in [`docs/api.md`](docs/api.md) and the on-disk format defined by `models.SCHEMA_VERSION` are stable.** Strangers who pin `bettermemory==3.x` get a contract they can rely on. The current major is 3; the same shape held for 1.x and 2.x and will hold for any future major line.
+The project uses semver with the conventions below. The headline: **within a major line, the surface defined in [`docs/api.md`](docs/api.md) and the on-disk format defined by `models.SCHEMA_VERSION` are stable.** Strangers who pin `bettermemory==5.x` get a contract they can rely on. The current major is 5; the same shape held for 1.x through 4.x and will hold for any future major line.
 
-The 2.0 bump itself was a scope-only bump — nine 1.6-plan features shipped in one release. SCHEMA_VERSION stayed at 1, every new wire field was opt-in or absence-as-signal, and no 1.x surface was renamed or removed. The 3.0 bump was the same shape: a soft API break trimming defensive `bettermemory.server` re-exports after verifying zero in-tree consumers, packaged with the post-2.7.3 audit-loop. SCHEMA_VERSION stayed at 1 across both transitions; treat the rules below as continuous across the 1→2 and 2→3 boundaries — they describe the project's stance on stability, not a one-off cleanup.
+The 2.0 bump itself was a scope-only bump — nine 1.6-plan features shipped in one release. SCHEMA_VERSION stayed at 1, every new wire field was opt-in or absence-as-signal, and no 1.x surface was renamed or removed. The 3.0 bump was the same shape: a soft API break trimming defensive `bettermemory.server` re-exports after verifying zero in-tree consumers, packaged with the post-2.7.3 audit-loop. 4.0 and 5.0 were the first hard breaks: 4.0 removed the embedding lane whole (the `semantic` module, both embedding extras, the `[behavior] semantic_provider` and `semantic_dedup` knobs, and the `"semantic"` search mode), and 5.0 removed the web UI whole (the `web` module, the `bettermemory ui` subcommand, the `[ui]` extra). SCHEMA_VERSION stayed at 1 across all four transitions; treat the rules below as continuous across every boundary — they describe the project's stance on stability, not a one-off cleanup.
 
 ### Surface (the 27 MCP tools)
 
-Stable within the current major (3.x):
+Stable within the current major (5.x):
 
 - Tool names. `memory_search` will not be renamed to `mem_search`.
 - Required parameter names and positions. `memory_remove(id, reason)` will not flip to `(reason, id)`.
 - Default values for optional parameters. `memory_search.expand_top` defaults to `False`; `memory_search.mode` defaults to `"hybrid"` (since 2.6.8); `memory_write.groundedness_check` defaults to `False` (since 2.0).
-- Closed-set string values for enum-typed parameters. `confidence` is `"low"` / `"medium"` / `"high"`; `outcome` is `"applied"` / `"ignored"` / `"contradicted"` / `"corrected"`; `category` is `"fact"` / `"user-inference"` / `"ambient"`; `mode` is `"keyword"` / `"bm25"` / `"semantic"` / `"hybrid"`; `link.type` is `"supersedes"` / `"contradicts"` / `"extends"` / `"depends_on"`.
+- Closed-set string values for enum-typed parameters. `confidence` is `"low"` / `"medium"` / `"high"`; `outcome` is `"applied"` / `"ignored"` / `"contradicted"` / `"corrected"`; `category` is `"fact"` / `"user-inference"` / `"ambient"`; `mode` is `"keyword"` / `"bm25"` / `"hybrid"` (the pre-4.0 `"semantic"` value went out with the embedding lane); `link.type` is `"supersedes"` / `"contradicts"` / `"extends"` / `"depends_on"`.
 - Return-shape keys for the same status. A `memory_write` response with `status="duplicate"` will continue to carry a `matches` list; the `status="ungrounded"` value (from the optional groundedness gate) will continue to carry `claims`.
 
 Permitted within a major:
@@ -127,7 +126,7 @@ Forbidden within a major:
 
 ### On-disk format (`models.SCHEMA_VERSION`)
 
-`SCHEMA_VERSION = 1` is the constant in `src/bettermemory/models.py`. Every memory and tombstone written by 1.x, 2.x, and 3.x carries `schema_version: 1` in its frontmatter. Readers default to `1` when the field is missing (the implicit version of memories written before the constant existed). 2.0 added several optional frontmatter fields (the typed `links` list, the parallel `verified_paths` / `verified_commits` / `verified_versions` attestation lists, `origin.worktree_root`) but every one is purely additive: legacy memories load unchanged, and the constant stays at 1. 3.0 made no on-disk-format changes.
+`SCHEMA_VERSION = 1` is the constant in `src/bettermemory/models.py`. Every memory and tombstone written by 1.x through 5.x carries `schema_version: 1` in its frontmatter. Readers default to `1` when the field is missing (the implicit version of memories written before the constant existed). 2.0 added several optional frontmatter fields (the typed `links` list, the parallel `verified_paths` / `verified_commits` / `verified_versions` attestation lists, `origin.worktree_root`) but every one is purely additive: legacy memories load unchanged, and the constant stays at 1. 3.0, 4.0, and 5.0 made no on-disk-format changes — both hard breaks were surface removals, which is why a two-major span still reads one schema version.
 
 Within a major, all changes to the on-disk format are **additive only**: new optional frontmatter fields, never renamed, never removed, never re-defined. A reader from a later minor will load files written by an earlier minor without any migration step. A reader from an earlier minor will load files written by a later minor as long as the later minor only added fields the earlier reader does not recognize (and tolerates), which is the rule above.
 
@@ -137,17 +136,19 @@ When a tool, Python API, config key, parameter, or field is destined for removal
 
 1. The deprecation lands in a minor of the current major with a `Deprecated` entry in the changelog. The entry names the deprecated surface, the replacement (if any), and the planned-removal target version.
 2. The implementation emits a runtime warning when the deprecated surface is used, with the same replacement pointer. Which channel carries the warning depends on who consumes the surface — two lanes, described below.
-3. The deprecated surface continues to function, since semver says so, until the next major bump (4.0).
-4. At 4.0, the surface is removed. The 4.0 release notes reiterate every removed item.
+3. The deprecated surface continues to function, since semver says so, until the next major bump (6.0).
+4. At 6.0, the surface is removed. The 6.0 release notes reiterate every removed item.
+
+Write step 1's planned-removal target as the *next* major at the time of writing, and re-target it if the surface outlives that major. The `origin.py` trio below is the worked example of the failure mode: it was deprecated against 4.0, 4.0 and 5.0 both shipped as removal releases without taking it, and the messages went on naming a version that was already history. Nothing forces the removal — only the release that decides to take it.
 
 The two warning lanes, keyed on who the consumer is:
 
-- **Python-API deprecations** (functions, methods, parameters — surfaces *code* imports and calls) use `warnings.warn(..., DeprecationWarning, stacklevel=2)`: raised per call, on Python's standard warnings channel. That channel is the one downstream tooling already hooks — this repo's message-pattern `filterwarnings` line escalates our own deprecations to test errors, and consumers get `-W` policy flags and their own pytest fences for free; display policy belongs to the consumer's filters, not to us. `stacklevel=2` attributes the warning to the caller's frame, so each call site is the one pointed at. The canonical example is the 4.0-removal trio in `src/bettermemory/origin.py` (`commits_since`, `commits_touching_pathspecs`, `commits_since_touching_paths`), whose messages follow the shape `<name> is deprecated and will be removed in bettermemory <version>; <replacement guidance>`. The phrase `deprecated and will be removed in bettermemory` is **load-bearing**: the message-scoped `filterwarnings` regex in `pyproject.toml` keys on exactly that text, and the "Deprecation fence" tests in `tests/test_origin.py` pin the regex against the emitted messages — a reworded message would silently escape the fence. Do not also log from API deprecations: production log readers are not the audience, and the warnings channel already carries it.
+- **Python-API deprecations** (functions, methods, parameters — surfaces *code* imports and calls) use `warnings.warn(..., DeprecationWarning, stacklevel=2)`: raised per call, on Python's standard warnings channel. That channel is the one downstream tooling already hooks — this repo's message-pattern `filterwarnings` line escalates our own deprecations to test errors, and consumers get `-W` policy flags and their own pytest fences for free; display policy belongs to the consumer's filters, not to us. `stacklevel=2` attributes the warning to the caller's frame, so each call site is the one pointed at. The canonical example is the deprecated trio in `src/bettermemory/origin.py` (`commits_since`, `commits_touching_pathspecs`, `commits_since_touching_paths`), still shipping and now targeted at 6.0, whose messages follow the shape `<name> is deprecated and will be removed in bettermemory <version>; <replacement guidance>`. The phrase `deprecated and will be removed in bettermemory` is **load-bearing**: the message-scoped `filterwarnings` regex in `pyproject.toml` keys on exactly that text, and the "Deprecation fence" tests in `tests/test_origin.py` pin the regex against the emitted messages — a reworded message would silently escape the fence. Do not also log from API deprecations: production log readers are not the audience, and the warnings channel already carries it.
 - **Config-key and other runtime-operational deprecations** (TOML keys — anything an operator *sets* rather than code calls) log a one-time WARNING per process via `log.warning`, guarded by a module-level seen-set — the pattern `_apply_legacy_endorsement_debt_alias` in `src/bettermemory/config.py` established for the 3.2.0 `endorsement_debt_ratio_threshold` rename. Their consumers read server logs, not the Python warnings channel: a `DeprecationWarning` is default-invisible in production (Python's default filters silence it outside `__main__`, and it lands on stderr rather than the log stream), and per-call logging would spam a long-lived server that rereads config on signal.
 
 Patches and bug fixes do not count as "uses" of the deprecated surface for the warning; the warning fires when *callers* use the surface. The implementation may continue to call into the deprecated path internally for compatibility — in the API lane that means routing internal callers through a non-deprecated seam (see `_commits_touching_pathspecs_impl` in `origin.py`) rather than letting internal frames trip the warning.
 
-### Major bumps (4.0 and beyond)
+### Major bumps (6.0 and beyond)
 
 A major bump is reserved for genuinely breaking changes:
 
@@ -155,7 +156,9 @@ A major bump is reserved for genuinely breaking changes:
 - A non-additive on-disk format change (renamed or removed frontmatter fields, changed serialization for an existing field, change in the `.tombstones/` layout, a `SCHEMA_VERSION` bump).
 - A change in the relationship between tools (for example, requiring `memory_write` to be paired with a `memory_record_use` call that is currently optional).
 
-The 2.0 and 3.0 releases are the examples of what does *not* require a hard-break major bump under this policy: 2.0 shipped nine additive features with no renames, and 3.0 trimmed defensive `bettermemory.server` re-exports after verifying zero in-tree consumers — a soft API break narrow enough to be the *only* break in the release. SCHEMA_VERSION stayed at 1 across both. Each bump was a scope signal to consumers ("the surface meaningfully grew" / "an import path you may have relied on is gone") rather than a wholesale compatibility break. A future major would carry a wider break.
+The 2.0 and 3.0 releases are the examples of what does *not* require a hard-break major bump under this policy: 2.0 shipped nine additive features with no renames, and 3.0 trimmed defensive `bettermemory.server` re-exports after verifying zero in-tree consumers — a soft API break narrow enough to be the *only* break in the release. Each bump was a scope signal to consumers ("the surface meaningfully grew" / "an import path you may have relied on is gone") rather than a wholesale compatibility break.
+
+4.0 and 5.0 are the examples of what *does*. Both removed whole surfaces the "forbidden within a major" list protects — 4.0 the embedding lane (a search-mode enum value, two config knobs, two packaging extras), 5.0 the web UI (a CLI subcommand, a module, an extra) — and both were owner scope decisions rather than compatibility accidents. SCHEMA_VERSION stayed at 1 across all four bumps, which is the point of separating the surface contract from the on-disk one: a hard surface break need not touch the user's data.
 
 Every major bump ships with:
 
@@ -170,7 +173,7 @@ These are not rules so much as the trade-offs the project makes consistently. Us
 - **False negatives beat false positives.** Missed context the user supplies in one followup turn is much cheaper than irrelevant context cascading through a conversation.
 - **The on-disk format is the user's data.** It is plain markdown with YAML frontmatter so the user can `grep`, `git log`, and hand-edit it. Code that obfuscates the format (binary encoding, opaque hashing of the bodies, anything that requires the running server to interpret) is out.
 - **Disclosure beats caveats.** The "Limitations" section of [`docs/internals.md`](docs/internals.md) lists what the project does not do. New limitations land there explicitly when discovered, rather than being papered over in a footnote elsewhere.
-- **Static surfaces beat configuration.** Each new config-toml-knob is friction and documentation debt; default behavior should be sensible without ever editing the file. When a knob really is needed (`semantic_dedup`, `verification_stale_days`), it lives in `[behavior]` with prose explaining when to flip it.
+- **Static surfaces beat configuration.** Each new config-toml-knob is friction and documentation debt; default behavior should be sensible without ever editing the file. When a knob really is needed (`rescue_expansion`, `verification_stale_days`), it lives in `[behavior]` with prose explaining when to flip it.
 
 ## Releasing
 

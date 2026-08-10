@@ -487,9 +487,10 @@ enough to earn its own entry above.
 - **Non-MCP SDK / REST endpoint.** Programmatic users can `import
   bettermemory` directly — see
   [examples/programmatic_client.py](../examples/programmatic_client.py).
-- **Removing `verified_commits` / `verified_versions` in 3.x.** The
-  compatibility contract forbids removing a parameter within a major;
-  they are documented as audit-trail-only. A 4.0 question at most.
+- **Removing `verified_commits` / `verified_versions` within a major.**
+  The compatibility contract forbids removing a parameter within a
+  major; they are documented as audit-trail-only. 4.0 and 5.0 both
+  shipped without taking them, so this is a 6.0 question at most.
 - **Gating the low-use episode tools out of the lean surface.**
   Evaluated against the event log; not available — the shipped plugin
   skill, the system-prompt addendum, and the swarm fan-in path depend
@@ -515,13 +516,14 @@ enough to earn its own entry above.
   tools to load first instead. Rationale next to the knob in
   `config.py`; the per-tool figures come from
   `tests/test_resident_footprint.py`, which measures them on every run.
-- **Merging the micro-tool pairs in 3.x** — `memory_write_confirm` /
-  `memory_write_cancel` and `memory_scope_enable` /
-  `memory_scope_disable` into one call each. The compatibility contract
-  forbids removing a tool within a major, and the economics are
-  backwards without the removal: a merged replacement can only be
-  *added* in a minor, so inside 3.x it would grow the description
-  budget rather than shrink it. A 4.0 question — deprecation cycle
+- **Merging the micro-tool pairs within a major** —
+  `memory_write_confirm` / `memory_write_cancel` and
+  `memory_scope_enable` / `memory_scope_disable` into one call each.
+  The compatibility contract forbids removing a tool within a major,
+  and the economics are backwards without the removal: a merged
+  replacement can only be *added* in a minor, so inside the line it
+  would grow the description budget rather than shrink it. 4.0 and 5.0
+  both passed on it, so it is a 6.0 question — deprecation cycle
   first, removal at the major with migration notes.
 
 ## Contributing

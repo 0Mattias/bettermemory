@@ -709,7 +709,7 @@ def commits_since(cwd: Path | None, since: datetime) -> int | None:
     """
     warnings.warn(
         "commits_since is deprecated and will be removed in bettermemory "
-        "4.0; use commit_author_timestamps + bisect_right (the author-date "
+        "6.0; use commit_author_timestamps + bisect_right (the author-date "
         "source behind verify.compute_commit_drift) instead of this "
         "committer-date --since count",
         DeprecationWarning,
@@ -869,7 +869,7 @@ def commits_touching_pathspecs(
     """
     warnings.warn(
         "commits_touching_pathspecs is deprecated and will be removed in "
-        "bettermemory 4.0; use commit_author_timestamps_touching_pathspecs "
+        "bettermemory 6.0; use commit_author_timestamps_touching_pathspecs "
         "(the author-date source behind verify.resolve_commit_drift_count) "
         "instead of this committer-date --since count",
         DeprecationWarning,
@@ -962,7 +962,7 @@ def commits_since_touching_paths(
     """
     warnings.warn(
         "commits_since_touching_paths is deprecated and will be removed in "
-        "bettermemory 4.0; use resolve_repo_pathspecs + "
+        "bettermemory 6.0; use resolve_repo_pathspecs + "
         "commit_author_timestamps_touching_pathspecs (the author-date source "
         "behind verify.resolve_commit_drift_count) instead of this "
         "committer-date composition",
