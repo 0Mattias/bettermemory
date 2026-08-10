@@ -90,9 +90,9 @@ def install_extra_command(extra: str) -> str:
     """The full ADD-an-extra instruction, backticked for prose.
 
     Tool form leading, pipx and development-clone variants in the
-    parenthetical. ``doctor`` bound this as ``_install_extra_command``
-    and shipped it verbatim in fix hints until the extras it named were
-    removed; no surface composes it today.
+    parenthetical. ``doctor`` bound this under a private alias and
+    shipped it verbatim in fix hints until the extras it instructed on
+    were removed; no surface composes it today.
     """
     return (
         f"`{tool_reinstall(extra)}` "
@@ -106,9 +106,9 @@ def reinstall_extra_command(module: str, extra: str) -> str:
 
     Same shape as `install_extra_command`, but the second parenthetical
     variant repairs the damaged ``module`` itself: the broken thing is a
-    dependency of the extra, not the package. ``doctor`` bound this as
-    ``_reinstall_extra_command``; like its sibling it has no live
-    consumer since the extras were removed.
+    dependency of the extra, not the package. ``doctor`` bound this
+    under a private alias too; like its sibling it has no live consumer
+    since the extras were removed.
     """
     return (
         f"`{tool_reinstall(extra)}` "
