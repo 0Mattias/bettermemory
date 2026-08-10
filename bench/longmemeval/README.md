@@ -284,6 +284,102 @@ check that says so honestly: that arm empties the filler table, which
 neutralises the 5.1.1 filter by construction, so identity is what a
 correct ablation had to produce. Every dev-set cell is unchanged too.
 
+## Round 3 — capping the leg's vote: the first mechanism to move this corpus, and still a kill, 2026-08-10
+
+Round 2's kill said the harmful terms are individually rare, so the
+damage is in the leg's VOTE rather than its vocabulary. Addendum 5
+preregistered the obvious consequence — make the leg earn its vote —
+and ran it. **It moved the number in the right direction for the first
+time, and it did not clear the line. The default does not flip.**
+
+The mechanism: `_hybrid_fuse` fuses by rank, so the leg contributes
+`_RESCUE_LEG_WEIGHT / (rrf_k + rank)` however thin its rank-1 is. The
+cap withholds the leg entirely when its own separation
+`(top − runner_up) / top` falls below θ = 0.12, which makes the query
+byte-identical to `rescue_expansion=False`. θ was fixed from the dev
+set's leg census before the code existed.
+
+### Arms
+
+| arm | macro@1 | macro@5 | macro@10 |
+| --- | --- | --- | --- |
+| baseline, lane off | 0.5246 | 0.8935 | 0.9443 |
+| lane on, cap off | 0.4772 | 0.8770 | 0.9471 |
+| **lane on, cap on (θ=0.12)** | **0.4916** | **0.8830** | **0.9466** |
+| `--ablate leg-only` + cap on | 0.4936 | 0.8870 | 0.9446 |
+
+Both determinism checks reproduced to four decimals, so the comparison
+is licensed. The cap recovers **30% of the macro@1 loss** (+0.0144 of
+0.0474) and **36% of the macro@5 loss** (+0.0060 of 0.0165). Real,
+repeatable, and not close to enough: 0.8830 against a 0.8900 kill line
+that has now stood through two rounds.
+
+### Scored predictions
+
+| # | prediction | measured | outcome |
+| --- | --- | --- | --- |
+| P16 | cap fires on ≥ 40% of engaging questions | **43.9%** (69 of 157) | **HELD** |
+| P17 | dev win survives: asked ≥ 45%/85%, requery exactly 80%/100% | asked 50%/**75%**, requery 80%/100% | **MISSED** — 3 questions at @5 |
+| P18 | macro@5 ≥ 0.8900 — **the kill criterion** | **0.8830** | **MISSED — KILL FIRED** |
+| P19 | macro@1 ≥ 0.5046 | **0.4916** | **MISSED** |
+| P20 | null shape: @5 ∈ [0.8900, 0.8970], @1 ∈ [0.5046, 0.5346] | 0.8830, 0.4916 | **MISSED**, both low |
+| P21 | macro@10 ≥ 0.9443 | **0.9466** | **HELD** |
+
+Kill criteria 4 (macro@5 below the line) and 5 (dev set loses more than
+one question) both fired. Two of six predictions held.
+
+### Why it failed, and the confound that called it
+
+**Addendum 5's confound 2 named this failure in advance:** the dev
+census labels a leg "correct" when its rank-1 is the gold document, and
+a leg whose rank-1 is wrong can still push the gold document up the
+fused list. So "incorrect" was an upper bound on "harmful", and θ was
+free to be more aggressive than the harm warranted. It was. θ = 0.12
+preserves 12 of the 14 legs whose rank-1 is gold — and withholds **25
+of the 41 engaged dev legs, 61%**. The 16 surviving legs are not enough
+to hold 90% recall@5, and the dev set drops to 75%.
+
+The transfer picture is the sharper lesson. Measured after the arms
+ran, the two corpora's engaged legs are separated *differently*:
+
+| | p25 | p50 | p75 |
+| --- | --- | --- | --- |
+| dev-set engaged legs | 0.0403 | 0.0698 | 0.1893 |
+| held-out engaged legs | 0.0568 | **0.1359** | 0.2627 |
+
+θ = 0.12 sits **above** the dev median and **below** the held-out
+median. The same constant is therefore aggressive on the corpus it was
+derived from and permissive on the corpus it was aimed at — the exact
+inversion C1 warns about, arrived at through a signal specifically
+chosen to be scale-free. Scale-free was necessary and not sufficient:
+the ratio does not depend on collection size or IDF scale, but its
+*distribution* still differs by corpus, and a fixed quantile is not a
+fixed value.
+
+### What this retires, and what it does not
+
+**Not retired: the mechanism.** Conditioning the vote is the first
+thing in three rounds to move this corpus toward baseline instead of
+away from it, on both the full lane and the leg-only ablation. The
+direction is established.
+
+**Retired: a fixed global θ.** A constant calibrated on one corpus's
+leg-separation distribution and applied to another's is the third
+version of the same mistake — the df threshold, the coverage gate's
+transfer, and now this. What the numbers point at is a **relative**
+criterion: withhold the leg when its separation is weak *for this
+store*, e.g. against a quantile of the legs that store's own queries
+produce, so the mechanism carries its calibration with it instead of
+importing one. That is not preregistered and no number here licenses
+it.
+
+**Also worth recording:** the leg-only ablation with the cap on
+(0.8870) beats the full lane with the cap on (0.8830). With the cap
+present the filler df-floor is costing 0.0040 macro@5 — a small,
+repeatable interaction between two mechanisms that were each measured
+neutral or positive alone, and a reminder that this lane now has three
+interacting parts.
+
 ## The pre-4.0 headline: parity, not victory (dated record)
 
 On third-party ground, against labels neither party authored,

@@ -9,6 +9,33 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+### Added — the rescue leg must earn its vote (opt-in lane only)
+
+`[behavior] rescue_expansion` stays **off by default**; nothing a
+default install ranks changes, and a test pins that the new constant is
+unobservable with the lane off.
+
+Inside the lane, the expansion leg now has to show internal separation
+before it joins the fusion. `_hybrid_fuse` fuses by rank, so the leg
+contributed `_RESCUE_LEG_WEIGHT / (rrf_k + rank)` whether its rank-1
+was found by a discriminating synonym or by a near-tie among candidates
+it could barely resolve — IDF only reorders *within* the leg and cannot
+reduce its influence. A leg whose `(top − runner_up) / top` falls below
+`_RESCUE_LEG_MIN_MARGIN` (0.12) is now withheld entirely, which leaves
+the query byte-identical to `rescue_expansion=False`.
+
+Preregistered as `bench/longmemeval/PREREGISTRATION.md` addendum 5,
+θ fixed from the dev set's leg census before the code existed. **Its
+kill criterion fired**: held-out macro@5 0.8830 against a 0.8900 line.
+The cap recovers 30% of the lane's macro@1 loss and 36% of its macro@5
+loss — the first mechanism in three rounds to move that corpus toward
+baseline — but it also costs the dev set three questions at recall@5,
+so the default stays off and a fixed global θ is retired. The
+measured reason is published with the arms: θ sits above the dev
+median leg separation and below the held-out median, so one constant is
+aggressive on the corpus it came from and permissive on the corpus it
+was aimed at.
+
 ### Bench — round 2's experiment was preregistered and killed before it ran
 
 No shipped behaviour changes. `[behavior] rescue_expansion` stays

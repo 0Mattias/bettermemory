@@ -210,11 +210,62 @@ def summarise(records: list[dict[str, Any]]) -> dict[str, Any]:
     return out
 
 
+def _longmemeval_records(
+    limit: int | None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Instrument B, POST-RUN only.
+
+    Addendum 5 reads nothing from the held-out corpus before its arms
+    run — that is round 3's discipline improvement over round 2. This
+    path exists to score P16 ("the cap fires on at least 40% of
+    engaging questions") AFTER the arms are published, which measures
+    what already happened rather than feeding a parameter. No gold
+    label here, so no correctness split.
+    """
+    sys.path.insert(0, str(_HERE / "longmemeval"))
+    import run as lr  # type: ignore[import-not-found]  # noqa: PLC0415
+
+    path = lr.DEFAULT_CORPUS
+    corpus = json.loads(path.read_text(encoding="utf-8"))
+    if limit:
+        corpus = corpus[:limit]
+    records: list[dict[str, Any]] = []
+    for inst in corpus:
+        if not inst["answer_session_ids"]:
+            continue
+        root = Path(tempfile.mkdtemp(prefix="bm-legcensus-"))
+        try:
+            lr.build_question_store(root, inst)
+            memories = Store(root).load_all()
+            leg = leg_for(memories, inst["question"])
+            rec: dict[str, Any] = {
+                "question_id": inst.get("question_id", ""),
+                "question_type": inst.get("question_type", ""),
+                "engaged": leg is not None,
+            }
+            if leg is not None:
+                rec.update(leg)
+                rec.pop("top_id")
+                rec.pop("ranked_ids")
+            records.append(rec)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+    return records, {
+        "instrument": "longmemeval",
+        "corpus": path.name,
+        "corpus_sha256": lr.corpus_fingerprint(path),
+        "instances": len(corpus),
+    }
+
+
 def main() -> int:
     p = argparse.ArgumentParser(
         description="Rescue-leg evidence census. No ranking change."
     )
-    p.add_argument("--instrument", choices=("retrieval",), default="retrieval")
+    p.add_argument(
+        "--instrument", choices=("retrieval", "longmemeval"), default="retrieval"
+    )
+    p.add_argument("--limit", type=int, default=None)
     p.add_argument(
         "--out",
         default=None,
@@ -227,7 +278,10 @@ def main() -> int:
     args = p.parse_args()
 
     started = time.time()
-    records, meta = _retrieval_records()
+    if args.instrument == "retrieval":
+        records, meta = _retrieval_records()
+    else:
+        records, meta = _longmemeval_records(args.limit)
     payload = {
         **meta,
         "coverage_gate": engine._RESCUE_COVERAGE_GATE,
