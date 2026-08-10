@@ -291,6 +291,15 @@ class RankingInputs(NamedTuple):
     did nothing for the human reading the curation page. The shape stays
     so the next ranking surface starts threaded instead of drifted.
 
+    `rescue_expansion` (5.1) is here because it did drift: the flag
+    shipped read directly off `deps.config.behavior` at this handler's
+    own call site, which left `probe_for_miss` — the surface whose whole
+    job is to rank the way production ranked — unable to see it. On a
+    store with the lane enabled the probe scored a two-leg fusion
+    against production's three, and the miss verdict reads only the
+    rank-1 hit, so the disagreement produced both masked and phantom
+    misses exactly as a dropped usage-aware factor does.
+
     Scope note: this covers the `[behavior]` knobs only, NOT the
     candidate pool or its BM25 corpus statistics — those are a separate
     decision with a separate helper (`resolve_search_pool`) and a
@@ -307,6 +316,7 @@ class RankingInputs(NamedTuple):
     negative_by_id: dict[str, tuple[int, int]] | None
     corroboration_boost: bool
     half_life_days: float
+    rescue_expansion: bool
     events: list[dict[str, Any]] | None
 
 
@@ -427,6 +437,7 @@ def resolve_ranking_inputs(
         negative_by_id=negative_by_id,
         corroboration_boost=behavior.corroboration_boost,
         half_life_days=behavior.recency_boost_half_life_days,
+        rescue_expansion=behavior.rescue_expansion,
         events=tally_events,
     )
 
@@ -846,7 +857,7 @@ async def memory_search(
         allow_empty_query=since_prior_session,
         corpus_stats_provider=corpus_stats_provider,
         matched_leg_out=matched_leg,
-        rescue_expansion=deps.config.behavior.rescue_expansion,
+        rescue_expansion=ranking.rescue_expansion,
     )
     # Pin one `now` for the whole response so the verification verdict
     # is consistent across hits — the alternative (let each helper

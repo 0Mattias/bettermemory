@@ -128,7 +128,6 @@ IRREGULAR_PAST: dict[str, tuple[str, ...]] = {
     "brought": ("bring",),
     "broken": ("break",),
     "built": ("build",),
-    "came": ("come",),
     "caught": ("catch",),
     "chosen": ("choose",),
     "held": ("hold",),
@@ -144,6 +143,16 @@ IRREGULAR_PAST: dict[str, tuple[str, ...]] = {
 # targets are under `_MIN_EXPANSION_LEN` and would be filtered anyway —
 # dead entries misread as coverage. See the filter note below for the
 # measured incident that makes the length floor non-negotiable.
+#
+# 'came' -> 'come' is absent for the reason BEHIND that floor rather
+# than the floor itself: the stemmer's final-e normalisation carries
+# 'come' to 'com', which clears `_MIN_EXPANSION_LEN` by one character
+# and is a live body token in every memory that cites a `.com` host
+# ('status.example.com' splits to ['status', 'example', 'com'] through
+# `_kebab_parts`). That is precisely the promiscuous-short-term class
+# the floor exists to block — a rescue leg earns its weight by adding
+# DISCRIMINATING vocabulary — and the entry buys little: 'came' is rare
+# in retrieval questions and 'come' is rarely what a memory is about.
 
 # Colloquial clippings -> the full form a written memory actually uses.
 # A query says "creds"/"repo"/"PR"; bodies say "credentials"/

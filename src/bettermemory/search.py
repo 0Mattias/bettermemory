@@ -2743,8 +2743,23 @@ def search(
                         # stats say nothing about the synthesized
                         # terms; fetch those too so a store-rare
                         # synonym prices off the store, not the slice.
+                        #
+                        # Same terms-to-fetch rule as the base fetch
+                        # above, and for the same reason: a synthesized
+                        # term can itself be joined — `morph_variants`
+                        # rewrites the tail of a kebab token, so
+                        # "split-testing" emits "split-test" — and
+                        # `_score_bm25`'s conjunctive fallback prices a
+                        # joined term with no direct hit off its parts.
+                        # Fetching whole terms only would leave those
+                        # parts at the pool-collapsed IDF the provider
+                        # exists to correct.
+                        exp_fetch = list(exp_terms)
+                        for term in exp_terms:
+                            exp_fetch.extend(_kebab_parts(term))
                         exp_stats = _merge_corpus_stats(
-                            hybrid_stats, corpus_stats_provider(exp_terms)
+                            hybrid_stats,
+                            corpus_stats_provider(list(dict.fromkeys(exp_fetch))),
                         )
                     exp_leg = _score_bm25(
                         candidates,

@@ -457,6 +457,7 @@ def _probe_message(
         applied_by_id=ranking.applied_by_id,
         negative_by_id=ranking.negative_by_id,
         corroboration_boost=ranking.corroboration_boost,
+        rescue_expansion=ranking.rescue_expansion,
         corpus_stats_provider=probe_pool.corpus_stats_provider,
     )
 
