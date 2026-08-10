@@ -35,8 +35,10 @@ from bettermemory.handlers.search import RankingInputs, resolve_ranking_inputs
 from bettermemory.models import Confidence, Memory, Source, generate_ulid
 from bettermemory.search import (
     _EXPANSION_TABLES,
+    _RESCUE_LEG_MIN_MARGIN,
     _STOPWORDS,
     _kebab_parts,
+    _leg_margin_ratio,
     _stem_token,
     reciprocal_rank_fusion,
     search,
@@ -648,3 +650,137 @@ def test_expansion_stats_fetch_covers_kebab_parts_like_the_base_fetch() -> None:
     assert "split" in exp_fetch and "test" in exp_fetch, (
         f"the expansion fetch dropped the components of a joined term: {exp_fetch}"
     )
+
+
+# ---------------------------------------------------------------------------
+# The leg-margin cap (round 3, PREREGISTRATION.md addendum 5)
+#
+# RRF fuses by RANK, so an unseparated leg votes exactly as hard as a
+# confident one. The cap is the only place the fusion can tell them
+# apart, which makes both its arithmetic and its withholding behaviour
+# load-bearing.
+# ---------------------------------------------------------------------------
+
+
+def _scored(*scores: float) -> list[tuple[Memory, float, list[str]]]:
+    """A leg-shaped `[(memory, score, matched)]` list, best first."""
+    now = datetime.now(timezone.utc)
+    return [
+        (_memory(f"body {i}", created=now - timedelta(days=i)), s, ["term"])
+        for i, s in enumerate(scores)
+    ]
+
+
+def test_leg_margin_ratio_is_the_separation_of_the_legs_own_top_two() -> None:
+    assert _leg_margin_ratio(_scored(10.0, 8.0)) == pytest.approx(0.2)
+    assert _leg_margin_ratio(_scored(10.0, 0.0)) == pytest.approx(1.0)
+    assert _leg_margin_ratio(_scored(10.0, 9.9)) == pytest.approx(0.01)
+
+
+def test_leg_margin_ratio_reads_the_fusion_ordering_not_list_order() -> None:
+    """`_id_order` sorts by `(score, created, id)` before fusion, so the
+    rank-1 the cap judges must be the rank-1 that would have voted — not
+    whatever order `_score_bm25` happened to return."""
+    unsorted = _scored(3.0, 12.0, 7.0)
+    assert _leg_margin_ratio(unsorted) == pytest.approx((12.0 - 7.0) / 12.0)
+
+
+def test_a_single_candidate_leg_is_maximally_separated() -> None:
+    """Nothing competes with it, so the cap must never fire on that
+    shape. On a small store this is most legs — stated as a confound in
+    addendum 5, and pinned here."""
+    assert _leg_margin_ratio(_scored(0.4)) == 1.0
+
+
+def test_an_empty_or_scoreless_leg_has_no_opinion() -> None:
+    assert _leg_margin_ratio([]) == 0.0
+    assert _leg_margin_ratio(_scored(0.0, 0.0)) == 0.0
+    assert _leg_margin_ratio(_scored(-1.0)) == 0.0
+
+
+def test_the_threshold_is_the_preregistered_one() -> None:
+    """Addendum 5 fixed θ before this code existed, by a stated rule
+    over the committed dev census. A later edit re-opens a preregistered
+    experiment on changed rules."""
+    assert _RESCUE_LEG_MIN_MARGIN == 0.12
+
+
+def test_a_well_separated_leg_still_rescues() -> None:
+    """The pure-paraphrase shape survives the cap: 'creds' reaches a body
+    that only says 'credential', and that leg has one real candidate."""
+    memories = [
+        _memory("Credential injection for containers uses mounted files."),
+        _memory("The reconciliation job runs at 0300 UTC."),
+    ]
+    legs: dict[str, str] = {}
+    hits = search(
+        memories, "creds", max_results=2, matched_leg_out=legs, rescue_expansion=True
+    )
+    assert hits and hits[0].id == memories[0].id
+    assert legs[hits[0].id] == "expansion"
+
+
+def test_an_unseparated_leg_is_withheld_and_the_result_matches_the_flag_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The whole contract: below θ the leg does not run, and the query
+    comes back byte-identical to `rescue_expansion=False` — the same
+    shape the lane already had when `exp_terms` came back empty.
+
+    Driven by moving θ rather than by hunting a fixture, so the test
+    pins the MECHANISM and cannot rot when the corpus changes.
+    """
+    memories = _corpus()
+    query = "do we ever rip the old toggles back out"
+
+    legs_on: dict[str, str] = {}
+    monkeypatch.setattr("bettermemory.search._RESCUE_LEG_MIN_MARGIN", 0.0)
+    uncapped = search(
+        memories, query, max_results=3, matched_leg_out=legs_on, rescue_expansion=True
+    )
+
+    monkeypatch.setattr("bettermemory.search._RESCUE_LEG_MIN_MARGIN", 1.01)
+    legs_capped: dict[str, str] = {}
+    capped = search(
+        memories,
+        query,
+        max_results=3,
+        matched_leg_out=legs_capped,
+        rescue_expansion=True,
+    )
+    off = search(memories, query, max_results=3, rescue_expansion=False)
+
+    assert [h.id for h in capped] == [h.id for h in off]
+    assert [h.score for h in capped] == [h.score for h in off]
+    assert "expansion" not in legs_capped.values()
+    # And the cap really did something — the uncapped run differs.
+    assert [h.id for h in uncapped] != [h.id for h in capped] or (
+        "expansion" in legs_on.values()
+    )
+
+
+def test_the_cap_never_touches_a_query_the_gate_already_skips(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A confident query never engages the leg, so no value of θ may
+    change its result. The cap sits strictly inside the coverage gate."""
+    memories = _corpus()
+    query = "feature flag removal owner deadline"
+    baseline = search(memories, query, max_results=3, rescue_expansion=True)
+    for theta in (0.0, 0.5, 1.01):
+        monkeypatch.setattr("bettermemory.search._RESCUE_LEG_MIN_MARGIN", theta)
+        got = search(memories, query, max_results=3, rescue_expansion=True)
+        assert [h.id for h in got] == [h.id for h in baseline], theta
+        assert [h.score for h in got] == [h.score for h in baseline], theta
+
+
+def test_the_cap_is_inert_with_the_lane_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No default install can observe this constant at any value."""
+    memories = _corpus()
+    query = "do we ever rip the old toggles back out"
+    baseline = search(memories, query, max_results=3)
+    for theta in (0.0, 0.12, 1.01):
+        monkeypatch.setattr("bettermemory.search._RESCUE_LEG_MIN_MARGIN", theta)
+        got = search(memories, query, max_results=3)
+        assert [h.id for h in got] == [h.id for h in baseline], theta
+        assert [h.score for h in got] == [h.score for h in baseline], theta

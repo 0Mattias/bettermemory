@@ -1070,6 +1070,36 @@ _RESCUE_COVERAGE_GATE = 0.60
 # overturned.
 _RESCUE_LEG_WEIGHT = 0.7
 
+# Minimum internal separation the rescue leg must show before its vote
+# counts: `(top score - runner-up score) / top score`, measured on the
+# leg's own ordering. Below this the leg is withheld entirely and the
+# result is byte-identical to `rescue_expansion=False` for that query.
+#
+# Why the leg needs a confidence test at all: `_hybrid_fuse` fuses by
+# RANK, so a leg contributes `_RESCUE_LEG_WEIGHT / (rrf_k + rank)`
+# whether its rank-1 was found by a discriminating synonym or by a
+# near-tie among candidates it can barely tell apart. IDF only reorders
+# WITHIN the leg; it cannot reduce the leg's influence. So a leg with no
+# real opinion still votes at full strength — which is the mechanism the
+# round-2 kill isolated (bench/longmemeval/PREREGISTRATION.md addendum
+# 4: the terms that carried the regression were individually RARE, so
+# the damage was never vocabulary commonness).
+#
+# Why a RATIO and not a score or a raw margin: both of those depend on
+# collection size, average document length and the IDF scale, none of
+# which are comparable between corpora — and a mechanism that must be a
+# function of the store cannot be an absolute constant. A ratio of two
+# scores drawn from the same leg on the same collection is scale-free by
+# construction.
+#
+# 0.12 is the largest round value below the dev set's correct-leg p25
+# (0.1235) — preserve first, then take the largest, rather than taking
+# the value that scores best on 41 observations. Measured consequence on
+# that census: 12 of 14 correct legs kept, 23 of 27 incorrect dropped,
+# kept-leg precision 0.341 -> 0.750. Preregistered in addendum 5 before
+# this code existed; see bench/leg_census.py for the instrument.
+_RESCUE_LEG_MIN_MARGIN = 0.12
+
 # Document-frequency floor for the QUERY_FILLER_WORDS list, as a
 # fraction of the priced collection. Memory bodies are technical prose,
 # so conversational filler is corpus-RARE, and Okapi IDF prices it like
@@ -2361,6 +2391,28 @@ def _id_order(
     return [memory.id for memory, _, _ in scored_sorted]
 
 
+def _leg_margin_ratio(scored: list[tuple[Memory, float, list[str]]]) -> float:
+    """The rescue leg's own internal separation, in [0, 1].
+
+    `(top - runner_up) / top` over the leg's own ordering — the SAME
+    `(score, created, id)` ordering `_id_order` applies before fusion, so
+    the rank-1 this judges is the rank-1 that would have voted.
+
+    A single-candidate leg returns 1.0: nothing competes with it, so it
+    is maximally separated and the cap must never fire on that shape. A
+    non-positive top score returns 0.0 — a leg that matched nothing has
+    no opinion to weigh, and dividing by it is undefined anyway.
+    """
+    if not scored:
+        return 0.0
+    ordered = sorted(scored, key=lambda x: (x[1], x[0].created, x[0].id), reverse=True)
+    top = ordered[0][1]
+    if top <= 0.0:
+        return 0.0
+    runner_up = ordered[1][1] if len(ordered) > 1 else 0.0
+    return (top - runner_up) / top
+
+
 def _hybrid_fuse(
     rankings: list[list[tuple[Memory, float, list[str]]]],
     *,
@@ -2772,6 +2824,17 @@ def search(
                         candidate_tokens=candidate_tokens,
                         corpus_stats=exp_stats,
                     )
+                    # A leg with no real opinion does not get to vote.
+                    # RRF reads rank, not score, so an unseparated leg
+                    # would contribute exactly as much as a confident
+                    # one; withholding it is the only way the fusion can
+                    # tell them apart. A withheld leg leaves `scored` as
+                    # the base fusion, so the result is byte-identical to
+                    # `rescue_expansion=False` for this query — the same
+                    # shape the lane already has when `exp_terms` comes
+                    # back empty. See `_RESCUE_LEG_MIN_MARGIN`.
+                    if exp_leg and _leg_margin_ratio(exp_leg) < _RESCUE_LEG_MIN_MARGIN:
+                        exp_leg = []
                     if exp_leg:
                         expansion_ids = {m.id for m, _, _ in exp_leg}
                         scored = _hybrid_fuse(
