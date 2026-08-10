@@ -415,6 +415,17 @@ band, so no threshold can tell them apart. See that addendum and
 round-2 results section in `bench/longmemeval/README.md` for the
 scored verdict.
 
+**Round 3 takes the mechanism the kill named.** Addendum 5 (2026-08-10)
+leaves the vocabulary alone and conditions the leg's VOTE: `_hybrid_fuse`
+fuses by rank, so a leg contributes `_RESCUE_LEG_WEIGHT / (rrf_k + rank)`
+however thin the evidence behind its rank-1 is. This gold set's leg
+census (`results/leg-census-2026-08-10.json`) says the leg's own
+separation predicts whether it is about to vote correctly — correct legs
+sit at `margin_ratio` 0.189, incorrect ones at 0.047 — so a leg whose
+rank-1 barely clears its rank-2 withholds its vote. θ = 0.12, derived
+from this instrument alone; the held-out set is deliberately not read
+before the run.
+
 Unpadded corpus (`results/unpadded-2026-08-09.json`):
 
 | arm | probe | recall@1 | recall@5 |

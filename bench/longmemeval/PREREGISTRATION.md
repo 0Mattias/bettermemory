@@ -827,3 +827,307 @@ measured in the same session.
 - **A private trial run remains undetectable.** What reduces it is
   predictions specific enough to be embarrassing, committed runner
   flags instead of patch drivers, pinned checksums, and replication.
+
+## Addendum 5 — round-3 experiment: capping the rescue leg's VOTE when its own evidence is weak, 2026-08-10
+
+Round 2 killed df-gating and named the mechanism on its way out. This
+addendum tests what that finding pointed at. Predictions continue the
+numbering — P1–P5, P6–P8 (addendum 3), P9–P15 (addendum 4) — so this
+document owns **P16–P21**.
+
+Two instruments, both bound: `bench/retrieval/` (development) and this
+directory (held-out).
+
+### What round 2 established, and why it changes the target
+
+Addendum 4's Gate 0 fired: on the 25 regressed held-out questions the
+emitted terms sit at median df/N **0.0268**, against **0.0361** on the
+dev set's leg-engaging asked probes — 0.74× where 5× was required, and
+no τ separates the two populations (`results/gate0-2026-08-10.json`).
+
+The harmful terms are individually **rare**. So the damage was never
+that the leg's vocabulary is common; it is that the leg's *vote* is
+unconditional. `_hybrid_fuse` fuses by RANK: the leg contributes
+`_RESCUE_LEG_WEIGHT / (rrf_k + rank)` whether its rank-1 was found by a
+discriminating synonym or by a near-tie among candidates it can barely
+tell apart. Round 2's own "why df, when BM25 already prices on df"
+section is the argument — and it applies just as well against df as
+for it, which is what the kill demonstrated.
+
+**Round 3 therefore leaves the vocabulary alone and conditions the
+VOTE.**
+
+### Hypothesis
+
+> **The expansion leg's own internal separation — how far its rank-1
+> stands above its rank-2 — predicts whether that leg is about to vote
+> correctly, and it predicts it well enough that withholding the vote
+> of a poorly-separated leg costs a technical store little and saves a
+> conversational one.**
+
+Falsifiable, and its most likely failure is that separation predicts on
+the dev set and not on the held-out set — the same transfer failure
+round 1 suffered, which is why the held-out arm is the test and the dev
+arm is only a guard.
+
+### Why `margin_ratio`, and why not the alternatives
+
+Measured on the dev set (`bench/retrieval/results/leg-census-2026-08-10.json`,
+41 engaged legs — 14 whose rank-1 is the gold document, 27 whose is
+not):
+
+| signal | correct legs (p50) | incorrect legs (p50) | separation |
+| --- | --- | --- | --- |
+| `top_score` | 10.63 | 6.60 | 1.6× |
+| `margin` (top1 − top2) | 1.42 | 0.30 | 4.7× |
+| **`margin_ratio`** ((top1 − top2)/top1) | **0.189** | **0.047** | **4.0×** |
+| `top_matched` | 2.0 | 2.0 | none |
+| `leg_size` | 35 | 40 | none |
+
+`top_matched` and `leg_size` carry no signal at all and are out.
+`top_score` and `margin` both separate, and both are **rejected on a
+transfer argument, not a fitting one**: a raw BM25 score depends on
+collection size, average document length and the IDF scale, none of
+which are comparable between 180 documents of technical prose and ~245
+conversational rounds. C1 requires a mechanism that is a function of
+the store, not a constant; an absolute score threshold is exactly the
+constant that cannot transfer. **`margin_ratio` is scale-free by
+construction** — it is a ratio of two scores drawn from the same leg,
+in the same units, on the same collection — which is the only reason
+it is a candidate for a threshold fixed on one corpus and applied to
+another.
+
+### Exact mechanism
+
+One insertion point, one constant. No new config key, no change to any
+table, no change to `morph_variants`, no change to the coverage gate,
+no change to the index stream. Entirely inside the existing
+`rescue_expansion` lane, so a default install is untouched.
+
+In `search()`'s hybrid rescue block, after the leg is scored and before
+it joins the fusion:
+
+```
+exp_leg = _score_bm25(candidates, exp_terms, ...)      # unchanged
+if exp_leg:
+    if _leg_margin_ratio(exp_leg) < _RESCUE_LEG_MIN_MARGIN:   # NEW
+        exp_leg = []                                          # NEW
+if exp_leg:
+    scored = _hybrid_fuse(rankings + [exp_leg], ...)   # unchanged
+```
+
+`_leg_margin_ratio` reads the leg's own ordering — the same
+`(score, created, id)` ordering `_id_order` applies before fusion, so
+the "rank-1" the cap judges is the rank-1 that would have voted — and
+returns `(top - runner_up) / top`, or `1.0` for a single-candidate leg
+(nothing competes with it) and `0.0` for a non-positive top score.
+
+**A capped leg does not run.** `scored` stays the base fusion,
+`expansion_ids` stays empty, `matched_leg` reports `lexical`, and the
+result is byte-identical to `rescue_expansion=False` for that query.
+This is the same shape the lane already has when `exp_terms` is empty —
+not a new failure mode, an existing one reached by a new condition.
+
+### Parameters
+
+| name | value | how it is set |
+| --- | --- | --- |
+| `_RESCUE_LEG_MIN_MARGIN` (θ) | **0.12** | dev-set leg census; rule below |
+| `_RESCUE_COVERAGE_GATE` | 0.60 | **unchanged.** Frozen. |
+| `_RESCUE_LEG_WEIGHT` | 0.7 | **unchanged.** Frozen. |
+| `_FILLER_DF_FLOOR_RATIO` | 0.5 | **unchanged.** Frozen. |
+| `_MIN_EXPANSION_LEN` | 3 | **unchanged.** Frozen. |
+
+**Exactly one parameter moves**, as in round 2.
+
+**θ = 0.12 by a stated rule, applied before any recall run: the largest
+round value strictly below the dev set's correct-leg `margin_ratio`
+p25 (0.1235).** The rule is "preserve, then take the largest", the same
+discipline addendum 4 used — not "take the value that scores best",
+which at n=41 is fitting noise. Its consequence is arithmetic, not a
+target: the cap keeps **12 of 14** correct legs and drops **23 of 27**
+incorrect ones, lifting the precision of the surviving legs from
+**0.341 to 0.750** (2.20×).
+
+The two correct legs it drops both sit at `margin_ratio` 0.0493, inside
+the incorrect legs' range. They are the price, they are visible here in
+advance, and P17 is what says how much of the dev-set result they are
+allowed to cost.
+
+### Gate 0 — dev-side only, and weaker than round 2's on purpose
+
+Addendum 4 spent a held-out corpus statistic to build its pre-run kill,
+and its own confound 1 recorded the consequence: *"LongMemEval has now
+informed a parameter and cannot be spent twice."* **Round 3 honours
+that. No held-out statistic is read before the run — not a census, not
+a distribution, nothing.** The cost is stated plainly: this round has
+**no cheap pre-run check that can predict transfer**, and Gate 0 below
+is a sanity floor on the dev side alone, not evidence about the
+held-out set.
+
+**Gate 0a — the signal exists on the dev set.** Correct legs' median
+`margin_ratio` ≥ 2× incorrect legs'. *(Measured before this commit:
+0.189 vs 0.047, 4.0×.)*
+
+**Gate 0b — θ is not merely an off-switch.** At θ the cap must keep ≥ 10
+of the 14 correct legs AND lift kept-leg precision ≥ 1.5× over no cap.
+*(Measured: 12 of 14, 0.750/0.341 = 2.20×.)*
+
+Both are computable from the committed leg census, and **both pass** —
+which is why this round proceeds to implementation where round 2 did
+not. A reader should weight that accordingly: passing a dev-side gate
+is much weaker evidence than passing a two-corpus one, and the
+held-out arm is doing nearly all the work.
+
+### Instrument A — `bench/retrieval/` (DEVELOPMENT set)
+
+20 blind-authored questions, 180 documents, lexical arm. **n=20: one
+question is 5 points.**
+
+```sh
+.venv/bin/python bench/retrieval/run.py --rescue-expansion on --json
+.venv/bin/python bench/retrieval/run.py --rescue-expansion on --pad-to 600 --prefilter both --json
+.venv/bin/python bench/retrieval/run.py --rescue-expansion on --index-threshold 180 --prefilter both --json
+```
+
+Cap off must reproduce `rebaseline-lane-*-2026-08-10.json` exactly.
+
+### Instrument B — this directory (HELD-OUT set)
+
+500 questions, `longmemeval_s_cleaned.json` sha256 `d6f21ea9…c3a442`,
+depth 200, lexical arm, `--per-question` sidecar mandatory. Four arms:
+
+1. **baseline, lane off** — must reproduce 0.5246 / 0.8935 / 0.9443 to
+   four decimals. **If it does not, STOP.**
+2. **lane on, cap off** — must reproduce 0.4772 / 0.8770 / 0.9471.
+3. **lane on, cap on at θ** — the experiment.
+4. **`--ablate leg-only` + cap on** — isolates the cap against the
+   mechanism that carried the whole regression, against 0.4732 /
+   0.8790 / 0.9471 uncapped.
+
+Every artifact carries `provenance.tree_dirty == false`; both flags are
+committed, so no arm needs a working-tree patch. θ is frozen before
+Instrument B runs.
+
+### Predictions
+
+**P16 — the cap fires where the damage is.** On the held-out set the
+cap withholds the leg on at least **40%** of the questions where it
+engages. Mechanism: the leg's separation is what the dev census says
+distinguishes a correct leg, and the held-out regression is 25 of the
+165 engaging questions. **MISSED if** below 40% — the cap is not
+reaching the population, and any null below is vacuous rather than
+informative.
+
+**P17 — the dev-set win survives.** Unpadded lexical: asked recall@1 ≥
+**45%** and recall@5 ≥ **85%** (one question of slack each against
+50%/90%), requery **exactly** 80%/100%. **MISSED if** asked drops more
+than one question at either k, or requery moves at all — the cap is
+withholding legs that were carrying the result, and the two correct
+legs at `margin_ratio` 0.0493 were not the only price.
+
+**P18 — no held-out regression. THE kill criterion, at round 1's exact
+line.** macro@5 ≥ **0.8900**. **Below that the default does not flip**,
+whatever the dev set says. (Same line and same declared-weaker
+consequence as addendum 4's P11: the lane's existing opt-in status is
+not re-litigated by this experiment.)
+
+**P19 — recall@1 recovers, because that is where the lane died.**
+macro@1 ≥ **0.5046**, i.e. recovering at least 2.74 of the 4.74 points
+the uncapped lane loses. Mechanism: 25 questions moved down under
+unconditional votes; a withheld vote restores the baseline ranking
+exactly. **MISSED if** below 0.5046 — separation does not transfer, and
+the dev-side signal was a property of 41 observations rather than of
+the mechanism.
+
+**P20 — the expected shape is a NULL, declared so it cannot be sold as
+a win.** macro@5 in **[0.8900, 0.8970]** and macro@1 in
+**[0.5046, 0.5346]**. **The cap is not predicted to help conversational
+stores. It is predicted to stop hurting them.** Anything above those
+bands must be explained by the arms before it is celebrated.
+
+**P21 — reach is preserved.** macro@10 ≥ **0.9443** (baseline).
+Uncapped, the lane *improves* @10 (0.9471) while destroying @1 and @5 —
+the signature of a recall mechanism with a precision problem. A cap
+that fixes precision should keep that. **MISSED if** @10 falls below
+baseline: the cap is withholding good legs too.
+
+### Kill criteria, collected in one place
+
+1. **Gate 0a or 0b fails** → dead on arrival, no implementation, no run.
+2. **Baseline does not reproduce to four decimals** → stop.
+3. **Uncapped lane arm does not reproduce 0.4772 / 0.8770 / 0.9471** →
+   stop, the harness or engine moved.
+4. **macro@5 < 0.8900** → the default does not flip (P18).
+5. **Dev set loses more than one question on the casual probe, or
+   requery moves at all** → the cap is not free on technical stores.
+6. **The cap fires on < 40% of engaging held-out questions** → any null
+   is vacuous (P16).
+7. **`tree_dirty` true on any artifact** → run void.
+
+### What would justify flipping `rescue_expansion` default-on
+
+**All seven, conjunctively. Any one short and the lane stays opt-in.**
+
+1. macro@5 ≥ 0.8900 (P18).
+2. macro@5 ≥ **0.8935**, the baseline itself — the held-out set pays
+   nothing at all for the dev set's win.
+3. macro@1 ≥ 0.5046 (P19).
+4. macro@10 ≥ 0.9443 (P21).
+5. Dev-set win preserved: asked ≥ 45%/85%, requery exactly 80%/100%.
+6. Non-vacuity: the cap fires on ≥ 40% of engaging held-out questions
+   and the leg still runs on the rest.
+7. Both determinism reproductions exact, `tree_dirty: false` everywhere,
+   artifacts committed, and the flip lands as its own reviewed change
+   citing this document.
+
+**What explicitly does NOT justify a flip:** a larger dev-set win (the
+gold set is the development set); a held-out gain concentrated in one
+question class; an improvement only at @10; or "it is opt-in anyway".
+
+### Declared confounds
+
+**1. θ is fitted to 41 dev-set observations.** Fourteen of them are the
+correct-leg population the preserve rule keys on. That is a small
+sample, the rule was chosen to be robust rather than optimal, and it is
+still fitting. The held-out arm is the only thing that can speak to
+whether the number transfers.
+
+**2. The dev set's correctness label is "the leg's rank-1 is the gold
+document", not "the leg helped".** A leg whose rank-1 is wrong can
+still move the gold document up the fused list from rank 3 to rank 2,
+and this census would count it as incorrect. So the 27 "incorrect" legs
+are an upper bound on the harmful population, and θ may be more
+aggressive than the harm warrants. P17 is the guard.
+
+**3. Above the index threshold the leg ranks a bm25-nominated slice.**
+The margin is then computed over a pool already biased toward the
+caller's vocabulary, so `margin_ratio` means something slightly
+different there. Instrument A measures this regime (padded-600 and
+forced-180); Instrument B has never run above the threshold at all.
+
+**4. Scope changes the pool, and production is scoped.** A leg's
+separation depends on what else is in the admitted set. Neither
+instrument measures a scoped store.
+
+**5. Single-candidate legs are maximally separated by definition** and
+always survive the cap. On a small store that is most legs, so the cap
+does progressively less as a store shrinks — the opposite of the
+df-gate's failure mode, and equally worth stating.
+
+**6. n=20 on the dev set.** One question is 5 points.
+
+**7. Cost.** The cap reads two floats off a list the engine already
+built and sorted. No new pass over anything. Runtime guard: the capped
+arm lands within **1.05×** the uncapped arm in the same session.
+
+### What is not claimed
+
+- **Not that the cap will help conversational stores.** P20 predicts a
+  null on purpose. The claim under test is "stops hurting".
+- **Not helpfulness, not correctness, not staleness.**
+- **Not a comparative claim.** No claude-mem arm runs in round 3.
+- **Not the above-threshold regime on Instrument B.**
+- **Not that `margin_ratio` is the best available signal** — only that
+  it is the best of the five the dev census measured, and the only one
+  of the two that separate which can transfer across corpora.
