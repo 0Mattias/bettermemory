@@ -7,6 +7,44 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## Unreleased
+
+### Bench — round 2's experiment was preregistered and killed before it ran
+
+No shipped behaviour changes. `[behavior] rescue_expansion` stays
+opt-in and unchanged.
+
+The retrieval campaign's named next experiment — df-gating the emitted
+expansion terms — was preregistered on both instruments
+(`bench/longmemeval/PREREGISTRATION.md` addendum 4, τ fixed at 0.05
+from corpus statistics with no recall input) and its pre-run kill
+fired. The hypothesis was that an emitted term's document frequency
+separates the vocabulary that helps a technical store from the
+vocabulary that harms a conversational one. Measured on both corpora:
+the terms that broke the held-out set are *rarer* than the ones
+carrying the gold-set win — median df/N 0.0268 against 0.0361, a 0.74×
+ratio where 5× was required — and no threshold separates them, because
+every τ that reaches the failure hits the dev set at least as hard. No
+gate was implemented and no gated arm ran, which is what the
+preregistration says to do.
+
+Three pieces of harness came out of it, all reusable: `--ablate
+none|floor-only|leg-only` on the LongMemEval runner, which moves both
+ablation arms out of an uncommitted driver patch and into committed,
+diffable code (round 1 lost a run to that patch racing a working-tree
+edit); `bench/df_census.py`, which measures emitted-term document
+frequencies through the engine's own pipeline; and
+`bench/longmemeval/gate0.py`, which recomputes the verdict from
+committed artifacts.
+
+Both instruments were re-baselined on the 5.1.1 engine rather than
+having round 1's constants copied forward. Every dev-set cell is
+unchanged; on the held-out set the 5.1.1 filler-emission repair is
+worth +0.0020 macro@1 and nothing at @5. Two corrections to the
+round-1 record follow from the census: the leg engages on 165 of 500
+held-out questions (33%), not "broadly", and the lane arm's macro@1 is
+0.4772 on the current engine where round 1 published 0.4752.
+
 ## 5.1.1 - 2026-08-10
 
 ### Fixed — two holes in the rescue lane, both inside the opt-in flag
