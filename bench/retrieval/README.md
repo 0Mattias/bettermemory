@@ -89,8 +89,13 @@ artificial mode flags:
 
 | arm | configuration | corresponds to |
 | --- | --- | --- |
-| `lexical` | `mode="hybrid"`, no embedding model | a default install |
-| `semantic` | `mode="hybrid"`, embedding model | `bettermemory[embeddings]` |
+| `lexical` | `mode="hybrid"`, deterministic lexical ranking | every install |
+| `semantic` | `mode="hybrid"`, embedding model | the pre-4.0 `embeddings` extra — **removed from the product; dated record only** |
+
+Only `lexical` is runnable. The `semantic` row is kept because the
+pre-4.0 figures below are quoted against it and a table that omits the
+arm they name would make those rows unreadable; asking the runner for
+it today drops the arm with a note.
 
 Each is probed three ways:
 
@@ -297,10 +302,12 @@ Two more things worth stating precisely rather than rounding off:
 ### What this still does not measure
 
 - **The semantic arm.** Unmeasured, and it is the arm the threshold
-  caveat was always aimed at: an embedding model cannot rescue a document
-  bm25 never nominated. Running `--pad-to 600 --prefilter both` on a
-  machine with `bettermemory[embeddings]` installed closes this and is
-  the one remaining increment.
+  caveat was always aimed at: an embedding model cannot rescue a
+  document bm25 never nominated. This once read as the one remaining
+  increment, closable by installing the `embeddings` extra and
+  re-running `--pad-to 600 --prefilter both`. 4.0.0 removed the extra,
+  so the increment is not available at any commit from 4.0.0 on and
+  the gap stays permanently open on this instrument.
 - **Realistic competition at 600 documents.** The padded corpus reaches
   the threshold with filler that cannot compete; the forced-180 run has
   genuine competition but only 180 documents against a 50-slot cap. A
