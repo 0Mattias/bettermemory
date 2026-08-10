@@ -7,7 +7,7 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
-## Unreleased
+## 5.1.1 - 2026-08-10
 
 ### Fixed — two holes in the rescue lane, both inside the opt-in flag
 
