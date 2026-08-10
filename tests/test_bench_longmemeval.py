@@ -19,6 +19,7 @@ skip cleanly when it is absent, which is the normal state in CI.
 
 from __future__ import annotations
 
+import importlib
 import importlib.util
 import inspect
 import json
@@ -591,6 +592,23 @@ def test_every_ablation_arm_is_a_committed_patch() -> None:
 
     with pytest.raises(ValueError, match="unknown ablation"):
         bm.apply_ablation("nope")
+
+
+def test_the_leg_margin_cap_has_a_committed_off_switch() -> None:
+    """Addendum 5's arm 2 is "lane on, cap off" — the paired control the
+    capped arm is judged against. Without a committed flag that arm
+    needs a working-tree patch, which is the failure class `--ablate`
+    was introduced to end.
+
+    The runner default must stay ON: it is the shipped in-lane
+    behaviour, and a default that silently disabled the cap would make
+    every published capped artifact a mislabelled uncapped one.
+    """
+    assert "--leg-margin-cap" in (_HERE / "run.py").read_text(encoding="utf-8")
+    assert bm.LEG_MARGIN_CAP is True
+
+    engine = importlib.import_module("bettermemory.search")
+    assert engine._RESCUE_LEG_MIN_MARGIN == 0.12
 
 
 def test_the_ablation_artifacts_declare_their_dirty_tree() -> None:

@@ -133,6 +133,14 @@ INDEX_THRESHOLD_ENV = "BETTERMEMORY_INDEX_THRESHOLD"
 # 2026-08-09 lane artifacts. Set inside `main()` from the flag.
 RESCUE_EXPANSION = False
 
+# Whether the rescue leg's vote is conditioned on its own separation
+# (`search._RESCUE_LEG_MIN_MARGIN`, round 3). Module-level and
+# defaulting to the SHIPPED behaviour; `off` drives the leg's margin
+# floor to zero, which is the pre-round-3 engine and the paired control
+# addendum 5's arm 2 requires. Nothing here changes a default install:
+# the cap lives inside the opt-in lane either way.
+LEG_MARGIN_CAP = True
+
 # Digest of the corpus the four committed artifacts ran against. The
 # `off` half of a `--prefilter both` run re-measures exactly what
 # `v2-padded600-2026-07-26.json` already recorded, which is what turns it
@@ -700,14 +708,30 @@ def main() -> int:
             "'on' reproduces the *-2026-08-09 lane artifacts."
         ),
     )
+    parser.add_argument(
+        "--leg-margin-cap",
+        choices=("on", "off"),
+        default="on",
+        help=(
+            "Condition the rescue leg's vote on its own separation "
+            "(round 3, addendum 5). Default on — the shipped lane "
+            "behaviour. 'off' is the pre-round-3 engine, the paired "
+            "control for the capped arm."
+        ),
+    )
     parser.add_argument("--json", action="store_true", help="Emit JSON.")
     args = parser.parse_args()
 
     # Module-level so the two arm runners read one flag without a
     # signature change (`run_arm`'s signature is pinned by the committed
     # artifacts' reproducibility note above it).
-    global RESCUE_EXPANSION
+    global RESCUE_EXPANSION, LEG_MARGIN_CAP
     RESCUE_EXPANSION = args.rescue_expansion == "on"
+    LEG_MARGIN_CAP = args.leg_margin_cap == "on"
+    if not LEG_MARGIN_CAP:
+        import bettermemory.search as _engine
+
+        _engine._RESCUE_LEG_MIN_MARGIN = 0.0
 
     corpus_path = Path(args.corpus).expanduser()
     if not corpus_path.is_absolute():
@@ -866,6 +890,7 @@ def main() -> int:
                     "prefilter_mode": args.prefilter,
                     "prefilter_cap": PREFILTER_CAP,
                     "rescue_expansion": RESCUE_EXPANSION,
+                    "leg_margin_cap": LEG_MARGIN_CAP,
                     "notes": notes,
                     "results": [
                         {

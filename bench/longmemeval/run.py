@@ -145,6 +145,14 @@ SCOPE = ["longmemeval"]
 # against a commit.
 RESCUE_EXPANSION = False
 
+# Whether the rescue leg's vote is conditioned on its own separation
+# (`search._RESCUE_LEG_MIN_MARGIN`, round 3). Module-level and
+# defaulting to the SHIPPED behaviour; `off` drives the leg's margin
+# floor to zero, which is the pre-round-3 engine and the paired control
+# addendum 5's arm 2 requires. Nothing here changes a default install:
+# the cap lives inside the opt-in lane either way.
+LEG_MARGIN_CAP = True
+
 # Which half of the lane to isolate. `none` runs the lane as shipped;
 # the other two are the ablation arms.
 #
@@ -553,6 +561,17 @@ def main() -> int:
         ),
     )
     p.add_argument(
+        "--leg-margin-cap",
+        choices=("on", "off"),
+        default="on",
+        help=(
+            "Condition the rescue leg's vote on its own separation "
+            "(round 3, addendum 5). Default on — the shipped lane "
+            "behaviour. 'off' is the pre-round-3 engine, the paired "
+            "control for the capped arm."
+        ),
+    )
+    p.add_argument(
         "--ablate",
         choices=ABLATIONS,
         default="none",
@@ -578,9 +597,12 @@ def main() -> int:
 
     # Module-level so the arm runner reads one flag without a signature
     # change — same reason `bench/retrieval/run.py` does it.
-    global RESCUE_EXPANSION, ABLATION
+    global RESCUE_EXPANSION, ABLATION, LEG_MARGIN_CAP
     RESCUE_EXPANSION = args.rescue_expansion == "on"
     ABLATION = args.ablate
+    LEG_MARGIN_CAP = args.leg_margin_cap == "on"
+    if not LEG_MARGIN_CAP:
+        _engine._RESCUE_LEG_MIN_MARGIN = 0.0
     if ABLATION != "none" and not RESCUE_EXPANSION:
         print(
             f"--ablate {ABLATION} isolates half of the rescue lane, which is "
@@ -671,6 +693,7 @@ def main() -> int:
         "k_values": list(K_VALUES),
         "rescue_expansion": RESCUE_EXPANSION,
         "ablation": ABLATION,
+        "leg_margin_cap": LEG_MARGIN_CAP,
         "notes": notes,
     }
 
