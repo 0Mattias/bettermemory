@@ -85,6 +85,7 @@ _SRC = Path(__file__).resolve().parents[2] / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
+from bettermemory import search as _engine  # noqa: E402
 from bettermemory.search import search as run_search  # noqa: E402
 from bettermemory.store import Store  # noqa: E402
 
@@ -143,6 +144,62 @@ SCOPE = ["longmemeval"]
 # states its own lane setting instead of leaving a reader to date it
 # against a commit.
 RESCUE_EXPANSION = False
+
+# Which half of the lane to isolate. `none` runs the lane as shipped;
+# the other two are the ablation arms.
+#
+# These used to be an UNCOMMITTED two-line driver patch on the imported
+# engine, and that cost a run: the first leg-only attempt raced a
+# working-tree edit, imported the flipped module, and measured pure
+# baseline while claiming to measure the leg. Both published ablation
+# artifacts still carry `tree_dirty: true`, because a working-tree
+# patch is what they were. Moving the patch HERE is the fix: it is
+# committed, reviewable in a diff, and reproducible at a sha, so no
+# preregistered arm ever has to run from a dirty tree again.
+#
+# The patch is deliberately narrow and applied to the imported engine
+# only — `src/` is untouched, and `apply_ablation` states each edit and
+# what it isolates.
+ABLATION = "none"
+ABLATIONS = ("none", "floor-only", "leg-only")
+
+
+def apply_ablation(mode: str) -> list[str]:
+    """Patch the imported engine for one ablation arm. Returns notes.
+
+    - `floor-only` pushes `_RESCUE_COVERAGE_GATE` below zero so the
+      coverage test `coverage < gate` can never fire. The filler
+      df-floor still applies (it is keyed on `rescue_expansion`, not on
+      the gate), so this arm measures the floor with the leg silent.
+    - `leg-only` empties `filler_stems`, which makes
+      `_filler_floor_stats` a no-op — it floors exactly the listed
+      stems — leaving the coverage-gated leg as the only mechanism.
+      Emptying the table also removes the 5.1.1 filter that keeps
+      filler out of the emitted terms, which is correct for this arm:
+      it isolates the leg as the leg exists, table and all.
+
+    Idempotent per process; the runner calls it once from `main`.
+    """
+    if mode not in ABLATIONS:
+        raise ValueError(f"unknown ablation {mode!r}; must be one of: {ABLATIONS}")
+    if mode == "none":
+        return []
+    if mode == "floor-only":
+        _engine._RESCUE_COVERAGE_GATE = -1.0
+        return [
+            "ABLATION floor-only — the coverage gate is patched to never "
+            "engage, so the rescue leg never runs and this arm measures "
+            "the filler df-floor alone. Committed patch, not a working-"
+            "tree edit; see apply_ablation in run.py."
+        ]
+    tables = _engine._EXPANSION_TABLES
+    _engine._EXPANSION_TABLES = tables._replace(filler_stems=frozenset())
+    return [
+        "ABLATION leg-only — the filler table is patched empty, which "
+        "makes the df-floor a no-op and leaves the coverage-gated "
+        "expansion leg as the only mechanism. Committed patch, not a "
+        "working-tree edit; see apply_ablation in run.py."
+    ]
 
 
 def corpus_fingerprint(path: Path) -> str:
@@ -496,6 +553,17 @@ def main() -> int:
         ),
     )
     p.add_argument(
+        "--ablate",
+        choices=ABLATIONS,
+        default="none",
+        help=(
+            "Isolate one half of the lane. 'floor-only' silences the rescue "
+            "leg (the coverage gate never engages); 'leg-only' empties the "
+            "filler table so the df-floor is a no-op. Requires "
+            "--rescue-expansion on. Committed patch — see apply_ablation."
+        ),
+    )
+    p.add_argument(
         "--per-question",
         default=None,
         metavar="PATH",
@@ -510,8 +578,17 @@ def main() -> int:
 
     # Module-level so the arm runner reads one flag without a signature
     # change — same reason `bench/retrieval/run.py` does it.
-    global RESCUE_EXPANSION
+    global RESCUE_EXPANSION, ABLATION
     RESCUE_EXPANSION = args.rescue_expansion == "on"
+    ABLATION = args.ablate
+    if ABLATION != "none" and not RESCUE_EXPANSION:
+        print(
+            f"--ablate {ABLATION} isolates half of the rescue lane, which is "
+            "off; pass --rescue-expansion on",
+            file=sys.stderr,
+        )
+        return 2
+    ablation_notes = apply_ablation(ABLATION)
 
     corpus_path = Path(args.corpus).expanduser()
     if not corpus_path.is_absolute():
@@ -528,7 +605,7 @@ def main() -> int:
         return 1
 
     sha = corpus_fingerprint(corpus_path)
-    notes: list[str] = []
+    notes: list[str] = list(ablation_notes)
     if sha not in KNOWN_CORPORA:
         notes.append(
             f"UNPINNED CORPUS — sha256 {sha[:16]}… is not a revision this "
@@ -593,6 +670,7 @@ def main() -> int:
         "retrieval_depth": RETRIEVAL_DEPTH,
         "k_values": list(K_VALUES),
         "rescue_expansion": RESCUE_EXPANSION,
+        "ablation": ABLATION,
         "notes": notes,
     }
 

@@ -19,6 +19,7 @@ skip cleanly when it is absent, which is the normal state in CI.
 
 from __future__ import annotations
 
+import importlib
 import importlib.util
 import inspect
 import json
@@ -541,6 +542,55 @@ def test_the_runner_can_still_produce_the_lane_arm_it_published() -> None:
     )
     assert published["provenance"]["commit"] == "6e87fad"
     assert published["provenance"]["tree_dirty"] is False
+
+
+def test_every_ablation_arm_is_a_committed_patch() -> None:
+    """The ablation arms exist in the runner, not in a working tree.
+
+    Round 1 drove them with an uncommitted two-line driver patch, and
+    that cost a run: the first leg-only attempt raced a working-tree
+    edit, imported the flipped module, and measured pure baseline while
+    claiming to measure the leg. Both published ablation artifacts
+    still carry `tree_dirty: true` because that is what they were.
+
+    With `--ablate` committed, every preregistered arm is reachable
+    from a clean checkout at a sha. This pins the patch each mode
+    applies, because a silently-neutered ablation measures the
+    unablated engine and looks like a result."""
+    assert bm.ABLATIONS == ("none", "floor-only", "leg-only")
+    assert bm.ABLATION == "none", "the runner default must be the unablated lane"
+
+    engine = importlib.import_module("bettermemory.search")
+    gate_before = engine._RESCUE_COVERAGE_GATE
+    filler_before = engine._EXPANSION_TABLES.filler_stems
+    assert filler_before, "the filler table is empty before any ablation"
+    try:
+        assert bm.apply_ablation("none") == []
+        assert engine._RESCUE_COVERAGE_GATE == gate_before
+
+        notes = bm.apply_ablation("floor-only")
+        # `coverage < gate` is the engagement test, and coverage is a
+        # ratio in [0, 1] — a negative gate can never fire.
+        assert engine._RESCUE_COVERAGE_GATE < 0.0
+        assert engine._EXPANSION_TABLES.filler_stems == filler_before
+        assert any("floor-only" in n for n in notes)
+        engine._RESCUE_COVERAGE_GATE = gate_before
+
+        notes = bm.apply_ablation("leg-only")
+        assert engine._EXPANSION_TABLES.filler_stems == frozenset()
+        # An empty table makes the floor a no-op: it floors exactly the
+        # listed stems, so with none listed it has nothing to say.
+        assert engine._filler_floor_stats(None, ["wondering"], 200) is None
+        assert engine._RESCUE_COVERAGE_GATE == gate_before
+        assert any("leg-only" in n for n in notes)
+    finally:
+        engine._RESCUE_COVERAGE_GATE = gate_before
+        engine._EXPANSION_TABLES = engine._EXPANSION_TABLES._replace(
+            filler_stems=filler_before
+        )
+
+    with pytest.raises(ValueError, match="unknown ablation"):
+        bm.apply_ablation("nope")
 
 
 def test_the_ablation_artifacts_declare_their_dirty_tree() -> None:
