@@ -104,6 +104,45 @@ def test_no_expansion_output_is_a_filler_word() -> None:
         assert not (mates & TABLES.filler_stems)
 
 
+# The -ing/-ed surface forms a casual question actually opens with. The
+# three tables are curated by hand, so checking their values covers
+# them; `morph_variants` is a RULE and regenerates filler from filler
+# ("wondering" -> 'wonder'/'wondered'), so the invariant has to be
+# driven through the real emit site instead.
+_FILLER_INFLECTIONS: tuple[str, ...] = (
+    "wondering",
+    "wondered",
+    "thinking",
+    "wanted",
+    "wanting",
+    "remembered",
+    "remembering",
+    "guessing",
+    "guessed",
+    "forgetting",
+    "knowing",
+    "supposing",
+    "supposed",
+)
+
+
+@pytest.mark.parametrize(
+    "word", sorted(set(QUERY_FILLER_WORDS) | set(_FILLER_INFLECTIONS))
+)
+def test_morph_variants_never_leak_filler_into_the_rescue_leg(word: str) -> None:
+    """The df-floor (`search._filler_floor_stats`) is applied to the
+    CALLER's tokens only, so a filler stem synthesized by the rule
+    reaches the rescue leg at full corpus-rare IDF — restoring exactly
+    the weight the floor removed, on the one leg that has no floor.
+    Measured: 'wonder'/'wondering' priced 7.1x their floored sibling
+    and above the genuine expansion vocabulary the lane exists to add,
+    which is enough to float a body of pure discourse filler over the
+    memory the rescue was engaged to reach."""
+    tok = _stem_token(word)
+    leaked = set(expansion_terms([tok], TABLES, _stem_token)) & TABLES.filler_stems
+    assert not leaked, f"{word!r} leaked filler into the rescue leg: {sorted(leaked)}"
+
+
 def test_irregular_targets_survive_the_length_floor() -> None:
     """went/gone -> 'go' and done -> 'do' are documented OUT of the
     table: a target under `_MIN_EXPANSION_LEN` is filtered at emit time,

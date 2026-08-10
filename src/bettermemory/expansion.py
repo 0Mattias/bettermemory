@@ -302,7 +302,18 @@ def expansion_terms(
     ('go', from went->go) reaching the rescue leg matched broadly
     enough to cost the gold set 5 points at recall@1 AND recall@5 —
     ultra-short terms are promiscuous matchers, and a rescue leg only
-    earns its weight adding DISCRIMINATING vocabulary."""
+    earns its weight adding DISCRIMINATING vocabulary.
+
+    Filler stems are dropped for the same reason, and this is the only
+    place the rule source can be caught. The three TABLES are curated
+    against the filler list entry by entry, but `morph_variants` is a
+    RULE: "wondering" regenerates 'wonder'/'wondered', "thinking"
+    regenerates 'think'. The df-floor that deflates filler
+    (`search._filler_floor_stats`) is applied to the CALLER's tokens
+    only, so a synthesized filler stem reaching the rescue leg prices
+    at full corpus-rare IDF — restoring exactly the weight the floor
+    removed, on the leg that has no floor. The two mechanisms must stay
+    disjoint; this filter is where the rule source is held to it."""
     exp: set[str] = set()
     for tok in query_tokens:
         exp.update(morph_variants(tok, stem))
@@ -310,4 +321,5 @@ def expansion_terms(
         exp.update(tables.clippings.get(tok, ()))
         exp.update(tables.synonyms.get(tok, ()))
     exp -= set(query_tokens)
+    exp -= tables.filler_stems
     return sorted(t for t in exp if len(t) >= _MIN_EXPANSION_LEN)
