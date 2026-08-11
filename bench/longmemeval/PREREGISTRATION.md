@@ -1715,3 +1715,148 @@ designed. The candidates, the evidence and the three ways forward are
 in [`../THIRD_INSTRUMENT.md`](../THIRD_INSTRUMENT.md). **P1a is blocked
 on it and is deliberately not preregistered.**
 
+---
+
+## Addendum 8 — P1a: store-derived PPMI expansion, 2026-08-11
+
+The campaign's first mechanism that changes what the legs CONTAIN
+rather than which of them vote. Predictions continue — P1–P5, P6–P8,
+P9–P15, P16–P21, P22–P28, P29–P34 — so this document owns **P35–P41**.
+
+**Three instruments, for the first time.** `bench/retrieval` (dev),
+this directory (**dev-contaminated**, and labelled so: it has informed
+parameters across four rounds and is no longer a clean check), and
+`bench/heldout` — blind-authored, sealed, and scored exactly once.
+
+### Ordering and the no-read attestation
+
+- Instrument data landed at **`35227dd`**, authored independently.
+- **Attestation: at the time of writing, no one implementing this
+  mechanism has read `bench/heldout/data/questions.json`,
+  `personas.json`, or any gold label.** The instrument has been
+  exercised only through `run.py --validate`, which prints counts and
+  no content, and through `harness.load` in a test that asserts counts
+  and the seal flag.
+- The enforcement record is the sha ordering: **data `35227dd` <
+  preregistration (this commit) < run commit.**
+- The dev census (`bench/retrieval/results/ppmi-census-2026-08-11.json`)
+  predates this document, exactly as addendum 4's did. Gate 0's bar
+  below is structural rather than fitted, and the disclosure is here
+  rather than implied.
+
+### What rounds 2–5 bind
+
+**C1 — the vocabulary is the problem.** Identical code flips sign
+between corpora, so a static table cannot be right for both. That is
+the argument FOR P1a.
+
+**C5 (new, from round 5) — the fusion cannot use an imprecise leg.**
+`_hybrid_fuse` fuses by RANK, so a leg contributes
+`_RESCUE_LEG_WEIGHT / (rrf_k + rank)` regardless of how good its
+evidence is. Three rounds of conditioning which legs vote recovered at
+most half the damage and plateaued. **Any new SOURCE therefore has to
+be at least as precise as the one it replaces, because the architecture
+offers no way to discount a bad leg's vote.**
+
+**Round 2 is not to be relitigated.** df was measured and killed as a
+separator for emitted terms; no df gate on emitted terms appears here.
+
+### The mechanism, had it been implemented
+
+Per-query, derived from the collection being ranked (which is what
+makes it a function of the store, per C1): for each query token, count
+the terms co-occurring with it across the candidate documents, score by
+shifted positive pointwise mutual information over document
+frequencies, clamp, and keep the top-k. Emission-side discipline **by
+construction**: query tokens excluded, **filler stems excluded** (the
+5.1.1 invariant applies to a derived source exactly as to the tables),
+length floor applied. Voting form: **the round-5 evidence rule**, the
+leg voting only when its rank-1 matches at least two emitted terms.
+
+### Gate 0 — precision parity, and why it is the right bar
+
+**Gate 0 — a replacement source must be at least as precise as the
+incumbent.** Measured identically on the same dev probes: the fraction
+of emitted terms that appear in the gold document. The committed static
+tables are the incumbent. **Requirement: the best grid cell reaches
+≥ 1.0× the static tables' precision.**
+
+The bar is structural, not tuned. The incumbent's default was **killed**
+on the held-out set for being too imprecise; C5 says the architecture
+cannot discount an imprecise leg; so replacing that source with a *less*
+precise one cannot help, whatever its recall. There is no threshold to
+choose here — 1.0× is the only defensible number, and it was fixed
+before the census was read.
+
+**Failing it publishes "store-derived co-occurrence does not reach
+usable precision at this scale" and ENDS the experiment: no engine
+code, no arms, no instrument spent.** The sealed instrument is
+explicitly NOT run on a failed gate — spending a single-use held-out
+check on a mechanism already known to be worse would waste the thing
+the arc spent a burst acquiring.
+
+### Instruments and arms, had Gate 0 passed
+
+1. `bench/retrieval` — as-asked, control, requery; unpadded and both
+   prefilter regimes.
+2. This directory — four arms as in rounds 3–5, labelled
+   **dev-contaminated** in every published row.
+3. `bench/heldout` — **once, last**, after the other two are scored.
+
+### Predictions
+
+**P35 — Gate 0 passes.** The best grid cell reaches ≥ 1.0× the static
+tables' precision. **MISSED if** below — publish the negative, run
+nothing.
+
+**P36** — dev-set recall@5 ≥ the current lane's 90%/85%/100%.
+**P37** — LongMemEval macro@5 ≥ 0.8900 (the line, five rounds standing).
+**P38** — LongMemEval macro@1 ≥ 0.5046.
+**P39** — held-out macro@5 within 0.01 of its lane-off baseline.
+**P40** — emitted terms per probe stay within 2× the static tables'.
+**P41** — the leg's firing rate stays inside round 5's measured band.
+
+### Kill criteria
+
+1. **Gate 0 fails** → dead on arrival; no implementation, no arms, and
+   the sealed instrument is NOT spent.
+2. Dev-set recall@5 falls → not free on technical stores.
+3. LongMemEval macro@5 < 0.8900 → the default does not flip.
+4. Held-out macro@5 below its lane-off baseline → the mechanism harms a
+   corpus that has never informed a parameter.
+5. `tree_dirty` true on any artifact → run void.
+
+### What would justify flipping `rescue_expansion` default-on
+
+All of: Gate 0 passed; dev cells unmoved or better; LongMemEval macro@5
+≥ 0.8935 (baseline, not merely the kill line); **held-out macro@5 ≥ its
+lane-off baseline** — the clean instrument is the one that matters and
+it gets a veto; provenance clean; and the flip lands as its own
+reviewed change citing this document.
+
+### Declared confounds
+
+**1. The precision proxy.** "Appears in the gold document" is a proxy
+for "helps". A term absent from the gold is not necessarily harmful —
+but the arc has established that unhelpful emitted terms are exactly
+what the held-out set charges for, and the comparison against the
+incumbent is measured identically on both sides.
+
+**2. Scale.** The dev corpus is 180 documents. Co-occurrence statistics
+are thin there, and PPMI is known to be noisy on small collections —
+`min_df` exists for that. A much larger store might support a cleaner
+table. **This experiment therefore speaks to stores of roughly this
+size, which is the size a personal memory store actually is.**
+
+**3. Per-query derivation, not an index-time table.** The campaign plan
+describes an index-time table; deriving per query from the candidate
+pool is the same statistic without a schema change, and is what the
+census measured.
+
+### What is not claimed
+
+- Not that co-occurrence carries no signal. It demonstrably finds gold
+  terms the static tables miss.
+- Not that a larger store would behave this way.
+- Not a comparative claim, and no claude-mem arm runs.
+
