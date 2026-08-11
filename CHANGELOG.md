@@ -9,6 +9,34 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+### Bench — the store-adaptive lever closes, with a measurement
+
+No shipped behaviour changes; the engine is untouched and
+`[behavior] rescue_expansion` remains off by default.
+
+Round 7 reduced the campaign's obstacle to one scalar — the weight the
+rescue leg's floor stratum carries — whose optimum differs about
+twofold between the two corpora and runs monotone in opposite
+directions. Addendum 11 asked whether that scalar could be derived from
+the store, which is what C1 has demanded since round 2.
+
+**Gate 0 fired.** Six register-adjacent statistics, measured on both
+corpora, and not one separates them by the twofold round 7 says the
+weight must move. The closest is mean document length at 1.70×, a
+length artifact rather than a register signal. The most instructive is
+filler-token share at **1.13×** — the quantity the lane's own origin
+story names, with the two corpora 12% apart on it.
+
+No adaptation rule was written, no arms ran, and the sealed instrument
+was not spent — it has now been protected through four experiments and
+has never been scored.
+
+What this retires is the adaptive family on cheap statistics: not "the
+right rule was not found", but that the inputs a rule could use do not
+separate the things it would have to tell apart. What distinguishes a
+corpus the lane helps from one it harms is semantic, not
+distributional.
+
 ### Changed — the leg's weight is the fraction of the evidence bar (opt-in lane only)
 
 `[behavior] rescue_expansion` remains **off by default**, and the

@@ -809,6 +809,77 @@ store, and both corpora say so by disagreeing monotonically.
 preregistration, and the blind instrument is still available to check
 it exactly once.
 
+## Round 8 — the store cannot tell the campaign which weight it wants, 2026-08-11
+
+Round 7 reduced the obstacle to one scalar. Addendum 11 asked whether
+that scalar could be derived from the store, which is what C1 has
+demanded since round 2. **Gate 0 fired. No adaptation rule was written,
+no arms ran, and the sealed instrument was not spent.**
+
+### The bar, and why it is round 7's own measurement
+
+The floor weight's optimum differs about **twofold** between the
+corpora (0.70 for the technical one, ~0.35 for the conversational one),
+monotone and opposed. A rule keyed on a store statistic has to amplify
+that statistic's spread into the weight's spread — so the statistic has
+to separate the corpora by at least as much as the weight must move.
+Below that, the rule is a high-gain amplifier on a near-constant input:
+unstable under ordinary corpus variation, and a fit rather than a
+derivation. **2× is round 7's requirement, not a chosen threshold.**
+
+### Measured — six statistics, neither corpus distinguishable
+
+| statistic | dev | LongMemEval | ratio | separates? |
+| --- | --- | --- | --- | --- |
+| documents | 180 | 255.6 | 1.42 | no |
+| mean document length | 123.2 | 209.4 | **1.70** | no |
+| type–token ratio | 0.1829 | 0.1288 | 0.70 | no |
+| hapax share | 0.4397 | 0.3781 | 0.86 | no |
+| **filler-token share** | 0.0108 | 0.0122 | **1.13** | no |
+| stopword share | 0.3803 | 0.3551 | 0.93 | no |
+
+Artifact: `bench/retrieval/results/store-census-2026-08-11.json`.
+
+**Not one statistic clears the bar.** The closest is mean document
+length at 1.70×, and that is a length artifact — chat rounds are longer
+than technical notes — not a register signal; keying the weight on it
+would damp any store that writes in paragraphs.
+
+**The most instructive failure is filler-token share at 1.13×.** That
+is the quantity the lane's own origin story names: *"memory bodies are
+technical prose, so conversational filler is corpus-RARE."* The two
+corpora are **12% apart** on it. The premise that motivated the filler
+df-floor in 5.1 is directionally true and nowhere near strong enough to
+carry a decision.
+
+### What this retires
+
+**The store-adaptive family, on cheap statistics.** Not "we did not
+find the right rule" — the inputs a rule could use do not separate the
+things it would have to tell apart. Any rule that appeared to work
+would be amplifying a ≤1.7× signal into a 2× decision, and would swing
+on ordinary corpus variation.
+
+**And it closes C1 with a measurement rather than a hope.** Six rounds
+have said "make it a function of the store". Round 8 says the store, as
+the engine can cheaply see it, **does not contain the distinction** —
+what separates a corpus the lane helps from one it harms is semantic,
+not distributional. That is a real result about the whole adaptive
+family and it cost one census.
+
+### Where the campaign stands
+
+The lane ships opt-in and unchanged. Its best measured configuration is
+round 6's (held-out macro@5 **0.8926**, 0.0009 under baseline) and that
+configuration costs the dev set two questions, so it cannot flip the
+default. The blind instrument has been protected through P1a, round 6,
+round 7 and now round 8, and **has never been scored** — it is still
+available, exactly once, for a mechanism that clears the dev gates.
+
+What is left is not another lever on this lane. Every one measured —
+which legs vote, what they contain, how hard they vote, and whether the
+store can say how hard — is now closed with evidence.
+
 ## The pre-4.0 headline: parity, not victory (dated record)
 
 On third-party ground, against labels neither party authored,
