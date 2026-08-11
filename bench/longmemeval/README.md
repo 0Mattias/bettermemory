@@ -478,6 +478,92 @@ criterion trained on "did the leg IMPROVE the fused result" — which the
 per-question sidecars can label directly, without a new instrument —
 is the obvious next thing to try, and nothing here licenses it.
 
+## Round 5 — evidence instead of a threshold, and the arc closes, 2026-08-10
+
+Round 4 retired threshold form and named the binding constraint: every
+rule so far was fitted to a proxy. Addendum 7 removed it.
+
+`bench/leg_labels.py` runs the shipped ranker twice per dev question —
+leg voting, leg withheld — and records where the gold document lands.
+**Of 39 engaged dev legs: 21 help, 3 hurt, 15 are neutral.** Rounds 3
+and 4 withheld 25 and 17 legs to catch those three, and against the
+true labels they were paying **9** and **7 helpful legs** to do it.
+Every harmful leg rested on a rank-1 matching exactly ONE synthesized
+term; no helpful leg did. So the rule became a count: **the leg votes
+only if its rank-1 matched at least two synthesized terms.**
+
+### Arms
+
+| arm | macro@1 | macro@5 | macro@10 |
+| --- | --- | --- | --- |
+| baseline, lane off | 0.5246 | 0.8935 | 0.9443 |
+| lane on, no cap | 0.4772 | 0.8770 | 0.9471 |
+| **lane on, evidence rule** | **0.5014** | **0.8823** | **0.9476** |
+| `--ablate leg-only` + evidence | 0.4954 | 0.8823 | 0.9456 |
+
+Both determinism arms reproduced to four decimals.
+
+### Scored predictions
+
+| # | prediction | measured | outcome |
+| --- | --- | --- | --- |
+| P29 | every dev cell identical to uncapped | asked @1 **50→55%**, control @1 **45→50%**, all @5 held | **MISSED** — both moves are UP |
+| P30 | macro@5 ≥ 0.8900 — **kill criterion** | **0.8823** | **MISSED — KILL** |
+| P31 | beats round 3 (>0.8830 @5, >0.4916 @1) | 0.8823 (**−0.0007**), 0.5014 | **MISSED** @5, **HELD** @1 |
+| P32 | macro@1 ≥ 0.5046 | **0.5014** (short by 0.0032) | **MISSED** |
+| P33 | macro@10 ≥ 0.9443 | **0.9476** | **HELD** |
+| P34 | fires ≤ 45%, within ±15 pts of dev's 31.7% | held-out **47.1%**, gap **15.4** | **MISSED**, both bounds |
+
+Kill criteria 3, 4, 5 and 6 fired.
+
+### What round 5 got, and what it did not
+
+**Got: the dev set, properly.** This is the only rule in the arc that
+costs the gold set nothing — recall@5 holds at 90%/85%/100%, and
+recall@1 *gains* a question on both casual probes. Rounds 3 and 4 lost
+three and two questions at @5. Removing the proxy did exactly what the
+labels said it would.
+
+**Got: the best held-out @1 and @10 of the arc.** 0.5014 recovers
+**51%** of the uncapped lane's macro@1 loss, against 30% and 26%. And
+@10 (0.9476) is the highest figure any arm has produced, above
+baseline.
+
+**Did not get: the line.** macro@5 0.8823 is 0.0077 short of 0.8900,
+and 0.0007 *below* round 3. **The default does not flip.**
+
+**Did not get: structural transfer.** P34 was the claim that a count
+has no distribution to shift. It does: the rule fires on 31.7% of dev
+legs and **47.1%** of held-out ones, a 15.4-point gap — wider than
+round 4's 2.0 and nearly round 3's 17.1. How many terms a leg's rank-1
+matches depends on how much expansion vocabulary the corpus overlaps,
+which varies by corpus exactly like a score distribution does. The
+argument was wrong and the prediction caught it.
+
+### The plateau, which is the arc's real finding
+
+| round | mechanism | held-out @5 |
+| --- | --- | --- |
+| — | lane on, no cap | 0.8770 |
+| 4 | self-calibrating standout | 0.8790 |
+| 5 | evidence count | 0.8823 |
+| 3 | fixed margin level | 0.8830 |
+| — | baseline (lane off) | 0.8935 |
+
+**Three structurally different withholding rules — a level, a shape,
+and a count — land within 0.004 of each other**, recovering between a
+third and a half of the lane's damage and none of them reaching
+baseline. That is a ceiling, not a tuning problem. Conditioning *which
+legs vote* cannot fix a lane whose remaining harm is in *what the legs
+contain*: the expansion vocabulary itself is wrong for conversational
+stores, which is what C1 said from the beginning when identical code
+flipped sign between the two corpora.
+
+**The lane is closed as an experimental line.** It ships opt-in with
+the evidence rule, which is its best form: strictly better than
+uncapped on the dev set, and the best @1/@10 it has produced on the
+held-out set.
+
 ## The pre-4.0 headline: parity, not victory (dated record)
 
 On third-party ground, against labels neither party authored,

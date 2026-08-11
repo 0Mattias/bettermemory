@@ -9,6 +9,45 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+### Changed — the leg votes only with two agreeing terms, and the lane's experimental arc closes (opt-in lane only)
+
+`[behavior] rescue_expansion` stays **off by default**.
+
+Rounds 3 and 4 conditioned the leg's vote on a statistic — a fixed
+margin level, then a self-calibrating gap ratio — and both were fitted
+to a proxy: "the leg's rank-1 is the gold document". Labelling the leg
+by whether its vote actually moved the gold (`bench/leg_labels.py`)
+reframes it: of 39 engaged dev legs, **21 help, 3 hurt, 15 are
+neutral**, and both shipped rules were withholding nine and seven
+helpful legs to catch those three. Every harmful leg rested on a
+rank-1 matching exactly ONE synthesized term.
+
+So `_RESCUE_LEG_MIN_EVIDENCE` (2) replaces the statistic with a count:
+the leg votes only if its top candidate matched at least two
+synthesized terms. One is a coincidence; two agreeing is evidence.
+
+Preregistered as addendum 7. **Its kill criterion fired** (held-out
+macro@5 0.8823 against 0.8900) and it is nonetheless the lane's best
+form: the only rule in the arc that costs the gold set nothing —
+recall@5 held, recall@1 *up* a question on both casual probes — plus
+the best held-out macro@1 (0.5014, recovering 51% of the lane's loss)
+and macro@10 (0.9476) of any arm. One prediction was falsified
+cleanly: a count does shift across corpora after all (31.7% vs 47.1%
+firing).
+
+**The lane closes as an experimental line.** Three structurally
+different withholding rules — a level, a shape, a count — land within
+0.004 of each other at held-out macro@5, which is a ceiling rather
+than a tuning problem: conditioning *which* legs vote cannot repair a
+lane whose remaining harm is in *what* the legs contain. The full
+round 2–5 record is indexed at the end of
+`bench/longmemeval/PREREGISTRATION.md`.
+
+One test defect surfaced and was repaired: a test named for the filler
+df-floor was toggling `rescue_expansion`, which moves the floor and the
+leg together, and crediting the floor. Driven separately, the floor
+alone leaves the distractor on top — the leg is what surfaced the gold.
+
 ### Changed — the leg's vote is conditioned on its own gap structure (opt-in lane only)
 
 `[behavior] rescue_expansion` stays **off by default**.

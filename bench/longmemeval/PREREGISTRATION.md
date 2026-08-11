@@ -1651,3 +1651,55 @@ consequence of counting evidence rather than measuring spread.
 - **Not helpfulness, correctness, or staleness.**
 - **Not a comparative claim.** No claude-mem arm runs.
 - **Not the above-threshold regime on Instrument B.**
+
+---
+
+## The retrieval campaign's round 2-5 arc, closed 2026-08-10
+
+Five preregistered experiments, one index so the record reads as one
+argument rather than five documents.
+
+| addendum | round | mechanism | verdict | held-out @1 / @5 |
+| --- | --- | --- | --- | --- |
+| 3 | 1 | the lane itself (filler floor + gated leg) | KILL — default did not ship | 0.4752 / 0.8770 |
+| 4 | 2 | df-gate the emitted terms | **KILL before running** — Gate 0a 0.74x against a 5x bar | — |
+| 5 | 3 | fixed margin threshold | KILL — first ground gained, a fixed level cannot transfer | 0.4916 / 0.8830 |
+| 6 | 4 | self-calibrating standout | KILL — calibration solved (2.0-pt gap vs 17.1), insufficient | 0.4896 / 0.8790 |
+| 7 | 5 | evidence count (two agreeing terms) | KILL — dev set preserved, best @1/@10, line still missed | 0.5014 / 0.8823 |
+
+Reference rows: baseline (lane off) 0.5246 / 0.8935; lane on, no cap
+0.4772 / 0.8770.
+
+**What each round established, in one line:**
+
+- **Round 2** — the harmful expansion terms are individually RARE, so
+  vocabulary frequency does not separate the class that helps a
+  technical store from the class that harms a conversational one. Two
+  populations, same df band. Killed offline for the price of a census.
+- **Round 3** — conditioning the leg's VOTE is the right target; a
+  fixed level is the wrong instrument, because its distribution differs
+  by corpus.
+- **Round 4** — a self-calibrating statistic really does transfer (a
+  2.0-point firing-rate gap where the fixed level spanned 17.1), and
+  transfer alone buys nothing: firing at the right RATE is not firing
+  on the right LEGS.
+- **Round 5** — the binding constraint was never the threshold but the
+  LABEL every threshold was fitted to. True labels preserve the dev set
+  completely and produce the arc's best @1 and @10. They do not reach
+  the line, and the "a count has no distribution" argument was wrong
+  (15.4-point firing gap).
+
+**The arc's finding: a ceiling, not a tuning problem.** Three
+structurally different withholding rules — a level, a shape, a count —
+land within 0.004 of each other at held-out macro@5 (0.8790, 0.8823,
+0.8830), recovering a third to a half of the lane's damage and none of
+it reaching baseline. Conditioning which legs vote cannot repair a lane
+whose remaining harm is in what the legs contain.
+
+**Consequence for the next preregistration.** Addendum 4's confound 1
+still binds: LongMemEval has now informed parameters across four
+rounds, and a genuinely clean held-out check needs a third instrument.
+Any successor experiment that adapts expansion vocabulary to the store
+(rather than adapting which legs vote) should say so in its first
+paragraph and budget for that instrument.
+
