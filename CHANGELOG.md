@@ -9,6 +9,34 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+### Changed — the leg's weight is the fraction of the evidence bar (opt-in lane only)
+
+`[behavior] rescue_expansion` remains **off by default**, and the
+default engine's fusion path stays **byte-identical** — asserted as a
+preregistered arm on both instruments, twice.
+
+The leg's weight is now `evidence / _EVIDENCE_FULL_AT`, capped: the
+fraction of the full-evidence bar the leg's own evidence reaches. That
+replaces an earlier form whose offset existed only to map the floor to
+half weight, and it introduces **no new constant**. The round-5 labels
+independently measure the floor stratum at 68.2% helpful, which the
+structural 66.7% corroborates to 1.5 points — two numbers from
+different places, neither derived from the other.
+
+Preregistered as addendum 10. **The dev gate failed again and the
+blind held-out instrument was not spent** — it has now been protected
+three times and has never been scored.
+
+What the arms established is sharper than any single figure. Sweeping
+the one scalar that differs between rounds 5, 6 and 7 shows the
+technical corpus wants the floor stratum at full weight (recall@5 rises
+0.65 → 0.90 with it) while the conversational corpus wants it damped
+(macro@5 0.8823 → 0.8926 as it falls). **Both monotone, in opposite
+directions.** No constant satisfies both, which is the campaign's C1
+restated at the finest resolution it has reached: one stratum, one
+scalar, measured in both directions. A store-adaptive weight is the
+experiment that follows, and nothing here licenses it.
+
 ### Changed — the rescue leg's vote scales with its evidence (opt-in lane only)
 
 `[behavior] rescue_expansion` remains **off by default**, and the

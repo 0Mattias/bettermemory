@@ -502,7 +502,7 @@ def test_the_prefilter_really_engages_on_every_committed_question(
     # rather than "the engine never changes".
     committed = json.loads(
         (
-            _RESULTS / "round6-scaled-prefilter-above-threshold-2026-08-11.json"
+            _RESULTS / "round7-structural-prefilter-above-threshold-2026-08-11.json"
         ).read_text()
     )
     published = {

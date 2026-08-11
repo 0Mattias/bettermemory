@@ -720,6 +720,95 @@ observed — that number is now dev-contaminated for curve selection.
 preregistration, and the blind instrument is still available to check
 it exactly once.
 
+## Round 7 — the structural curve, and the trade-off located exactly, 2026-08-11
+
+Round 6 confirmed the fusion hypothesis and failed its dev gate by
+halving the floor stratum's vote. Addendum 10 replaced the curve's form
+with the quantity the mechanism names — a leg's weight is the fraction
+of the full-evidence bar its evidence reaches, `m/F` — which lifts the
+floor from 0.35 to 0.467 and **introduces no new constant**.
+
+**The dev gate failed again, so the blind instrument was not spent for
+the third time. And the arms together locate the campaign's obstacle in
+a single number.**
+
+### Arms
+
+| arm | macro@1 | macro@5 | macro@10 |
+| --- | --- | --- | --- |
+| baseline, lane off | 0.5246 | 0.8935 | 0.9443 |
+| lane on, flat weight (round 5) | 0.5014 | 0.8823 | 0.9476 |
+| lane on, `(m−1)/(F−1)` (round 6) | 0.5134 | **0.8926** | 0.9463 |
+| **lane on, `m/F` (round 7)** | **0.5074** | **0.8901** | 0.9468 |
+
+### Scored predictions
+
+| # | prediction | measured | outcome |
+| --- | --- | --- | --- |
+| P49 | lane-off byte-identical | dev cells identical; LongMemEval 0.5246/0.8935/0.9443 exact | **HELD** |
+| P50 | dev preserved (asked ≥55/90, requery =80/100, control ≥50/85) | asked **(55, 80)**, requery (80, 100), control **(50, 85)** | **MISSED** — asked@5 |
+| P51 | macro@5 ≥ 0.8900 | **0.8901** | **HELD** |
+| P52 | macro@5 ≥ 0.8935 (baseline) | 0.8901 | **MISSED** |
+| P53 | macro@1 ≥ 0.5134 | 0.5074 | **MISSED** |
+| P54 | macro@10 ≥ 0.9443 | **0.9468** | **HELD** |
+| P55 | held-out confirms | **not run** — dev gate failed | — |
+
+Three of six scoreable held. Kill criterion 2 fired.
+
+### The finding: one number, two corpora, opposite directions
+
+The gentler curve recovered `control` (80%→85%) and did **not** recover
+`asked`. Sweeping the floor stratum's weight directly — the only
+quantity that differs between rounds 5, 6 and 7 — shows why:
+
+| weight at the floor stratum | dev asked recall@5 | LongMemEval macro@5 |
+| --- | --- | --- |
+| 0.00 (withheld) | 0.65 | — |
+| **0.35** (round 6) | 0.80 | **0.8926** |
+| **0.467** (round 7) | 0.80 | **0.8901** |
+| 0.60 | 0.85 | — |
+| **0.70** (round 5, no damping) | **0.90** | **0.8823** |
+
+The dev figures come from a direct sweep over that weight on the gold
+set; the three LongMemEval figures are the committed arms of rounds 5,
+6 and 7.
+
+**Both columns are monotone and they run in opposite directions.** The
+technical corpus wants the floor stratum at full weight; the
+conversational corpus wants it damped, and the more it is damped the
+better that corpus does. There is no constant that satisfies both — not
+because the search was insufficient, but because the two optima are at
+opposite ends of the same axis.
+
+That is C1 restated at the finest resolution the campaign has achieved.
+Six rounds ago it was "identical code flips sign between corpora". It
+is now **one stratum of one leg, one scalar, measured monotone in both
+directions**.
+
+### Why the blind instrument still has not run
+
+Addendum 10 spends it only if the dev gates pass. They did not. It has
+now been protected from P1a, round 6 and round 7, and has never been
+scored.
+
+That remains correct: the flip case requires the dev set at or above
+its current figures, so no configuration measured here could have
+flipped the default whatever the blind instrument said.
+
+### What the record supports next
+
+**A store-adaptive weight, not another constant.** Round 4 proved a
+self-calibrating criterion transfers — its firing rate matched across
+corpora to 2.0 points where a fixed threshold spanned 17.1 — but it
+self-calibrated a *threshold*, and thresholds were the wrong lever.
+Nobody has self-calibrated the *weight*, and the sweep above is exactly
+the shape that motivates it: the right weight is a property of the
+store, and both corpora say so by disagreeing monotonically.
+
+**No number here licenses that experiment.** It needs its own
+preregistration, and the blind instrument is still available to check
+it exactly once.
+
 ## The pre-4.0 headline: parity, not victory (dated record)
 
 On third-party ground, against labels neither party authored,
