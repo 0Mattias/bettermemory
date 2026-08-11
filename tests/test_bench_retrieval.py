@@ -501,9 +501,7 @@ def test_the_prefilter_really_engages_on_every_committed_question(
     # therefore keeps meaning "the harness reproduces what it published"
     # rather than "the engine never changes".
     committed = json.loads(
-        (
-            _RESULTS / "round7-structural-prefilter-above-threshold-2026-08-11.json"
-        ).read_text()
+        (_RESULTS / "shipped-prefilter-above-threshold-2026-08-11.json").read_text()
     )
     published = {
         (r["arm"], r["probe"]): r for r in committed["results"] if r["prefilter"]

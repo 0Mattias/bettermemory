@@ -9,6 +9,39 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+### Changed — the lane ships the flat evidence rule (opt-in lane only)
+
+`[behavior] rescue_expansion` remains **off by default**, and lane-off
+ranking is byte-identical under either form.
+
+The lane's active form is the flat weight: above the evidence floor the
+rescue leg votes at full strength. The evidence-scaled form introduced
+during the campaign stays committed and exercisable as a non-default
+variant (`_RESCUE_LEG_EVIDENCE_SCALING`, `--evidence-scaling on` on both
+runners), because it is the campaign's best held-out configuration and
+its record is published.
+
+**The rationale is the audience, decided by the preregistered dev
+gates' own verdicts.** Round 8 established that no cheap store statistic
+distinguishes a technical corpus from a conversational one — the best
+separator is 1.70×, and filler-token share, the quantity the lane's own
+premise names, is 1.13×. So the engine cannot infer which corpus it
+holds, and the owner decides by turning the knob on. That audience is a
+store whose owner knows it holds technical prose, and on the gold set:
+
+| form | as-asked r@1/r@5 | control r@1/r@5 |
+| --- | --- | --- |
+| **flat (shipped)** | 0.55 / **0.90** | 0.50 / **0.85** |
+| scaled `(m−1)/(F−1)` | 0.55 / 0.80 | 0.50 / 0.80 |
+| scaled `m/F` | 0.55 / 0.80 | 0.50 / 0.85 |
+
+The scaled forms' compensating gains land on LongMemEval's
+conversational stores (macro@5 0.8823 flat → 0.8926 / 0.8901 scaled) —
+and **every one of those figures is below that corpus's lane-off
+baseline of 0.8935**, so a conversational store is better served leaving
+the lane off entirely than running any form of it. The form only
+matters for the audience flat serves best.
+
 ### Bench — the store-adaptive lever closes, with a measurement
 
 No shipped behaviour changes; the engine is untouched and
