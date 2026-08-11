@@ -2265,3 +2265,121 @@ addendum 9.
   constant, and corroborates independently.
 - Not a comparative claim; no claude-mem arm runs.
 
+---
+
+## Addendum 11 — round 8: a store-adaptive floor weight, 2026-08-11
+
+The endgame lever. Round 7 reduced the campaign's obstacle to one
+scalar; this asks whether that scalar can be derived from the store.
+Predictions continue — this document owns **P56–P62**.
+
+### What round 7 established
+
+Sweeping the floor stratum's weight, the only quantity differing
+between rounds 5, 6 and 7:
+
+| weight at the floor stratum | dev asked recall@5 | LongMemEval macro@5 |
+| --- | --- | --- |
+| 0.00 | 0.65 | — |
+| 0.35 | 0.80 | 0.8926 |
+| 0.467 | 0.80 | 0.8901 |
+| 0.60 | 0.85 | — |
+| 0.70 | 0.90 | 0.8823 |
+
+**Monotone, in opposite directions, roughly twofold apart in the
+optimum.** The technical corpus wants full weight; the conversational
+one wants it damped. No constant satisfies both.
+
+### Hypothesis
+
+> **The right floor weight is a property of the store, and the store
+> says which it is.** A statistic the engine can compute from the
+> store's own text should place a technical corpus near full weight and
+> a conversational one lower, letting one rule serve both.
+
+### Contamination line, binding
+
+**0.8926 and 0.8901 are dev-contaminated for weight selection.** The
+adaptation rule may not be chosen or tuned to hit them, and — equally —
+its clamp bounds may not be chosen *because* a contaminated number was
+best there. Bounds must be structural, in the sense round 6's
+damping-only [0, `_RESCUE_LEG_WEIGHT`] range was structural. Derivation
+is restricted to mechanism quantities and the round-5 dev labels.
+
+### Gate 0 — can any store statistic separate the corpora at all?
+
+Round 7 measured the weight needing to move about **twofold** between
+the corpora. A rule keyed on a statistic has to amplify that
+statistic's spread into the weight's spread, so:
+
+**Gate 0 — separation.** At least one cheap, store-computable statistic
+must separate the two corpora by **≥ 2×** (or ≤ 0.5×). Below that, any
+rule steep enough to move the weight twofold is a high-gain amplifier
+on a near-constant input — unstable under ordinary corpus variation,
+and a fit rather than a derivation.
+
+**Gate 0a** — the rule computed on the dev store lands at or near the
+dev optimum (full or near-full weight).
+**Gate 0b** — the rule computed on the LongMemEval store moves in the
+damped **direction**. Sign only; its magnitude target is contaminated.
+
+The bar is fixed before the census is read, and it is not a free
+parameter: it is round 7's own measured requirement. **Failing Gate 0
+ends round 8 before any engine code, and does NOT spend the sealed
+instrument** — the protection that has now held through P1a, round 6
+and round 7.
+
+### The candidate statistics
+
+All computable from the store's text alone, deterministic, no schema
+change: document count, mean document length, type–token ratio, hapax
+share, **filler-token share** (the quantity C1's own story names — "memory
+bodies are technical prose, so conversational filler is corpus-RARE"),
+and stopword share.
+
+### Predictions
+
+**P56 — Gate 0 passes.** Some statistic separates the corpora by ≥ 2×.
+**MISSED if** none does — publish the negative, write no rule, spend
+nothing.
+
+**P57** — lane-off byte-identical (the arm, again).
+**P58** — dev preserved: asked ≥ 55%/90%, requery exactly 80%/100%,
+control ≥ 50%/85%.
+**P59** — LongMemEval macro@5 ≥ 0.8935 (baseline).
+**P60** — macro@1 ≥ 0.5246 (baseline).
+**P61** — macro@10 ≥ 0.9443.
+**P62** — `bench/heldout` macro@5 ≥ its lane-off baseline, if it runs.
+
+### Kill criteria
+
+1. **Gate 0 fails** → dead on arrival; no rule, no arms, instrument NOT
+   spent.
+2. P57 fails → scope violated; revert.
+3. Any P58 figure falls → not free on technical stores; instrument NOT
+   spent.
+4. macro@5 < 0.8900 → the default does not flip.
+5. Held-out below its lane-off baseline → the blind instrument vetoes.
+6. `tree_dirty` true on any artifact → run void.
+
+### The preregistered case for `rescue_expansion` default-on
+
+Carried forward verbatim from addendum 10. **All seven, conjunctively:**
+lane-off byte-identical; dev at or above its current lane-on figures;
+LongMemEval macro@5 ≥ 0.8935; macro@1 ≥ 0.5246; macro@10 ≥ 0.9443;
+`bench/heldout` macro@5 ≥ its lane-off baseline; provenance clean
+everywhere. **Even with all seven the implementer does not flip** — the
+case is reported as MADE and the owner executes it.
+
+### Declared confounds
+
+**1. "Cheap" excludes semantics.** These statistics are surface
+counts. If what distinguishes the corpora is meaning rather than
+distribution, no statistic here will see it — and that would itself be
+the finding.
+
+**2. Two corpora is a small basis** for claiming a statistic does or
+does not separate register in general.
+
+**3. Instrument B is dev-contaminated** and labelled so in every row.
+
