@@ -38,7 +38,10 @@ attempt starts from the answer rather than repeating the sweep.**
    files at **500 kB** (`check-added-large-files --maxkb=500`).
    LongMemEval is exempt from this only because it is NOT committed —
    `bench/longmemeval/data/` is untracked, which is exactly the
-   dependency the third instrument was supposed to avoid.
+   dependency the third instrument was supposed to avoid. (Sizes quoted
+   below are from live checks on the date in the heading, not from any
+   committed artifact; they are context, and no argument here rests on
+   them.)
 
 Requirements 3 and 4 are what every candidate died on.
 
@@ -49,7 +52,7 @@ point, not from a paper's prose.
 
 | candidate | license, at source | disqualifier |
 | --- | --- | --- |
-| **MSC (Multi-Session Chat)** | ParlAI **code** is MIT (`facebookresearch/ParlAI/LICENSE`). The **data** is a separate tarball, `parl.ai/downloads/msc/msc_v0.1.tar.gz`, **51,116,516 bytes**, carrying no license statement located at that endpoint or in `parlai/tasks/msc/`. | **No data-redistribution grant.** The MIT header in `parlai/tasks/msc/build.py` covers that source file; it does not license the tarball the file downloads. Separately 100× over the commit cap. |
+| **MSC (Multi-Session Chat)** | ParlAI **code** is MIT (`facebookresearch/ParlAI/LICENSE`). The **data** is a separate tarball, `parl.ai/downloads/msc/msc_v0.1.tar.gz`, carrying no license statement located at that endpoint or in `parlai/tasks/msc/`. | **No data-redistribution grant.** The MIT header in `parlai/tasks/msc/build.py` covers that source file; it does not license the tarball the file downloads. The tarball is also far past the commit cap, so it would need subsampling — which needs the grant first. |
 | **PerLTQA** | `Elvin-Yiming-Du/PerLTQA` — GitHub reports **`NOASSERTION`** (no license file it can identify). | **No identifiable license.** Absence of a license is not permission. |
 | **LoCoMo** | `adymaharana/locomo` — **CC BY-NC 4.0**. | **Non-commercial.** Cannot ship inside an MIT repository. |
 | **DailyDialog** | `li2017dailydialog/daily_dialog` — **CC BY-NC-SA 4.0**. | **Non-commercial AND share-alike.** Doubly incompatible. |
