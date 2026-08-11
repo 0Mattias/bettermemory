@@ -380,6 +380,104 @@ repeatable interaction between two mechanisms that were each measured
 neutral or positive alone, and a reminder that this lane now has three
 interacting parts.
 
+## Round 4 — the cap self-calibrates, and it was not enough, 2026-08-10
+
+Round 3 failed on calibration: a fixed threshold fired on 61% of dev
+legs and 43.9% of held-out ones. Addendum 6 replaced it with a
+criterion drawn entirely from the leg being judged — the top adjacent
+gap over the mean of the leg's other gaps, K = 2.5, over the top 12
+candidates.
+
+**The calibration problem is solved. The recall problem is not.**
+
+### Arms
+
+| arm | macro@1 | macro@5 | macro@10 |
+| --- | --- | --- | --- |
+| baseline, lane off | 0.5246 | 0.8935 | 0.9443 |
+| lane on, no cap | 0.4772 | 0.8770 | 0.9471 |
+| **lane on, standout cap** | **0.4896** | **0.8790** | **0.9466** |
+| standout cap, `--ablate floor-off` | 0.4876 | 0.8790 | 0.9446 |
+| standout cap, `--ablate leg-only` | 0.4896 | 0.8830 | 0.9446 |
+| *(round 3, fixed θ = 0.12)* | *0.4916* | *0.8830* | *0.9466* |
+
+Both determinism arms reproduced to four decimals.
+
+### Scored predictions
+
+| # | prediction | measured | outcome |
+| --- | --- | --- | --- |
+| P22 | firing rate within ±10 pts of dev's 41.5% | dev **41.5%**, held-out **39.5%** — **2.0-point gap** | **HELD** |
+| P23 | every dev cell exactly unmoved | asked 90%→**80%**, control 85%→**75%** | **MISSED** |
+| P24 | macro@5 ≥ 0.8900 — **kill criterion** | **0.8790** | **MISSED — KILL** |
+| P25 | beats round 3 (>0.8830, >0.4916) | 0.8790, 0.4896 | **MISSED**, both |
+| P26 | floor-off ≥ floor-on at macro@5 | 0.8790 = 0.8790 | **HELD** |
+| P27 | macro@10 ≥ 0.9443 | **0.9466** | **HELD** |
+| P28 | null band @5 [0.8900, 0.8990], @1 [0.5046, 0.5346] | 0.8790, 0.4896 | **MISSED**, both |
+
+Three of seven held. Kill criteria 3 (below the line), 4 (dev cells
+moved) and 6 (no gain over round 3) all fired.
+
+### The finding: self-calibration was achieved and was not sufficient
+
+**P22 is the hypothesis, and it held with room to spare.** The rule
+fires on 41.5% of engaged dev legs and 39.5% of engaged held-out ones —
+a **2.0-point** gap where round 3's fixed threshold spanned **17.1**.
+A criterion drawn from the leg's own gap structure really does carry
+its calibration across corpora with different score distributions. That
+is a real, reusable result about the *form* of a threshold.
+
+**And the recall did not follow.** 0.8790 is *below* round 3's 0.8830,
+on a rule that fires at a more consistent rate and preserves more of
+the dev set. So firing at the right RATE is not the same as firing on
+the right LEGS. The fixed θ was aggressive in a way that happened to
+catch more harmful legs on this corpus; the self-calibrating rule
+spreads its withholding more evenly and catches fewer of them. Round
+3's advantage was not calibration — it was aggression, and aggression
+is what the dev set was paying for.
+
+**Confound 2 predicted the dev-set cost for the second time.** The
+census labels a leg "correct" when its rank-1 is the gold document, and
+K preserves all 14 such legs — yet the dev set still lost two questions
+at recall@5 (round 3 lost three). A leg whose rank-1 is wrong can still
+lift the gold document, and no rule keyed on the rank-1 proxy can see
+that. **The proxy, not the threshold, is now the binding constraint on
+this whole family.**
+
+### What the floor arm settled
+
+Round 3 read `leg-only + cap` (0.8870) above `full lane + cap`
+(0.8830) and attributed 0.0040 to the filler df-floor. **That
+attribution was wrong**, and the clean arm says so: with the floor
+disabled and the table intact, macro@5 is *identical* to floor-on
+(0.8790), while @1 and @10 are slightly worse. The floor costs
+nothing under a cap.
+
+What round 3 actually measured was the `leg-only` confound — emptying
+the filler table disables the floor **and** the 5.1.1 emission filter
+together. Round 4 reproduces it: `leg-only + standout` reads 0.8830
+against 0.8790 with the table intact. So the 0.0040 belongs to putting
+filler back INTO the emitted terms, not to removing the floor. That is
+a real effect and an uncomfortable one — the 5.1.1 filler-emission
+repair, which is right on principle and neutral at @1, costs this
+conversational corpus 0.0040 at @5 under a cap. Recorded, not acted
+on: no preregistration covers it.
+
+### Where this leaves the campaign
+
+**Retired: threshold form as the lever.** Three rounds have now moved
+the threshold — a df level, a fixed margin level, a self-calibrating
+shape — and the held-out ceiling has moved 0.8770 → 0.8830 → 0.8790.
+The mechanism family is real but bounded, and the binding constraint
+has moved off the threshold entirely.
+
+**What the data points at instead** is the correctness signal itself.
+Every rule so far has been calibrated against "the leg's rank-1 is the
+gold document", which confound 2 has now cost two rounds running. A
+criterion trained on "did the leg IMPROVE the fused result" — which the
+per-question sidecars can label directly, without a new instrument —
+is the obvious next thing to try, and nothing here licenses it.
+
 ## The pre-4.0 headline: parity, not victory (dated record)
 
 On third-party ground, against labels neither party authored,

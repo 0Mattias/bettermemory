@@ -9,6 +9,33 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+### Changed — the leg's vote is conditioned on its own gap structure (opt-in lane only)
+
+`[behavior] rescue_expansion` stays **off by default**.
+
+Round 3 shipped a fixed threshold on the leg's top-to-runner-up margin.
+Round 4 replaces it: `_RESCUE_LEG_STANDOUT` (2.5) compares the leg's
+top adjacent gap against the mean of its other gaps, over the top 12
+candidates, so the comparison set is drawn from the store being ranked.
+Every degenerate shape fails open; a totally flat leg is the one that
+withholds.
+
+Preregistered as addendum 6 — the derivation RULE, not a value.
+**Its hypothesis held and its kill criterion fired.** The rule really
+does self-calibrate: it fires on 41.5% of engaged dev legs and 39.5%
+of held-out ones, a 2.0-point gap where the fixed threshold spanned
+17.1. But held-out macro@5 came in at 0.8790, *below* round 3's
+0.8830 and below the 0.8900 line — firing at the right rate is not the
+same as firing on the right legs.
+
+Two things the arms settled. The clean `--ablate floor-off` arm shows
+the filler df-floor costs nothing under a cap, retracting round 3's
+attribution of 0.0040 to it — that difference belongs to the
+`leg-only` ablation also disabling the 5.1.1 emission filter. And the
+binding constraint is now the correctness proxy ("the leg's rank-1 is
+the gold document"), which has cost the dev set two questions in round
+4 and three in round 3 despite preserving every leg it can see.
+
 ### Added — the rescue leg must earn its vote (opt-in lane only)
 
 `[behavior] rescue_expansion` stays **off by default**; nothing a
