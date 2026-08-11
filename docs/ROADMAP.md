@@ -395,7 +395,7 @@ enough to earn its own entry above.
   derived while auditing something else — recorded here so they are not
   re-derived. (i) **The recency knob is out of scope by construction.**
   The corpus is written in a single pass, so `_recency_factor` in
-  `src/bettermemory/search.py` (`src/bettermemory/search.py:1382-1388`)
+  `src/bettermemory/search.py` (`src/bettermemory/search.py:1418-1424`)
   — the one ranking knob live by default, applied in three scorers and
   configured by `recency_boost_half_life_days` in
   `src/bettermemory/config.py` (`src/bettermemory/config.py:346`) —

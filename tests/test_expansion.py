@@ -493,7 +493,7 @@ def test_the_rescue_lane_beats_a_filler_heavy_distractor() -> None:
         # longer lets a one-term leg vote, and this fixture's leg has
         # exactly one.
         engine._RESCUE_LEG_MIN_EVIDENCE = saved_floor
-        engine._leg_top_evidence = lambda leg: 9
+        engine._leg_top_evidence = lambda scored: 9
         with_leg = search(memories, query, max_results=2, rescue_expansion=True)
         assert with_leg[0].id == gold.id
     finally:
@@ -835,7 +835,7 @@ def test_an_unseparated_leg_is_withheld_from_the_fusion(
     query = "do we ever rip the old toggles back out"
 
     legs_voting: dict[str, str] = {}
-    monkeypatch.setattr("bettermemory.search._leg_top_evidence", lambda leg: 99)
+    monkeypatch.setattr("bettermemory.search._leg_top_evidence", lambda scored: 99)
     voting = search(
         memories,
         query,
@@ -845,7 +845,7 @@ def test_an_unseparated_leg_is_withheld_from_the_fusion(
     )
 
     legs_withheld: dict[str, str] = {}
-    monkeypatch.setattr("bettermemory.search._leg_top_evidence", lambda leg: 0)
+    monkeypatch.setattr("bettermemory.search._leg_top_evidence", lambda scored: 0)
     withheld = search(
         memories,
         query,
