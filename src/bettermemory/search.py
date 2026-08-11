@@ -1107,6 +1107,35 @@ _RESCUE_LEG_WEIGHT = 0.7
 # before this code existed.
 _RESCUE_LEG_MIN_EVIDENCE = 2
 
+# The evidence count at which the rescue leg earns its FULL weight.
+# Below it the leg still votes, but at a reduced share of
+# `_RESCUE_LEG_WEIGHT` scaled linearly from the floor:
+#
+#     scale(m) = min(1.0, (m - 1) / (_EVIDENCE_FULL_AT - 1))
+#
+# so a leg at the floor (2 matched terms) votes at half strength and a
+# leg with 3 or more votes in full.
+#
+# Why the vote should scale at all: `_hybrid_fuse` fuses by RANK, so
+# before this the leg contributed `_RESCUE_LEG_WEIGHT / (rrf_k + rank)`
+# whether its rank-1 rested on a discriminating synonym or on a single
+# coincidental token. Three rounds of choosing WHICH legs vote plateaued
+# within 0.004 of each other, and one round of choosing WHAT they
+# contain could not reach the incumbent's precision; the vote itself was
+# the one variable that had never moved.
+#
+# 3 is read off the dev labels by a stated rule, not tuned: legs
+# stratify monotonically by evidence — 0% helpful at one matched term,
+# 68.2% at two, 100% at three or more — and the leg earns its full
+# weight at the count where the labels first read 100%.
+# `bench/leg_labels.py` is the instrument; addendum 9 is the
+# preregistration, committed before this constant existed.
+#
+# The scale is bounded in [0, 1], so this can only ever REDUCE the
+# leg's influence relative to the flat weight, never amplify it. An
+# amplifying change would need a different safety argument.
+_EVIDENCE_FULL_AT = 3
+
 # Document-frequency floor for the QUERY_FILLER_WORDS list, as a
 # fraction of the priced collection. Memory bodies are technical prose,
 # so conversational filler is corpus-RARE, and Okapi IDF prices it like
@@ -2411,6 +2440,22 @@ def _leg_top_evidence(scored: list[tuple[Memory, float, list[str]]]) -> int:
     return len(top[2])
 
 
+def _leg_evidence_weight(evidence: int) -> float:
+    """The rescue leg's RRF weight, scaled by its own evidence.
+
+    Returns 0.0 below `_RESCUE_LEG_MIN_EVIDENCE` — the round-5 rule,
+    unchanged: a leg resting on one matched term is a coincidence and
+    votes nothing. Above the floor the weight rises linearly to the full
+    `_RESCUE_LEG_WEIGHT` at `_EVIDENCE_FULL_AT` and is capped there, so
+    the result is always within [0, `_RESCUE_LEG_WEIGHT`].
+    """
+    if evidence < _RESCUE_LEG_MIN_EVIDENCE:
+        return 0.0
+    span = max(1, _EVIDENCE_FULL_AT - 1)
+    scale = min(1.0, (evidence - 1) / span)
+    return _RESCUE_LEG_WEIGHT * scale
+
+
 def _hybrid_fuse(
     rankings: list[list[tuple[Memory, float, list[str]]]],
     *,
@@ -2834,17 +2879,19 @@ def search(
                     # comes back empty. The filler floor above is keyed
                     # on `rescue_expansion`, not on the leg, so it
                     # stays. See `_RESCUE_LEG_MIN_EVIDENCE`.
-                    if (
-                        exp_leg
-                        and _leg_top_evidence(exp_leg) < _RESCUE_LEG_MIN_EVIDENCE
-                    ):
+                    leg_weight = (
+                        _leg_evidence_weight(_leg_top_evidence(exp_leg))
+                        if exp_leg
+                        else 0.0
+                    )
+                    if leg_weight <= 0.0:
                         exp_leg = []
                     if exp_leg:
                         expansion_ids = {m.id for m, _, _ in exp_leg}
                         scored = _hybrid_fuse(
                             rankings + [exp_leg],
                             rrf_k=rrf_k,
-                            weights=[1.0, 1.0, _RESCUE_LEG_WEIGHT],
+                            weights=[1.0, 1.0, leg_weight],
                         )
                         # `match_terms` stays a subset of the CALLER's
                         # tokens — synthesized terms explain the leg,

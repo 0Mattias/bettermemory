@@ -34,10 +34,13 @@ from bettermemory.expansion import (
 from bettermemory.handlers.search import RankingInputs, resolve_ranking_inputs
 from bettermemory.models import Confidence, Memory, Source, generate_ulid
 from bettermemory.search import (
+    _EVIDENCE_FULL_AT,
     _EXPANSION_TABLES,
     _RESCUE_LEG_MIN_EVIDENCE,
+    _RESCUE_LEG_WEIGHT,
     _STOPWORDS,
     _kebab_parts,
+    _leg_evidence_weight,
     _leg_top_evidence,
     _stem_token,
     reciprocal_rank_fusion,
@@ -477,18 +480,25 @@ def test_the_rescue_lane_beats_a_filler_heavy_distractor() -> None:
     # this — a fact the previous version of this test hid.
     import bettermemory.search as engine
 
-    saved = engine._RESCUE_LEG_MIN_EVIDENCE
+    saved_floor = engine._RESCUE_LEG_MIN_EVIDENCE
+    saved_reader = engine._leg_top_evidence
     try:
         engine._RESCUE_LEG_MIN_EVIDENCE = 99
         floor_only = search(memories, query, max_results=2, rescue_expansion=True)
         assert floor_only[0].id == distractor.id
 
-        # Leg voting: the gold surfaces.
-        engine._RESCUE_LEG_MIN_EVIDENCE = 0
+        # Leg voting: the gold surfaces. Forced by the evidence READER
+        # rather than by lowering the floor — since round 6 the weight
+        # curve is also zero at one matched term, so the floor alone no
+        # longer lets a one-term leg vote, and this fixture's leg has
+        # exactly one.
+        engine._RESCUE_LEG_MIN_EVIDENCE = saved_floor
+        engine._leg_top_evidence = lambda leg: 9
         with_leg = search(memories, query, max_results=2, rescue_expansion=True)
         assert with_leg[0].id == gold.id
     finally:
-        engine._RESCUE_LEG_MIN_EVIDENCE = saved
+        engine._RESCUE_LEG_MIN_EVIDENCE = saved_floor
+        engine._leg_top_evidence = saved_reader
 
 
 def test_the_filler_floor_deflates_listed_words() -> None:
@@ -750,6 +760,32 @@ def test_the_evidence_bar_is_the_preregistered_one() -> None:
     minimum non-trivial count and confirmed against true labels: on 39
     engaged dev legs it withholds 3 of 3 harmful and 0 of 21 helpful."""
     assert _RESCUE_LEG_MIN_EVIDENCE == 2
+
+
+def test_the_leg_weight_scales_with_its_evidence() -> None:
+    """Round 6's curve: withheld below the floor, half weight at the
+    floor, full weight at `_EVIDENCE_FULL_AT`, capped above it."""
+    assert _leg_evidence_weight(0) == 0.0
+    assert _leg_evidence_weight(1) == 0.0
+    assert _leg_evidence_weight(2) == pytest.approx(_RESCUE_LEG_WEIGHT * 0.5)
+    assert _leg_evidence_weight(3) == pytest.approx(_RESCUE_LEG_WEIGHT)
+    assert _leg_evidence_weight(9) == pytest.approx(_RESCUE_LEG_WEIGHT)
+
+
+def test_the_leg_weight_is_bounded_and_monotone() -> None:
+    """Bounded in [0, _RESCUE_LEG_WEIGHT] by construction, so the change
+    can only ever REDUCE the leg's influence relative to the flat
+    weight, never amplify it — the safety argument addendum 9 makes."""
+    weights = [_leg_evidence_weight(m) for m in range(0, 12)]
+    assert all(0.0 <= w <= _RESCUE_LEG_WEIGHT for w in weights)
+    assert weights == sorted(weights)
+    assert max(weights) == pytest.approx(_RESCUE_LEG_WEIGHT)
+
+
+def test_the_full_weight_anchor_is_the_preregistered_one() -> None:
+    """Read off the dev labels by a stated rule — the count where they
+    first reach 100% helpful. A later edit re-opens the experiment."""
+    assert _EVIDENCE_FULL_AT == 3
 
 
 def test_one_matched_term_is_a_coincidence_and_two_is_evidence() -> None:
