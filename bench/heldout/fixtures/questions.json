@@ -1,0 +1,27 @@
+[
+  {
+    "question_id": "q_1",
+    "persona_id": "persona_1",
+    "question": "alpha",
+    "answer_session_ids": [
+      "persona_1_s1"
+    ]
+  },
+  {
+    "question_id": "q_2",
+    "persona_id": "persona_1",
+    "question": "bravo charlie",
+    "answer_session_ids": [
+      "persona_1_s2",
+      "persona_1_s3"
+    ]
+  },
+  {
+    "question_id": "q_3",
+    "persona_id": "persona_2",
+    "question": "echo",
+    "answer_session_ids": [
+      "persona_2_s2"
+    ]
+  }
+]

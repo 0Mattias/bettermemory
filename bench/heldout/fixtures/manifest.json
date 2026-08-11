@@ -1,0 +1,10 @@
+{
+  "instrument": "harness-fixture",
+  "version": "1",
+  "authored": "2026-08-11",
+  "author": "harness fixture, not an instrument author",
+  "license": "MIT",
+  "license_notes": "Placeholder content written for testing run.py. Not an instrument.",
+  "description": "Obviously-fake fixture for bench/heldout/run.py unit tests.",
+  "sealed": false
+}

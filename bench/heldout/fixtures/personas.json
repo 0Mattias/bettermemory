@@ -1,0 +1,66 @@
+[
+  {
+    "persona_id": "persona_1",
+    "sessions": [
+      {
+        "session_id": "persona_1_s1",
+        "date": "2026-01-05",
+        "turns": [
+          {
+            "role": "user",
+            "text": "alpha alpha alpha placeholder one"
+          },
+          {
+            "role": "assistant",
+            "text": "acknowledged placeholder one"
+          }
+        ]
+      },
+      {
+        "session_id": "persona_1_s2",
+        "date": "2026-01-12",
+        "turns": [
+          {
+            "role": "user",
+            "text": "bravo bravo bravo placeholder two"
+          }
+        ]
+      },
+      {
+        "session_id": "persona_1_s3",
+        "date": "2026-01-19",
+        "turns": [
+          {
+            "role": "user",
+            "text": "charlie charlie charlie placeholder three"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "persona_id": "persona_2",
+    "sessions": [
+      {
+        "session_id": "persona_2_s1",
+        "date": "2026-02-02",
+        "turns": [
+          {
+            "role": "user",
+            "text": "delta delta delta placeholder four"
+          }
+        ]
+      },
+      {
+        "session_id": "persona_2_s2",
+        "date": "2026-02-09",
+        "turns": [
+          {
+            "role": "user",
+            "text": "echo echo echo placeholder five"
+          }
+        ]
+      }
+    ]
+  }
+]
