@@ -1,0 +1,3921 @@
+{
+  "kind": "bettermemory-p1e-hybrid-census",
+  "p1a_standard": {
+    "incumbent_precision": 0.2743,
+    "gate_multiple": 1.0,
+    "min_gate_terms": 30
+  },
+  "mechanisms": {
+    "agreement_rule": "emit only terms ranked highly by BOTH shifted PPMI over the store and cosine over the trained vectors \u2014 two estimators of the same structure whose errors are largely independent",
+    "ngram_bridging": "an out-of-vocabulary query token borrows a vector from the in-vocabulary terms it shares character n-grams with, Jaccard-weighted over the best 5"
+  },
+  "grid": {
+    "sparse_k": [
+      5,
+      10,
+      20,
+      40
+    ],
+    "dense_k": [
+      5,
+      10,
+      20,
+      40
+    ],
+    "top_k": [
+      1,
+      2,
+      3,
+      5
+    ],
+    "ppmi_min_df": 2,
+    "ppmi_shift": 1.0,
+    "ngram_range": [
+      3,
+      5
+    ],
+    "bridge_neighbours": 5,
+    "bridge_min_overlap": 0.3
+  },
+  "note": "STATISTICS ONLY \u2014 emitted-term precision against the gold document, scored against P1a's unchanged gate. No ranking change, no engine integration, no preregistration. Dev-side; bench/heldout is not read.",
+  "model": {
+    "name": "store",
+    "artifact_sha256": "5e125d68b8004b64f9d505b12aadce2c373df765e4a753feacdd98e631abd69c",
+    "trainer_sha256": "32ca1d138b4b172f7555fd8614f7621ce7e1376c143210bbaf7295b50a162cf4",
+    "corpus": "store",
+    "parameters": {
+      "window": 5,
+      "min_count": 5,
+      "max_vocab": 20000,
+      "min_cooc": 1.0,
+      "dim": 64,
+      "epochs": 15,
+      "lr": 0.05,
+      "xmax": 50.0,
+      "alpha": 0.75,
+      "seed": 20260811,
+      "round": 8
+    },
+    "corpus_stats": {
+      "files": 1,
+      "units": 281,
+      "tokens": 35025,
+      "vocab": 1104,
+      "cooccurrence_cells": 33691
+    },
+    "sources": [
+      {
+        "kind": "jsonl-body",
+        "licence": "MIT (this repository)",
+        "files": 1,
+        "bytes": 244808,
+        "units": 281,
+        "manifest_sha256": "2f06b98fde1789bbbd563f2fc3a3ae5c5927e27413b8315117216cf14d3a70cd"
+      }
+    ]
+  },
+  "instrument": "retrieval",
+  "corpus": "corpus.jsonl",
+  "corpus_sha256": "c40acee95ce1bb70ac6ea788e0fb4a9a1c6eff1fc55fe4569b651b5b156ea2ea",
+  "collection_size": 180,
+  "collection_vocabulary": 4055,
+  "arms": {
+    "raw": {
+      "summary": {
+        "probes": 40,
+        "incumbent_precision_ci95": [
+          0.2203,
+          0.3359
+        ],
+        "incumbent_terms_total": 226,
+        "incumbent_hits_total": 62,
+        "query_tokens_total": 455,
+        "query_tokens_in_vocab": 312,
+        "vocabulary_coverage": 0.6857,
+        "incumbent_terms_per_probe": 5.65,
+        "incumbent_precision": 0.2743,
+        "grid": {
+          "s10_d10_k1": {
+            "terms_total": 16,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.1936
+            ],
+            "terms_per_probe": 0.4,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0151
+          },
+          "s10_d10_k2": {
+            "terms_total": 16,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.1936
+            ],
+            "terms_per_probe": 0.4,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0151
+          },
+          "s10_d10_k3": {
+            "terms_total": 16,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.1936
+            ],
+            "terms_per_probe": 0.4,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0151
+          },
+          "s10_d10_k5": {
+            "terms_total": 16,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.1936
+            ],
+            "terms_per_probe": 0.4,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0151
+          },
+          "s10_d20_k1": {
+            "terms_total": 24,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.138
+            ],
+            "terms_per_probe": 0.6,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0031
+          },
+          "s10_d20_k2": {
+            "terms_total": 26,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.1287
+            ],
+            "terms_per_probe": 0.65,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0021
+          },
+          "s10_d20_k3": {
+            "terms_total": 26,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.1287
+            ],
+            "terms_per_probe": 0.65,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0021
+          },
+          "s10_d20_k5": {
+            "terms_total": 26,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.1287
+            ],
+            "terms_per_probe": 0.65,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0021
+          },
+          "s10_d40_k1": {
+            "terms_total": 47,
+            "hits_total": 3,
+            "new_hits_total": 3,
+            "probes_with_a_new_hit": 3,
+            "precision": 0.0638,
+            "precision_ci95": [
+              0.0219,
+              0.1716
+            ],
+            "terms_per_probe": 1.18,
+            "gate_multiple": 0.233,
+            "p_vs_incumbent": 0.002
+          },
+          "s10_d40_k2": {
+            "terms_total": 53,
+            "hits_total": 3,
+            "new_hits_total": 3,
+            "probes_with_a_new_hit": 3,
+            "precision": 0.0566,
+            "precision_ci95": [
+              0.0194,
+              0.1537
+            ],
+            "terms_per_probe": 1.32,
+            "gate_multiple": 0.206,
+            "p_vs_incumbent": 0.0007
+          },
+          "s10_d40_k3": {
+            "terms_total": 53,
+            "hits_total": 3,
+            "new_hits_total": 3,
+            "probes_with_a_new_hit": 3,
+            "precision": 0.0566,
+            "precision_ci95": [
+              0.0194,
+              0.1537
+            ],
+            "terms_per_probe": 1.32,
+            "gate_multiple": 0.206,
+            "p_vs_incumbent": 0.0007
+          },
+          "s10_d40_k5": {
+            "terms_total": 53,
+            "hits_total": 3,
+            "new_hits_total": 3,
+            "probes_with_a_new_hit": 3,
+            "precision": 0.0566,
+            "precision_ci95": [
+              0.0194,
+              0.1537
+            ],
+            "terms_per_probe": 1.32,
+            "gate_multiple": 0.206,
+            "p_vs_incumbent": 0.0007
+          },
+          "s10_d5_k1": {
+            "terms_total": 8,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.3244
+            ],
+            "terms_per_probe": 0.2,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.084
+          },
+          "s10_d5_k2": {
+            "terms_total": 8,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.3244
+            ],
+            "terms_per_probe": 0.2,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.084
+          },
+          "s10_d5_k3": {
+            "terms_total": 8,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.3244
+            ],
+            "terms_per_probe": 0.2,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.084
+          },
+          "s10_d5_k5": {
+            "terms_total": 8,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.3244
+            ],
+            "terms_per_probe": 0.2,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.084
+          },
+          "s20_d10_k1": {
+            "terms_total": 30,
+            "hits_total": 2,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.0667,
+            "precision_ci95": [
+              0.0185,
+              0.2132
+            ],
+            "terms_per_probe": 0.75,
+            "gate_multiple": 0.243,
+            "p_vs_incumbent": 0.0136
+          },
+          "s20_d10_k2": {
+            "terms_total": 32,
+            "hits_total": 2,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.0625,
+            "precision_ci95": [
+              0.0173,
+              0.2015
+            ],
+            "terms_per_probe": 0.8,
+            "gate_multiple": 0.228,
+            "p_vs_incumbent": 0.0094
+          },
+          "s20_d10_k3": {
+            "terms_total": 32,
+            "hits_total": 2,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.0625,
+            "precision_ci95": [
+              0.0173,
+              0.2015
+            ],
+            "terms_per_probe": 0.8,
+            "gate_multiple": 0.228,
+            "p_vs_incumbent": 0.0094
+          },
+          "s20_d10_k5": {
+            "terms_total": 32,
+            "hits_total": 2,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.0625,
+            "precision_ci95": [
+              0.0173,
+              0.2015
+            ],
+            "terms_per_probe": 0.8,
+            "gate_multiple": 0.228,
+            "p_vs_incumbent": 0.0094
+          },
+          "s20_d20_k1": {
+            "terms_total": 62,
+            "hits_total": 4,
+            "new_hits_total": 4,
+            "probes_with_a_new_hit": 4,
+            "precision": 0.0645,
+            "precision_ci95": [
+              0.0254,
+              0.1545
+            ],
+            "terms_per_probe": 1.55,
+            "gate_multiple": 0.235,
+            "p_vs_incumbent": 0.0005
+          },
+          "s20_d20_k2": {
+            "terms_total": 68,
+            "hits_total": 4,
+            "new_hits_total": 4,
+            "probes_with_a_new_hit": 4,
+            "precision": 0.0588,
+            "precision_ci95": [
+              0.0231,
+              0.1417
+            ],
+            "terms_per_probe": 1.7,
+            "gate_multiple": 0.214,
+            "p_vs_incumbent": 0.0002
+          },
+          "s20_d20_k3": {
+            "terms_total": 68,
+            "hits_total": 4,
+            "new_hits_total": 4,
+            "probes_with_a_new_hit": 4,
+            "precision": 0.0588,
+            "precision_ci95": [
+              0.0231,
+              0.1417
+            ],
+            "terms_per_probe": 1.7,
+            "gate_multiple": 0.214,
+            "p_vs_incumbent": 0.0002
+          },
+          "s20_d20_k5": {
+            "terms_total": 68,
+            "hits_total": 4,
+            "new_hits_total": 4,
+            "probes_with_a_new_hit": 4,
+            "precision": 0.0588,
+            "precision_ci95": [
+              0.0231,
+              0.1417
+            ],
+            "terms_per_probe": 1.7,
+            "gate_multiple": 0.214,
+            "p_vs_incumbent": 0.0002
+          },
+          "s20_d40_k1": {
+            "terms_total": 117,
+            "hits_total": 7,
+            "new_hits_total": 7,
+            "probes_with_a_new_hit": 7,
+            "precision": 0.0598,
+            "precision_ci95": [
+              0.0293,
+              0.1184
+            ],
+            "terms_per_probe": 2.92,
+            "gate_multiple": 0.218,
+            "p_vs_incumbent": 0.0
+          },
+          "s20_d40_k2": {
+            "terms_total": 146,
+            "hits_total": 9,
+            "new_hits_total": 9,
+            "probes_with_a_new_hit": 9,
+            "precision": 0.0616,
+            "precision_ci95": [
+              0.0328,
+              0.113
+            ],
+            "terms_per_probe": 3.65,
+            "gate_multiple": 0.225,
+            "p_vs_incumbent": 0.0
+          },
+          "s20_d40_k3": {
+            "terms_total": 154,
+            "hits_total": 11,
+            "new_hits_total": 11,
+            "probes_with_a_new_hit": 9,
+            "precision": 0.0714,
+            "precision_ci95": [
+              0.0403,
+              0.1234
+            ],
+            "terms_per_probe": 3.85,
+            "gate_multiple": 0.26,
+            "p_vs_incumbent": 0.0
+          },
+          "s20_d40_k5": {
+            "terms_total": 156,
+            "hits_total": 11,
+            "new_hits_total": 11,
+            "probes_with_a_new_hit": 9,
+            "precision": 0.0705,
+            "precision_ci95": [
+              0.0398,
+              0.1218
+            ],
+            "terms_per_probe": 3.9,
+            "gate_multiple": 0.257,
+            "p_vs_incumbent": 0.0
+          },
+          "s20_d5_k1": {
+            "terms_total": 14,
+            "hits_total": 2,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.1429,
+            "precision_ci95": [
+              0.0401,
+              0.3994
+            ],
+            "terms_per_probe": 0.35,
+            "gate_multiple": 0.521,
+            "p_vs_incumbent": 0.2804
+          },
+          "s20_d5_k2": {
+            "terms_total": 14,
+            "hits_total": 2,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.1429,
+            "precision_ci95": [
+              0.0401,
+              0.3994
+            ],
+            "terms_per_probe": 0.35,
+            "gate_multiple": 0.521,
+            "p_vs_incumbent": 0.2804
+          },
+          "s20_d5_k3": {
+            "terms_total": 14,
+            "hits_total": 2,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.1429,
+            "precision_ci95": [
+              0.0401,
+              0.3994
+            ],
+            "terms_per_probe": 0.35,
+            "gate_multiple": 0.521,
+            "p_vs_incumbent": 0.2804
+          },
+          "s20_d5_k5": {
+            "terms_total": 14,
+            "hits_total": 2,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.1429,
+            "precision_ci95": [
+              0.0401,
+              0.3994
+            ],
+            "terms_per_probe": 0.35,
+            "gate_multiple": 0.521,
+            "p_vs_incumbent": 0.2804
+          },
+          "s40_d10_k1": {
+            "terms_total": 52,
+            "hits_total": 10,
+            "new_hits_total": 10,
+            "probes_with_a_new_hit": 8,
+            "precision": 0.1923,
+            "precision_ci95": [
+              0.108,
+              0.319
+            ],
+            "terms_per_probe": 1.3,
+            "gate_multiple": 0.701,
+            "p_vs_incumbent": 0.2234
+          },
+          "s40_d10_k2": {
+            "terms_total": 68,
+            "hits_total": 12,
+            "new_hits_total": 12,
+            "probes_with_a_new_hit": 10,
+            "precision": 0.1765,
+            "precision_ci95": [
+              0.1039,
+              0.2836
+            ],
+            "terms_per_probe": 1.7,
+            "gate_multiple": 0.643,
+            "p_vs_incumbent": 0.103
+          },
+          "s40_d10_k3": {
+            "terms_total": 70,
+            "hits_total": 12,
+            "new_hits_total": 12,
+            "probes_with_a_new_hit": 10,
+            "precision": 0.1714,
+            "precision_ci95": [
+              0.1009,
+              0.2762
+            ],
+            "terms_per_probe": 1.75,
+            "gate_multiple": 0.625,
+            "p_vs_incumbent": 0.0823
+          },
+          "s40_d10_k5": {
+            "terms_total": 70,
+            "hits_total": 12,
+            "new_hits_total": 12,
+            "probes_with_a_new_hit": 10,
+            "precision": 0.1714,
+            "precision_ci95": [
+              0.1009,
+              0.2762
+            ],
+            "terms_per_probe": 1.75,
+            "gate_multiple": 0.625,
+            "p_vs_incumbent": 0.0823
+          },
+          "s40_d20_k1": {
+            "terms_total": 98,
+            "hits_total": 14,
+            "new_hits_total": 14,
+            "probes_with_a_new_hit": 12,
+            "precision": 0.1429,
+            "precision_ci95": [
+              0.087,
+              0.2256
+            ],
+            "terms_per_probe": 2.45,
+            "gate_multiple": 0.521,
+            "p_vs_incumbent": 0.0103
+          },
+          "s40_d20_k2": {
+            "terms_total": 130,
+            "hits_total": 16,
+            "new_hits_total": 16,
+            "probes_with_a_new_hit": 14,
+            "precision": 0.1231,
+            "precision_ci95": [
+              0.0772,
+              0.1906
+            ],
+            "terms_per_probe": 3.25,
+            "gate_multiple": 0.449,
+            "p_vs_incumbent": 0.0009
+          },
+          "s40_d20_k3": {
+            "terms_total": 138,
+            "hits_total": 16,
+            "new_hits_total": 16,
+            "probes_with_a_new_hit": 14,
+            "precision": 0.1159,
+            "precision_ci95": [
+              0.0726,
+              0.18
+            ],
+            "terms_per_probe": 3.45,
+            "gate_multiple": 0.423,
+            "p_vs_incumbent": 0.0004
+          },
+          "s40_d20_k5": {
+            "terms_total": 138,
+            "hits_total": 16,
+            "new_hits_total": 16,
+            "probes_with_a_new_hit": 14,
+            "precision": 0.1159,
+            "precision_ci95": [
+              0.0726,
+              0.18
+            ],
+            "terms_per_probe": 3.45,
+            "gate_multiple": 0.423,
+            "p_vs_incumbent": 0.0004
+          },
+          "s40_d40_k1": {
+            "terms_total": 156,
+            "hits_total": 23,
+            "new_hits_total": 23,
+            "probes_with_a_new_hit": 19,
+            "precision": 0.1474,
+            "precision_ci95": [
+              0.1003,
+              0.2115
+            ],
+            "terms_per_probe": 3.9,
+            "gate_multiple": 0.537,
+            "p_vs_incumbent": 0.0034
+          },
+          "s40_d40_k2": {
+            "terms_total": 239,
+            "hits_total": 29,
+            "new_hits_total": 29,
+            "probes_with_a_new_hit": 23,
+            "precision": 0.1213,
+            "precision_ci95": [
+              0.0858,
+              0.1688
+            ],
+            "terms_per_probe": 5.97,
+            "gate_multiple": 0.442,
+            "p_vs_incumbent": 0.0
+          },
+          "s40_d40_k3": {
+            "terms_total": 284,
+            "hits_total": 31,
+            "new_hits_total": 31,
+            "probes_with_a_new_hit": 23,
+            "precision": 0.1092,
+            "precision_ci95": [
+              0.078,
+              0.1508
+            ],
+            "terms_per_probe": 7.1,
+            "gate_multiple": 0.398,
+            "p_vs_incumbent": 0.0
+          },
+          "s40_d40_k5": {
+            "terms_total": 318,
+            "hits_total": 33,
+            "new_hits_total": 33,
+            "probes_with_a_new_hit": 23,
+            "precision": 0.1038,
+            "precision_ci95": [
+              0.0749,
+              0.1422
+            ],
+            "terms_per_probe": 7.95,
+            "gate_multiple": 0.378,
+            "p_vs_incumbent": 0.0
+          },
+          "s40_d5_k1": {
+            "terms_total": 28,
+            "hits_total": 6,
+            "new_hits_total": 6,
+            "probes_with_a_new_hit": 6,
+            "precision": 0.2143,
+            "precision_ci95": [
+              0.1021,
+              0.3954
+            ],
+            "terms_per_probe": 0.7,
+            "gate_multiple": 0.781,
+            "p_vs_incumbent": 0.4984
+          },
+          "s40_d5_k2": {
+            "terms_total": 32,
+            "hits_total": 8,
+            "new_hits_total": 8,
+            "probes_with_a_new_hit": 8,
+            "precision": 0.25,
+            "precision_ci95": [
+              0.1325,
+              0.4211
+            ],
+            "terms_per_probe": 0.8,
+            "gate_multiple": 0.911,
+            "p_vs_incumbent": 0.772
+          },
+          "s40_d5_k3": {
+            "terms_total": 32,
+            "hits_total": 8,
+            "new_hits_total": 8,
+            "probes_with_a_new_hit": 8,
+            "precision": 0.25,
+            "precision_ci95": [
+              0.1325,
+              0.4211
+            ],
+            "terms_per_probe": 0.8,
+            "gate_multiple": 0.911,
+            "p_vs_incumbent": 0.772
+          },
+          "s40_d5_k5": {
+            "terms_total": 32,
+            "hits_total": 8,
+            "new_hits_total": 8,
+            "probes_with_a_new_hit": 8,
+            "precision": 0.25,
+            "precision_ci95": [
+              0.1325,
+              0.4211
+            ],
+            "terms_per_probe": 0.8,
+            "gate_multiple": 0.911,
+            "p_vs_incumbent": 0.772
+          },
+          "s5_d10_k1": {
+            "terms_total": 12,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2425
+            ],
+            "terms_per_probe": 0.3,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0349
+          },
+          "s5_d10_k2": {
+            "terms_total": 12,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2425
+            ],
+            "terms_per_probe": 0.3,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0349
+          },
+          "s5_d10_k3": {
+            "terms_total": 12,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2425
+            ],
+            "terms_per_probe": 0.3,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0349
+          },
+          "s5_d10_k5": {
+            "terms_total": 12,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2425
+            ],
+            "terms_per_probe": 0.3,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0349
+          },
+          "s5_d20_k1": {
+            "terms_total": 12,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2425
+            ],
+            "terms_per_probe": 0.3,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0349
+          },
+          "s5_d20_k2": {
+            "terms_total": 12,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2425
+            ],
+            "terms_per_probe": 0.3,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0349
+          },
+          "s5_d20_k3": {
+            "terms_total": 12,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2425
+            ],
+            "terms_per_probe": 0.3,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0349
+          },
+          "s5_d20_k5": {
+            "terms_total": 12,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2425
+            ],
+            "terms_per_probe": 0.3,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0349
+          },
+          "s5_d40_k1": {
+            "terms_total": 23,
+            "hits_total": 3,
+            "new_hits_total": 3,
+            "probes_with_a_new_hit": 3,
+            "precision": 0.1304,
+            "precision_ci95": [
+              0.0454,
+              0.3213
+            ],
+            "terms_per_probe": 0.57,
+            "gate_multiple": 0.475,
+            "p_vs_incumbent": 0.1344
+          },
+          "s5_d40_k2": {
+            "terms_total": 23,
+            "hits_total": 3,
+            "new_hits_total": 3,
+            "probes_with_a_new_hit": 3,
+            "precision": 0.1304,
+            "precision_ci95": [
+              0.0454,
+              0.3213
+            ],
+            "terms_per_probe": 0.57,
+            "gate_multiple": 0.475,
+            "p_vs_incumbent": 0.1344
+          },
+          "s5_d40_k3": {
+            "terms_total": 23,
+            "hits_total": 3,
+            "new_hits_total": 3,
+            "probes_with_a_new_hit": 3,
+            "precision": 0.1304,
+            "precision_ci95": [
+              0.0454,
+              0.3213
+            ],
+            "terms_per_probe": 0.57,
+            "gate_multiple": 0.475,
+            "p_vs_incumbent": 0.1344
+          },
+          "s5_d40_k5": {
+            "terms_total": 23,
+            "hits_total": 3,
+            "new_hits_total": 3,
+            "probes_with_a_new_hit": 3,
+            "precision": 0.1304,
+            "precision_ci95": [
+              0.0454,
+              0.3213
+            ],
+            "terms_per_probe": 0.57,
+            "gate_multiple": 0.475,
+            "p_vs_incumbent": 0.1344
+          },
+          "s5_d5_k1": {
+            "terms_total": 8,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.3244
+            ],
+            "terms_per_probe": 0.2,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.084
+          },
+          "s5_d5_k2": {
+            "terms_total": 8,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.3244
+            ],
+            "terms_per_probe": 0.2,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.084
+          },
+          "s5_d5_k3": {
+            "terms_total": 8,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.3244
+            ],
+            "terms_per_probe": 0.2,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.084
+          },
+          "s5_d5_k5": {
+            "terms_total": 8,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.3244
+            ],
+            "terms_per_probe": 0.2,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.084
+          }
+        },
+        "query_tokens_bridged": 0
+      },
+      "verdict": {
+        "bar": "best cell precision >= 1.0x the committed tables' 0.2743",
+        "min_gate_terms": 30,
+        "gate_applicable": true,
+        "best_cell": "s40_d5_k2",
+        "best_precision": 0.25,
+        "best_precision_ci95": [
+          0.1325,
+          0.4211
+        ],
+        "best_terms_per_probe": 0.8,
+        "best_gate_multiple": 0.911,
+        "best_at_or_above_budget_cell": "s40_d40_k2",
+        "best_at_or_above_budget": {
+          "terms_total": 239,
+          "hits_total": 29,
+          "new_hits_total": 29,
+          "probes_with_a_new_hit": 23,
+          "precision": 0.1213,
+          "precision_ci95": [
+            0.0858,
+            0.1688
+          ],
+          "terms_per_probe": 5.97,
+          "gate_multiple": 0.442,
+          "p_vs_incumbent": 0.0
+        },
+        "matched_budget_cell": "s40_d40_k2",
+        "matched_budget": {
+          "terms_total": 239,
+          "hits_total": 29,
+          "new_hits_total": 29,
+          "probes_with_a_new_hit": 23,
+          "precision": 0.1213,
+          "precision_ci95": [
+            0.0858,
+            0.1688
+          ],
+          "terms_per_probe": 5.97,
+          "gate_multiple": 0.442,
+          "p_vs_incumbent": 0.0
+        },
+        "passes": false
+      }
+    },
+    "raw+bridge": {
+      "summary": {
+        "probes": 40,
+        "incumbent_precision_ci95": [
+          0.2203,
+          0.3359
+        ],
+        "incumbent_terms_total": 226,
+        "incumbent_hits_total": 62,
+        "query_tokens_total": 455,
+        "query_tokens_in_vocab": 362,
+        "vocabulary_coverage": 0.7956,
+        "incumbent_terms_per_probe": 5.65,
+        "incumbent_precision": 0.2743,
+        "grid": {
+          "s10_d10_k1": {
+            "terms_total": 16,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.1936
+            ],
+            "terms_per_probe": 0.4,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0151
+          },
+          "s10_d10_k2": {
+            "terms_total": 16,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.1936
+            ],
+            "terms_per_probe": 0.4,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0151
+          },
+          "s10_d10_k3": {
+            "terms_total": 16,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.1936
+            ],
+            "terms_per_probe": 0.4,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0151
+          },
+          "s10_d10_k5": {
+            "terms_total": 16,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.1936
+            ],
+            "terms_per_probe": 0.4,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0151
+          },
+          "s10_d20_k1": {
+            "terms_total": 24,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.138
+            ],
+            "terms_per_probe": 0.6,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0031
+          },
+          "s10_d20_k2": {
+            "terms_total": 26,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.1287
+            ],
+            "terms_per_probe": 0.65,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0021
+          },
+          "s10_d20_k3": {
+            "terms_total": 26,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.1287
+            ],
+            "terms_per_probe": 0.65,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0021
+          },
+          "s10_d20_k5": {
+            "terms_total": 26,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.1287
+            ],
+            "terms_per_probe": 0.65,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0021
+          },
+          "s10_d40_k1": {
+            "terms_total": 49,
+            "hits_total": 3,
+            "new_hits_total": 3,
+            "probes_with_a_new_hit": 3,
+            "precision": 0.0612,
+            "precision_ci95": [
+              0.021,
+              0.1652
+            ],
+            "terms_per_probe": 1.23,
+            "gate_multiple": 0.223,
+            "p_vs_incumbent": 0.0015
+          },
+          "s10_d40_k2": {
+            "terms_total": 55,
+            "hits_total": 3,
+            "new_hits_total": 3,
+            "probes_with_a_new_hit": 3,
+            "precision": 0.0545,
+            "precision_ci95": [
+              0.0187,
+              0.1485
+            ],
+            "terms_per_probe": 1.38,
+            "gate_multiple": 0.199,
+            "p_vs_incumbent": 0.0005
+          },
+          "s10_d40_k3": {
+            "terms_total": 55,
+            "hits_total": 3,
+            "new_hits_total": 3,
+            "probes_with_a_new_hit": 3,
+            "precision": 0.0545,
+            "precision_ci95": [
+              0.0187,
+              0.1485
+            ],
+            "terms_per_probe": 1.38,
+            "gate_multiple": 0.199,
+            "p_vs_incumbent": 0.0005
+          },
+          "s10_d40_k5": {
+            "terms_total": 55,
+            "hits_total": 3,
+            "new_hits_total": 3,
+            "probes_with_a_new_hit": 3,
+            "precision": 0.0545,
+            "precision_ci95": [
+              0.0187,
+              0.1485
+            ],
+            "terms_per_probe": 1.38,
+            "gate_multiple": 0.199,
+            "p_vs_incumbent": 0.0005
+          },
+          "s10_d5_k1": {
+            "terms_total": 8,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.3244
+            ],
+            "terms_per_probe": 0.2,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.084
+          },
+          "s10_d5_k2": {
+            "terms_total": 8,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.3244
+            ],
+            "terms_per_probe": 0.2,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.084
+          },
+          "s10_d5_k3": {
+            "terms_total": 8,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.3244
+            ],
+            "terms_per_probe": 0.2,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.084
+          },
+          "s10_d5_k5": {
+            "terms_total": 8,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.3244
+            ],
+            "terms_per_probe": 0.2,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.084
+          },
+          "s20_d10_k1": {
+            "terms_total": 32,
+            "hits_total": 2,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.0625,
+            "precision_ci95": [
+              0.0173,
+              0.2015
+            ],
+            "terms_per_probe": 0.8,
+            "gate_multiple": 0.228,
+            "p_vs_incumbent": 0.0094
+          },
+          "s20_d10_k2": {
+            "terms_total": 34,
+            "hits_total": 2,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.0588,
+            "precision_ci95": [
+              0.0163,
+              0.1909
+            ],
+            "terms_per_probe": 0.85,
+            "gate_multiple": 0.214,
+            "p_vs_incumbent": 0.0065
+          },
+          "s20_d10_k3": {
+            "terms_total": 34,
+            "hits_total": 2,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.0588,
+            "precision_ci95": [
+              0.0163,
+              0.1909
+            ],
+            "terms_per_probe": 0.85,
+            "gate_multiple": 0.214,
+            "p_vs_incumbent": 0.0065
+          },
+          "s20_d10_k5": {
+            "terms_total": 34,
+            "hits_total": 2,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.0588,
+            "precision_ci95": [
+              0.0163,
+              0.1909
+            ],
+            "terms_per_probe": 0.85,
+            "gate_multiple": 0.214,
+            "p_vs_incumbent": 0.0065
+          },
+          "s20_d20_k1": {
+            "terms_total": 68,
+            "hits_total": 4,
+            "new_hits_total": 4,
+            "probes_with_a_new_hit": 4,
+            "precision": 0.0588,
+            "precision_ci95": [
+              0.0231,
+              0.1417
+            ],
+            "terms_per_probe": 1.7,
+            "gate_multiple": 0.214,
+            "p_vs_incumbent": 0.0002
+          },
+          "s20_d20_k2": {
+            "terms_total": 74,
+            "hits_total": 4,
+            "new_hits_total": 4,
+            "probes_with_a_new_hit": 4,
+            "precision": 0.0541,
+            "precision_ci95": [
+              0.0212,
+              0.1309
+            ],
+            "terms_per_probe": 1.85,
+            "gate_multiple": 0.197,
+            "p_vs_incumbent": 0.0001
+          },
+          "s20_d20_k3": {
+            "terms_total": 74,
+            "hits_total": 4,
+            "new_hits_total": 4,
+            "probes_with_a_new_hit": 4,
+            "precision": 0.0541,
+            "precision_ci95": [
+              0.0212,
+              0.1309
+            ],
+            "terms_per_probe": 1.85,
+            "gate_multiple": 0.197,
+            "p_vs_incumbent": 0.0001
+          },
+          "s20_d20_k5": {
+            "terms_total": 74,
+            "hits_total": 4,
+            "new_hits_total": 4,
+            "probes_with_a_new_hit": 4,
+            "precision": 0.0541,
+            "precision_ci95": [
+              0.0212,
+              0.1309
+            ],
+            "terms_per_probe": 1.85,
+            "gate_multiple": 0.197,
+            "p_vs_incumbent": 0.0001
+          },
+          "s20_d40_k1": {
+            "terms_total": 129,
+            "hits_total": 7,
+            "new_hits_total": 7,
+            "probes_with_a_new_hit": 7,
+            "precision": 0.0543,
+            "precision_ci95": [
+              0.0265,
+              0.1078
+            ],
+            "terms_per_probe": 3.23,
+            "gate_multiple": 0.198,
+            "p_vs_incumbent": 0.0
+          },
+          "s20_d40_k2": {
+            "terms_total": 162,
+            "hits_total": 9,
+            "new_hits_total": 9,
+            "probes_with_a_new_hit": 9,
+            "precision": 0.0556,
+            "precision_ci95": [
+              0.0295,
+              0.1022
+            ],
+            "terms_per_probe": 4.05,
+            "gate_multiple": 0.203,
+            "p_vs_incumbent": 0.0
+          },
+          "s20_d40_k3": {
+            "terms_total": 172,
+            "hits_total": 11,
+            "new_hits_total": 11,
+            "probes_with_a_new_hit": 9,
+            "precision": 0.064,
+            "precision_ci95": [
+              0.0361,
+              0.1109
+            ],
+            "terms_per_probe": 4.3,
+            "gate_multiple": 0.233,
+            "p_vs_incumbent": 0.0
+          },
+          "s20_d40_k5": {
+            "terms_total": 174,
+            "hits_total": 11,
+            "new_hits_total": 11,
+            "probes_with_a_new_hit": 9,
+            "precision": 0.0632,
+            "precision_ci95": [
+              0.0357,
+              0.1096
+            ],
+            "terms_per_probe": 4.35,
+            "gate_multiple": 0.23,
+            "p_vs_incumbent": 0.0
+          },
+          "s20_d5_k1": {
+            "terms_total": 16,
+            "hits_total": 2,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.125,
+            "precision_ci95": [
+              0.035,
+              0.3602
+            ],
+            "terms_per_probe": 0.4,
+            "gate_multiple": 0.456,
+            "p_vs_incumbent": 0.1906
+          },
+          "s20_d5_k2": {
+            "terms_total": 16,
+            "hits_total": 2,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.125,
+            "precision_ci95": [
+              0.035,
+              0.3602
+            ],
+            "terms_per_probe": 0.4,
+            "gate_multiple": 0.456,
+            "p_vs_incumbent": 0.1906
+          },
+          "s20_d5_k3": {
+            "terms_total": 16,
+            "hits_total": 2,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.125,
+            "precision_ci95": [
+              0.035,
+              0.3602
+            ],
+            "terms_per_probe": 0.4,
+            "gate_multiple": 0.456,
+            "p_vs_incumbent": 0.1906
+          },
+          "s20_d5_k5": {
+            "terms_total": 16,
+            "hits_total": 2,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.125,
+            "precision_ci95": [
+              0.035,
+              0.3602
+            ],
+            "terms_per_probe": 0.4,
+            "gate_multiple": 0.456,
+            "p_vs_incumbent": 0.1906
+          },
+          "s40_d10_k1": {
+            "terms_total": 56,
+            "hits_total": 10,
+            "new_hits_total": 10,
+            "probes_with_a_new_hit": 8,
+            "precision": 0.1786,
+            "precision_ci95": [
+              0.1,
+              0.2984
+            ],
+            "terms_per_probe": 1.4,
+            "gate_multiple": 0.651,
+            "p_vs_incumbent": 0.1412
+          },
+          "s40_d10_k2": {
+            "terms_total": 72,
+            "hits_total": 12,
+            "new_hits_total": 12,
+            "probes_with_a_new_hit": 10,
+            "precision": 0.1667,
+            "precision_ci95": [
+              0.098,
+              0.2691
+            ],
+            "terms_per_probe": 1.8,
+            "gate_multiple": 0.608,
+            "p_vs_incumbent": 0.0655
+          },
+          "s40_d10_k3": {
+            "terms_total": 74,
+            "hits_total": 12,
+            "new_hits_total": 12,
+            "probes_with_a_new_hit": 10,
+            "precision": 0.1622,
+            "precision_ci95": [
+              0.0953,
+              0.2624
+            ],
+            "terms_per_probe": 1.85,
+            "gate_multiple": 0.591,
+            "p_vs_incumbent": 0.052
+          },
+          "s40_d10_k5": {
+            "terms_total": 74,
+            "hits_total": 12,
+            "new_hits_total": 12,
+            "probes_with_a_new_hit": 10,
+            "precision": 0.1622,
+            "precision_ci95": [
+              0.0953,
+              0.2624
+            ],
+            "terms_per_probe": 1.85,
+            "gate_multiple": 0.591,
+            "p_vs_incumbent": 0.052
+          },
+          "s40_d20_k1": {
+            "terms_total": 110,
+            "hits_total": 14,
+            "new_hits_total": 14,
+            "probes_with_a_new_hit": 12,
+            "precision": 0.1273,
+            "precision_ci95": [
+              0.0773,
+              0.2024
+            ],
+            "terms_per_probe": 2.75,
+            "gate_multiple": 0.464,
+            "p_vs_incumbent": 0.0025
+          },
+          "s40_d20_k2": {
+            "terms_total": 142,
+            "hits_total": 16,
+            "new_hits_total": 16,
+            "probes_with_a_new_hit": 14,
+            "precision": 0.1127,
+            "precision_ci95": [
+              0.0706,
+              0.1752
+            ],
+            "terms_per_probe": 3.55,
+            "gate_multiple": 0.411,
+            "p_vs_incumbent": 0.0002
+          },
+          "s40_d20_k3": {
+            "terms_total": 150,
+            "hits_total": 16,
+            "new_hits_total": 16,
+            "probes_with_a_new_hit": 14,
+            "precision": 0.1067,
+            "precision_ci95": [
+              0.0667,
+              0.1662
+            ],
+            "terms_per_probe": 3.75,
+            "gate_multiple": 0.389,
+            "p_vs_incumbent": 0.0001
+          },
+          "s40_d20_k5": {
+            "terms_total": 150,
+            "hits_total": 16,
+            "new_hits_total": 16,
+            "probes_with_a_new_hit": 14,
+            "precision": 0.1067,
+            "precision_ci95": [
+              0.0667,
+              0.1662
+            ],
+            "terms_per_probe": 3.75,
+            "gate_multiple": 0.389,
+            "p_vs_incumbent": 0.0001
+          },
+          "s40_d40_k1": {
+            "terms_total": 174,
+            "hits_total": 25,
+            "new_hits_total": 25,
+            "probes_with_a_new_hit": 19,
+            "precision": 0.1437,
+            "precision_ci95": [
+              0.0993,
+              0.2035
+            ],
+            "terms_per_probe": 4.35,
+            "gate_multiple": 0.524,
+            "p_vs_incumbent": 0.0017
+          },
+          "s40_d40_k2": {
+            "terms_total": 271,
+            "hits_total": 33,
+            "new_hits_total": 33,
+            "probes_with_a_new_hit": 25,
+            "precision": 0.1218,
+            "precision_ci95": [
+              0.088,
+              0.1661
+            ],
+            "terms_per_probe": 6.78,
+            "gate_multiple": 0.444,
+            "p_vs_incumbent": 0.0
+          },
+          "s40_d40_k3": {
+            "terms_total": 326,
+            "hits_total": 37,
+            "new_hits_total": 37,
+            "probes_with_a_new_hit": 25,
+            "precision": 0.1135,
+            "precision_ci95": [
+              0.0835,
+              0.1525
+            ],
+            "terms_per_probe": 8.15,
+            "gate_multiple": 0.414,
+            "p_vs_incumbent": 0.0
+          },
+          "s40_d40_k5": {
+            "terms_total": 362,
+            "hits_total": 39,
+            "new_hits_total": 39,
+            "probes_with_a_new_hit": 25,
+            "precision": 0.1077,
+            "precision_ci95": [
+              0.0798,
+              0.1439
+            ],
+            "terms_per_probe": 9.05,
+            "gate_multiple": 0.393,
+            "p_vs_incumbent": 0.0
+          },
+          "s40_d5_k1": {
+            "terms_total": 30,
+            "hits_total": 6,
+            "new_hits_total": 6,
+            "probes_with_a_new_hit": 6,
+            "precision": 0.2,
+            "precision_ci95": [
+              0.095,
+              0.3731
+            ],
+            "terms_per_probe": 0.75,
+            "gate_multiple": 0.729,
+            "p_vs_incumbent": 0.3864
+          },
+          "s40_d5_k2": {
+            "terms_total": 34,
+            "hits_total": 8,
+            "new_hits_total": 8,
+            "probes_with_a_new_hit": 8,
+            "precision": 0.2353,
+            "precision_ci95": [
+              0.1244,
+              0.4
+            ],
+            "terms_per_probe": 0.85,
+            "gate_multiple": 0.858,
+            "p_vs_incumbent": 0.6323
+          },
+          "s40_d5_k3": {
+            "terms_total": 34,
+            "hits_total": 8,
+            "new_hits_total": 8,
+            "probes_with_a_new_hit": 8,
+            "precision": 0.2353,
+            "precision_ci95": [
+              0.1244,
+              0.4
+            ],
+            "terms_per_probe": 0.85,
+            "gate_multiple": 0.858,
+            "p_vs_incumbent": 0.6323
+          },
+          "s40_d5_k5": {
+            "terms_total": 34,
+            "hits_total": 8,
+            "new_hits_total": 8,
+            "probes_with_a_new_hit": 8,
+            "precision": 0.2353,
+            "precision_ci95": [
+              0.1244,
+              0.4
+            ],
+            "terms_per_probe": 0.85,
+            "gate_multiple": 0.858,
+            "p_vs_incumbent": 0.6323
+          },
+          "s5_d10_k1": {
+            "terms_total": 12,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2425
+            ],
+            "terms_per_probe": 0.3,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0349
+          },
+          "s5_d10_k2": {
+            "terms_total": 12,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2425
+            ],
+            "terms_per_probe": 0.3,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0349
+          },
+          "s5_d10_k3": {
+            "terms_total": 12,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2425
+            ],
+            "terms_per_probe": 0.3,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0349
+          },
+          "s5_d10_k5": {
+            "terms_total": 12,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2425
+            ],
+            "terms_per_probe": 0.3,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0349
+          },
+          "s5_d20_k1": {
+            "terms_total": 12,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2425
+            ],
+            "terms_per_probe": 0.3,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0349
+          },
+          "s5_d20_k2": {
+            "terms_total": 12,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2425
+            ],
+            "terms_per_probe": 0.3,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0349
+          },
+          "s5_d20_k3": {
+            "terms_total": 12,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2425
+            ],
+            "terms_per_probe": 0.3,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0349
+          },
+          "s5_d20_k5": {
+            "terms_total": 12,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2425
+            ],
+            "terms_per_probe": 0.3,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0349
+          },
+          "s5_d40_k1": {
+            "terms_total": 23,
+            "hits_total": 3,
+            "new_hits_total": 3,
+            "probes_with_a_new_hit": 3,
+            "precision": 0.1304,
+            "precision_ci95": [
+              0.0454,
+              0.3213
+            ],
+            "terms_per_probe": 0.57,
+            "gate_multiple": 0.475,
+            "p_vs_incumbent": 0.1344
+          },
+          "s5_d40_k2": {
+            "terms_total": 23,
+            "hits_total": 3,
+            "new_hits_total": 3,
+            "probes_with_a_new_hit": 3,
+            "precision": 0.1304,
+            "precision_ci95": [
+              0.0454,
+              0.3213
+            ],
+            "terms_per_probe": 0.57,
+            "gate_multiple": 0.475,
+            "p_vs_incumbent": 0.1344
+          },
+          "s5_d40_k3": {
+            "terms_total": 23,
+            "hits_total": 3,
+            "new_hits_total": 3,
+            "probes_with_a_new_hit": 3,
+            "precision": 0.1304,
+            "precision_ci95": [
+              0.0454,
+              0.3213
+            ],
+            "terms_per_probe": 0.57,
+            "gate_multiple": 0.475,
+            "p_vs_incumbent": 0.1344
+          },
+          "s5_d40_k5": {
+            "terms_total": 23,
+            "hits_total": 3,
+            "new_hits_total": 3,
+            "probes_with_a_new_hit": 3,
+            "precision": 0.1304,
+            "precision_ci95": [
+              0.0454,
+              0.3213
+            ],
+            "terms_per_probe": 0.57,
+            "gate_multiple": 0.475,
+            "p_vs_incumbent": 0.1344
+          },
+          "s5_d5_k1": {
+            "terms_total": 8,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.3244
+            ],
+            "terms_per_probe": 0.2,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.084
+          },
+          "s5_d5_k2": {
+            "terms_total": 8,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.3244
+            ],
+            "terms_per_probe": 0.2,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.084
+          },
+          "s5_d5_k3": {
+            "terms_total": 8,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.3244
+            ],
+            "terms_per_probe": 0.2,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.084
+          },
+          "s5_d5_k5": {
+            "terms_total": 8,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.3244
+            ],
+            "terms_per_probe": 0.2,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.084
+          }
+        },
+        "query_tokens_bridged": 50
+      },
+      "verdict": {
+        "bar": "best cell precision >= 1.0x the committed tables' 0.2743",
+        "min_gate_terms": 30,
+        "gate_applicable": true,
+        "best_cell": "s40_d5_k2",
+        "best_precision": 0.2353,
+        "best_precision_ci95": [
+          0.1244,
+          0.4
+        ],
+        "best_terms_per_probe": 0.85,
+        "best_gate_multiple": 0.858,
+        "best_at_or_above_budget_cell": "s40_d40_k2",
+        "best_at_or_above_budget": {
+          "terms_total": 271,
+          "hits_total": 33,
+          "new_hits_total": 33,
+          "probes_with_a_new_hit": 25,
+          "precision": 0.1218,
+          "precision_ci95": [
+            0.088,
+            0.1661
+          ],
+          "terms_per_probe": 6.78,
+          "gate_multiple": 0.444,
+          "p_vs_incumbent": 0.0
+        },
+        "matched_budget_cell": "s40_d40_k2",
+        "matched_budget": {
+          "terms_total": 271,
+          "hits_total": 33,
+          "new_hits_total": 33,
+          "probes_with_a_new_hit": 25,
+          "precision": 0.1218,
+          "precision_ci95": [
+            0.088,
+            0.1661
+          ],
+          "terms_per_probe": 6.78,
+          "gate_multiple": 0.444,
+          "p_vs_incumbent": 0.0
+        },
+        "passes": false
+      }
+    },
+    "centred": {
+      "summary": {
+        "probes": 40,
+        "incumbent_precision_ci95": [
+          0.2203,
+          0.3359
+        ],
+        "incumbent_terms_total": 226,
+        "incumbent_hits_total": 62,
+        "query_tokens_total": 455,
+        "query_tokens_in_vocab": 312,
+        "vocabulary_coverage": 0.6857,
+        "incumbent_terms_per_probe": 5.65,
+        "incumbent_precision": 0.2743,
+        "grid": {
+          "s10_d10_k1": {
+            "terms_total": 14,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2153
+            ],
+            "terms_per_probe": 0.35,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0229
+          },
+          "s10_d10_k2": {
+            "terms_total": 14,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2153
+            ],
+            "terms_per_probe": 0.35,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0229
+          },
+          "s10_d10_k3": {
+            "terms_total": 14,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2153
+            ],
+            "terms_per_probe": 0.35,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0229
+          },
+          "s10_d10_k5": {
+            "terms_total": 14,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2153
+            ],
+            "terms_per_probe": 0.35,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0229
+          },
+          "s10_d20_k1": {
+            "terms_total": 22,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.1487
+            ],
+            "terms_per_probe": 0.55,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0046
+          },
+          "s10_d20_k2": {
+            "terms_total": 24,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.138
+            ],
+            "terms_per_probe": 0.6,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0031
+          },
+          "s10_d20_k3": {
+            "terms_total": 24,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.138
+            ],
+            "terms_per_probe": 0.6,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0031
+          },
+          "s10_d20_k5": {
+            "terms_total": 24,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.138
+            ],
+            "terms_per_probe": 0.6,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0031
+          },
+          "s10_d40_k1": {
+            "terms_total": 46,
+            "hits_total": 4,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.087,
+            "precision_ci95": [
+              0.0343,
+              0.2032
+            ],
+            "terms_per_probe": 1.15,
+            "gate_multiple": 0.317,
+            "p_vs_incumbent": 0.0069
+          },
+          "s10_d40_k2": {
+            "terms_total": 50,
+            "hits_total": 4,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.08,
+            "precision_ci95": [
+              0.0315,
+              0.1884
+            ],
+            "terms_per_probe": 1.25,
+            "gate_multiple": 0.292,
+            "p_vs_incumbent": 0.0036
+          },
+          "s10_d40_k3": {
+            "terms_total": 50,
+            "hits_total": 4,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.08,
+            "precision_ci95": [
+              0.0315,
+              0.1884
+            ],
+            "terms_per_probe": 1.25,
+            "gate_multiple": 0.292,
+            "p_vs_incumbent": 0.0036
+          },
+          "s10_d40_k5": {
+            "terms_total": 50,
+            "hits_total": 4,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.08,
+            "precision_ci95": [
+              0.0315,
+              0.1884
+            ],
+            "terms_per_probe": 1.25,
+            "gate_multiple": 0.292,
+            "p_vs_incumbent": 0.0036
+          },
+          "s10_d5_k1": {
+            "terms_total": 10,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2775
+            ],
+            "terms_per_probe": 0.25,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0537
+          },
+          "s10_d5_k2": {
+            "terms_total": 10,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2775
+            ],
+            "terms_per_probe": 0.25,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0537
+          },
+          "s10_d5_k3": {
+            "terms_total": 10,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2775
+            ],
+            "terms_per_probe": 0.25,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0537
+          },
+          "s10_d5_k5": {
+            "terms_total": 10,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2775
+            ],
+            "terms_per_probe": 0.25,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0537
+          },
+          "s20_d10_k1": {
+            "terms_total": 48,
+            "hits_total": 2,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.0417,
+            "precision_ci95": [
+              0.0115,
+              0.1398
+            ],
+            "terms_per_probe": 1.2,
+            "gate_multiple": 0.152,
+            "p_vs_incumbent": 0.0005
+          },
+          "s20_d10_k2": {
+            "terms_total": 50,
+            "hits_total": 2,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.04,
+            "precision_ci95": [
+              0.011,
+              0.1346
+            ],
+            "terms_per_probe": 1.25,
+            "gate_multiple": 0.146,
+            "p_vs_incumbent": 0.0004
+          },
+          "s20_d10_k3": {
+            "terms_total": 50,
+            "hits_total": 2,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.04,
+            "precision_ci95": [
+              0.011,
+              0.1346
+            ],
+            "terms_per_probe": 1.25,
+            "gate_multiple": 0.146,
+            "p_vs_incumbent": 0.0004
+          },
+          "s20_d10_k5": {
+            "terms_total": 50,
+            "hits_total": 2,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.04,
+            "precision_ci95": [
+              0.011,
+              0.1346
+            ],
+            "terms_per_probe": 1.25,
+            "gate_multiple": 0.146,
+            "p_vs_incumbent": 0.0004
+          },
+          "s20_d20_k1": {
+            "terms_total": 65,
+            "hits_total": 2,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.0308,
+            "precision_ci95": [
+              0.0085,
+              0.1054
+            ],
+            "terms_per_probe": 1.62,
+            "gate_multiple": 0.112,
+            "p_vs_incumbent": 0.0
+          },
+          "s20_d20_k2": {
+            "terms_total": 71,
+            "hits_total": 2,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.0282,
+            "precision_ci95": [
+              0.0078,
+              0.097
+            ],
+            "terms_per_probe": 1.77,
+            "gate_multiple": 0.103,
+            "p_vs_incumbent": 0.0
+          },
+          "s20_d20_k3": {
+            "terms_total": 71,
+            "hits_total": 2,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.0282,
+            "precision_ci95": [
+              0.0078,
+              0.097
+            ],
+            "terms_per_probe": 1.77,
+            "gate_multiple": 0.103,
+            "p_vs_incumbent": 0.0
+          },
+          "s20_d20_k5": {
+            "terms_total": 71,
+            "hits_total": 2,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.0282,
+            "precision_ci95": [
+              0.0078,
+              0.097
+            ],
+            "terms_per_probe": 1.77,
+            "gate_multiple": 0.103,
+            "p_vs_incumbent": 0.0
+          },
+          "s20_d40_k1": {
+            "terms_total": 110,
+            "hits_total": 8,
+            "new_hits_total": 6,
+            "probes_with_a_new_hit": 6,
+            "precision": 0.0727,
+            "precision_ci95": [
+              0.0373,
+              0.137
+            ],
+            "terms_per_probe": 2.75,
+            "gate_multiple": 0.265,
+            "p_vs_incumbent": 0.0
+          },
+          "s20_d40_k2": {
+            "terms_total": 139,
+            "hits_total": 8,
+            "new_hits_total": 6,
+            "probes_with_a_new_hit": 6,
+            "precision": 0.0576,
+            "precision_ci95": [
+              0.0294,
+              0.1095
+            ],
+            "terms_per_probe": 3.48,
+            "gate_multiple": 0.21,
+            "p_vs_incumbent": 0.0
+          },
+          "s20_d40_k3": {
+            "terms_total": 147,
+            "hits_total": 8,
+            "new_hits_total": 6,
+            "probes_with_a_new_hit": 6,
+            "precision": 0.0544,
+            "precision_ci95": [
+              0.0278,
+              0.1037
+            ],
+            "terms_per_probe": 3.67,
+            "gate_multiple": 0.198,
+            "p_vs_incumbent": 0.0
+          },
+          "s20_d40_k5": {
+            "terms_total": 151,
+            "hits_total": 8,
+            "new_hits_total": 6,
+            "probes_with_a_new_hit": 6,
+            "precision": 0.053,
+            "precision_ci95": [
+              0.0271,
+              0.1011
+            ],
+            "terms_per_probe": 3.77,
+            "gate_multiple": 0.193,
+            "p_vs_incumbent": 0.0
+          },
+          "s20_d5_k1": {
+            "terms_total": 20,
+            "hits_total": 2,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.1,
+            "precision_ci95": [
+              0.0279,
+              0.301
+            ],
+            "terms_per_probe": 0.5,
+            "gate_multiple": 0.365,
+            "p_vs_incumbent": 0.0885
+          },
+          "s20_d5_k2": {
+            "terms_total": 20,
+            "hits_total": 2,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.1,
+            "precision_ci95": [
+              0.0279,
+              0.301
+            ],
+            "terms_per_probe": 0.5,
+            "gate_multiple": 0.365,
+            "p_vs_incumbent": 0.0885
+          },
+          "s20_d5_k3": {
+            "terms_total": 20,
+            "hits_total": 2,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.1,
+            "precision_ci95": [
+              0.0279,
+              0.301
+            ],
+            "terms_per_probe": 0.5,
+            "gate_multiple": 0.365,
+            "p_vs_incumbent": 0.0885
+          },
+          "s20_d5_k5": {
+            "terms_total": 20,
+            "hits_total": 2,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.1,
+            "precision_ci95": [
+              0.0279,
+              0.301
+            ],
+            "terms_per_probe": 0.5,
+            "gate_multiple": 0.365,
+            "p_vs_incumbent": 0.0885
+          },
+          "s40_d10_k1": {
+            "terms_total": 74,
+            "hits_total": 6,
+            "new_hits_total": 6,
+            "probes_with_a_new_hit": 4,
+            "precision": 0.0811,
+            "precision_ci95": [
+              0.0377,
+              0.1658
+            ],
+            "terms_per_probe": 1.85,
+            "gate_multiple": 0.296,
+            "p_vs_incumbent": 0.0006
+          },
+          "s40_d10_k2": {
+            "terms_total": 92,
+            "hits_total": 8,
+            "new_hits_total": 8,
+            "probes_with_a_new_hit": 6,
+            "precision": 0.087,
+            "precision_ci95": [
+              0.0447,
+              0.1623
+            ],
+            "terms_per_probe": 2.3,
+            "gate_multiple": 0.317,
+            "p_vs_incumbent": 0.0003
+          },
+          "s40_d10_k3": {
+            "terms_total": 94,
+            "hits_total": 8,
+            "new_hits_total": 8,
+            "probes_with_a_new_hit": 6,
+            "precision": 0.0851,
+            "precision_ci95": [
+              0.0438,
+              0.159
+            ],
+            "terms_per_probe": 2.35,
+            "gate_multiple": 0.31,
+            "p_vs_incumbent": 0.0002
+          },
+          "s40_d10_k5": {
+            "terms_total": 94,
+            "hits_total": 8,
+            "new_hits_total": 8,
+            "probes_with_a_new_hit": 6,
+            "precision": 0.0851,
+            "precision_ci95": [
+              0.0438,
+              0.159
+            ],
+            "terms_per_probe": 2.35,
+            "gate_multiple": 0.31,
+            "p_vs_incumbent": 0.0002
+          },
+          "s40_d20_k1": {
+            "terms_total": 95,
+            "hits_total": 8,
+            "new_hits_total": 8,
+            "probes_with_a_new_hit": 6,
+            "precision": 0.0842,
+            "precision_ci95": [
+              0.0433,
+              0.1575
+            ],
+            "terms_per_probe": 2.38,
+            "gate_multiple": 0.307,
+            "p_vs_incumbent": 0.0002
+          },
+          "s40_d20_k2": {
+            "terms_total": 131,
+            "hits_total": 10,
+            "new_hits_total": 10,
+            "probes_with_a_new_hit": 8,
+            "precision": 0.0763,
+            "precision_ci95": [
+              0.042,
+              0.1348
+            ],
+            "terms_per_probe": 3.27,
+            "gate_multiple": 0.278,
+            "p_vs_incumbent": 0.0
+          },
+          "s40_d20_k3": {
+            "terms_total": 141,
+            "hits_total": 10,
+            "new_hits_total": 10,
+            "probes_with_a_new_hit": 8,
+            "precision": 0.0709,
+            "precision_ci95": [
+              0.039,
+              0.1256
+            ],
+            "terms_per_probe": 3.52,
+            "gate_multiple": 0.258,
+            "p_vs_incumbent": 0.0
+          },
+          "s40_d20_k5": {
+            "terms_total": 143,
+            "hits_total": 12,
+            "new_hits_total": 12,
+            "probes_with_a_new_hit": 10,
+            "precision": 0.0839,
+            "precision_ci95": [
+              0.0487,
+              0.1409
+            ],
+            "terms_per_probe": 3.58,
+            "gate_multiple": 0.306,
+            "p_vs_incumbent": 0.0
+          },
+          "s40_d40_k1": {
+            "terms_total": 145,
+            "hits_total": 18,
+            "new_hits_total": 16,
+            "probes_with_a_new_hit": 12,
+            "precision": 0.1241,
+            "precision_ci95": [
+              0.08,
+              0.1877
+            ],
+            "terms_per_probe": 3.62,
+            "gate_multiple": 0.452,
+            "p_vs_incumbent": 0.0006
+          },
+          "s40_d40_k2": {
+            "terms_total": 225,
+            "hits_total": 24,
+            "new_hits_total": 22,
+            "probes_with_a_new_hit": 16,
+            "precision": 0.1067,
+            "precision_ci95": [
+              0.0727,
+              0.1538
+            ],
+            "terms_per_probe": 5.62,
+            "gate_multiple": 0.389,
+            "p_vs_incumbent": 0.0
+          },
+          "s40_d40_k3": {
+            "terms_total": 267,
+            "hits_total": 24,
+            "new_hits_total": 22,
+            "probes_with_a_new_hit": 16,
+            "precision": 0.0899,
+            "precision_ci95": [
+              0.0611,
+              0.1303
+            ],
+            "terms_per_probe": 6.67,
+            "gate_multiple": 0.328,
+            "p_vs_incumbent": 0.0
+          },
+          "s40_d40_k5": {
+            "terms_total": 308,
+            "hits_total": 26,
+            "new_hits_total": 24,
+            "probes_with_a_new_hit": 18,
+            "precision": 0.0844,
+            "precision_ci95": [
+              0.0583,
+              0.1208
+            ],
+            "terms_per_probe": 7.7,
+            "gate_multiple": 0.308,
+            "p_vs_incumbent": 0.0
+          },
+          "s40_d5_k1": {
+            "terms_total": 36,
+            "hits_total": 4,
+            "new_hits_total": 4,
+            "probes_with_a_new_hit": 4,
+            "precision": 0.1111,
+            "precision_ci95": [
+              0.0441,
+              0.2532
+            ],
+            "terms_per_probe": 0.9,
+            "gate_multiple": 0.405,
+            "p_vs_incumbent": 0.0361
+          },
+          "s40_d5_k2": {
+            "terms_total": 42,
+            "hits_total": 6,
+            "new_hits_total": 6,
+            "probes_with_a_new_hit": 6,
+            "precision": 0.1429,
+            "precision_ci95": [
+              0.0672,
+              0.2784
+            ],
+            "terms_per_probe": 1.05,
+            "gate_multiple": 0.521,
+            "p_vs_incumbent": 0.0721
+          },
+          "s40_d5_k3": {
+            "terms_total": 42,
+            "hits_total": 6,
+            "new_hits_total": 6,
+            "probes_with_a_new_hit": 6,
+            "precision": 0.1429,
+            "precision_ci95": [
+              0.0672,
+              0.2784
+            ],
+            "terms_per_probe": 1.05,
+            "gate_multiple": 0.521,
+            "p_vs_incumbent": 0.0721
+          },
+          "s40_d5_k5": {
+            "terms_total": 42,
+            "hits_total": 6,
+            "new_hits_total": 6,
+            "probes_with_a_new_hit": 6,
+            "precision": 0.1429,
+            "precision_ci95": [
+              0.0672,
+              0.2784
+            ],
+            "terms_per_probe": 1.05,
+            "gate_multiple": 0.521,
+            "p_vs_incumbent": 0.0721
+          },
+          "s5_d10_k1": {
+            "terms_total": 12,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2425
+            ],
+            "terms_per_probe": 0.3,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0349
+          },
+          "s5_d10_k2": {
+            "terms_total": 12,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2425
+            ],
+            "terms_per_probe": 0.3,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0349
+          },
+          "s5_d10_k3": {
+            "terms_total": 12,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2425
+            ],
+            "terms_per_probe": 0.3,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0349
+          },
+          "s5_d10_k5": {
+            "terms_total": 12,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2425
+            ],
+            "terms_per_probe": 0.3,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0349
+          },
+          "s5_d20_k1": {
+            "terms_total": 12,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2425
+            ],
+            "terms_per_probe": 0.3,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0349
+          },
+          "s5_d20_k2": {
+            "terms_total": 12,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2425
+            ],
+            "terms_per_probe": 0.3,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0349
+          },
+          "s5_d20_k3": {
+            "terms_total": 12,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2425
+            ],
+            "terms_per_probe": 0.3,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0349
+          },
+          "s5_d20_k5": {
+            "terms_total": 12,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2425
+            ],
+            "terms_per_probe": 0.3,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0349
+          },
+          "s5_d40_k1": {
+            "terms_total": 22,
+            "hits_total": 4,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.1818,
+            "precision_ci95": [
+              0.0731,
+              0.3852
+            ],
+            "terms_per_probe": 0.55,
+            "gate_multiple": 0.663,
+            "p_vs_incumbent": 0.3486
+          },
+          "s5_d40_k2": {
+            "terms_total": 22,
+            "hits_total": 4,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.1818,
+            "precision_ci95": [
+              0.0731,
+              0.3852
+            ],
+            "terms_per_probe": 0.55,
+            "gate_multiple": 0.663,
+            "p_vs_incumbent": 0.3486
+          },
+          "s5_d40_k3": {
+            "terms_total": 22,
+            "hits_total": 4,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.1818,
+            "precision_ci95": [
+              0.0731,
+              0.3852
+            ],
+            "terms_per_probe": 0.55,
+            "gate_multiple": 0.663,
+            "p_vs_incumbent": 0.3486
+          },
+          "s5_d40_k5": {
+            "terms_total": 22,
+            "hits_total": 4,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.1818,
+            "precision_ci95": [
+              0.0731,
+              0.3852
+            ],
+            "terms_per_probe": 0.55,
+            "gate_multiple": 0.663,
+            "p_vs_incumbent": 0.3486
+          },
+          "s5_d5_k1": {
+            "terms_total": 10,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2775
+            ],
+            "terms_per_probe": 0.25,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0537
+          },
+          "s5_d5_k2": {
+            "terms_total": 10,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2775
+            ],
+            "terms_per_probe": 0.25,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0537
+          },
+          "s5_d5_k3": {
+            "terms_total": 10,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2775
+            ],
+            "terms_per_probe": 0.25,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0537
+          },
+          "s5_d5_k5": {
+            "terms_total": 10,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2775
+            ],
+            "terms_per_probe": 0.25,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0537
+          }
+        },
+        "query_tokens_bridged": 0
+      },
+      "verdict": {
+        "bar": "best cell precision >= 1.0x the committed tables' 0.2743",
+        "min_gate_terms": 30,
+        "gate_applicable": true,
+        "best_cell": "s40_d5_k2",
+        "best_precision": 0.1429,
+        "best_precision_ci95": [
+          0.0672,
+          0.2784
+        ],
+        "best_terms_per_probe": 1.05,
+        "best_gate_multiple": 0.521,
+        "best_at_or_above_budget_cell": "s40_d40_k3",
+        "best_at_or_above_budget": {
+          "terms_total": 267,
+          "hits_total": 24,
+          "new_hits_total": 22,
+          "probes_with_a_new_hit": 16,
+          "precision": 0.0899,
+          "precision_ci95": [
+            0.0611,
+            0.1303
+          ],
+          "terms_per_probe": 6.67,
+          "gate_multiple": 0.328,
+          "p_vs_incumbent": 0.0
+        },
+        "matched_budget_cell": "s40_d40_k2",
+        "matched_budget": {
+          "terms_total": 225,
+          "hits_total": 24,
+          "new_hits_total": 22,
+          "probes_with_a_new_hit": 16,
+          "precision": 0.1067,
+          "precision_ci95": [
+            0.0727,
+            0.1538
+          ],
+          "terms_per_probe": 5.62,
+          "gate_multiple": 0.389,
+          "p_vs_incumbent": 0.0
+        },
+        "passes": false
+      }
+    },
+    "centred+bridge": {
+      "summary": {
+        "probes": 40,
+        "incumbent_precision_ci95": [
+          0.2203,
+          0.3359
+        ],
+        "incumbent_terms_total": 226,
+        "incumbent_hits_total": 62,
+        "query_tokens_total": 455,
+        "query_tokens_in_vocab": 362,
+        "vocabulary_coverage": 0.7956,
+        "incumbent_terms_per_probe": 5.65,
+        "incumbent_precision": 0.2743,
+        "grid": {
+          "s10_d10_k1": {
+            "terms_total": 14,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2153
+            ],
+            "terms_per_probe": 0.35,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0229
+          },
+          "s10_d10_k2": {
+            "terms_total": 14,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2153
+            ],
+            "terms_per_probe": 0.35,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0229
+          },
+          "s10_d10_k3": {
+            "terms_total": 14,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2153
+            ],
+            "terms_per_probe": 0.35,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0229
+          },
+          "s10_d10_k5": {
+            "terms_total": 14,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2153
+            ],
+            "terms_per_probe": 0.35,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0229
+          },
+          "s10_d20_k1": {
+            "terms_total": 22,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.1487
+            ],
+            "terms_per_probe": 0.55,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0046
+          },
+          "s10_d20_k2": {
+            "terms_total": 24,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.138
+            ],
+            "terms_per_probe": 0.6,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0031
+          },
+          "s10_d20_k3": {
+            "terms_total": 24,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.138
+            ],
+            "terms_per_probe": 0.6,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0031
+          },
+          "s10_d20_k5": {
+            "terms_total": 24,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.138
+            ],
+            "terms_per_probe": 0.6,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0031
+          },
+          "s10_d40_k1": {
+            "terms_total": 56,
+            "hits_total": 4,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.0714,
+            "precision_ci95": [
+              0.0281,
+              0.1698
+            ],
+            "terms_per_probe": 1.4,
+            "gate_multiple": 0.26,
+            "p_vs_incumbent": 0.0013
+          },
+          "s10_d40_k2": {
+            "terms_total": 60,
+            "hits_total": 4,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.0667,
+            "precision_ci95": [
+              0.0262,
+              0.1593
+            ],
+            "terms_per_probe": 1.5,
+            "gate_multiple": 0.243,
+            "p_vs_incumbent": 0.0007
+          },
+          "s10_d40_k3": {
+            "terms_total": 60,
+            "hits_total": 4,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.0667,
+            "precision_ci95": [
+              0.0262,
+              0.1593
+            ],
+            "terms_per_probe": 1.5,
+            "gate_multiple": 0.243,
+            "p_vs_incumbent": 0.0007
+          },
+          "s10_d40_k5": {
+            "terms_total": 60,
+            "hits_total": 4,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.0667,
+            "precision_ci95": [
+              0.0262,
+              0.1593
+            ],
+            "terms_per_probe": 1.5,
+            "gate_multiple": 0.243,
+            "p_vs_incumbent": 0.0007
+          },
+          "s10_d5_k1": {
+            "terms_total": 10,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2775
+            ],
+            "terms_per_probe": 0.25,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0537
+          },
+          "s10_d5_k2": {
+            "terms_total": 10,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2775
+            ],
+            "terms_per_probe": 0.25,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0537
+          },
+          "s10_d5_k3": {
+            "terms_total": 10,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2775
+            ],
+            "terms_per_probe": 0.25,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0537
+          },
+          "s10_d5_k5": {
+            "terms_total": 10,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2775
+            ],
+            "terms_per_probe": 0.25,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0537
+          },
+          "s20_d10_k1": {
+            "terms_total": 50,
+            "hits_total": 2,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.04,
+            "precision_ci95": [
+              0.011,
+              0.1346
+            ],
+            "terms_per_probe": 1.25,
+            "gate_multiple": 0.146,
+            "p_vs_incumbent": 0.0004
+          },
+          "s20_d10_k2": {
+            "terms_total": 52,
+            "hits_total": 2,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.0385,
+            "precision_ci95": [
+              0.0106,
+              0.1298
+            ],
+            "terms_per_probe": 1.3,
+            "gate_multiple": 0.14,
+            "p_vs_incumbent": 0.0003
+          },
+          "s20_d10_k3": {
+            "terms_total": 52,
+            "hits_total": 2,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.0385,
+            "precision_ci95": [
+              0.0106,
+              0.1298
+            ],
+            "terms_per_probe": 1.3,
+            "gate_multiple": 0.14,
+            "p_vs_incumbent": 0.0003
+          },
+          "s20_d10_k5": {
+            "terms_total": 52,
+            "hits_total": 2,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.0385,
+            "precision_ci95": [
+              0.0106,
+              0.1298
+            ],
+            "terms_per_probe": 1.3,
+            "gate_multiple": 0.14,
+            "p_vs_incumbent": 0.0003
+          },
+          "s20_d20_k1": {
+            "terms_total": 69,
+            "hits_total": 2,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.029,
+            "precision_ci95": [
+              0.008,
+              0.0997
+            ],
+            "terms_per_probe": 1.73,
+            "gate_multiple": 0.106,
+            "p_vs_incumbent": 0.0
+          },
+          "s20_d20_k2": {
+            "terms_total": 75,
+            "hits_total": 2,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.0267,
+            "precision_ci95": [
+              0.0073,
+              0.0921
+            ],
+            "terms_per_probe": 1.88,
+            "gate_multiple": 0.097,
+            "p_vs_incumbent": 0.0
+          },
+          "s20_d20_k3": {
+            "terms_total": 75,
+            "hits_total": 2,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.0267,
+            "precision_ci95": [
+              0.0073,
+              0.0921
+            ],
+            "terms_per_probe": 1.88,
+            "gate_multiple": 0.097,
+            "p_vs_incumbent": 0.0
+          },
+          "s20_d20_k5": {
+            "terms_total": 75,
+            "hits_total": 2,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.0267,
+            "precision_ci95": [
+              0.0073,
+              0.0921
+            ],
+            "terms_per_probe": 1.88,
+            "gate_multiple": 0.097,
+            "p_vs_incumbent": 0.0
+          },
+          "s20_d40_k1": {
+            "terms_total": 130,
+            "hits_total": 8,
+            "new_hits_total": 6,
+            "probes_with_a_new_hit": 6,
+            "precision": 0.0615,
+            "precision_ci95": [
+              0.0315,
+              0.1167
+            ],
+            "terms_per_probe": 3.25,
+            "gate_multiple": 0.224,
+            "p_vs_incumbent": 0.0
+          },
+          "s20_d40_k2": {
+            "terms_total": 161,
+            "hits_total": 8,
+            "new_hits_total": 6,
+            "probes_with_a_new_hit": 6,
+            "precision": 0.0497,
+            "precision_ci95": [
+              0.0254,
+              0.095
+            ],
+            "terms_per_probe": 4.03,
+            "gate_multiple": 0.181,
+            "p_vs_incumbent": 0.0
+          },
+          "s20_d40_k3": {
+            "terms_total": 171,
+            "hits_total": 8,
+            "new_hits_total": 6,
+            "probes_with_a_new_hit": 6,
+            "precision": 0.0468,
+            "precision_ci95": [
+              0.0239,
+              0.0896
+            ],
+            "terms_per_probe": 4.28,
+            "gate_multiple": 0.171,
+            "p_vs_incumbent": 0.0
+          },
+          "s20_d40_k5": {
+            "terms_total": 175,
+            "hits_total": 8,
+            "new_hits_total": 6,
+            "probes_with_a_new_hit": 6,
+            "precision": 0.0457,
+            "precision_ci95": [
+              0.0233,
+              0.0876
+            ],
+            "terms_per_probe": 4.38,
+            "gate_multiple": 0.167,
+            "p_vs_incumbent": 0.0
+          },
+          "s20_d5_k1": {
+            "terms_total": 22,
+            "hits_total": 2,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.0909,
+            "precision_ci95": [
+              0.0253,
+              0.2782
+            ],
+            "terms_per_probe": 0.55,
+            "gate_multiple": 0.331,
+            "p_vs_incumbent": 0.0605
+          },
+          "s20_d5_k2": {
+            "terms_total": 22,
+            "hits_total": 2,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.0909,
+            "precision_ci95": [
+              0.0253,
+              0.2782
+            ],
+            "terms_per_probe": 0.55,
+            "gate_multiple": 0.331,
+            "p_vs_incumbent": 0.0605
+          },
+          "s20_d5_k3": {
+            "terms_total": 22,
+            "hits_total": 2,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.0909,
+            "precision_ci95": [
+              0.0253,
+              0.2782
+            ],
+            "terms_per_probe": 0.55,
+            "gate_multiple": 0.331,
+            "p_vs_incumbent": 0.0605
+          },
+          "s20_d5_k5": {
+            "terms_total": 22,
+            "hits_total": 2,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.0909,
+            "precision_ci95": [
+              0.0253,
+              0.2782
+            ],
+            "terms_per_probe": 0.55,
+            "gate_multiple": 0.331,
+            "p_vs_incumbent": 0.0605
+          },
+          "s40_d10_k1": {
+            "terms_total": 78,
+            "hits_total": 6,
+            "new_hits_total": 6,
+            "probes_with_a_new_hit": 4,
+            "precision": 0.0769,
+            "precision_ci95": [
+              0.0357,
+              0.1578
+            ],
+            "terms_per_probe": 1.95,
+            "gate_multiple": 0.28,
+            "p_vs_incumbent": 0.0003
+          },
+          "s40_d10_k2": {
+            "terms_total": 96,
+            "hits_total": 8,
+            "new_hits_total": 8,
+            "probes_with_a_new_hit": 6,
+            "precision": 0.0833,
+            "precision_ci95": [
+              0.0428,
+              0.1559
+            ],
+            "terms_per_probe": 2.4,
+            "gate_multiple": 0.304,
+            "p_vs_incumbent": 0.0001
+          },
+          "s40_d10_k3": {
+            "terms_total": 98,
+            "hits_total": 8,
+            "new_hits_total": 8,
+            "probes_with_a_new_hit": 6,
+            "precision": 0.0816,
+            "precision_ci95": [
+              0.0419,
+              0.1529
+            ],
+            "terms_per_probe": 2.45,
+            "gate_multiple": 0.297,
+            "p_vs_incumbent": 0.0001
+          },
+          "s40_d10_k5": {
+            "terms_total": 98,
+            "hits_total": 8,
+            "new_hits_total": 8,
+            "probes_with_a_new_hit": 6,
+            "precision": 0.0816,
+            "precision_ci95": [
+              0.0419,
+              0.1529
+            ],
+            "terms_per_probe": 2.45,
+            "gate_multiple": 0.297,
+            "p_vs_incumbent": 0.0001
+          },
+          "s40_d20_k1": {
+            "terms_total": 107,
+            "hits_total": 10,
+            "new_hits_total": 10,
+            "probes_with_a_new_hit": 8,
+            "precision": 0.0935,
+            "precision_ci95": [
+              0.0516,
+              0.1635
+            ],
+            "terms_per_probe": 2.67,
+            "gate_multiple": 0.341,
+            "p_vs_incumbent": 0.0002
+          },
+          "s40_d20_k2": {
+            "terms_total": 147,
+            "hits_total": 12,
+            "new_hits_total": 12,
+            "probes_with_a_new_hit": 10,
+            "precision": 0.0816,
+            "precision_ci95": [
+              0.0473,
+              0.1373
+            ],
+            "terms_per_probe": 3.67,
+            "gate_multiple": 0.297,
+            "p_vs_incumbent": 0.0
+          },
+          "s40_d20_k3": {
+            "terms_total": 157,
+            "hits_total": 12,
+            "new_hits_total": 12,
+            "probes_with_a_new_hit": 10,
+            "precision": 0.0764,
+            "precision_ci95": [
+              0.0443,
+              0.1288
+            ],
+            "terms_per_probe": 3.92,
+            "gate_multiple": 0.279,
+            "p_vs_incumbent": 0.0
+          },
+          "s40_d20_k5": {
+            "terms_total": 159,
+            "hits_total": 14,
+            "new_hits_total": 14,
+            "probes_with_a_new_hit": 12,
+            "precision": 0.0881,
+            "precision_ci95": [
+              0.0532,
+              0.1424
+            ],
+            "terms_per_probe": 3.98,
+            "gate_multiple": 0.321,
+            "p_vs_incumbent": 0.0
+          },
+          "s40_d40_k1": {
+            "terms_total": 169,
+            "hits_total": 24,
+            "new_hits_total": 22,
+            "probes_with_a_new_hit": 18,
+            "precision": 0.142,
+            "precision_ci95": [
+              0.0973,
+              0.2026
+            ],
+            "terms_per_probe": 4.22,
+            "gate_multiple": 0.518,
+            "p_vs_incumbent": 0.0016
+          },
+          "s40_d40_k2": {
+            "terms_total": 269,
+            "hits_total": 30,
+            "new_hits_total": 28,
+            "probes_with_a_new_hit": 22,
+            "precision": 0.1115,
+            "precision_ci95": [
+              0.0792,
+              0.1547
+            ],
+            "terms_per_probe": 6.72,
+            "gate_multiple": 0.406,
+            "p_vs_incumbent": 0.0
+          },
+          "s40_d40_k3": {
+            "terms_total": 319,
+            "hits_total": 30,
+            "new_hits_total": 28,
+            "probes_with_a_new_hit": 22,
+            "precision": 0.094,
+            "precision_ci95": [
+              0.0667,
+              0.1311
+            ],
+            "terms_per_probe": 7.97,
+            "gate_multiple": 0.343,
+            "p_vs_incumbent": 0.0
+          },
+          "s40_d40_k5": {
+            "terms_total": 364,
+            "hits_total": 32,
+            "new_hits_total": 30,
+            "probes_with_a_new_hit": 24,
+            "precision": 0.0879,
+            "precision_ci95": [
+              0.063,
+              0.1215
+            ],
+            "terms_per_probe": 9.1,
+            "gate_multiple": 0.32,
+            "p_vs_incumbent": 0.0
+          },
+          "s40_d5_k1": {
+            "terms_total": 38,
+            "hits_total": 4,
+            "new_hits_total": 4,
+            "probes_with_a_new_hit": 4,
+            "precision": 0.1053,
+            "precision_ci95": [
+              0.0417,
+              0.2413
+            ],
+            "terms_per_probe": 0.95,
+            "gate_multiple": 0.384,
+            "p_vs_incumbent": 0.0259
+          },
+          "s40_d5_k2": {
+            "terms_total": 44,
+            "hits_total": 6,
+            "new_hits_total": 6,
+            "probes_with_a_new_hit": 6,
+            "precision": 0.1364,
+            "precision_ci95": [
+              0.064,
+              0.2671
+            ],
+            "terms_per_probe": 1.1,
+            "gate_multiple": 0.497,
+            "p_vs_incumbent": 0.0537
+          },
+          "s40_d5_k3": {
+            "terms_total": 44,
+            "hits_total": 6,
+            "new_hits_total": 6,
+            "probes_with_a_new_hit": 6,
+            "precision": 0.1364,
+            "precision_ci95": [
+              0.064,
+              0.2671
+            ],
+            "terms_per_probe": 1.1,
+            "gate_multiple": 0.497,
+            "p_vs_incumbent": 0.0537
+          },
+          "s40_d5_k5": {
+            "terms_total": 44,
+            "hits_total": 6,
+            "new_hits_total": 6,
+            "probes_with_a_new_hit": 6,
+            "precision": 0.1364,
+            "precision_ci95": [
+              0.064,
+              0.2671
+            ],
+            "terms_per_probe": 1.1,
+            "gate_multiple": 0.497,
+            "p_vs_incumbent": 0.0537
+          },
+          "s5_d10_k1": {
+            "terms_total": 12,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2425
+            ],
+            "terms_per_probe": 0.3,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0349
+          },
+          "s5_d10_k2": {
+            "terms_total": 12,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2425
+            ],
+            "terms_per_probe": 0.3,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0349
+          },
+          "s5_d10_k3": {
+            "terms_total": 12,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2425
+            ],
+            "terms_per_probe": 0.3,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0349
+          },
+          "s5_d10_k5": {
+            "terms_total": 12,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2425
+            ],
+            "terms_per_probe": 0.3,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0349
+          },
+          "s5_d20_k1": {
+            "terms_total": 12,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2425
+            ],
+            "terms_per_probe": 0.3,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0349
+          },
+          "s5_d20_k2": {
+            "terms_total": 12,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2425
+            ],
+            "terms_per_probe": 0.3,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0349
+          },
+          "s5_d20_k3": {
+            "terms_total": 12,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2425
+            ],
+            "terms_per_probe": 0.3,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0349
+          },
+          "s5_d20_k5": {
+            "terms_total": 12,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2425
+            ],
+            "terms_per_probe": 0.3,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0349
+          },
+          "s5_d40_k1": {
+            "terms_total": 22,
+            "hits_total": 4,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.1818,
+            "precision_ci95": [
+              0.0731,
+              0.3852
+            ],
+            "terms_per_probe": 0.55,
+            "gate_multiple": 0.663,
+            "p_vs_incumbent": 0.3486
+          },
+          "s5_d40_k2": {
+            "terms_total": 22,
+            "hits_total": 4,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.1818,
+            "precision_ci95": [
+              0.0731,
+              0.3852
+            ],
+            "terms_per_probe": 0.55,
+            "gate_multiple": 0.663,
+            "p_vs_incumbent": 0.3486
+          },
+          "s5_d40_k3": {
+            "terms_total": 22,
+            "hits_total": 4,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.1818,
+            "precision_ci95": [
+              0.0731,
+              0.3852
+            ],
+            "terms_per_probe": 0.55,
+            "gate_multiple": 0.663,
+            "p_vs_incumbent": 0.3486
+          },
+          "s5_d40_k5": {
+            "terms_total": 22,
+            "hits_total": 4,
+            "new_hits_total": 2,
+            "probes_with_a_new_hit": 2,
+            "precision": 0.1818,
+            "precision_ci95": [
+              0.0731,
+              0.3852
+            ],
+            "terms_per_probe": 0.55,
+            "gate_multiple": 0.663,
+            "p_vs_incumbent": 0.3486
+          },
+          "s5_d5_k1": {
+            "terms_total": 10,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2775
+            ],
+            "terms_per_probe": 0.25,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0537
+          },
+          "s5_d5_k2": {
+            "terms_total": 10,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2775
+            ],
+            "terms_per_probe": 0.25,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0537
+          },
+          "s5_d5_k3": {
+            "terms_total": 10,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2775
+            ],
+            "terms_per_probe": 0.25,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0537
+          },
+          "s5_d5_k5": {
+            "terms_total": 10,
+            "hits_total": 0,
+            "new_hits_total": 0,
+            "probes_with_a_new_hit": 0,
+            "precision": 0.0,
+            "precision_ci95": [
+              0.0,
+              0.2775
+            ],
+            "terms_per_probe": 0.25,
+            "gate_multiple": 0.0,
+            "p_vs_incumbent": 0.0537
+          }
+        },
+        "query_tokens_bridged": 50
+      },
+      "verdict": {
+        "bar": "best cell precision >= 1.0x the committed tables' 0.2743",
+        "min_gate_terms": 30,
+        "gate_applicable": true,
+        "best_cell": "s40_d40_k1",
+        "best_precision": 0.142,
+        "best_precision_ci95": [
+          0.0973,
+          0.2026
+        ],
+        "best_terms_per_probe": 4.22,
+        "best_gate_multiple": 0.518,
+        "best_at_or_above_budget_cell": "s40_d40_k2",
+        "best_at_or_above_budget": {
+          "terms_total": 269,
+          "hits_total": 30,
+          "new_hits_total": 28,
+          "probes_with_a_new_hit": 22,
+          "precision": 0.1115,
+          "precision_ci95": [
+            0.0792,
+            0.1547
+          ],
+          "terms_per_probe": 6.72,
+          "gate_multiple": 0.406,
+          "p_vs_incumbent": 0.0
+        },
+        "matched_budget_cell": "s40_d40_k2",
+        "matched_budget": {
+          "terms_total": 269,
+          "hits_total": 30,
+          "new_hits_total": 28,
+          "probes_with_a_new_hit": 22,
+          "precision": 0.1115,
+          "precision_ci95": [
+            0.0792,
+            0.1547
+          ],
+          "terms_per_probe": 6.72,
+          "gate_multiple": 0.406,
+          "p_vs_incumbent": 0.0
+        },
+        "passes": false
+      }
+    }
+  },
+  "seconds": 6.9
+}

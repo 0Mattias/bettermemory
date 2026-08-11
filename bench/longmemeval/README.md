@@ -639,6 +639,111 @@ picture has to change the FUSION — give the leg a contribution that
 scales with its evidence instead of with its rank — and no number here
 licenses that.
 
+## P1e — the same statistic, trained instead of counted, 2026-08-11
+
+P1a killed an ESTIMATOR. Raw PPMI over 180 documents is noisy where
+PPMI is known to be worst, so the successor question was always whether
+factorizing the same co-occurrence structure does better than reading
+it raw. That became askable when the owner settled the WaC boundary on
+2026-08-11: from-scratch-TRAINED models are legal, pretrained
+third-party weights are not.
+
+`bench/embed_train.py` trains GloVe in pure Python from committed
+repository text — no network, no third-party model code, no numpy
+(the dependency tree has carried none since 4.0), fixed seed, and
+byte-identical across runs. `bench/embed_census.py` scores it against
+**addendum 8's gate, quoted unchanged**, on the same dev probes.
+
+**No preregistration was written and none is proposed here.** This is a
+census, on the same terms as P1a's: statistics only, dev-side, and the
+sealed instrument under `bench/heldout/` was not read.
+
+### Measured
+
+Dev gold set, incumbent 0.2743 (62 of 226 emitted terms) at 5.65 terms
+per probe (`../retrieval/results/embed-census-2026-08-11.json`):
+
+| source | terms/probe | precision | x bar | p vs incumbent |
+| --- | --- | --- | --- | --- |
+| committed static tables (incumbent) | 5.65 | 0.2743 | 1.000 | — |
+| P1a — raw store PPMI, best of 36 cells | 9.78 | 0.1253 | 0.46 | <0.001 |
+| **P1e — trained on the store, tightest cell** | 2.95 | 0.2712 | **0.989** | 0.950 |
+| **P1e — trained on the store, at the incumbent's width** | 5.65 | 0.2168 | **0.790** | 0.155 |
+| P1e — trained on 13.5x more repository prose | 9.85 | 0.1015 | 0.370 | <0.001 |
+| P1e — trained on conversational haystacks | 3.62 | 0.1034 | 0.377 | <0.001 |
+
+**No cell passes, on any corpus, in either vector reading.** The
+mechanism is nonetheless not what P1a was: training the statistic
+roughly doubles reading it raw, and the remaining gap is inside the
+noise of a 226-term sample. The gate is a point comparison and it is
+missed — but the record says "missed, unresolvably" rather than
+borrowing P1a's "missed decisively", because the two are not the same
+measurement and the difference is checkable in the artifact.
+
+### The conversational instrument cannot carry this gate, and that is a finding
+
+Run here as well (`results/embed-census-2026-08-11.json`, 20 questions,
+trained on a disjoint instance slice): **the committed tables emit 0.6
+terms per probe on LongMemEval questions — twelve terms across twenty
+probes, five of them in evidence.** A precision computed on twelve
+terms is not a bar, so the census reports `gate_applicable: false` for
+this instrument rather than publishing a ratio against it.
+
+That is worth stating on its own. The lane's whole story on this corpus
+has been that its expansion terms are harmful; the census adds that on
+conversational queries the tables barely fire at all. Whatever the lane
+costs here, it is not being paid by the static vocabulary tables.
+
+### What P1e adds to the campaign's record
+
+Rounds 3-5 measured that conditioning WHICH legs vote hits a ceiling.
+P1a measured that replacing the source with store-derived counts is
+less precise than the tables. **P1e measures that the counting was not
+the limitation — the corpus is.** More text raises query-token coverage
+from 68.6% to 92.3% and drops precision to 0.29x, and more training
+epochs fit the co-occurrence matrix twenty times better while halving
+precision. The only corpus that yields usable neighbours is the
+collection being ranked, and at personal-store scale that collection is
+35,000 tokens.
+
+So the constraint P1a stated survives its own successor, in a stronger
+form: it is not that a small store is thin for PPMI, it is that **no
+admissible corpus is both large and on-topic**, and off-topic text is
+worse than no text. Whether a mechanism at 0.79x-0.99x is worth an
+engine and a preregistration is an owner's call, not a number this
+census produces — and `../THIRD_INSTRUMENT.md` still blocks any
+vocabulary-adapting mechanism on a clean held-out instrument that does
+not exist.
+
+### Two invented mechanisms, measured to the same standard
+
+The textbook family is written for corpora four orders of magnitude
+larger than a personal memory store, so its miss is not a terminal
+verdict. `../embed_hybrid.py` proposes two mechanisms designed for the
+regime the census described, and holds them to the same bar
+(`../retrieval/results/embed-hybrid-2026-08-11.json`).
+
+- **The agreement rule** — emit only terms ranked highly by BOTH PPMI
+  and the trained vectors, on the hypothesis that two estimators of the
+  same structure have independent errors. **Measured worse than the
+  dense model alone, 0.44x against 0.79x at the incumbent's width.**
+  The premise was wrong in a way worth recording: GloVe factorizes the
+  matrix PPMI reads, so rank agreement selects for high-count pairs,
+  and high-count pairs are the frequent, least discriminating terms.
+- **N-gram bridging** — give an out-of-vocabulary query token a vector
+  composed from the in-vocabulary terms it shares characters with.
+  **Coverage 0.686 to 0.796, fifty tokens rescued, precision unmoved.**
+  A mechanism that does exactly what it was built for, aimed at recall
+  while the bar prices precision.
+
+Both negatives are the point rather than an embarrassment: the bar did
+not move to accommodate an invention, and the invention's own premise
+was reported as withdrawn by the data that withdrew it. The variant the
+first failure points at — cosine threshold to select, sparse counts to
+veto rather than to confirm — is named in the retrieval README and was
+deliberately not run, because a grid explored until something passes
+stops being evidence.
+
 ## Round 6 — the evidence-scaled vote clears the line, and the dev gate stops it, 2026-08-11
 
 Five kills all named the same untested cause: `_hybrid_fuse` fuses by

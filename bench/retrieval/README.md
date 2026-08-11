@@ -533,6 +533,146 @@ rescue's reach is wider than the nominator's, and the gap is now the
 measured size of the next increment (nominate on query + expansion
 variants), not a surprise waiting in a large store.
 
+### P1e — a from-scratch dense embedding, censused against the same bar
+
+P1a's kill was about an ESTIMATOR, not about the idea: raw co-occurrence
+counts over 180 documents are noisy, and PPMI is famously worst exactly
+there. The obvious successor is to factorize the same statistic instead
+of reading it raw. That became admissible on 2026-08-11, when the owner
+settled the WaC question — *"I never said 'no neural weights', I said no
+sloppy bullshit. You can add neural weights as long as we built the
+model from scratch."* Pretrained third-party weights stay banned; a
+model this repository trains, from text this repository ships, with no
+network anywhere, does not.
+
+So `bench/embed_train.py` trains GloVe — same objective, written out,
+pure Python because the dependency tree has carried no numpy since 4.0 —
+and `bench/embed_census.py` scores its emitted terms against **P1a's
+gate, quoted unchanged**: at least 1.0x the committed tables' precision,
+measured identically on the same 40 dev probes.
+
+**No corpus was staged.** Every training input is repository text that
+was already committed, under this repository's own MIT grant, so the
+census costs zero new bytes and no new fetch policy. `bench/` prose and
+`tests/` are both excluded from the `repo` corpus deliberately — this
+README names the instrument's paraphrase pairs in plain text and the
+census's own test module cites its morphology examples, so a model
+trained on either would be reading the answer key.
+
+**Measured** (`results/embed-census-2026-08-11.json`); incumbent
+0.2743 (62/226 terms) at 5.65 terms per probe, 95% CI [0.220, 0.336]:
+
+| training corpus | tokens | query-token coverage | best cell | precision | x bar | terms/probe |
+| --- | --- | --- | --- | --- | --- | --- |
+| the store itself | 35k | 0.686 | k1, cos>=0.995 | 0.2712 | **0.989** | 2.95 |
+| — the same arm at the incumbent's width | | | k2, cos>=0.995 | 0.2168 | **0.790** | 5.65 |
+| repo prose (docs, changelog, docstrings) | 474k | 0.897 | k1, cos>=0.7 | 0.1015 | 0.370 | 9.85 |
+| repo + store | 509k | 0.923 | k3, cos>=0.8 | 0.0788 | 0.287 | 22.52 |
+| LongMemEval haystacks (conversational) | 966k | 0.877 | k1, cos>=0.9 | 0.1034 | 0.377 | 3.62 |
+
+Reference: P1a's raw PPMI best was 0.1253, **0.46x**, at 9.78 per probe.
+
+**The mechanism is not inert, and it does not pass.** Factorizing the
+same statistic roughly doubles what reading it raw achieved — 0.46x to
+0.989x at the tightest cell, 0.790x at the incumbent's exact term
+budget. No cell passes, on any corpus, in either vector reading.
+
+**The miss is not statistically resolvable, and that is stated rather
+than argued around.** At the incumbent's own width the comparison is 49
+hits of 226 against 62 of 226, p = 0.155; at the tightest cell it is 32
+of 118 against 62 of 226, p = 0.950. Neither separates from the bar.
+P1a's did: 0.1253 against 0.2743 is p < 0.001. **A gate is a point
+comparison and this misses it at every reading — but "misses by 1.1% on
+118 terms" is a different finding from "misses by 54% on 391", and
+publishing the first as if it were the second would be the same
+overclaim in the other direction.**
+
+**More text makes it worse.** This is the census's sharpest result and
+it runs opposite to the obvious prediction. The `repo` corpus is 13.5x
+larger and covers 89.7% of the probes' query tokens against the store's
+68.6% — better coverage, five times the vocabulary — and it lands at
+0.370x. Adding the store back on top (`repo+store`) reaches the best
+coverage of any committed arm, 92.3%, and the worst precision, 0.287x.
+Coverage was never the binding constraint. **Topicality is**: the only
+corpus that produces usable neighbours is the collection being ranked,
+and that collection is 35k tokens.
+
+**More training makes it worse too**, so "undertrained" is foreclosed
+(`results/embed-sensitivity-2026-08-11.json`, store corpus, the declared
+`dim=64, epochs=15` default against four alternatives):
+
+| dim | epochs | final loss | best x | x at or above the incumbent's width |
+| --- | --- | --- | --- | --- |
+| 32 | 15 | 0.011314 | 0.957 | 0.847 |
+| **64** | **15** (declared default) | 0.011431 | **0.989** | **0.790** |
+| 128 | 15 | 0.011409 | 0.744 | 0.744 |
+| 64 | 60 | 0.002876 | 0.496 | 0.496 |
+| 64 | 150 | 0.000542 | 0.416 | 0.416 |
+
+Ten times the epochs fits the co-occurrence matrix twenty times better
+(loss 0.0005 against 0.011) and halves the precision. That is textbook
+overfitting on 33,691 cells, and it means the headline is not a
+lucky under-trained corner: the reported configuration is the one the
+trainer declared as its default before any census ran, and the sweep
+finds nothing better.
+
+**What this retires.** Not "dense embeddings carry no signal" — they
+carry roughly twice what raw PPMI did, and 32 of their hits are gold
+terms the committed tables never emit. What it retires is the hope that
+the ESTIMATOR was P1a's problem. The wall is the corpus: there is no
+text that is simultaneously licence-clean, committable, in the store's
+domain, and large enough to train on, because **the store IS the domain
+and a personal memory store is tens of thousands of tokens.** Every
+corpus that escapes that size constraint leaves the domain, and leaving
+the domain costs more than the size buys.
+
+### Two mechanisms built for this regime, and what they measured
+
+The textbook family missing is not a reason to stop — the book was
+written for corpora four orders of magnitude larger than a personal
+memory store. `bench/embed_hybrid.py` proposes two mechanisms sized for
+the regime the census actually described, and scores them against the
+same unchanged bar (`results/embed-hybrid-2026-08-11.json`).
+
+**A. The agreement rule — a count-dense hybrid. Hypothesis withdrawn by
+its own measurement.** PPMI is unbiased and noisy; the factorization is
+smoothed and biased; so a term both rank highly should be far likelier
+to be a real associate. Emit only the intersection of the two top-k
+lists, buying precision with recall — the trade the bar rewards.
+
+Measured, it is **worse than the dense rule alone: 0.44x at the
+incumbent's width against 0.79x.** The reason is the result. GloVe
+factorizes the very matrix PPMI reads, so these are not independent
+estimators — what they agree on is the high-count pairs, and high-count
+pairs are the frequent, least discriminating terms. The premise was
+independence and the data withdrew it.
+
+**B. N-gram bridging — coverage without a bigger corpus.** An
+out-of-vocabulary query token borrows a vector from the in-vocabulary
+terms it shares character n-grams with, Jaccard-weighted over the best
+five. No new training, no new parameters, no corpus — it exploits the
+one thing English morphology guarantees, that 'splitting' and 'split'
+share most of their characters, which is the same *morphology class*
+the shipped lane attacks with hand-written rules.
+
+It works, at what it was built for: **coverage 0.686 to 0.796, fifty
+query tokens given vectors they had none for.** It does not move
+precision. Recorded as a mechanism that does its job and is aimed at
+the wrong quantity — the bar prices precision, and coverage is recall.
+
+**Named and deliberately not tested here.** The agreement rule's
+failure points somewhere specific: the two estimators should not be
+intersected as ranks, because rank agreement selects for frequency.
+The variant the diagnosis suggests is to keep the cosine THRESHOLD,
+which is the one dial that demonstrably buys precision — 0.69x at
+cos>=0.0 rising to 0.99x at cos>=0.995, unevenly (it dips at 0.7 and
+again at 0.9 before recovering, so the trend is real and the curve is
+not clean) — and to use the sparse signal only to *veto* candidates
+whose PPMI is explained by frequency alone. That is a different
+mechanism, it was not run, and it is written down here rather than
+swept: a grid explored until something passes is how a census stops
+being evidence.
+
 ### Measured and killed on the way: RM3 as an equal leg
 
 Pseudo-relevance feedback — top-k first-pass documents contributing

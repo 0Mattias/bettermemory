@@ -110,6 +110,80 @@ In rough order of cost:
 
 Option 3 is the recommendation. Option 1 is worth one email.
 
+## The other corpus question — TRAINING text, P1e, 2026-08-11
+
+Everything above is about an INSTRUMENT: text whose gold labels score a
+mechanism. P1e raised a second and separate corpus question — text a
+from-scratch embedding is TRAINED on — and it is recorded here because
+it runs into the same licence wall from the other side.
+
+**Decision taken: nothing was staged. Every training input is
+repository text that was already committed**, under this repository's
+own MIT grant (`LICENSE`). Four corpora were assembled and each is
+enumerated with its licence in `bench/embed_train.py`'s `SOURCES`:
+
+| corpus | what it is | tokens | licence | committed? |
+| --- | --- | --- | --- | --- |
+| `store` | `bench/retrieval/corpus.jsonl` bodies | 35k | MIT, this repository | yes |
+| `repo` | `docs/`, root `*.md`, `plugin/`, plus docstrings and comments from `src/` | 474k | MIT, this repository | yes |
+| `repo+store` | both of the above | 509k | MIT, this repository | yes |
+| `lme` | LongMemEval haystacks, instances 20-60 | 966k | **no redistribution grant** | **no** — gitignored download |
+
+Three notes on why it is drawn that way:
+
+- **`bench/` prose and `tests/` are both excluded from `repo`, and both
+  exclusions are load-bearing.** `bench/retrieval/README.md` states the
+  instrument's paraphrase pairs in plain English ("'toggles' vs
+  'feature flags', 'creds' vs 'credentials'"), and the census's own
+  test module cites 'split'/'splitting' and 'credential' as its
+  morphology and clipping examples. A model trained on either would be
+  handed the answer key. Excluding `tests/` also stabilises the corpus
+  against our own test-writing — otherwise every commit that adds a
+  test changes the training text and no artifact reproduces.
+- **The `lme` arm is a diagnostic, not a shippable derivation.** It is
+  the only conversational text available, and it is not committed —
+  the same limitation `bench/df_census.py` and `bench/store_census.py`
+  already carry, stated in the artifact rather than implied. Nothing
+  that could ship may depend on it.
+- **The trained vectors are not committed either.** They are a derived
+  intermediate of a deterministic committed script over committed
+  inputs, and a float dump of a multi-thousand-term vocabulary runs
+  well past the repository's 500 kB added-file cap. `embed_train.py
+  --twice` reproduces them bit for bit, so the script plus the
+  `corpus_manifest_sha256` in every census artifact is the record.
+
+### Flagged for the owner, not decided here
+
+**A public-domain external corpus was NOT fetched.** Project Gutenberg
+is the obvious candidate and the licence analysis is favourable: works
+published in or before 1930 are public domain in the US, and Project
+Gutenberg's own licence explicitly permits unrestricted use of such a
+work once the PG header, footer and trademark references are stripped —
+the restriction attaches to the PG trademark, not to the underlying
+text. Nothing in that argument required checking, because the fetch
+itself is the blocker: **staging external data is a download plus a new
+fetch-with-pinned-hash policy, and this note's own requirement 3 says
+that is a deliberate owner decision rather than something a bench author
+assumes.** It is flagged, unspent.
+
+What the census can say without it: the register/vocabulary ceiling such
+a corpus would hit is already measured from the arms that did run. Every
+corpus larger than the store covered MORE of the probes' query
+vocabulary and emitted LESS precise terms, and the conversational arm
+did no better — the per-arm rows are in
+`retrieval/results/embed-census-2026-08-11.json` and tabulated in
+`retrieval/README.md`. Off-topic text made the mechanism worse, not
+better, so a corpus of 1900s prose is very unlikely to be the missing
+input —
+but that is an inference from neighbouring arms, not a measurement of
+Gutenberg, and it is written down as the former.
+
+**The user's own memory store was considered and rejected outright.**
+It is the only text with both the right domain and the right register,
+and it is personal data: committing it to a public MIT repository is
+not a trade-off to weigh. It is also not reproducible — it changes
+every session — so an artifact derived from it could not be an artifact.
+
 ## Status
 
 **P1a is not preregistered and no P1a engine code exists.** Writing the
