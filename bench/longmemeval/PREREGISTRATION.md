@@ -1860,3 +1860,224 @@ census measured.
 - Not that a larger store would behave this way.
 - Not a comparative claim, and no claude-mem arm runs.
 
+---
+
+## Addendum 9 — round 6: the leg's contribution scales with its evidence, 2026-08-11
+
+The window's final experiment, and the one every prior kill pointed at.
+Predictions continue — so this document owns **P42–P48**.
+
+### Why this, and why now
+
+Five preregistered experiments have failed, and they failed in a
+pattern. Rounds 3, 4 and 5 each changed WHICH legs vote and landed
+within 0.004 of each other at held-out macro@5 (0.8790 / 0.8823 /
+0.8830, baseline 0.8935). Addendum 8's P1a changed WHAT the legs
+contain and could not reach even the incumbent's precision (0.46×).
+
+Every one of those write-ups names the same cause without testing it:
+
+> `_hybrid_fuse` fuses by RANK, so a leg contributes
+> `_RESCUE_LEG_WEIGHT / (rrf_k + rank)` **whether its rank-1 was found
+> by a discriminating synonym or by a single coincidental token**. IDF
+> only reorders WITHIN the leg; it cannot reduce the leg's influence.
+
+Choosing better voters plateaued. Choosing better words was worse than
+the incumbent. **The remaining variable is the vote itself**, and it has
+been constant at 0.7 through every round.
+
+### Scope constraint, stated as a binding limit
+
+This changes **only** how the rescue-expansion leg's contribution
+enters fusion, and **only** when the lane is on. Two things follow and
+both are preregistered rather than assumed:
+
+- **The default engine's fusion path must be byte-identical.** P42
+  asserts it as an arm, not an assumption.
+- **Generalising evidence-scaled fusion to the base legs is OUT OF
+  SCOPE for this window regardless of results.** If the dev evidence
+  suggests it generalises, that is recorded below as a named future
+  hypothesis and left alone.
+
+### Hypothesis
+
+> **A leg's contribution should scale with how much evidence stands
+> behind its top candidate. Legs at the evidence floor are helpful more
+> often than not but not reliably; legs above it are reliably helpful;
+> and a fusion that gives both the same vote is discarding the
+> distinction it already has in hand.**
+
+### The dev evidence, and the curve derived from it
+
+From the committed round-5 labels
+(`bench/retrieval/results/leg-labels-2026-08-10.json`, 39 engaged legs
+labelled by whether the leg's vote actually moved the gold document):
+
+| evidence (matched terms at the leg's rank-1) | n | helped | neutral | hurt | % helped |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 11 | 0 | 8 | 3 | **0%** |
+| 2 | 22 | 15 | 7 | 0 | **68.2%** |
+| ≥ 3 | 6 | 6 | 0 | 0 | **100%** |
+
+Monotone, with no inversion. The floor stratum is already excluded by
+the round-5 rule and stays excluded. What is new is the middle: a leg at
+exactly the floor is helpful about two times in three, and a leg above
+it was helpful every time.
+
+**The curve, and the rule that produced it.** The leg earns its FULL
+weight at the evidence count where the dev labels first read 100%
+helpful, and scales linearly from the floor to there:
+
+```
+scale(m) = 0.0                              if m < _RESCUE_LEG_MIN_EVIDENCE
+         = min(1.0, (m - 1) / (_EVIDENCE_FULL_AT - 1))   otherwise
+weight   = _RESCUE_LEG_WEIGHT * scale(m)
+```
+
+with `_EVIDENCE_FULL_AT = 3`, giving:
+
+| m | scale | leg weight |
+| --- | --- | --- |
+| < 2 | 0.00 | 0.000 (withheld — round-5 rule, unchanged) |
+| 2 | 0.50 | 0.350 |
+| ≥ 3 | 1.00 | 0.700 (the current constant, unchanged) |
+
+**Exactly one new constant**, and it is read off the labels by a stated
+rule rather than tuned: 3 is where the dev labels reach 100%. The scale
+is bounded in [0, 1] by construction, so the leg can never contribute
+MORE than today — this experiment can only ever reduce the leg's
+influence, never amplify it. That bound is deliberate: an amplifying
+change would need a different safety argument than a damping one.
+
+**Ordering disclosure.** The leg-labels artifact predates this
+document, exactly as addenda 4 and 8 disclosed for their censuses.
+Gate 0's bar below is structural and was fixed before the strata were
+tabulated; the reader can check that a 90% bar is nowhere near the
+0%/68.2%/100% the table reports, which is not what a fitted bar looks
+like.
+
+### Gate 0 — is there anything for a curve to express?
+
+**Gate 0 — the evidence level must stratify the labels.** The top
+stratum must be **≥ 90% helpful** and the floor stratum **materially
+lower**, or a flat curve is the null hypothesis and there is nothing to
+scale. *(Measured: 100% and 68.2%.)* **Passes.**
+
+**As in addendum 8, a failed gate would spend nothing** — no fusion
+code, no arms, and above all no held-out run.
+
+### Arms
+
+**Instrument A — `bench/retrieval` (dev).** Unpadded, padded-600 and
+both prefilter regimes, lane on.
+
+**Instrument B — this directory (dev-contaminated, labelled so in every
+row).** baseline lane-off; lane-on with the current flat weight; lane-on
+with the evidence-scaled weight.
+
+**Instrument C — `bench/heldout` (blind, sealed).** Scored **once,
+last, and only if the dev gates below pass** — the same protection that
+saved it from P1a. **No-read attestation: no gold label or question
+text from that instrument has been read by the implementer at the time
+of writing; the sha ordering is data `35227dd` < this commit < any run
+commit.**
+
+### Predictions
+
+**P42 — the lane-off path is byte-identical. An arm, not an
+assumption.** With `rescue_expansion=False`, hit ids AND scores are
+identical to the pre-change engine across the dev corpus and a
+LongMemEval baseline arm reproducing 0.5246 / 0.8935 / 0.9443 to four
+decimals. **MISSED if** anything moves — the scope constraint is
+violated and the change is reverted regardless of every other result.
+
+**P43 — the dev set does not regress.** Unpadded lexical: asked ≥
+50%/90%, requery exactly 80%/100%, control ≥ 45%/85%. Damping a leg
+that is already helping is the obvious way this hurts.
+
+**P44 — LongMemEval improves on round 5.** macro@5 > **0.8830** (the
+arc's best) and macro@1 > **0.5014**.
+
+**P45 — THE kill criterion, at the line that has stood five rounds.**
+macro@5 ≥ **0.8900**.
+
+**P46 — reach is preserved.** macro@10 ≥ **0.9443**.
+
+**P47 — the damping is real and bounded.** The fraction of engaged legs
+receiving the reduced weight is > 0 and < 100% on both dev instruments
+— a curve that never fires, or always fires, is a constant by another
+name.
+
+**P48 — held-out, if it runs.** macro@5 ≥ its own lane-off baseline on
+`bench/heldout`. The clean instrument gets a veto: a mechanism that
+helps two dev-informed corpora and harms the blind one is overfitting
+with extra steps.
+
+### Kill criteria
+
+1. **P42 fails** → scope violated; revert, publish, stop.
+2. Dev-set recall@5 falls → not free on technical stores.
+3. macro@5 < 0.8900 → the default does not flip.
+4. macro@5 ≤ 0.8830 → no gain over round 5; the fusion hypothesis is
+   measured and dead like the other two.
+5. Held-out macro@5 below its lane-off baseline → the blind instrument
+   vetoes.
+6. `tree_dirty` true on any artifact → run void.
+
+### What flips `rescue_expansion` default-on
+
+Stated exactly, because this is the first mechanism with a plausible
+route to it. **All seven, conjunctively:**
+
+1. **P42 holds** — lane-off byte-identical.
+2. LongMemEval macro@5 ≥ **0.8935** — the baseline itself, not merely
+   the 0.8900 kill line. The lane must cost this corpus nothing.
+3. LongMemEval macro@1 ≥ **0.5246**, the baseline.
+4. LongMemEval macro@10 ≥ 0.9443.
+5. Dev set at or above its current lane-on figures (asked 50%/90%,
+   requery 80%/100%, control 45%/85%).
+6. **`bench/heldout` macro@5 ≥ its lane-off baseline** — the blind
+   instrument confirms rather than merely fails to contradict.
+7. Provenance clean everywhere, and the flip lands as its own reviewed
+   change citing this document.
+
+Anything short and the lane stays opt-in. In particular a LongMemEval
+result between 0.8900 and 0.8935 clears the kill line **and does not
+flip the default** — it means the lane still costs the corpus
+something.
+
+### Named future hypothesis, deliberately not tested here
+
+**H-fusion-general: the base legs may have the same problem.** Keyword
+and BM25 also contribute by rank, so a base leg with a weak top hit
+votes as hard as one with a strong one. If round 6 works, that is the
+obvious next question — and it is out of scope for this window by the
+constraint above, because changing base-leg fusion changes the default
+engine's ranking for every user, which needs its own preregistration
+and its own held-out budget. Recorded so it is not rediscovered as a
+surprise.
+
+### Declared confounds
+
+**1. Six legs above the floor.** The 100%-helpful stratum is n=6. The
+curve's upper anchor rests on that, which is why the rule reads the
+count where the labels *first* reach 100% rather than fitting a slope.
+
+**2. The proxy is one step removed.** "Helped" means the leg moved the
+gold document, measured on the dev corpus only. The held-out set has no
+such labels and never will — it can only be scored, not diagnosed.
+
+**3. Damping cannot rescue a leg that is simply wrong.** The mechanism
+reduces a weak leg's influence; it does not improve the leg. If the
+held-out harm comes from legs with high evidence counts that are
+nonetheless wrong, this changes nothing, and P44 is where that shows.
+
+**4. Instrument B is dev-contaminated** and labelled so in every row.
+
+### What is not claimed
+
+- Not that the base legs should change — explicitly out of scope.
+- Not that damping helps conversational stores; P44/P45 are the tests.
+- Not helpfulness, correctness or staleness.
+- Not a comparative claim; no claude-mem arm runs.
+
