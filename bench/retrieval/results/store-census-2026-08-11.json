@@ -1,0 +1,45 @@
+{
+  "separation_bar": 2.0,
+  "lme_sample": 20,
+  "seconds": 14.2,
+  "note": "STATISTICS ONLY \u2014 register-adjacent store statistics on both dev corpora. No ranking change, no adaptation rule, no threshold applied. The held-out instrument is not read.",
+  "any_statistic_separates": false,
+  "comparison": {
+    "docs": {
+      "dev": 180.0,
+      "longmemeval": 255.6,
+      "ratio": 1.42,
+      "separates": false
+    },
+    "mean_doc_len": {
+      "dev": 123.166667,
+      "longmemeval": 209.447669,
+      "ratio": 1.7005,
+      "separates": false
+    },
+    "type_token_ratio": {
+      "dev": 0.182905,
+      "longmemeval": 0.128778,
+      "ratio": 0.7041,
+      "separates": false
+    },
+    "hapax_share": {
+      "dev": 0.439704,
+      "longmemeval": 0.378082,
+      "ratio": 0.8599,
+      "separates": false
+    },
+    "filler_tok_share": {
+      "dev": 0.01078,
+      "longmemeval": 0.012154,
+      "ratio": 1.1274,
+      "separates": false
+    },
+    "stopword_share": {
+      "dev": 0.380331,
+      "longmemeval": 0.355088,
+      "ratio": 0.9336,
+      "separates": false
+    }
+  }
+}
