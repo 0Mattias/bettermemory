@@ -146,10 +146,10 @@ SCOPE = ["longmemeval"]
 RESCUE_EXPANSION = False
 
 # Whether the rescue leg's vote is conditioned on its own separation
-# (`search._RESCUE_LEG_STANDOUT`, rounds 3-4). Module-level and
-# defaulting to the SHIPPED behaviour; `off` drives the leg's standout
-# floor to zero, which is the pre-cap engine and the paired control
-# addenda 5 and 6 both require as arm 2. Nothing here changes a default install:
+# (`search._RESCUE_LEG_MIN_EVIDENCE`, rounds 3-5). Module-level and
+# defaulting to the SHIPPED behaviour; `off` drives the leg's
+# evidence floor to zero, which is the pre-cap engine and the paired
+# control addenda 5, 6 and 7 all require as arm 2. Nothing here changes a default install:
 # the cap lives inside the opt-in lane either way.
 LEG_MARGIN_CAP = True
 
@@ -618,7 +618,7 @@ def main() -> int:
     ABLATION = args.ablate
     LEG_MARGIN_CAP = args.leg_margin_cap == "on"
     if not LEG_MARGIN_CAP:
-        _engine._RESCUE_LEG_STANDOUT = 0.0
+        _engine._RESCUE_LEG_MIN_EVIDENCE = 0
     if ABLATION != "none" and not RESCUE_EXPANSION:
         print(
             f"--ablate {ABLATION} isolates half of the rescue lane, which is "

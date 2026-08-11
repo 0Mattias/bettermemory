@@ -68,16 +68,12 @@ def label_leg(memories: list[Memory], query: str, gold: str) -> dict[str, Any] |
     Returns None when the leg never engages — there is nothing to label.
 
     Both arms run the shipped `search()`. The withheld arm is produced
-    by driving the cap's PREDICATE to "no opinion" rather than by
-    raising its constant: most legs fail OPEN by design (fewer than
-    three candidates, or everything tied below rank 1), so a constant
-    high enough to suppress a judgeable leg still lets those vote, and
-    the counterfactual would silently be missing exactly the legs the
-    cap cannot see. Patching the predicate suppresses every leg, which
-    is the counterfactual the label needs.
+    by driving the cap's PREDICATE to "no evidence" rather than by
+    raising its constant, so every leg is suppressed regardless of
+    shape — the counterfactual the label needs.
     """
-    saved_predicate = engine._leg_standout
-    saved_standout = engine._RESCUE_LEG_STANDOUT
+    saved_predicate = engine._leg_top_evidence
+    saved_bar = engine._RESCUE_LEG_MIN_EVIDENCE
     saved_gate = engine._RESCUE_COVERAGE_GATE
 
     # Does the leg engage at all? The gate reads the floored base
@@ -97,18 +93,18 @@ def label_leg(memories: list[Memory], query: str, gold: str) -> dict[str, Any] |
         return None  # confident base ranking: no leg to label
 
     try:
-        engine._RESCUE_LEG_STANDOUT = 0.0  # every leg votes
+        engine._RESCUE_LEG_MIN_EVIDENCE = 0  # every leg votes
         voting = engine.search(
             memories, query, max_results=DEPTH, rescue_expansion=True
         )
-        engine._leg_standout = lambda leg: 0.0  # every leg withheld
-        engine._RESCUE_LEG_STANDOUT = 1.0
+        engine._leg_top_evidence = lambda leg: 0  # every leg withheld
+        engine._RESCUE_LEG_MIN_EVIDENCE = 1
         withheld = engine.search(
             memories, query, max_results=DEPTH, rescue_expansion=True
         )
     finally:
-        engine._leg_standout = saved_predicate
-        engine._RESCUE_LEG_STANDOUT = saved_standout
+        engine._leg_top_evidence = saved_predicate
+        engine._RESCUE_LEG_MIN_EVIDENCE = saved_bar
 
     with_leg = _rank_of(voting, gold)
     without = _rank_of(withheld, gold)
@@ -195,7 +191,11 @@ def _leg_shape(memories: list[Memory], query: str) -> dict[str, Any]:
 
 
 def lc_standout(leg: dict[str, Any]) -> float:
-    """Round 4's statistic, recomputed from a census record."""
+    """Round 4's retired statistic, recomputed from a census record.
+
+    Kept so the labels can show what the rules they replace would have
+    done — `bench/longmemeval/PREREGISTRATION.md` addendum 7 quotes
+    those counts."""
     gaps = leg["gaps"]
     if len(gaps) < 2:
         return float("inf")

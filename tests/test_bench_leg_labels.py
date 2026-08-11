@@ -22,7 +22,7 @@ from types import ModuleType
 
 
 from bettermemory.models import Confidence, Memory, Source, generate_ulid
-from bettermemory.search import _RESCUE_COVERAGE_GATE, _RESCUE_LEG_STANDOUT
+from bettermemory.search import _RESCUE_COVERAGE_GATE, _RESCUE_LEG_MIN_EVIDENCE
 
 _BENCH = Path(__file__).resolve().parents[1] / "bench" / "leg_labels.py"
 
@@ -115,7 +115,7 @@ def test_labelling_restores_every_constant_it_borrows() -> None:
     labels.label_leg(memories, "creds", memories[0].id)
     import bettermemory.search as engine
 
-    assert engine._RESCUE_LEG_STANDOUT == _RESCUE_LEG_STANDOUT
+    assert engine._RESCUE_LEG_MIN_EVIDENCE == _RESCUE_LEG_MIN_EVIDENCE
     assert engine._RESCUE_COVERAGE_GATE == _RESCUE_COVERAGE_GATE
 
 

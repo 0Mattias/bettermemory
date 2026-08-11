@@ -12,7 +12,6 @@ from __future__ import annotations
 from ._mcp import call_tool
 
 import inspect
-import math
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -36,11 +35,10 @@ from bettermemory.handlers.search import RankingInputs, resolve_ranking_inputs
 from bettermemory.models import Confidence, Memory, Source, generate_ulid
 from bettermemory.search import (
     _EXPANSION_TABLES,
-    _RESCUE_LEG_STANDOUT,
-    _STANDOUT_WINDOW,
+    _RESCUE_LEG_MIN_EVIDENCE,
     _STOPWORDS,
     _kebab_parts,
-    _leg_standout,
+    _leg_top_evidence,
     _stem_token,
     reciprocal_rank_fusion,
     search,
@@ -348,10 +346,16 @@ def test_rescue_surfaces_paraphrase_via_synonyms_with_honest_labels() -> None:
 def test_rescue_expansion_only_hit_reports_expansion_leg() -> None:
     """A doc reachable ONLY through synthesized vocabulary reports
     matched_leg='expansion', relevance 'low', match_terms [] — the
-    pure-paraphrase shape."""
+    pure-paraphrase shape.
+
+    The body has to be reachable by TWO synthesized terms: since round
+    5 a leg whose rank-1 rests on one matched term is withheld as a
+    coincidence (`_RESCUE_LEG_MIN_EVIDENCE`). A single-synonym rescue
+    on a tiny store no longer fires, which is a real narrowing of the
+    lane and is pinned separately below."""
     now = datetime.now(timezone.utc)
     memories = [
-        _memory("Credential injection for containers uses mounted files."),
+        _memory("Credential and secret injection for containers uses files."),
         _memory("The reconciliation job runs at 0300 UTC.", created=now),
     ]
     legs: dict[str, str] = {}
@@ -429,12 +433,20 @@ def test_kill_switch_restores_two_leg_hybrid() -> None:
     assert all(h.id != memories[0].id or h.match_terms for h in hits)
 
 
-def test_filler_df_floor_stops_filler_outranking_content() -> None:
+def test_the_rescue_lane_beats_a_filler_heavy_distractor() -> None:
     """The measured failure class: conversational filler is corpus-rare
-    in technical prose, so BM25 prices it like a discriminating term.
-    With the floor, one real content-term match must beat two
-    filler-term matches; with the switch off, the old (wrong) order
-    comes back — pinning the mechanism, not just the outcome."""
+    in technical prose, so BM25 prices it like a discriminating term and
+    a distractor matching "remember" + "supposed" outranks the right
+    memory matching "paged" + "ack".
+
+    **What actually fixes this fixture is the LEG, not the floor**, and
+    that is pinned below rather than assumed. Until round 5 this test
+    toggled `rescue_expansion` — which moves BOTH mechanisms — and
+    credited the floor. Driving them separately shows the floor alone
+    leaves the distractor on top; the expansion leg is what surfaces
+    the gold. The floor's own contribution is pinned directly in
+    `test_the_filler_floor_deflates_listed_words`.
+    """
     now = datetime.now(timezone.utc)
     gold = _memory(
         "The escalation rotation pages the secondary oncall after "
@@ -453,15 +465,44 @@ def test_filler_df_floor_stops_filler_outranking_content() -> None:
     memories = [gold, distractor, *filler_dense]
     query = "i remember getting paged, who is supposed to ack escalation"
 
-    with_floor = search(memories, query, max_results=2, rescue_expansion=True)
-    assert with_floor[0].id == gold.id
-
-    without = search(memories, query, max_results=2, rescue_expansion=False)
-    assert without[0].id == distractor.id, (
+    # Lane off: the measured wrong order.
+    off = search(memories, query, max_results=2, rescue_expansion=False)
+    assert off[0].id == distractor.id, (
         "expected the unfloored ranking to prefer the filler-heavy "
         "distractor; if this starts failing the fixture no longer "
         "reproduces the measured failure class and needs rebuilding"
     )
+
+    # Floor on, leg withheld: still wrong. The floor is not what fixes
+    # this — a fact the previous version of this test hid.
+    import bettermemory.search as engine
+
+    saved = engine._RESCUE_LEG_MIN_EVIDENCE
+    try:
+        engine._RESCUE_LEG_MIN_EVIDENCE = 99
+        floor_only = search(memories, query, max_results=2, rescue_expansion=True)
+        assert floor_only[0].id == distractor.id
+
+        # Leg voting: the gold surfaces.
+        engine._RESCUE_LEG_MIN_EVIDENCE = 0
+        with_leg = search(memories, query, max_results=2, rescue_expansion=True)
+        assert with_leg[0].id == gold.id
+    finally:
+        engine._RESCUE_LEG_MIN_EVIDENCE = saved
+
+
+def test_the_filler_floor_deflates_listed_words() -> None:
+    """The floor's own contribution, pinned where it cannot be confused
+    with the leg's: a listed filler word is priced at a document
+    frequency of at least half the collection, and an unlisted word is
+    left alone."""
+    from bettermemory.search import _filler_floor_stats
+
+    floored = _filler_floor_stats(None, ["remember", "escalation"], 200)
+    assert floored is not None
+    assert floored.body_df["remember"] >= 100
+    assert "escalation" not in floored.body_df
+    assert _filler_floor_stats(None, ["escalation"], 200) is None
 
 
 def test_bm25_and_keyword_modes_are_untouched_by_the_flag() -> None:
@@ -534,7 +575,7 @@ async def test_behavior_key_on_surfaces_the_paraphrase_over_the_wire(
     and the hit is labelled `matched_leg="expansion"` with honestly
     empty `match_terms`."""
     server = _server(tmp_path / "memories", rescue_expansion=True)
-    await _seed(server, "Credential injection for containers uses mounted files.")
+    await _seed(server, "Credential and secret injection for containers uses files.")
     await _seed(server, "The reconciliation job runs at 0300 UTC.")
 
     hits = await _search(server, "creds")
@@ -550,7 +591,7 @@ async def test_behavior_key_off_is_the_shipped_default_over_the_wire(
     """Default off, all the way through the handler: the same query
     returns nothing and no hit anywhere ever reports an expansion leg."""
     server = _server(tmp_path / "memories", rescue_expansion=False)
-    await _seed(server, "Credential injection for containers uses mounted files.")
+    await _seed(server, "Credential and secret injection for containers uses files.")
     await _seed(server, "The reconciliation job runs at 0300 UTC.")
 
     assert await _search(server, "creds") == []
@@ -599,7 +640,10 @@ def test_the_miss_probe_ranks_the_expansion_leg_when_the_lane_is_on() -> None:
     # written during the turn being audited.
     old = datetime.now(timezone.utc) - timedelta(days=3)
     memories = [
-        _memory("Credential injection for containers uses mounted files.", created=old),
+        _memory(
+            "Credential and secret injection for containers uses files.",
+            created=old,
+        ),
         _memory("The reconciliation job runs at 0300 UTC.", created=old),
     ]
     # Above MIN_PROBE_CONTENT_TOKENS; 'cred' is reachable only through
@@ -673,78 +717,54 @@ def _scored(*scores: float) -> list[tuple[Memory, float, list[str]]]:
     ]
 
 
-def test_leg_standout_measures_the_top_gap_against_the_legs_own_gaps() -> None:
-    """`gaps[0] / mean(gaps[1:])`. A leg whose top candidate pulls away
-    scores high; a leg descending in even steps scores 1.0."""
-    # gaps 5, 1, 1 -> 5 / 1.0
-    assert _leg_standout(_scored(10.0, 5.0, 4.0, 3.0)) == pytest.approx(5.0)
-    # even steps: no standout at all
-    assert _leg_standout(_scored(4.0, 3.0, 2.0, 1.0)) == pytest.approx(1.0)
+def _scored_matched(
+    *pairs: tuple[float, int],
+) -> list[tuple[Memory, float, list[str]]]:
+    """A leg-shaped list of `(score, matched-term-count)` pairs."""
+    now = datetime.now(timezone.utc)
+    return [
+        (
+            _memory(f"body {i}", created=now - timedelta(days=i)),
+            score,
+            [f"t{j}" for j in range(n)],
+        )
+        for i, (score, n) in enumerate(pairs)
+    ]
 
 
-def test_leg_standout_reads_the_fusion_ordering_not_list_order() -> None:
+def test_leg_top_evidence_counts_the_rank_one_candidates_matches() -> None:
+    assert _leg_top_evidence(_scored_matched((10.0, 3), (5.0, 1))) == 3
+    assert _leg_top_evidence(_scored_matched((10.0, 1), (5.0, 4))) == 1
+    assert _leg_top_evidence([]) == 0
+
+
+def test_leg_top_evidence_reads_the_fusion_ordering_not_list_order() -> None:
     """`_id_order` sorts by `(score, created, id)` before fusion, so the
-    rank-1 the cap judges must be the rank-1 that would have voted."""
-    assert _leg_standout(_scored(3.0, 12.0, 4.0, 3.0)) == pytest.approx(
-        _leg_standout(_scored(12.0, 4.0, 3.0, 3.0))
-    )
+    candidate judged must be the one that would have voted — not
+    whatever order `_score_bm25` happened to return."""
+    assert _leg_top_evidence(_scored_matched((3.0, 1), (12.0, 3), (7.0, 2))) == 3
 
 
-def test_leg_standout_reads_only_the_committed_window() -> None:
-    """The window is load-bearing: a long flat tail would drag the
-    denominator toward zero and make every leg look like a standout, so
-    engine and census must read the same shape."""
-    assert _STANDOUT_WINDOW == 12
-    short = _scored(10.0, 5.0, 4.0, 3.0)
-    padded = _scored(10.0, 5.0, 4.0, 3.0, *[3.0] * 30)
-    assert _leg_standout(padded) != pytest.approx(_leg_standout(short))
-    # …and the tail beyond the window cannot move the verdict at all.
-    a = _scored(*([10.0, 5.0] + [4.0 - 0.1 * i for i in range(10)]))
-    b = _scored(*([10.0, 5.0] + [4.0 - 0.1 * i for i in range(10)] + [0.0] * 20))
-    assert _leg_standout(a) == pytest.approx(_leg_standout(b))
+def test_the_evidence_bar_is_the_preregistered_one() -> None:
+    """Addendum 7 fixed this before the code existed, argued as the
+    minimum non-trivial count and confirmed against true labels: on 39
+    engaged dev legs it withholds 3 of 3 harmful and 0 of 21 helpful."""
+    assert _RESCUE_LEG_MIN_EVIDENCE == 2
 
 
-@pytest.mark.parametrize(
-    "leg",
-    [
-        [],
-        _scored(5.0),
-        _scored(5.0, 4.0),
-    ],
-)
-def test_a_leg_too_small_to_judge_fails_open(
-    leg: list[tuple[Memory, float, list[str]]],
-) -> None:
-    """No comparison set exists, so the statistic declines rather than
-    withholding — the same principle `compute_idf` applies to a corpus
-    df of 0. On a small store this is most legs."""
-    assert _leg_standout(leg) == math.inf
+def test_one_matched_term_is_a_coincidence_and_two_is_evidence() -> None:
+    """The rule in one line, at the boundary."""
+    assert _leg_top_evidence(_scored_matched((9.0, 1))) < _RESCUE_LEG_MIN_EVIDENCE
+    assert _leg_top_evidence(_scored_matched((9.0, 2))) >= _RESCUE_LEG_MIN_EVIDENCE
 
 
-def test_a_leg_tied_below_rank_one_is_a_perfect_standout() -> None:
-    """Everything below the top is tied, so the top gap is the only
-    structure there is."""
-    assert _leg_standout(_scored(9.0, 2.0, 2.0, 2.0)) == math.inf
-
-
-def test_a_totally_flat_leg_has_no_opinion() -> None:
-    """The one degenerate shape that withholds — the shape the whole
-    mechanism is named for."""
-    assert _leg_standout(_scored(2.0, 2.0, 2.0, 2.0)) == 0.0
-
-
-def test_the_threshold_is_the_preregistered_one() -> None:
-    """Addendum 6 fixed K before this code existed, by a stated rule
-    over the committed dev census. A later edit re-opens a
-    preregistered experiment on changed rules."""
-    assert _RESCUE_LEG_STANDOUT == 2.5
-
-
-def test_a_well_separated_leg_still_rescues() -> None:
-    """The pure-paraphrase shape survives the cap: 'creds' reaches a body
-    that only says 'credential', and that leg has one real candidate."""
+def test_a_leg_with_two_agreeing_terms_still_rescues() -> None:
+    """The pure-paraphrase shape survives the rule when the body is
+    reachable by two synthesized terms — 'creds' emits 'credential' and
+    'secret', and a body carrying both is evidence rather than
+    coincidence."""
     memories = [
-        _memory("Credential injection for containers uses mounted files."),
+        _memory("Credential and secret injection for containers uses files."),
         _memory("The reconciliation job runs at 0300 UTC."),
     ]
     legs: dict[str, str] = {}
@@ -760,12 +780,10 @@ def test_an_unseparated_leg_is_withheld_from_the_fusion(
 ) -> None:
     """The withholding wiring, isolated from fixture luck.
 
-    The statistic is pinned by its own unit tests above; what this pins
-    is that `search()` acts on its verdict. Driving `_leg_standout`
-    directly rather than hunting a corpus whose leg happens to be flat
-    is deliberate — most small legs are tied below rank 1 and so fail
-    OPEN by design, which would make a fixture-based version of this
-    test quietly vacuous.
+    The count is pinned by its own unit tests above; what this pins is
+    that `search()` acts on its verdict. Driving `_leg_top_evidence`
+    directly rather than hunting a corpus whose leg happens to rest on
+    one term keeps the test about the wiring.
 
     What is asserted is the RANKING, not score equality with
     `rescue_expansion=False`: the filler df-floor is keyed on
@@ -781,7 +799,7 @@ def test_an_unseparated_leg_is_withheld_from_the_fusion(
     query = "do we ever rip the old toggles back out"
 
     legs_voting: dict[str, str] = {}
-    monkeypatch.setattr("bettermemory.search._leg_standout", lambda leg: math.inf)
+    monkeypatch.setattr("bettermemory.search._leg_top_evidence", lambda leg: 99)
     voting = search(
         memories,
         query,
@@ -791,7 +809,7 @@ def test_an_unseparated_leg_is_withheld_from_the_fusion(
     )
 
     legs_withheld: dict[str, str] = {}
-    monkeypatch.setattr("bettermemory.search._leg_standout", lambda leg: 0.0)
+    monkeypatch.setattr("bettermemory.search._leg_top_evidence", lambda leg: 0)
     withheld = search(
         memories,
         query,
@@ -820,11 +838,11 @@ def test_the_cap_never_touches_a_query_the_gate_already_skips(
     memories = _corpus()
     query = "feature flag removal owner deadline"
     baseline = search(memories, query, max_results=3, rescue_expansion=True)
-    for theta in (0.0, 2.5, math.inf):
-        monkeypatch.setattr("bettermemory.search._RESCUE_LEG_STANDOUT", theta)
+    for bar in (0, 2, 99):
+        monkeypatch.setattr("bettermemory.search._RESCUE_LEG_MIN_EVIDENCE", bar)
         got = search(memories, query, max_results=3, rescue_expansion=True)
-        assert [h.id for h in got] == [h.id for h in baseline], theta
-        assert [h.score for h in got] == [h.score for h in baseline], theta
+        assert [h.id for h in got] == [h.id for h in baseline], bar
+        assert [h.score for h in got] == [h.score for h in baseline], bar
 
 
 def test_the_cap_is_inert_with_the_lane_off(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -832,8 +850,8 @@ def test_the_cap_is_inert_with_the_lane_off(monkeypatch: pytest.MonkeyPatch) -> 
     memories = _corpus()
     query = "do we ever rip the old toggles back out"
     baseline = search(memories, query, max_results=3)
-    for theta in (0.0, 2.5, math.inf):
-        monkeypatch.setattr("bettermemory.search._RESCUE_LEG_STANDOUT", theta)
+    for bar in (0, 2, 99):
+        monkeypatch.setattr("bettermemory.search._RESCUE_LEG_MIN_EVIDENCE", bar)
         got = search(memories, query, max_results=3)
-        assert [h.id for h in got] == [h.id for h in baseline], theta
-        assert [h.score for h in got] == [h.score for h in baseline], theta
+        assert [h.id for h in got] == [h.id for h in baseline], bar
+        assert [h.score for h in got] == [h.score for h in baseline], bar
