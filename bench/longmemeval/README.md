@@ -564,6 +564,81 @@ the evidence rule, which is its best form: strictly better than
 uncapped on the dev set, and the best @1/@10 it has produced on the
 held-out set.
 
+## P1a — store-derived PPMI, killed at the gate, 2026-08-11
+
+Round 5 closed the vote-conditioning line and named what was left: the
+remaining harm is in what the legs CONTAIN. P1a is the mechanism for
+that — derive expansion vocabulary from the collection being ranked
+instead of from committed tables, which is what C1 has demanded since
+round 2 (identical code flips sign between corpora, so a static table
+cannot be right for both).
+
+**Addendum 8's Gate 0 fired. No engine code was written, no arms ran,
+and the sealed held-out instrument was not spent.**
+
+### The bar, and why it is the only defensible one
+
+Round 5 established C5: `_hybrid_fuse` fuses by RANK, so a leg
+contributes `_RESCUE_LEG_WEIGHT / (rrf_k + rank)` however thin its
+evidence is, and the architecture offers **no way to discount a bad
+leg's vote**. The incumbent static tables already had their default
+killed on this corpus for being too imprecise. So a replacement source
+has to be at least as precise as what it replaces — 1.0×, with nothing
+to tune.
+
+### Measured
+
+Identically on both sides, over 40 dev probes: the fraction of emitted
+terms that appear in the gold document.
+
+| source | terms per probe | precision |
+| --- | --- | --- |
+| committed static tables (incumbent) | 5.65 | **0.2743** |
+| best PPMI cell, 36-point grid | 9.78 | **0.1253** |
+
+**0.46× the incumbent. Not one of the 36 grid cells reaches parity**;
+the range is 0.22×–0.46× across every combination of minimum document
+frequency (2/3/5), PPMI shift (1/2/4) and top-k (2/3/5/8). The best
+cell is also the *tightest* one — precision falls as more associates
+are admitted, which is the shape of a source with no usable head.
+
+Artifact: `bench/retrieval/results/ppmi-census-2026-08-11.json`.
+
+### The signal is real; the precision is not
+
+This is not "co-occurrence carries nothing". PPMI finds **150–201 gold
+terms the static tables miss**, on 34–38 of 40 probes. The association
+is there. What is missing is a way to keep it without the 10–65 terms
+per probe that come with it — and at 55 terms per probe the round-5
+evidence rule stops protecting anything, because matching two emitted
+terms becomes trivial for almost any document. **The guard that made
+round 5 the lane's best form is weakest exactly where a wide source
+needs it most.**
+
+### What this retires, and what it leaves
+
+**Retired: store-derived co-occurrence as an expansion source at
+personal-store scale.** 180 documents is thin for PPMI, and that is not
+an artifact of the benchmark — it is the size a personal memory store
+actually is. A mechanism that needs a large collection to be precise is
+the wrong mechanism for this product.
+
+**Not retired: the sealed instrument.** It has never been scored. The
+gate refusing to spend it is the point of having a gate: a single-use
+held-out check is not spent on a mechanism already known to be worse
+than the incumbent.
+
+**What the record now says about the campaign.** Two lanes have been
+measured to their end. Conditioning which legs vote plateaus at a
+ceiling (rounds 3–5). Replacing the source with store-derived
+statistics is less precise than the tables it would replace (P1a). Both
+findings point the same way: the expansion leg's contribution to a
+rank-based fusion cannot be made precise enough by choosing better
+words or better voters. The next mechanism that could change the
+picture has to change the FUSION — give the leg a contribution that
+scales with its evidence instead of with its rank — and no number here
+licenses that.
+
 ## The pre-4.0 headline: parity, not victory (dated record)
 
 On third-party ground, against labels neither party authored,

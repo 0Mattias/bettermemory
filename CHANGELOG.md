@@ -7,6 +7,39 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## Unreleased
+
+### Bench — a held-out instrument, and P1a killed at its gate
+
+No shipped behaviour changes; `[behavior] rescue_expansion` remains off
+by default and the engine is untouched.
+
+**A third instrument.** The arc index recorded that LongMemEval has
+informed parameters across four rounds and is no longer a clean
+held-out check. `bench/heldout/` is the replacement: a format
+specification written for an author who has never read the retrieval
+code and deliberately carrying no authoring guidance, a loader and
+scoring harness, and a seal protocol whose enforcement record is git
+history (data commit before preregistration before run) plus a no-read
+attestation. The content was authored independently; the implementer
+has not read it.
+
+**P1a, preregistered and killed before implementation.** Addendum 8
+asked whether store-derived co-occurrence (PPMI over the collection
+being ranked) could replace the committed expansion tables — the
+mechanism C1 has demanded since round 2, since identical code flips
+sign between corpora. Its Gate 0 is a precision-parity bar with nothing
+to tune: round 5 established that the fusion reads rank rather than
+evidence, so it cannot discount an imprecise leg, and the incumbent
+already had its default killed for imprecision. Measured on 40 dev
+probes, the best of 36 grid cells reaches **0.1253 against the
+incumbent's 0.2743 — 0.46×, with no cell at parity**. No engine code
+was written, no arms ran, and **the sealed instrument was not spent**.
+
+The signal is real — PPMI finds 150+ gold terms the static tables miss
+— but it arrives with 10–65 terms per probe, and at that width the
+round-5 evidence rule stops protecting anything.
+
 ## 5.2.0 - 2026-08-11
 
 A minor by the [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract):

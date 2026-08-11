@@ -446,6 +446,16 @@ least two synthesized terms — one is a coincidence, two agreeing is
 evidence — which on these labels withholds 3 of 3 harmful legs and 0
 of 21 helpful ones.
 
+**P1a was preregistered against this gold set and killed at its gate.**
+Addendum 8 asked whether store-derived co-occurrence (PPMI over the
+collection being ranked) could replace the committed tables. Measured
+here on 40 probes: the static tables emit 5.65 terms per probe at
+precision 0.2743, and the best of 36 PPMI grid cells emits 9.78 at
+**0.1253** — 0.46×, with no cell reaching parity. The signal is real
+(PPMI finds 150+ gold terms the tables miss) but arrives with 10–65
+terms per probe, and a rank-based fusion has no way to discount a leg
+that imprecise. See `results/ppmi-census-2026-08-11.json`.
+
 Unpadded corpus (`results/unpadded-2026-08-09.json`):
 
 | arm | probe | recall@1 | recall@5 |
