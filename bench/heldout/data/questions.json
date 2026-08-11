@@ -1,0 +1,993 @@
+[
+  {
+    "question_id": "q_ravi_1",
+    "persona_id": "ravi_bakery",
+    "question": "Before I signed the lease I was looking at a stall in the market hall too. What was the rent on that one?",
+    "answer_session_ids": [
+      "ravi_s1"
+    ]
+  },
+  {
+    "question_id": "q_ravi_2",
+    "persona_id": "ravi_bakery",
+    "question": "What did Nate quote me originally for the three phase, and what did the bill actually come to?",
+    "answer_session_ids": [
+      "ravi_s3",
+      "ravi_s4"
+    ]
+  },
+  {
+    "question_id": "q_ravi_3",
+    "persona_id": "ravi_bakery",
+    "question": "Marisol's first anniversary is coming up and I want to raise her off the right number. What did we settle on when I hired her?",
+    "answer_session_ids": [
+      "ravi_s5"
+    ]
+  },
+  {
+    "question_id": "q_ravi_4",
+    "persona_id": "ravi_bakery",
+    "question": "A customer asked me today where my starter came from. Who gave me Gladys, and how old is she?",
+    "answer_session_ids": [
+      "ravi_s6"
+    ]
+  },
+  {
+    "question_id": "q_ravi_5",
+    "persona_id": "ravi_bakery",
+    "question": "How many of the fougasse did I have sitting there unsold on opening Saturday?",
+    "answer_session_ids": [
+      "ravi_s8"
+    ]
+  },
+  {
+    "question_id": "q_ravi_6",
+    "persona_id": "ravi_bakery",
+    "question": "I am writing the one year post. How many loaves went out on the first day, and what did the first month bring in?",
+    "answer_session_ids": [
+      "ravi_s8",
+      "ravi_s9"
+    ]
+  },
+  {
+    "question_id": "q_ravi_7",
+    "persona_id": "ravi_bakery",
+    "question": "What am I charging Lumen per loaf?",
+    "answer_session_ids": [
+      "ravi_s10"
+    ]
+  },
+  {
+    "question_id": "q_ravi_8",
+    "persona_id": "ravi_bakery",
+    "question": "Who was the writer who came in on a pizza night and wrote about the rye?",
+    "answer_session_ids": [
+      "ravi_s11"
+    ]
+  },
+  {
+    "question_id": "q_nadia_1",
+    "persona_id": "nadia_eelgrass",
+    "question": "How much was the Renshaw worth, and what was the first thing I actually spent it on?",
+    "answer_session_ids": [
+      "nadia_s2",
+      "nadia_s3"
+    ]
+  },
+  {
+    "question_id": "q_nadia_2",
+    "persona_id": "nadia_eelgrass",
+    "question": "What was the survival split between the high and low density plots in that first pass?",
+    "answer_session_ids": [
+      "nadia_s5"
+    ]
+  },
+  {
+    "question_id": "q_nadia_3",
+    "persona_id": "nadia_eelgrass",
+    "question": "What was the line Halloway wrote on page one of chapter two?",
+    "answer_session_ids": [
+      "nadia_s8"
+    ]
+  },
+  {
+    "question_id": "q_nadia_4",
+    "persona_id": "nadia_eelgrass",
+    "question": "Who asked me the light question after my talk, and what did she have that I needed?",
+    "answer_session_ids": [
+      "nadia_s9"
+    ]
+  },
+  {
+    "question_id": "q_nadia_5",
+    "persona_id": "nadia_eelgrass",
+    "question": "Ferrante went on sabbatical. Who is sitting in the external seat now?",
+    "answer_session_ids": [
+      "nadia_s10"
+    ]
+  },
+  {
+    "question_id": "q_nadia_6",
+    "persona_id": "nadia_eelgrass",
+    "question": "What took out plots 4 and 5, and how did I end up building the chapter around it?",
+    "answer_session_ids": [
+      "nadia_s4",
+      "nadia_s8"
+    ]
+  },
+  {
+    "question_id": "q_nadia_7",
+    "persona_id": "nadia_eelgrass",
+    "question": "How many loggers did I buy and what did they cost each? I need it for the equipment inventory.",
+    "answer_session_ids": [
+      "nadia_s3"
+    ]
+  },
+  {
+    "question_id": "q_nadia_8",
+    "persona_id": "nadia_eelgrass",
+    "question": "Where did we land on authorship when Halloway pushed for his postdoc?",
+    "answer_session_ids": [
+      "nadia_s6"
+    ]
+  },
+  {
+    "question_id": "q_tomas_1",
+    "persona_id": "tomas_twins",
+    "question": "What number were we on the Cedarcrest waitlist before they called?",
+    "answer_session_ids": [
+      "tomas_s3"
+    ]
+  },
+  {
+    "question_id": "q_tomas_2",
+    "persona_id": "tomas_twins",
+    "question": "What did the insurance actually pay on the kitchen, and what did the whole thing end up costing us?",
+    "answer_session_ids": [
+      "tomas_s8",
+      "tomas_s10"
+    ]
+  },
+  {
+    "question_id": "q_tomas_3",
+    "persona_id": "tomas_twins",
+    "question": "Who ran Mateo's allergy testing after the party?",
+    "answer_session_ids": [
+      "tomas_s2"
+    ]
+  },
+  {
+    "question_id": "q_tomas_4",
+    "persona_id": "tomas_twins",
+    "question": "I am filling out the summer camp health form. What is Cedarcrest's actual nut rule, and what did the last allergy check come back at?",
+    "answer_session_ids": [
+      "tomas_s6",
+      "tomas_s9"
+    ]
+  },
+  {
+    "question_id": "q_tomas_5",
+    "persona_id": "tomas_twins",
+    "question": "What did the mechanic find underneath the Odyssey?",
+    "answer_session_ids": [
+      "tomas_s4"
+    ]
+  },
+  {
+    "question_id": "q_tomas_6",
+    "persona_id": "tomas_twins",
+    "question": "What was the number Rowe and Vance put on the job in the interview?",
+    "answer_session_ids": [
+      "tomas_s5"
+    ]
+  },
+  {
+    "question_id": "q_tomas_7",
+    "persona_id": "tomas_twins",
+    "question": "Who covers the kids on Wednesday afternoons, and what do we do for her?",
+    "answer_session_ids": [
+      "tomas_s7"
+    ]
+  },
+  {
+    "question_id": "q_tomas_8",
+    "persona_id": "tomas_twins",
+    "question": "What is the name of the contractor who did the kitchen?",
+    "answer_session_ids": [
+      "tomas_s8"
+    ]
+  },
+  {
+    "question_id": "q_ingrid_1",
+    "persona_id": "ingrid_ultra",
+    "question": "How much vertical was on the Kalve Ridge course again? Someone asked me at the club.",
+    "answer_session_ids": [
+      "ingrid_s1"
+    ]
+  },
+  {
+    "question_id": "q_ingrid_2",
+    "persona_id": "ingrid_ultra",
+    "question": "What did Rasmussen actually call the injury? I keep saying shin splints and I know that is wrong.",
+    "answer_session_ids": [
+      "ingrid_s3"
+    ]
+  },
+  {
+    "question_id": "q_ingrid_3",
+    "persona_id": "ingrid_ultra",
+    "question": "I am writing a gear post. Which shoes have I actually run in across this whole build?",
+    "answer_session_ids": [
+      "ingrid_s2",
+      "ingrid_s5",
+      "ingrid_s8"
+    ]
+  },
+  {
+    "question_id": "q_ingrid_4",
+    "persona_id": "ingrid_ultra",
+    "question": "What did my ferritin and vitamin D come back at when Hedda sent me for bloods?",
+    "answer_session_ids": [
+      "ingrid_s4"
+    ]
+  },
+  {
+    "question_id": "q_ingrid_5",
+    "persona_id": "ingrid_ultra",
+    "question": "How many grams an hour did I settle on, and where exactly did it fall apart when I pushed it?",
+    "answer_session_ids": [
+      "ingrid_s6"
+    ]
+  },
+  {
+    "question_id": "q_ingrid_6",
+    "persona_id": "ingrid_ultra",
+    "question": "Where was Kare allowed to meet me on the course, and how far did I get before I stopped?",
+    "answer_session_ids": [
+      "ingrid_s6",
+      "ingrid_s9"
+    ]
+  },
+  {
+    "question_id": "q_ingrid_7",
+    "persona_id": "ingrid_ultra",
+    "question": "What was my finish time at Bjorka?",
+    "answer_session_ids": [
+      "ingrid_s7"
+    ]
+  },
+  {
+    "question_id": "q_ingrid_8",
+    "persona_id": "ingrid_ultra",
+    "question": "People keep assuming I timed out. Why did I actually pull out?",
+    "answer_session_ids": [
+      "ingrid_s9"
+    ]
+  },
+  {
+    "question_id": "q_marcus_1",
+    "persona_id": "marcus_floors",
+    "question": "What did I actually score on the license exam?",
+    "answer_session_ids": [
+      "marcus_s3"
+    ]
+  },
+  {
+    "question_id": "q_marcus_2",
+    "persona_id": "marcus_floors",
+    "question": "What was the Bellview contract worth, and what did I end up collecting out of it?",
+    "answer_session_ids": [
+      "marcus_s6",
+      "marcus_s7"
+    ]
+  },
+  {
+    "question_id": "q_marcus_3",
+    "persona_id": "marcus_floors",
+    "question": "What is my credit limit with Halcyon?",
+    "answer_session_ids": [
+      "marcus_s5"
+    ]
+  },
+  {
+    "question_id": "q_marcus_4",
+    "persona_id": "marcus_floors",
+    "question": "What did the lawyer cost me on the lien?",
+    "answer_session_ids": [
+      "marcus_s7"
+    ]
+  },
+  {
+    "question_id": "q_marcus_5",
+    "persona_id": "marcus_floors",
+    "question": "What am I paying Dominic an hour, and what am I putting him in charge of now?",
+    "answer_session_ids": [
+      "marcus_s5",
+      "marcus_s9"
+    ]
+  },
+  {
+    "question_id": "q_marcus_6",
+    "persona_id": "marcus_floors",
+    "question": "What was the penalty when I missed that payroll deposit?",
+    "answer_session_ids": [
+      "marcus_s8"
+    ]
+  },
+  {
+    "question_id": "q_marcus_7",
+    "persona_id": "marcus_floors",
+    "question": "What did the scraper run me?",
+    "answer_session_ids": [
+      "marcus_s10"
+    ]
+  },
+  {
+    "question_id": "q_marcus_8",
+    "persona_id": "marcus_floors",
+    "question": "Renewal is coming up. What am I paying a year for the general liability?",
+    "answer_session_ids": [
+      "marcus_s2"
+    ]
+  },
+  {
+    "question_id": "q_hyewon_1",
+    "persona_id": "hyewon_lisbon",
+    "question": "What did the tax number end up costing me through Rui?",
+    "answer_session_ids": [
+      "hyewon_s2"
+    ]
+  },
+  {
+    "question_id": "q_hyewon_2",
+    "persona_id": "hyewon_lisbon",
+    "question": "What was I paying a month for the health insurance the consulate wanted?",
+    "answer_session_ids": [
+      "hyewon_s3"
+    ]
+  },
+  {
+    "question_id": "q_hyewon_3",
+    "persona_id": "hyewon_lisbon",
+    "question": "The vet wants Bori's history. What did she have to go through before the flight, and what did the bloodwork show in July?",
+    "answer_session_ids": [
+      "hyewon_s4",
+      "hyewon_s10"
+    ]
+  },
+  {
+    "question_id": "q_hyewon_4",
+    "persona_id": "hyewon_lisbon",
+    "question": "Teresa asked why I chose this neighborhood over the pretty one. Which places was I deciding between, and what actually decided it?",
+    "answer_session_ids": [
+      "hyewon_s5"
+    ]
+  },
+  {
+    "question_id": "q_hyewon_5",
+    "persona_id": "hyewon_lisbon",
+    "question": "What was the exact date I landed?",
+    "answer_session_ids": [
+      "hyewon_s6"
+    ]
+  },
+  {
+    "question_id": "q_hyewon_6",
+    "persona_id": "hyewon_lisbon",
+    "question": "What time was standup landing for me before I changed it, and who do I report to now?",
+    "answer_session_ids": [
+      "hyewon_s7",
+      "hyewon_s9"
+    ]
+  },
+  {
+    "question_id": "q_hyewon_7",
+    "persona_id": "hyewon_lisbon",
+    "question": "How long is my residence permit valid before I have to renew?",
+    "answer_session_ids": [
+      "hyewon_s8"
+    ]
+  },
+  {
+    "question_id": "q_hyewon_8",
+    "persona_id": "hyewon_lisbon",
+    "question": "What year would I be eligible to apply for citizenship?",
+    "answer_session_ids": [
+      "hyewon_s10"
+    ]
+  },
+  {
+    "question_id": "q_bea_1",
+    "persona_id": "bea_choir",
+    "question": "What did the commission cost us, and which pot did the money come out of?",
+    "answer_session_ids": [
+      "bea_s2"
+    ]
+  },
+  {
+    "question_id": "q_bea_2",
+    "persona_id": "bea_choir",
+    "question": "How much did I ask the Havermeyer Trust for, and what did they actually award us?",
+    "answer_session_ids": [
+      "bea_s9",
+      "bea_s10"
+    ]
+  },
+  {
+    "question_id": "q_bea_3",
+    "persona_id": "bea_choir",
+    "question": "What did Manzo say the hip actually was, and when was the injection?",
+    "answer_session_ids": [
+      "bea_s6"
+    ]
+  },
+  {
+    "question_id": "q_bea_4",
+    "persona_id": "bea_choir",
+    "question": "When did Gordon's letter arrive, and how did the trip out to see him go?",
+    "answer_session_ids": [
+      "bea_s7",
+      "bea_s10"
+    ]
+  },
+  {
+    "question_id": "q_bea_5",
+    "persona_id": "bea_choir",
+    "question": "How many people came to the spring concert?",
+    "answer_session_ids": [
+      "bea_s4"
+    ]
+  },
+  {
+    "question_id": "q_bea_6",
+    "persona_id": "bea_choir",
+    "question": "How many tenors did I inherit when I took over from Malcolm?",
+    "answer_session_ids": [
+      "bea_s1"
+    ]
+  },
+  {
+    "question_id": "q_bea_7",
+    "persona_id": "bea_choir",
+    "question": "Who took the rehearsals while I was not allowed to drive?",
+    "answer_session_ids": [
+      "bea_s3"
+    ]
+  },
+  {
+    "question_id": "q_bea_8",
+    "persona_id": "bea_choir",
+    "question": "What have I agreed to for the autumn season, and who am I sharing it with?",
+    "answer_session_ids": [
+      "bea_s11"
+    ]
+  },
+  {
+    "question_id": "q_jonah_1",
+    "persona_id": "jonah_indiegame",
+    "question": "What was the advance Fathom Row put on the table?",
+    "answer_session_ids": [
+      "jonah_s3"
+    ]
+  },
+  {
+    "question_id": "q_jonah_2",
+    "persona_id": "jonah_indiegame",
+    "question": "Why did the Fathom Row deal fall apart in the end?",
+    "answer_session_ids": [
+      "jonah_s4"
+    ]
+  },
+  {
+    "question_id": "q_jonah_3",
+    "persona_id": "jonah_indiegame",
+    "question": "Where were my wishlists before the demo went out, and where did they get to during the event?",
+    "answer_session_ids": [
+      "jonah_s2",
+      "jonah_s5"
+    ]
+  },
+  {
+    "question_id": "q_jonah_4",
+    "persona_id": "jonah_indiegame",
+    "question": "What did the localization cost me, and which languages did I get?",
+    "answer_session_ids": [
+      "jonah_s7"
+    ]
+  },
+  {
+    "question_id": "q_jonah_5",
+    "persona_id": "jonah_indiegame",
+    "question": "What did I price it at, and what was the launch discount?",
+    "answer_session_ids": [
+      "jonah_s8"
+    ]
+  },
+  {
+    "question_id": "q_jonah_6",
+    "persona_id": "jonah_indiegame",
+    "question": "First week units versus where I am now?",
+    "answer_session_ids": [
+      "jonah_s9",
+      "jonah_s10"
+    ]
+  },
+  {
+    "question_id": "q_jonah_7",
+    "persona_id": "jonah_indiegame",
+    "question": "What was that save bug during the demo, and how long did it take me to reproduce?",
+    "answer_session_ids": [
+      "jonah_s5"
+    ]
+  },
+  {
+    "question_id": "q_jonah_8",
+    "persona_id": "jonah_indiegame",
+    "question": "Who gave me the grant last autumn?",
+    "answer_session_ids": [
+      "jonah_s6"
+    ]
+  },
+  {
+    "question_id": "q_amina_1",
+    "persona_id": "amina_icu",
+    "question": "How much does the hospital put toward tuition, and what do I owe them afterward?",
+    "answer_session_ids": [
+      "amina_s2"
+    ]
+  },
+  {
+    "question_id": "q_amina_2",
+    "persona_id": "amina_icu",
+    "question": "What did the two programs cost when I was choosing between them, and when do I actually finish?",
+    "answer_session_ids": [
+      "amina_s1",
+      "amina_s10"
+    ]
+  },
+  {
+    "question_id": "q_amina_3",
+    "persona_id": "amina_icu",
+    "question": "What did I end up getting in advanced patho that first term?",
+    "answer_session_ids": [
+      "amina_s6"
+    ]
+  },
+  {
+    "question_id": "q_amina_4",
+    "persona_id": "amina_icu",
+    "question": "Why did my clinical placement collapse, and where did I end up going instead?",
+    "answer_session_ids": [
+      "amina_s8"
+    ]
+  },
+  {
+    "question_id": "q_amina_5",
+    "persona_id": "amina_icu",
+    "question": "For the paperwork I need the dates. When did I fly out after the stroke, and when was the funeral?",
+    "answer_session_ids": [
+      "amina_s4",
+      "amina_s9"
+    ]
+  },
+  {
+    "question_id": "q_amina_6",
+    "persona_id": "amina_icu",
+    "question": "What is the rent difference between Ridgeley and the Farrow Street place?",
+    "answer_session_ids": [
+      "amina_s7"
+    ]
+  },
+  {
+    "question_id": "q_amina_7",
+    "persona_id": "amina_icu",
+    "question": "What was the shift in the spring I could not shake?",
+    "answer_session_ids": [
+      "amina_s3"
+    ]
+  },
+  {
+    "question_id": "q_amina_8",
+    "persona_id": "amina_icu",
+    "question": "What did I drop my hours to when school started?",
+    "answer_session_ids": [
+      "amina_s5"
+    ]
+  },
+  {
+    "question_id": "q_derek_1",
+    "persona_id": "derek_sloop",
+    "question": "What did I pay for Perpetua, and where was she when I found her?",
+    "answer_session_ids": [
+      "derek_s1"
+    ]
+  },
+  {
+    "question_id": "q_derek_2",
+    "persona_id": "derek_sloop",
+    "question": "What did the surveyor cost, and what did she actually find?",
+    "answer_session_ids": [
+      "derek_s7",
+      "derek_s8"
+    ]
+  },
+  {
+    "question_id": "q_derek_3",
+    "persona_id": "derek_sloop",
+    "question": "What were my three engine options, and what did the rebuild come to?",
+    "answer_session_ids": [
+      "derek_s3"
+    ]
+  },
+  {
+    "question_id": "q_derek_4",
+    "persona_id": "derek_sloop",
+    "question": "What is the mooring at Munsey Cove costing me for a season?",
+    "answer_session_ids": [
+      "derek_s5"
+    ]
+  },
+  {
+    "question_id": "q_derek_5",
+    "persona_id": "derek_sloop",
+    "question": "How many days did I get on the water this year, and how far was the August trip?",
+    "answer_session_ids": [
+      "derek_s9",
+      "derek_s10"
+    ]
+  },
+  {
+    "question_id": "q_derek_6",
+    "persona_id": "derek_sloop",
+    "question": "What turned out to be causing the overheating?",
+    "answer_session_ids": [
+      "derek_s9"
+    ]
+  },
+  {
+    "question_id": "q_derek_7",
+    "persona_id": "derek_sloop",
+    "question": "What did I end up paying for the used sails?",
+    "answer_session_ids": [
+      "derek_s4"
+    ]
+  },
+  {
+    "question_id": "q_derek_8",
+    "persona_id": "derek_sloop",
+    "question": "What was it I found weeping when I pulled the deck hardware apart in December?",
+    "answer_session_ids": [
+      "derek_s6"
+    ]
+  },
+  {
+    "question_id": "q_priya_1",
+    "persona_id": "priya_fintech",
+    "question": "What were the two processors in the migration, the one we came off and the one we went to?",
+    "answer_session_ids": [
+      "priya_s1"
+    ]
+  },
+  {
+    "question_id": "q_priya_2",
+    "persona_id": "priya_fintech",
+    "question": "What was the base at Halyard, and what did Northbeam come back with when I told them?",
+    "answer_session_ids": [
+      "priya_s7",
+      "priya_s8"
+    ]
+  },
+  {
+    "question_id": "q_priya_3",
+    "persona_id": "priya_fintech",
+    "question": "What did the migration save us a year? I need the number for the review.",
+    "answer_session_ids": [
+      "priya_s6"
+    ]
+  },
+  {
+    "question_id": "q_priya_4",
+    "persona_id": "priya_fintech",
+    "question": "What did the error rate go to during the phase one ramp, and what caused it?",
+    "answer_session_ids": [
+      "priya_s4"
+    ]
+  },
+  {
+    "question_id": "q_priya_5",
+    "persona_id": "priya_fintech",
+    "question": "Who did I report to before Aditya, and how did the Aditya chapter end?",
+    "answer_session_ids": [
+      "priya_s3",
+      "priya_s10"
+    ]
+  },
+  {
+    "question_id": "q_priya_6",
+    "persona_id": "priya_fintech",
+    "question": "What was the compliance blocker that nearly ate the migration timeline?",
+    "answer_session_ids": [
+      "priya_s2"
+    ]
+  },
+  {
+    "question_id": "q_priya_7",
+    "persona_id": "priya_fintech",
+    "question": "Who got promoted the cycle I was told to wait?",
+    "answer_session_ids": [
+      "priya_s5"
+    ]
+  },
+  {
+    "question_id": "q_priya_8",
+    "persona_id": "priya_fintech",
+    "question": "How many payouts did the rules engine change block, and how long was it broken?",
+    "answer_session_ids": [
+      "priya_s9"
+    ]
+  },
+  {
+    "question_id": "q_leo_1",
+    "persona_id": "leo_bees",
+    "question": "What was Hodgkin's mite count when I did the washes that summer?",
+    "answer_session_ids": [
+      "leo_s3"
+    ]
+  },
+  {
+    "question_id": "q_leo_2",
+    "persona_id": "leo_bees",
+    "question": "What did I pull in honey the first year compared to this year?",
+    "answer_session_ids": [
+      "leo_s4",
+      "leo_s10"
+    ]
+  },
+  {
+    "question_id": "q_leo_3",
+    "persona_id": "leo_bees",
+    "question": "What did the nuc from Ida cost me?",
+    "answer_session_ids": [
+      "leo_s7"
+    ]
+  },
+  {
+    "question_id": "q_leo_4",
+    "persona_id": "leo_bees",
+    "question": "The Selvaggios are moving and the new people asked about the bees. What was their complaint and what did I do about it?",
+    "answer_session_ids": [
+      "leo_s6"
+    ]
+  },
+  {
+    "question_id": "q_leo_5",
+    "persona_id": "leo_bees",
+    "question": "Where did the swarm end up, and what happened to Hodgkin over the winter?",
+    "answer_session_ids": [
+      "leo_s2",
+      "leo_s7"
+    ]
+  },
+  {
+    "question_id": "q_leo_6",
+    "persona_id": "leo_bees",
+    "question": "What am I charging for the small jars at the market?",
+    "answer_session_ids": [
+      "leo_s5"
+    ]
+  },
+  {
+    "question_id": "q_leo_7",
+    "persona_id": "leo_bees",
+    "question": "What does the district require before the club can meet?",
+    "answer_session_ids": [
+      "leo_s8"
+    ]
+  },
+  {
+    "question_id": "q_leo_8",
+    "persona_id": "leo_bees",
+    "question": "Where did the original packages come from?",
+    "answer_session_ids": [
+      "leo_s1"
+    ]
+  },
+  {
+    "question_id": "q_sofia_1",
+    "persona_id": "sofia_dance",
+    "question": "What was the apprenticeship paying me, and what did they put on the table for next season?",
+    "answer_session_ids": [
+      "sofia_s3",
+      "sofia_s9"
+    ]
+  },
+  {
+    "question_id": "q_sofia_2",
+    "persona_id": "sofia_dance",
+    "question": "What exactly did I do to my ankle last year?",
+    "answer_session_ids": [
+      "sofia_s4"
+    ]
+  },
+  {
+    "question_id": "q_sofia_3",
+    "persona_id": "sofia_dance",
+    "question": "What was the Ghent residency actually worth, and when was the application due?",
+    "answer_session_ids": [
+      "sofia_s5"
+    ]
+  },
+  {
+    "question_id": "q_sofia_4",
+    "persona_id": "sofia_dance",
+    "question": "How long is the solo I made in Ghent?",
+    "answer_session_ids": [
+      "sofia_s8"
+    ]
+  },
+  {
+    "question_id": "q_sofia_5",
+    "persona_id": "sofia_dance",
+    "question": "Which two auditions did I do that first spring, and how far did I get in each?",
+    "answer_session_ids": [
+      "sofia_s1",
+      "sofia_s2"
+    ]
+  },
+  {
+    "question_id": "q_sofia_6",
+    "persona_id": "sofia_dance",
+    "question": "What am I paying for the studio now that I am on my own?",
+    "answer_session_ids": [
+      "sofia_s9"
+    ]
+  },
+  {
+    "question_id": "q_sofia_7",
+    "persona_id": "sofia_dance",
+    "question": "What were the dates of the Undertow run?",
+    "answer_session_ids": [
+      "sofia_s7"
+    ]
+  },
+  {
+    "question_id": "q_sofia_8",
+    "persona_id": "sofia_dance",
+    "question": "What am I getting for the Saturday class?",
+    "answer_session_ids": [
+      "sofia_s10"
+    ]
+  },
+  {
+    "question_id": "q_walt_1",
+    "persona_id": "walt_machinist",
+    "question": "What were the two pension options on the estimate, and which one did I end up filing?",
+    "answer_session_ids": [
+      "walt_s1",
+      "walt_s9"
+    ]
+  },
+  {
+    "question_id": "q_walt_2",
+    "persona_id": "walt_machinist",
+    "question": "What was the severance formula they read out, and where did it actually cap me?",
+    "answer_session_ids": [
+      "walt_s4",
+      "walt_s8"
+    ]
+  },
+  {
+    "question_id": "q_walt_3",
+    "persona_id": "walt_machinist",
+    "question": "What was my A1c when Priest first put me on the metformin?",
+    "answer_session_ids": [
+      "walt_s3"
+    ]
+  },
+  {
+    "question_id": "q_walt_4",
+    "persona_id": "walt_machinist",
+    "question": "What did I end up paying for the motorhome?",
+    "answer_session_ids": [
+      "walt_s6"
+    ]
+  },
+  {
+    "question_id": "q_walt_5",
+    "persona_id": "walt_machinist",
+    "question": "What did we work out with Renata in the end?",
+    "answer_session_ids": [
+      "walt_s7"
+    ]
+  },
+  {
+    "question_id": "q_walt_6",
+    "persona_id": "walt_machinist",
+    "question": "What does it cost a month to go on Deb's plan?",
+    "answer_session_ids": [
+      "walt_s8"
+    ]
+  },
+  {
+    "question_id": "q_walt_7",
+    "persona_id": "walt_machinist",
+    "question": "What broke on the May trip, and what did it cost me?",
+    "answer_session_ids": [
+      "walt_s10"
+    ]
+  },
+  {
+    "question_id": "q_walt_8",
+    "persona_id": "walt_machinist",
+    "question": "Before I decided, what were the two things on wheels I was pricing out?",
+    "answer_session_ids": [
+      "walt_s2"
+    ]
+  },
+  {
+    "question_id": "q_yusuf_1",
+    "persona_id": "yusuf_hospitalsec",
+    "question": "In that first payroll phish, how many people opened it and how many actually typed in a password?",
+    "answer_session_ids": [
+      "yusuf_s1"
+    ]
+  },
+  {
+    "question_id": "q_yusuf_2",
+    "persona_id": "yusuf_hospitalsec",
+    "question": "What was our click rate on the simulation before any of this started, and what was it when we reran it?",
+    "answer_session_ids": [
+      "yusuf_s2",
+      "yusuf_s9"
+    ]
+  },
+  {
+    "question_id": "q_yusuf_3",
+    "persona_id": "yusuf_hospitalsec",
+    "question": "What were the three high findings in the external assessment?",
+    "answer_session_ids": [
+      "yusuf_s5"
+    ]
+  },
+  {
+    "question_id": "q_yusuf_4",
+    "persona_id": "yusuf_hospitalsec",
+    "question": "How many exceptions were we carrying mid rollout, and when did we finally get to everybody?",
+    "answer_session_ids": [
+      "yusuf_s4",
+      "yusuf_s9"
+    ]
+  },
+  {
+    "question_id": "q_yusuf_5",
+    "persona_id": "yusuf_hospitalsec",
+    "question": "What did the vendor laptop bring in, and how long did containment take?",
+    "answer_session_ids": [
+      "yusuf_s7"
+    ]
+  },
+  {
+    "question_id": "q_yusuf_6",
+    "persona_id": "yusuf_hospitalsec",
+    "question": "What is the immutable backup storage costing us a year?",
+    "answer_session_ids": [
+      "yusuf_s3"
+    ]
+  },
+  {
+    "question_id": "q_yusuf_7",
+    "persona_id": "yusuf_hospitalsec",
+    "question": "How much did I miss the certification by on the first attempt?",
+    "answer_session_ids": [
+      "yusuf_s8"
+    ]
+  },
+  {
+    "question_id": "q_yusuf_8",
+    "persona_id": "yusuf_hospitalsec",
+    "question": "Why did we end up on an every other week on call rotation?",
+    "answer_session_ids": [
+      "yusuf_s6"
+    ]
+  }
+]

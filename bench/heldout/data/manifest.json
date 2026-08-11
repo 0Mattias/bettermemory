@@ -1,0 +1,10 @@
+{
+  "instrument": "heldout",
+  "version": "1",
+  "authored": "2026-08-11",
+  "author": "blind instrument author, working from bench/heldout/FORMAT.md alone",
+  "license": "MIT",
+  "license_notes": "Original work written for this instrument. No text is copied or adapted from any external dataset, book, article, or website. All people, places, businesses, products and events are invented; any resemblance to real ones is coincidental. Licensed under the MIT license of the repository that contains it.",
+  "description": "Fifteen invented multi-session personal-assistant histories and 120 later-recall questions in each user's own voice, with exhaustive per-question gold session labels.",
+  "sealed": true
+}
