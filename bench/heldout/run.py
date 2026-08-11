@@ -92,7 +92,7 @@ def validate_personas(personas: Any) -> dict[str, list[dict[str, Any]]]:
     load is not a weaker instrument, it is not an instrument.
     """
     _require(
-        isinstance(personas, list) and personas,
+        isinstance(personas, list) and bool(personas),
         "personas.json must be a non-empty array",
     )
     by_persona: dict[str, list[dict[str, Any]]] = {}

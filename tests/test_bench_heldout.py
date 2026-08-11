@@ -71,14 +71,32 @@ def test_the_fixture_declares_itself_not_an_instrument() -> None:
     assert "not an instrument" in (_FIXTURES / "README.md").read_text().lower()
 
 
-def test_no_instrument_data_is_committed_yet() -> None:
-    """The container ships before the content, by design. If this starts
-    failing, the instrument has landed and the seal in FORMAT.md applies
-    from that commit onward."""
-    assert not (_BENCH / "data").exists(), (
-        "bench/heldout/data/ exists — the instrument has landed, and the "
-        "seal protocol in FORMAT.md now governs reading it"
+def test_the_landed_instrument_is_loadable_and_sealed() -> None:
+    """Post-landing form of the tripwire. The instrument landed in
+    `35227dd`, so the seal in FORMAT.md is in force from that commit
+    until the preregistered run.
+
+    **This test is deliberately blind.** It asserts existence, mechanical
+    loadability and the seal flag; it never renders question text, gold
+    labels, or persona content, and it must not be extended to. The
+    harness loading files programmatically is fine — that is what the
+    seal permits and what `--validate` exists for. Printing any of it is
+    not.
+    """
+    data = _BENCH / "data"
+    assert data.exists(), "the instrument has not landed"
+    for name in ("personas.json", "questions.json", "manifest.json"):
+        assert (data / name).exists(), f"missing {name}"
+
+    by_persona, questions, manifest = harness.load(data)
+    # Counts and flags only — no content crosses this boundary.
+    assert len(by_persona) >= 2
+    assert len(questions) >= 1
+    assert manifest["sealed"] is True, (
+        "manifest does not assert the seal; the instrument cannot be used "
+        "as a held-out check"
     )
+    assert manifest["instrument"] != "harness-fixture"
 
 
 # ---------------------------------------------------------------------------
