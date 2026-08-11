@@ -1433,3 +1433,221 @@ guard: within **1.05×** the uncapped arm in the same session.
 - **Not helpfulness, correctness, or staleness.**
 - **Not a comparative claim.** No claude-mem arm runs in round 4.
 - **Not the above-threshold regime on Instrument B.**
+
+## Addendum 7 — round-5 experiment: the leg needs more than one word of evidence, 2026-08-10
+
+Round 4 retired threshold FORM as the lever and named what replaced it
+as the binding constraint: every rule so far was calibrated against a
+proxy. This addendum removes the proxy. Predictions continue —
+P1–P5, P6–P8, P9–P15, P16–P21, P22–P28 — so this owns **P29–P34**.
+
+Two instruments, both bound. **This is the campaign's round-5
+experiment and the last of the arc**; the result is a win or a kill
+either way.
+
+### What rounds 2–4 established
+
+| round | mechanism | held-out @1 | held-out @5 | what it settled |
+| --- | --- | --- | --- | --- |
+| 2 | df-gate emitted terms | — | — | killed pre-run: the harmful terms are RARE, so vocabulary frequency does not separate |
+| 3 | fixed margin threshold | 0.4916 | 0.8830 | first ground gained; a fixed level cannot transfer |
+| 4 | self-calibrating standout | 0.4896 | 0.8790 | calibration solved (2.0-pt firing gap vs 17.1) and insufficient |
+| — | lane, no cap | 0.4772 | 0.8770 | |
+| — | baseline | 0.5246 | 0.8935 | |
+
+Rounds 3 and 4 both cost the dev set (three questions at recall@5, then
+two) while both caught the same harm. **The threshold was never the
+problem; the label it was fitted to was.**
+
+### The label, and what it revealed
+
+`bench/leg_labels.py` runs the shipped ranker twice per dev question —
+leg voting, leg withheld — and records where the gold document lands.
+On 39 engaged dev legs (`results/leg-labels-2026-08-10.json` under
+`bench/retrieval/`):
+
+| verdict | n |
+| --- | --- |
+| helped (rescued into the top 5, or moved up) | **21** |
+| hurt (broke out of the top 5, or moved down) | **3** |
+| neutral | 15 |
+
+**Only three legs of thirty-nine actually harm anything.** Round 3
+withheld 25 engaged legs and round 4 withheld 17 — to catch those
+three. Against the true labels they withheld **9** and **7 helpful
+legs** respectively. That is the dev-set regression, exactly.
+
+### Hypothesis
+
+> **A leg whose top candidate matched only ONE synthesized term has a
+> coincidence, not a paraphrase match. Two independent synthesized
+> terms agreeing on the same document is evidence, and requiring it
+> separates the harmful legs from the helpful ones without touching the
+> helpful ones at all.**
+
+### The rule
+
+**The leg votes iff its rank-1 candidate matched at least
+`_RESCUE_LEG_MIN_EVIDENCE` (2) synthesized terms.** Nothing else — no
+score, no ratio, no distribution, no window.
+
+```
+if exp_leg and len(top_of(exp_leg).matched) < _RESCUE_LEG_MIN_EVIDENCE:
+    exp_leg = []
+```
+
+**Why 2 and why it should transfer.** It is the minimum non-trivial
+count: "more than one piece of evidence" is a bar stated independently
+of any measurement, and the labels confirm it rather than select it.
+This is the first rule in the arc that is **not a threshold on a
+distribution** — it is a count of independent agreeing terms, so there
+is no distribution to shift between corpora. Rounds 3 and 4 failed
+because `margin_ratio` and `standout` are statistics whose spread
+depends on the store; a count of matched terms has no such spread. The
+transfer argument is therefore structural rather than empirical, which
+is the strongest form available after two empirical ones failed.
+
+**Measured consequence on the dev labels, stated in advance:** withholds
+**3 of 3** harmful legs, **0 of 21** helpful legs, and 8 of 15 neutral
+ones. Firing rate **31.7%** of engaged legs (round 3: 61%, round 4:
+41.5%).
+
+**This REPLACES the standout cap.** `_RESCUE_LEG_STANDOUT`,
+`_STANDOUT_WINDOW` and `_leg_standout` are removed. Round 4 retired
+threshold form; keeping a retired mechanism beside its replacement
+would leave two constants where the campaign has argued down to one.
+
+### Gate 0 — dev-side, and honestly derivable
+
+**Gate 0a — perfect separation on true labels.** The rule must withhold
+**100% of harmful** legs and **0% of helpful** ones on the committed
+dev labels. Anything less and it is another proxy. *(Measured before
+this commit: 3/3 and 0/21.)*
+
+**Gate 0b — non-trivial.** It must withhold at least one leg and fewer
+than half of the engaged population, so it is neither a no-op nor an
+off-switch. *(Measured: 13 of 41, 31.7%.)*
+
+Both pass. As in round 4, this is a dev-side gate and therefore weak
+evidence about transfer; the held-out arm does the work. **No held-out
+statistic is read before the run.**
+
+### Instrument A — `bench/retrieval/` (DEVELOPMENT set)
+
+```sh
+.venv/bin/python bench/retrieval/run.py --rescue-expansion on --json
+.venv/bin/python bench/retrieval/run.py --rescue-expansion on --pad-to 600 --prefilter both --json
+.venv/bin/python bench/retrieval/run.py --rescue-expansion on --index-threshold 180 --prefilter both --json
+```
+
+### Instrument B — this directory (HELD-OUT set)
+
+500 questions, sha256 `d6f21ea9…c3a442`, depth 200, lexical arm,
+`--per-question` mandatory. **Four arms** — round 4 settled the floor
+question (the clean `floor-off` arm reproduced floor-on exactly), so
+the floor ablation is retired and not repeated:
+
+1. **baseline, lane off** — must reproduce 0.5246 / 0.8935 / 0.9443.
+   **If it does not, STOP.**
+2. **lane on, no cap** — must reproduce 0.4772 / 0.8770 / 0.9471.
+3. **lane on, evidence rule** — the experiment.
+4. **`--ablate leg-only` + evidence rule** — the leg in isolation,
+   kept because it is the arm that carried every regression.
+
+**Out of scope by standing guard:** round 4's finding that `leg-only`
+beats table-intact by 0.0040 — filler back in the emitted terms helping
+this corpus — is recorded and NOT acted on. The 5.1.1 emission filter
+is untouched this round and is a candidate for its own preregistration
+only.
+
+### Predictions
+
+**P29 — the dev set is preserved EXACTLY. The explicit target.**
+Unpadded lexical: asked **50%/90%**, requery **80%/100%**, control
+**45%/85%** — every cell identical to the uncapped lane. Rounds 3 and
+4 lost three and two questions here; the rule withholds zero helpful
+legs by construction, so anything less means the true labels did not
+generalize even within the dev set. **MISSED if** any cell moves.
+
+**P30 — no held-out regression. THE kill criterion, at the line that
+has stood four rounds.** macro@5 ≥ **0.8900**.
+
+**P31 — it beats every prior round.** macro@5 > **0.8830** (round 3's
+best) and macro@1 > **0.4916**. **MISSED if** either is at or below —
+removing the proxy bought nothing, and the lane's harm is not
+concentrated in the legs the labels say it is.
+
+**P32 — recall@1 recovers materially.** macro@1 ≥ **0.5046**, within
+two points of baseline.
+
+**P33 — reach is preserved.** macro@10 ≥ **0.9443**.
+
+**P34 — the firing rate is LOW and comparable across corpora.** The
+rule fires on ≤ **45%** of engaged held-out questions, and within **±15
+points** of the dev rate (31.7%), i.e. in **[16.7%, 45%]**. A count has
+no distribution to shift, so a wide gap here would falsify the
+structural transfer argument even if recall improves.
+
+### Kill criteria
+
+1. Baseline does not reproduce to four decimals → stop.
+2. Uncapped arm does not reproduce 0.4772 / 0.8770 / 0.9471 → stop.
+3. macro@5 < 0.8900 → the default does not flip (P30).
+4. Any dev-set cell moves → the rule is not free on technical stores.
+5. macro@5 ≤ 0.8830 → no gain over round 3 (P31).
+6. Firing rate outside [16.7%, 45%] → the structural transfer argument
+   is false (P34).
+7. `tree_dirty` true on any artifact → run void.
+
+### What would justify flipping `rescue_expansion` default-on
+
+**All eight, conjunctively.** 1. macro@5 ≥ 0.8900. 2. macro@5 ≥
+**0.8935**, the baseline itself. 3. macro@1 ≥ 0.5046. 4. macro@10 ≥
+0.9443. 5. Every dev cell unmoved. 6. Firing rate inside the P34 band
+on both corpora. 7. Both determinism reproductions exact,
+`tree_dirty: false`, artifacts committed. 8. The flip lands as its own
+reviewed change citing this document.
+
+**What does NOT justify a flip:** a larger dev-set win; a gain
+concentrated in one question class; an improvement only at @10.
+
+### Declared confounds
+
+**1. Three harmful legs.** The rule is confirmed against a harmful
+population of THREE. That is the weakest evidence base in the arc, and
+it is why the constant is argued structurally (the minimum non-trivial
+count) rather than fitted — there is no threshold to tune here, only a
+bar to state. A different corpus could have harmful legs at
+`top_matched` 2, and nothing in this document would have seen it.
+
+**2. The label is dev-side and gold-anchored.** It needs a gold
+document, so it cannot be computed on the held-out corpus at all —
+which is what keeps that corpus clean, and also what means the rule has
+never been checked against held-out harm.
+
+**3. `top_matched` counts terms, not their quality.** Two matched
+synonyms from the same table row are less independent than two from
+different sources, and the rule cannot tell them apart.
+
+**4. Above the index threshold the leg ranks a nominated slice**, so
+its rank-1 may match fewer terms for pool reasons rather than evidence
+reasons. Instrument A measures that regime; Instrument B never has.
+
+**5. Small stores.** A leg with one candidate can still match one term
+and would be withheld, where rounds 3 and 4 failed open. This rule is
+STRICTER on tiny legs than its predecessors, which is a deliberate
+consequence of counting evidence rather than measuring spread.
+
+**6. n=20 on the dev set.** One question is 5 points.
+
+**7. Cost.** One `len()` on a list the engine already built.
+
+### What is not claimed
+
+- **Not that the rule helps conversational stores** — only that it
+  should stop hurting them while leaving technical stores alone.
+- **Not that two terms is optimal** — only that it is the minimum
+  non-trivial count and that the dev labels separate perfectly on it.
+- **Not helpfulness, correctness, or staleness.**
+- **Not a comparative claim.** No claude-mem arm runs.
+- **Not the above-threshold regime on Instrument B.**

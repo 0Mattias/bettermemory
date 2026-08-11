@@ -436,6 +436,16 @@ structure — `gap[0] / mean(other gaps) ≥ 2.5` over the leg's top 12
 candidates — so the comparison set is drawn from the store being
 ranked. The derivation rule, not a value, is what is preregistered.
 
+**Round 5 removes the proxy every earlier round was fitted to.**
+`results/leg-labels-2026-08-10.json` labels each engaged leg by whether
+its vote actually moved the gold document, and the answer reframes the
+problem: of 39 engaged legs, 21 help, 3 hurt, 15 are neutral. Rounds 3
+and 4 withheld 25 and 17 legs to catch those three, paying 9 and 7
+helpful legs for it. Addendum 7 requires the leg's rank-1 to match at
+least two synthesized terms — one is a coincidence, two agreeing is
+evidence — which on these labels withholds 3 of 3 harmful legs and 0
+of 21 helpful ones.
+
 Unpadded corpus (`results/unpadded-2026-08-09.json`):
 
 | arm | probe | recall@1 | recall@5 |
