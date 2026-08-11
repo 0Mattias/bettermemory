@@ -7,27 +7,36 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
-## Unreleased
+## 5.3.0 - 2026-08-11
 
-### Changed — the lane ships the flat evidence rule (opt-in lane only)
+A minor by the [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract).
+Everything below moves behaviour **only inside the opt-in
+`rescue_expansion` lane**; lane-off ranking is byte-identical,
+`SCHEMA_VERSION` is untouched, and no tool, parameter, default or
+return shape changed. One commit carries a conventional-commit `!` and
+that marker stays honest in the log; the surface it changed is
+lane-internal.
 
-`[behavior] rescue_expansion` remains **off by default**, and lane-off
-ranking is byte-identical under either form.
+### Changed — the rescue leg votes at full strength or not at all (opt-in lane only)
 
-The lane's active form is the flat weight: above the evidence floor the
-rescue leg votes at full strength. The evidence-scaled form introduced
-during the campaign stays committed and exercisable as a non-default
-variant (`_RESCUE_LEG_EVIDENCE_SCALING`, `--evidence-scaling on` on both
-runners), because it is the campaign's best held-out configuration and
-its record is published.
+`[behavior] rescue_expansion` remains **off by default**. A default
+install ranks exactly as it did in 5.2.0, asserted as a preregistered
+arm on both benchmark instruments rather than assumed.
 
-**The rationale is the audience, decided by the preregistered dev
-gates' own verdicts.** Round 8 established that no cheap store statistic
-distinguishes a technical corpus from a conversational one — the best
-separator is 1.70×, and filler-token share, the quantity the lane's own
-premise names, is 1.13×. So the engine cannot infer which corpus it
-holds, and the owner decides by turning the knob on. That audience is a
-store whose owner knows it holds technical prose, and on the gold set:
+Inside the lane the leg's vote is now conditioned on its own evidence:
+a leg whose top candidate matched fewer than two synthesized terms is
+withheld entirely, and above that floor it votes at full strength. One
+matched term is a coincidence; two independent terms agreeing on the
+same document is evidence.
+
+An evidence-**scaled** form — the leg's weight rising with its match
+count — was built and measured during the campaign and ships as a
+committed non-default variant (`_RESCUE_LEG_EVIDENCE_SCALING`,
+`--evidence-scaling on` on both runners). It is not the active form,
+and the reason is the audience.
+
+**Why flat, decided by the preregistered dev gates' own verdicts.** On
+the technical-prose gold set:
 
 | form | as-asked r@1/r@5 | control r@1/r@5 |
 | --- | --- | --- |
@@ -38,126 +47,78 @@ store whose owner knows it holds technical prose, and on the gold set:
 The scaled forms' compensating gains land on LongMemEval's
 conversational stores (macro@5 0.8823 flat → 0.8926 / 0.8901 scaled) —
 and **every one of those figures is below that corpus's lane-off
-baseline of 0.8935**, so a conversational store is better served leaving
-the lane off entirely than running any form of it. The form only
-matters for the audience flat serves best.
+baseline of 0.8935**. A conversational store is better served leaving
+the lane off entirely than running any form of it, so the form only
+matters for the audience flat serves best: a store whose owner knows it
+holds technical prose.
 
-### Bench — the store-adaptive lever closes, with a measurement
+### The retrieval campaign, rounds 6–8, and why the lane is a knob
 
-No shipped behaviour changes; the engine is untouched and
-`[behavior] rescue_expansion` remains off by default.
+Five preregistered experiments ran, each committed before its code and
+each scored against its own criteria. Two of the leg-weight forms were
+**superseded before release** rather than shipped:
 
-Round 7 reduced the campaign's obstacle to one scalar — the weight the
-rescue leg's floor stratum carries — whose optimum differs about
-twofold between the two corpora and runs monotone in opposite
-directions. Addendum 11 asked whether that scalar could be derived from
-the store, which is what C1 has demanded since round 2.
+- **P1a — store-derived PPMI expansion.** Killed at its gate before any
+  engine code: the best of 36 grid cells reached 0.46× the incumbent
+  static tables' precision, and a rank-based fusion cannot discount an
+  imprecise leg. The signal is real (PPMI finds 150+ gold terms the
+  tables miss) and arrives with 10–65 terms per probe.
+- **Round 6 — evidence-scaled weight, `(m−1)/(F−1)`.** Produced the
+  campaign's best held-out figures (macro@5 **0.8926**, clearing a kill
+  line that had stood five rounds and landing 0.0009 under baseline;
+  macro@1 0.5134). Failed its dev gate.
+- **Round 7 — the structural form `m/F`**, zero new constants: the
+  leg's weight becomes the fraction of the evidence bar its own
+  evidence reaches. macro@5
+  0.8901, dev gate failed again — and the two rounds together located
+  the obstacle exactly: sweeping the one scalar that differs between
+  them, the technical corpus wants the leg's floor stratum at full
+  weight (as-asked recall@5 rising 0.65 → 0.90) while the
+  conversational corpus wants it damped (macro@5 0.8823 → 0.8926).
+  **Both monotone, in opposite directions.** No constant satisfies both.
+- **Round 8 — a store-adaptive weight.** Killed at its gate: of six
+  register-adjacent statistics, none separates the two corpora by the
+  twofold the weight would have to move. The closest is mean document
+  length at 1.70×, a length artifact; filler-token share — the quantity
+  the lane's own premise names — is **1.13×**.
 
-**Gate 0 fired.** Six register-adjacent statistics, measured on both
-corpora, and not one separates them by the twofold round 7 says the
-weight must move. The closest is mean document length at 1.70×, a
-length artifact rather than a register signal. The most instructive is
-filler-token share at **1.13×** — the quantity the lane's own origin
-story names, with the two corpora 12% apart on it.
+**That is why `rescue_expansion` is a knob and not an inference.** The
+engine cannot cheaply tell which kind of corpus it is holding, so the
+owner decides. Round 8 closes the adaptive family with a measurement
+rather than a hope: what separates a store the lane helps from one it
+harms is semantic, not distributional.
 
-No adaptation rule was written, no arms ran, and the sealed instrument
-was not spent — it has now been protected through four experiments and
-has never been scored.
+### Bench — a blind held-out instrument, built and still sealed
 
-What this retires is the adaptive family on cheap statistics: not "the
-right rule was not found", but that the inputs a rule could use do not
-separate the things it would have to tell apart. What distinguishes a
-corpus the lane helps from one it harms is semantic, not
-distributional.
+The campaign's earlier record noted that LongMemEval had informed
+parameters across four rounds and was no longer a clean check.
+`bench/heldout/` is the replacement: a format specification written for
+an author who has never read the retrieval code and deliberately
+carrying no authoring guidance, a loader and scoring harness, and a
+seal protocol whose enforcement record is git history (data commit
+before preregistration before run) plus a no-read attestation. The
+content was authored independently.
 
-### Changed — the leg's weight is the fraction of the evidence bar (opt-in lane only)
+**It has never been scored.** Each preregistration spends it only if
+its dev gates pass, and P1a, round 6, round 7 and round 8 each failed
+before reaching it. That protection is the point: a single-use held-out
+check is not spent to confirm a configuration already disqualified.
 
-`[behavior] rescue_expansion` remains **off by default**, and the
-default engine's fusion path stays **byte-identical** — asserted as a
-preregistered arm on both instruments, twice.
+Also added, all reusable and none of it shipped in the wheel:
+`bench/leg_labels.py` (labelling each leg by whether its vote moved the
+gold document), `bench/ppmi_census.py`, `bench/store_census.py`, and
+`--evidence-scaling` / `--leg-margin-cap` / `--ablate` flags so every
+preregistered arm is reachable from a clean checkout at a sha.
 
-The leg's weight is now `evidence / _EVIDENCE_FULL_AT`, capped: the
-fraction of the full-evidence bar the leg's own evidence reaches. That
-replaces an earlier form whose offset existed only to map the floor to
-half weight, and it introduces **no new constant**. The round-5 labels
-independently measure the floor stratum at 68.2% helpful, which the
-structural 66.7% corroborates to 1.5 points — two numbers from
-different places, neither derived from the other.
+### Fixed
 
-Preregistered as addendum 10. **The dev gate failed again and the
-blind held-out instrument was not spent** — it has now been protected
-three times and has never been scored.
-
-What the arms established is sharper than any single figure. Sweeping
-the one scalar that differs between rounds 5, 6 and 7 shows the
-technical corpus wants the floor stratum at full weight (recall@5 rises
-0.65 → 0.90 with it) while the conversational corpus wants it damped
-(macro@5 0.8823 → 0.8926 as it falls). **Both monotone, in opposite
-directions.** No constant satisfies both, which is the campaign's C1
-restated at the finest resolution it has reached: one stratum, one
-scalar, measured in both directions. A store-adaptive weight is the
-experiment that follows, and nothing here licenses it.
-
-### Changed — the rescue leg's vote scales with its evidence (opt-in lane only)
-
-`[behavior] rescue_expansion` remains **off by default**, and the
-default engine's fusion path is **byte-identical** — asserted as a
-preregistered arm rather than assumed, and confirmed on both
-instruments.
-
-Inside the lane, the leg's contribution is no longer a constant. RRF
-fuses by rank, so the leg previously contributed the same 0.7 whether
-its rank-1 rested on a discriminating synonym or a single coincidental
-token. It now scales with the leg's own evidence: nothing below the
-round-5 floor, half weight at the floor, full weight at three matched
-terms, bounded so the change can only reduce the leg's influence and
-never amplify it.
-
-Preregistered as addendum 9, the experiment five prior kills had all
-pointed at without testing. **It produced the campaign's best held-out
-figures** — macro@5 **0.8926**, clearing the 0.8900 kill line for the
-first time in six rounds and landing 0.0009 below baseline, and
-macro@1 **0.5134**, recovering 76% of the lane's loss. **And it failed
-its dev gate**: the gold set lost two questions at recall@5, because
-the damping fires on ~79% of voting legs and that stratum is helpful
-two times in three.
-
-So the default does not flip, and the blind held-out instrument was
-not spent — addendum 9 scores it only if the dev gates pass, the same
-protection that kept it unspent when P1a failed. The mechanism is
-demonstrated; the constant is too aggressive for a technical store,
-which is a round-7 question with its own preregistration.
-
-### Bench — a held-out instrument, and P1a killed at its gate
-
-No shipped behaviour changes; `[behavior] rescue_expansion` remains off
-by default and the engine is untouched.
-
-**A third instrument.** The arc index recorded that LongMemEval has
-informed parameters across four rounds and is no longer a clean
-held-out check. `bench/heldout/` is the replacement: a format
-specification written for an author who has never read the retrieval
-code and deliberately carrying no authoring guidance, a loader and
-scoring harness, and a seal protocol whose enforcement record is git
-history (data commit before preregistration before run) plus a no-read
-attestation. The content was authored independently; the implementer
-has not read it.
-
-**P1a, preregistered and killed before implementation.** Addendum 8
-asked whether store-derived co-occurrence (PPMI over the collection
-being ranked) could replace the committed expansion tables — the
-mechanism C1 has demanded since round 2, since identical code flips
-sign between corpora. Its Gate 0 is a precision-parity bar with nothing
-to tune: round 5 established that the fusion reads rank rather than
-evidence, so it cannot discount an imprecise leg, and the incumbent
-already had its default killed for imprecision. Measured on 40 dev
-probes, the best of 36 grid cells reaches **0.1253 against the
-incumbent's 0.2743 — 0.46×, with no cell at parity**. No engine code
-was written, no arms ran, and **the sealed instrument was not spent**.
-
-The signal is real — PPMI finds 150+ gold terms the static tables miss
-— but it arrives with 10–65 terms per probe, and at that width the
-round-5 evidence rule stops protecting anything.
+- A test named for the filler df-floor toggled `rescue_expansion`,
+  which moves the floor **and** the leg together, then credited the
+  floor. Driven separately the floor alone leaves the distractor on
+  top — the leg is what surfaced the gold. It had been mis-attributing
+  since 5.1.0.
+- A `docs/ROADMAP.md` citation of the recency helper by line number had
+  drifted four times as `search.py` grew; it now cites the symbol.
 
 ## 5.2.0 - 2026-08-11
 
