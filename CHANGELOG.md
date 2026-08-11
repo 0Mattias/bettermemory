@@ -7,136 +7,124 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
-## Unreleased
+## 5.2.0 - 2026-08-11
 
-### Changed — the leg votes only with two agreeing terms, and the lane's experimental arc closes (opt-in lane only)
-
-`[behavior] rescue_expansion` stays **off by default**.
-
-Rounds 3 and 4 conditioned the leg's vote on a statistic — a fixed
-margin level, then a self-calibrating gap ratio — and both were fitted
-to a proxy: "the leg's rank-1 is the gold document". Labelling the leg
-by whether its vote actually moved the gold (`bench/leg_labels.py`)
-reframes it: of 39 engaged dev legs, **21 help, 3 hurt, 15 are
-neutral**, and both shipped rules were withholding nine and seven
-helpful legs to catch those three. Every harmful leg rested on a
-rank-1 matching exactly ONE synthesized term.
-
-So `_RESCUE_LEG_MIN_EVIDENCE` (2) replaces the statistic with a count:
-the leg votes only if its top candidate matched at least two
-synthesized terms. One is a coincidence; two agreeing is evidence.
-
-Preregistered as addendum 7. **Its kill criterion fired** (held-out
-macro@5 0.8823 against 0.8900) and it is nonetheless the lane's best
-form: the only rule in the arc that costs the gold set nothing —
-recall@5 held, recall@1 *up* a question on both casual probes — plus
-the best held-out macro@1 (0.5014, recovering 51% of the lane's loss)
-and macro@10 (0.9476) of any arm. One prediction was falsified
-cleanly: a count does shift across corpora after all (31.7% vs 47.1%
-firing).
-
-**The lane closes as an experimental line.** Three structurally
-different withholding rules — a level, a shape, a count — land within
-0.004 of each other at held-out macro@5, which is a ceiling rather
-than a tuning problem: conditioning *which* legs vote cannot repair a
-lane whose remaining harm is in *what* the legs contain. The full
-round 2–5 record is indexed at the end of
-`bench/longmemeval/PREREGISTRATION.md`.
-
-One test defect surfaced and was repaired: a test named for the filler
-df-floor was toggling `rescue_expansion`, which moves the floor and the
-leg together, and crediting the floor. Driven separately, the floor
-alone leaves the distractor on top — the leg is what surfaced the gold.
-
-### Changed — the leg's vote is conditioned on its own gap structure (opt-in lane only)
-
-`[behavior] rescue_expansion` stays **off by default**.
-
-Round 3 shipped a fixed threshold on the leg's top-to-runner-up margin.
-Round 4 replaces it: `_RESCUE_LEG_STANDOUT` (2.5) compares the leg's
-top adjacent gap against the mean of its other gaps, over the top 12
-candidates, so the comparison set is drawn from the store being ranked.
-Every degenerate shape fails open; a totally flat leg is the one that
-withholds.
-
-Preregistered as addendum 6 — the derivation RULE, not a value.
-**Its hypothesis held and its kill criterion fired.** The rule really
-does self-calibrate: it fires on 41.5% of engaged dev legs and 39.5%
-of held-out ones, a 2.0-point gap where the fixed threshold spanned
-17.1. But held-out macro@5 came in at 0.8790, *below* round 3's
-0.8830 and below the 0.8900 line — firing at the right rate is not the
-same as firing on the right legs.
-
-Two things the arms settled. The clean `--ablate floor-off` arm shows
-the filler df-floor costs nothing under a cap, retracting round 3's
-attribution of 0.0040 to it — that difference belongs to the
-`leg-only` ablation also disabling the 5.1.1 emission filter. And the
-binding constraint is now the correctness proxy ("the leg's rank-1 is
-the gold document"), which has cost the dev set two questions in round
-4 and three in round 3 despite preserving every leg it can see.
+A minor by the [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract):
+a major is reserved for removals or renames of the `docs/api.md` stable
+surface, non-additive on-disk changes, or changes in the relationship
+between tools. Everything below moves behaviour **only inside the
+opt-in `rescue_expansion` lane**, `SCHEMA_VERSION` is untouched, and no
+tool, parameter, default or return shape changed. Two commits in this
+window carry a conventional-commit `!` and that marker stays honest in
+the log — one of them (`13d0690`) introduced a cap surface that
+`d759438` replaced before either was ever released.
 
 ### Added — the rescue leg must earn its vote (opt-in lane only)
 
-`[behavior] rescue_expansion` stays **off by default**; nothing a
-default install ranks changes, and a test pins that the new constant is
-unobservable with the lane off.
+`[behavior] rescue_expansion` remains **off by default**. A default
+install ranks exactly as it did in 5.1.1, and a test pins that the new
+constant is unobservable with the lane off.
 
-Inside the lane, the expansion leg now has to show internal separation
-before it joins the fusion. `_hybrid_fuse` fuses by rank, so the leg
-contributed `_RESCUE_LEG_WEIGHT / (rrf_k + rank)` whether its rank-1
-was found by a discriminating synonym or by a near-tie among candidates
-it could barely resolve — IDF only reorders *within* the leg and cannot
-reduce its influence. A leg whose `(top − runner_up) / top` falls below
-`_RESCUE_LEG_MIN_MARGIN` (0.12) is now withheld entirely, which leaves
-the query byte-identical to `rescue_expansion=False`.
+Inside the lane, the expansion leg now has to show evidence before it
+joins the fusion. `_hybrid_fuse` fuses by RANK, so the leg contributed
+`_RESCUE_LEG_WEIGHT / (rrf_k + rank)` whether its rank-1 was found by a
+discriminating synonym or by a single coincidental token — IDF only
+reorders *within* the leg and cannot reduce its influence. Since 5.2.0
+a leg whose top candidate matched fewer than `_RESCUE_LEG_MIN_EVIDENCE`
+(2) synthesized terms is withheld entirely: one matched term is a
+coincidence, two independent terms agreeing on the same document is
+evidence. A withheld leg leaves the base fusion untouched.
 
-Preregistered as `bench/longmemeval/PREREGISTRATION.md` addendum 5,
-θ fixed from the dev set's leg census before the code existed. **Its
-kill criterion fired**: held-out macro@5 0.8830 against a 0.8900 line.
-The cap recovers 30% of the lane's macro@1 loss and 36% of its macro@5
-loss — the first mechanism in three rounds to move that corpus toward
-baseline — but it also costs the dev set three questions at recall@5,
-so the default stays off and a fixed global θ is retired. The
-measured reason is published with the arms: θ sits above the dev
-median leg separation and below the held-out median, so one constant is
-aggressive on the corpus it came from and permissive on the corpus it
-was aimed at.
+**What it is worth**, on the two committed instruments:
 
-### Bench — round 2's experiment was preregistered and killed before it ran
+- On the technical-prose gold set (`bench/retrieval`) it costs nothing
+  and gains: recall@5 holds at 90%/85%/100% across the three probes,
+  and recall@1 rises a question on both casual probes (50%→55% asked,
+  45%→50% control).
+- On LongMemEval's conversational stores it recovers **51%** of the
+  uncapped lane's macro@1 loss (0.4772 → 0.5014 against a 0.5246
+  baseline) and lifts macro@10 to 0.9476, above baseline. macro@5
+  reaches 0.8823 against a 0.8935 baseline.
 
-No shipped behaviour changes. `[behavior] rescue_expansion` stays
-opt-in and unchanged.
+**The default stays off.** The lane's kill line — held-out macro@5
+≥ 0.8900, unchanged since 5.1.0 — is still not met.
 
-The retrieval campaign's named next experiment — df-gating the emitted
-expansion terms — was preregistered on both instruments
-(`bench/longmemeval/PREREGISTRATION.md` addendum 4, τ fixed at 0.05
-from corpus statistics with no recall input) and its pre-run kill
-fired. The hypothesis was that an emitted term's document frequency
-separates the vocabulary that helps a technical store from the
-vocabulary that harms a conversational one. Measured on both corpora:
-the terms that broke the held-out set are *rarer* than the ones
-carrying the gold-set win — median df/N 0.0268 against 0.0361, a 0.74×
-ratio where 5× was required — and no threshold separates them, because
-every τ that reaches the failure hits the dev set at least as hard. No
-gate was implemented and no gated arm ran, which is what the
-preregistration says to do.
+### The retrieval campaign's round 2–5 arc, and why the lane closes
 
-Three pieces of harness came out of it, all reusable: `--ablate
-none|floor-only|leg-only` on the LongMemEval runner, which moves both
-ablation arms out of an uncommitted driver patch and into committed,
-diffable code (round 1 lost a run to that patch racing a working-tree
-edit); `bench/df_census.py`, which measures emitted-term document
-frequencies through the engine's own pipeline; and
-`bench/longmemeval/gate0.py`, which recomputes the verdict from
-committed artifacts.
+Four preregistered experiments ran in this window, each committed
+before its code existed and each scored against its own criteria. Three
+of them tested a different way of deciding which legs may vote; all
+three are recorded here because the shipped rule is the fourth, and
+because two of them were **superseded before release** rather than
+shipped:
 
-Both instruments were re-baselined on the 5.1.1 engine rather than
-having round 1's constants copied forward. Every dev-set cell is
-unchanged; on the held-out set the 5.1.1 filler-emission repair is
-worth +0.0020 macro@1 and nothing at @5. Two corrections to the
-round-1 record follow from the census: the leg engages on 165 of 500
-held-out questions (33%), not "broadly", and the lane arm's macro@1 is
-0.4772 on the current engine where round 1 published 0.4752.
+- **Round 2 — df-gate the emitted terms.** Killed *before running* by a
+  cheap pre-run check: the terms carrying the regression are
+  individually RARE, so document frequency does not separate the class
+  that helps a technical store from the class that harms a
+  conversational one (0.74× against a 5× bar).
+- **Round 3 — a fixed margin threshold** (`13d0690`). First held-out
+  ground gained (macro@5 0.8770 → 0.8830), and killed on calibration: a
+  fixed level fired on 61% of dev legs and 43.9% of held-out ones, and
+  cost the gold set three questions.
+- **Round 4 — a self-calibrating standout ratio** (`d759438` replaced
+  it). Its hypothesis *held* — a criterion drawn from the leg's own gap
+  structure transferred with a 2.0-point firing gap against the fixed
+  level's 17.1 — and it was not enough: macro@5 0.8790. Firing at the
+  right rate is not firing on the right legs.
+- **Round 5 — true labels** (the shipped rule). Rounds 3 and 4 were
+  both fitted to a proxy, "the leg's rank-1 is the gold document".
+  Labelling each leg by whether its vote actually moved the gold
+  reframed the problem: of 39 engaged dev legs **21 help, 3 hurt, 15
+  are neutral**, and the two earlier rules were withholding nine and
+  seven helpful legs to catch those three.
+
+**The arc's finding is a ceiling, not a tuning problem.** Three
+structurally different rules — a level, a shape, a count — land within
+0.004 of each other at held-out macro@5 (0.8790 / 0.8823 / 0.8830),
+recovering between a third and a half of the lane's damage and none of
+it reaching baseline. Conditioning *which* legs vote cannot repair a
+lane whose remaining harm is in *what* the legs contain. The full
+record, cross-referenced, is indexed at the end of
+`bench/longmemeval/PREREGISTRATION.md`.
+
+One round-5 prediction was falsified cleanly and is recorded as such:
+the claim that a count has no distribution to shift between corpora is
+wrong (31.7% dev firing against 47.1% held-out).
+
+### Bench — the harness the arc left behind
+
+All reusable, all committed, none of it shipped in the wheel:
+
+- `--ablate none|floor-only|leg-only|floor-off` and
+  `--leg-margin-cap on|off` on the LongMemEval runner. Round 1's
+  ablations were an uncommitted driver patch, and it cost a run — the
+  first leg-only attempt raced a working-tree edit and measured pure
+  baseline while claiming to measure the leg. Every preregistered arm
+  is now reachable from a clean checkout at a sha.
+- `bench/df_census.py`, `bench/leg_census.py` and
+  `bench/leg_labels.py` — the statistics each round's threshold was
+  derived from, computed through the engine's own pipeline so a census
+  cannot silently measure a different quantity than the ranker prices.
+- `bench/longmemeval/gate0.py`, which recomputes round 2's kill from
+  committed artifacts rather than from a re-run.
+
+The clean `floor-off` arm also retracted a round-3 attribution: the
+filler df-floor costs nothing under a cap, and the 0.0040 credited to
+it belongs to the `leg-only` ablation disabling the 5.1.1 emission
+filter as well.
+
+### Fixed — two test defects the work surfaced
+
+- A test named for the filler df-floor toggled `rescue_expansion`,
+  which moves the floor **and** the leg together, then credited the
+  floor. Driven separately the floor alone leaves the distractor on
+  top — the leg is what surfaced the gold. It had been mis-attributing
+  since 5.1.0.
+- The end-to-end prefilter test compared a live run against a dated
+  artifact; its golden now tracks the current in-lane engine, and every
+  superseded artifact stays committed as the record of the engine that
+  produced it.
 
 ## 5.1.1 - 2026-08-10
 
