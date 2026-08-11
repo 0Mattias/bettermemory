@@ -44,6 +44,7 @@ def _load(name: str, filename: str) -> ModuleType:
 trainer = _load("bench_embed_train", "embed_train.py")
 census = _load("bench_embed_census", "embed_census.py")
 hybrid = _load("bench_embed_hybrid", "embed_hybrid.py")
+round2 = _load("bench_embed_round2", "embed_round2.py")
 
 
 # ---------------------------------------------------------------------------
@@ -495,6 +496,192 @@ def test_the_committed_hybrid_census_records_its_own_negative() -> None:
         > arms["raw"]["summary"]["vocabulary_coverage"]
     )
     assert arms["raw+bridge"]["summary"]["query_tokens_bridged"] > 0
+
+
+# ---------------------------------------------------------------------------
+# Census 2 — the declared family
+# ---------------------------------------------------------------------------
+
+
+def test_the_declared_family_is_exactly_128_cells() -> None:
+    """The declaration fixes the family before any run. If this count
+    moves, a cell was added after the fact and the whole anti-gate-
+    shopping argument is void."""
+    size = (
+        len(round2.TOP_K_GRID)
+        * len(round2.TAU_GRID)
+        * len(round2.VETO_MODES)
+        * len(round2.BRIDGING_MODES)
+        * len(round2.POSTPROC_GRID)
+    )
+    assert size == 128
+
+
+def test_the_primary_cell_is_a_member_of_the_declared_family() -> None:
+    """A primary naming a cell the grid never emits would make the
+    readiness criterion unfalsifiable."""
+    keys = {
+        f"k{k}_t{t:g}_{v}_{'bridge' if b else 'nobridge'}"
+        for k in round2.TOP_K_GRID
+        for t in round2.TAU_GRID
+        for v in round2.VETO_MODES
+        for b in round2.BRIDGING_MODES
+    }
+    assert round2.PRIMARY_CELL in keys
+    assert round2.PRIMARY_ARM in round2.POSTPROC_GRID
+
+
+def test_the_code_and_the_declaration_name_the_same_primary() -> None:
+    """The document is the contract; this file is its executable form.
+    If they drift, the committed declaration stops describing the run."""
+    text = (_BENCH / "P1E_CENSUS2_DECLARATION.md").read_text(encoding="utf-8")
+    assert "`store / centred / top_k=2 / tau=0.99 /" in text
+    assert round2.PRIMARY_ARM == "centred"
+    assert round2.PRIMARY_CELL == "k2_t0.99_ppmi_positive_nobridge"
+    # The declaration cites its bounds by name rather than copying the
+    # digits, so this checks the names it promises are the ones that
+    # exist. The digits themselves are checked against the artifact
+    # below — one source of truth, not two.
+    for constant in (
+        "READING_A_MIN_WIDTH",
+        "R3_CI_LOWER_BOUND",
+        "GATE_MULTIPLE",
+        "MIN_GATE_TERMS",
+    ):
+        assert constant in text, constant
+
+
+def test_the_declared_bounds_are_the_incumbents_own() -> None:
+    """R1-R4's bounds are not chosen numbers — they are the incumbent's
+    published figures. Pinned against the census-1 artifact so a bar can
+    never be quietly rebased between censuses."""
+    path = _BENCH / "retrieval" / "results" / "embed-census-2026-08-11.json"
+    arms = json.loads(path.read_text(encoding="utf-8"))["retrieval"]["arms"]
+    incumbent = next(iter(arms.values()))["summary"]
+
+    assert round2.READING_A_MIN_WIDTH == incumbent["incumbent_terms_per_probe"]
+    assert round2.R3_CI_LOWER_BOUND == incumbent["incumbent_precision_ci95"][0]
+    assert round2.P1A_INCUMBENT_PRECISION == incumbent["incumbent_precision"]
+    assert round2.GATE_MULTIPLE == 1.0
+
+
+def test_no_df_gate_appears_in_the_family() -> None:
+    """Addendum 8 binds: round 2 measured df as a separator for emitted
+    terms and killed it. A df-capped veto was considered and excluded,
+    and this pins the exclusion."""
+    assert set(round2.VETO_MODES) == {"none", "ppmi_positive"}
+
+
+def test_the_veto_keeps_only_above_chance_associates() -> None:
+    """Four documents; 'a' and 'b' always co-occur so their PPMI is
+    positive, while 'z' shares no document with 'a' and cannot."""
+    docs = [{"a", "b"}, {"a", "b"}, {"a", "b"}, {"z", "q"}]
+    keep = round2.ppmi_positive(docs, "a", {"b", "z", "q"})
+    assert "b" in keep
+    assert "z" not in keep and "q" not in keep
+
+
+def test_the_veto_is_restricted_to_the_candidate_pool() -> None:
+    docs = [{"a", "b"}, {"a", "b"}, {"a", "b"}]
+    assert round2.ppmi_positive(docs, "a", set()) == set()
+
+
+def test_reading_b_is_unbiased_at_every_width() -> None:
+    """The declaration PREDICTS this: the committed tables emit an
+    unordered set with no score to narrow by, so subsampling cannot make
+    them look more precise. A drift here would invalidate every
+    narrow-cell comparison in census 1."""
+    pool = [True] * 62 + [False] * 164  # the incumbent's own 62/226
+    truth = 62 / 226
+    for width in (1.0, 3.0, 5.0):
+        out = round2.reading_b(pool, width, 40)
+        assert out["applicable"] is True
+        assert out["mean"] == pytest.approx(truth, abs=0.02)
+        assert out["p05"] < truth < out["p95"]
+
+    # At the incumbent's own width the subsample IS the whole pool, so
+    # the estimate is exact rather than merely unbiased. Worth pinning:
+    # it is the anchor the narrower widths are read against.
+    full = round2.reading_b(pool, 5.65, 40)
+    assert full["target_terms"] == len(pool)
+    assert full["mean"] == full["p05"] == full["p95"] == pytest.approx(0.2743, abs=1e-4)
+
+
+def test_reading_b_narrows_as_the_width_grows() -> None:
+    """Unbiased everywhere, but a wider subsample is a tighter estimate —
+    which is why the narrow readings carry the wider intervals."""
+    pool = [True] * 62 + [False] * 164
+    narrow = round2.reading_b(pool, 1.0, 40)
+    wide = round2.reading_b(pool, 5.0, 40)
+    assert (narrow["p95"] - narrow["p05"]) > (wide["p95"] - wide["p05"])
+
+
+def test_reading_b_refuses_a_width_it_cannot_sample() -> None:
+    assert round2.reading_b([True, False], 5.0, 40)["applicable"] is False
+
+
+def _grid_cell(precision: float, per_probe: float, total: int, lo: float) -> dict:
+    return {
+        "precision": precision,
+        "terms_per_probe": per_probe,
+        "terms_total": total,
+        "gate_multiple": round(precision / 0.2743, 3),
+        "precision_ci95": [lo, 1.0],
+    }
+
+
+def _arms(primary: dict, extra: dict | None = None) -> dict:
+    grid = {round2.PRIMARY_CELL: primary}
+    grid.update(extra or {})
+    return {
+        "centred": {"summary": {"grid": grid}},
+        "raw": {"summary": {"grid": {}}},
+    }
+
+
+def test_readiness_licenses_only_when_all_four_hold() -> None:
+    passing = _grid_cell(0.2800, 6.0, 240, 0.2300)
+    out = round2.readiness(_arms(passing))
+    assert out["licensed"] is True
+    assert out["verdict"] == "LICENSES THE P1e PREREGISTRATION"
+
+
+def test_readiness_refuses_a_narrow_cell_however_precise() -> None:
+    """R2 is Reading A: a source matching the incumbent's precision on
+    half the terms is narrower, not better."""
+    narrow = _grid_cell(0.4000, 2.9, 116, 0.3200)
+    out = round2.readiness(_arms(narrow))
+    assert out["R1_gate_multiple_ge_1"] is True
+    assert out["R2_width_ge_incumbent"] is False
+    assert out["licensed"] is False
+
+
+def test_readiness_refuses_a_pass_resting_on_a_thin_sample() -> None:
+    """R3: the interval's lower bound has to clear the incumbent's."""
+    thin = _grid_cell(0.2800, 6.0, 40, 0.1500)
+    out = round2.readiness(_arms(thin))
+    assert out["R3_ci_lower_ge_incumbent_lower"] is False
+    assert out["licensed"] is False
+
+
+def test_readiness_parks_when_nothing_passes_at_width() -> None:
+    failing = _grid_cell(0.1900, 9.0, 360, 0.1600)
+    out = round2.readiness(_arms(failing))
+    assert out["parked"] is True
+    assert out["verdict"] == "PARKS THE LANE"
+
+
+def test_a_non_primary_winner_licenses_no_preregistration() -> None:
+    """The anti-gate-shopping clause: the maximum of 128 cells is not a
+    preregistered hypothesis, so it parks nothing and licenses nothing
+    beyond a fresh declaration."""
+    failing = _grid_cell(0.1900, 9.0, 360, 0.1600)
+    winner = {"k5_t0.95_none_bridge": _grid_cell(0.2900, 7.0, 280, 0.2400)}
+    out = round2.readiness(_arms(failing, winner))
+    assert out["licensed"] is False
+    assert out["parked"] is False, "a family-wide at-width pass blocks parking"
+    assert out["verdict"] == "NEITHER — census-3 declaration at most"
+    assert out["non_primary_cells_meeting_R1_R4"] == ["centred/k5_t0.95_none_bridge"]
 
 
 # ---------------------------------------------------------------------------

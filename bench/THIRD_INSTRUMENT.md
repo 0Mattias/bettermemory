@@ -152,7 +152,23 @@ Three notes on why it is drawn that way:
   --twice` reproduces them bit for bit, so the script plus the
   `corpus_manifest_sha256` in every census artifact is the record.
 
-### Flagged for the owner, not decided here
+### Flagged for the owner — and PARKED by the data, 2026-08-11
+
+**Owner decision, taken on census 1's evidence: Gutenberg is parked.**
+The topicality wall is the reason, not preference. Census 1 measured
+every corpus larger than the store as covering MORE of the probes'
+query vocabulary and emitting LESS precise terms, so scale is not the
+missing input and no fetch-with-pinned-hash policy gets established for
+a low-probability bet. The licence analysis below stays on file so a
+future attempt starts from the answer rather than repeating the sweep;
+the arm does not run.
+
+What replaces it is the shape census 1 pointed at: **a model trained on
+the collection it ranks.** That is the product's natural form — every
+install derives its own vectors from its own store, locally, at
+derivation time, with no external corpus, no download, and no
+third-party weights. It is WaC-clean by construction and needs no
+corpus decision at all. `P1E_CENSUS2_DECLARATION.md` puts it under test.
 
 **A public-domain external corpus was NOT fetched.** Project Gutenberg
 is the obvious candidate and the licence analysis is favourable: works
