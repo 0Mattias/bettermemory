@@ -495,14 +495,15 @@ def test_the_prefilter_really_engages_on_every_committed_question(
     live = json.loads(capsys.readouterr().out)
 
     # The golden tracks the CURRENT in-lane engine, not a dated receipt.
-    # `prefilter-above-threshold-2026-08-09.json` held this role until
-    # round 3's leg-margin cap changed what the lane ranks; that file
-    # stays committed as the record of the engine that produced it, and
-    # this comparison moves forward with the code so it keeps meaning
-    # "the harness reproduces what it published" rather than "the engine
-    # never changes".
+    # Each round's leg-conditioning rule changes what the lane ranks, so
+    # this pointer moves with the code while every superseded artifact
+    # stays committed as the record of the engine that produced it. It
+    # therefore keeps meaning "the harness reproduces what it published"
+    # rather than "the engine never changes".
     committed = json.loads(
-        (_RESULTS / "round3-cap-prefilter-above-threshold-2026-08-10.json").read_text()
+        (
+            _RESULTS / "round5-evidence-prefilter-above-threshold-2026-08-10.json"
+        ).read_text()
     )
     published = {
         (r["arm"], r["probe"]): r for r in committed["results"] if r["prefilter"]

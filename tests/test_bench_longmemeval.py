@@ -625,7 +625,7 @@ def test_the_leg_margin_cap_has_a_committed_off_switch() -> None:
     assert bm.LEG_MARGIN_CAP is True
 
     engine = importlib.import_module("bettermemory.search")
-    assert engine._RESCUE_LEG_STANDOUT == 2.5
+    assert engine._RESCUE_LEG_MIN_EVIDENCE == 2
 
 
 def test_the_ablation_artifacts_declare_their_dirty_tree() -> None:
