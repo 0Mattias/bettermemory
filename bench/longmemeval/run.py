@@ -146,10 +146,10 @@ SCOPE = ["longmemeval"]
 RESCUE_EXPANSION = False
 
 # Whether the rescue leg's vote is conditioned on its own separation
-# (`search._RESCUE_LEG_MIN_MARGIN`, round 3). Module-level and
-# defaulting to the SHIPPED behaviour; `off` drives the leg's margin
-# floor to zero, which is the pre-round-3 engine and the paired control
-# addendum 5's arm 2 requires. Nothing here changes a default install:
+# (`search._RESCUE_LEG_STANDOUT`, rounds 3-4). Module-level and
+# defaulting to the SHIPPED behaviour; `off` drives the leg's standout
+# floor to zero, which is the pre-cap engine and the paired control
+# addenda 5 and 6 both require as arm 2. Nothing here changes a default install:
 # the cap lives inside the opt-in lane either way.
 LEG_MARGIN_CAP = True
 
