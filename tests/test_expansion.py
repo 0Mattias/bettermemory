@@ -763,11 +763,15 @@ def test_the_evidence_bar_is_the_preregistered_one() -> None:
 
 
 def test_the_leg_weight_scales_with_its_evidence() -> None:
-    """Round 6's curve: withheld below the floor, half weight at the
-    floor, full weight at `_EVIDENCE_FULL_AT`, capped above it."""
+    """The curve: withheld below the floor, two thirds of full weight
+    at the floor, full weight at `_EVIDENCE_FULL_AT`, capped above.
+
+    The floor value is `2/3` because the weight is the fraction of the
+    full-evidence bar the leg reaches — round 7 replaced round 6's
+    offset form, which put it at 1/2 and cost the dev set."""
     assert _leg_evidence_weight(0) == 0.0
     assert _leg_evidence_weight(1) == 0.0
-    assert _leg_evidence_weight(2) == pytest.approx(_RESCUE_LEG_WEIGHT * 0.5)
+    assert _leg_evidence_weight(2) == pytest.approx(_RESCUE_LEG_WEIGHT * 2 / 3)
     assert _leg_evidence_weight(3) == pytest.approx(_RESCUE_LEG_WEIGHT)
     assert _leg_evidence_weight(9) == pytest.approx(_RESCUE_LEG_WEIGHT)
 

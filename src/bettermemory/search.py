@@ -1108,13 +1108,13 @@ _RESCUE_LEG_WEIGHT = 0.7
 _RESCUE_LEG_MIN_EVIDENCE = 2
 
 # The evidence count at which the rescue leg earns its FULL weight.
-# Below it the leg still votes, but at a reduced share of
-# `_RESCUE_LEG_WEIGHT` scaled linearly from the floor:
+# Below it the leg still votes, but at the fraction of that bar its own
+# evidence reaches:
 #
-#     scale(m) = min(1.0, (m - 1) / (_EVIDENCE_FULL_AT - 1))
+#     scale(m) = min(1.0, m / _EVIDENCE_FULL_AT)
 #
-# so a leg at the floor (2 matched terms) votes at half strength and a
-# leg with 3 or more votes in full.
+# so a leg at the floor (2 matched terms) votes at two thirds strength
+# and a leg with 3 or more votes in full.
 #
 # Why the vote should scale at all: `_hybrid_fuse` fuses by RANK, so
 # before this the leg contributed `_RESCUE_LEG_WEIGHT / (rrf_k + rank)`
@@ -2445,14 +2445,27 @@ def _leg_evidence_weight(evidence: int) -> float:
 
     Returns 0.0 below `_RESCUE_LEG_MIN_EVIDENCE` — the round-5 rule,
     unchanged: a leg resting on one matched term is a coincidence and
-    votes nothing. Above the floor the weight rises linearly to the full
-    `_RESCUE_LEG_WEIGHT` at `_EVIDENCE_FULL_AT` and is capped there, so
-    the result is always within [0, `_RESCUE_LEG_WEIGHT`].
+    votes nothing. Above the floor the weight is the fraction of the
+    full-evidence bar the leg's own evidence reaches,
+    `evidence / _EVIDENCE_FULL_AT`, capped at 1 — so the result is
+    always within [0, `_RESCUE_LEG_WEIGHT`].
+
+    Round 6 used `(evidence - 1) / (_EVIDENCE_FULL_AT - 1)` instead. The
+    offset existed only to map the floor to exactly half weight, which
+    was a choice rather than a derivation, and it is the choice that
+    cost the dev set two questions at recall@5 while the mechanism
+    itself was working. The plain ratio has no offset to justify and
+    introduces no constant.
+
+    The forms differ only at the floor: 2/3 of full weight here against
+    1/2 there. The round-5 labels independently measure that stratum at
+    68.2% helpful, which the structural 66.7% corroborates to 1.5
+    points — two numbers from different places, neither derived from
+    the other. See addendum 10.
     """
     if evidence < _RESCUE_LEG_MIN_EVIDENCE:
         return 0.0
-    span = max(1, _EVIDENCE_FULL_AT - 1)
-    scale = min(1.0, (evidence - 1) / span)
+    scale = min(1.0, evidence / max(1, _EVIDENCE_FULL_AT))
     return _RESCUE_LEG_WEIGHT * scale
 
 
