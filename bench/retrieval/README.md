@@ -673,6 +673,90 @@ mechanism, it was not run, and it is written down here rather than
 swept: a grid explored until something passes is how a census stops
 being evidence.
 
+### P1e census 2 — declared first, and it parks the lane
+
+Census 1 left one mechanism named and deliberately unrun: use the sparse
+counts to *veto* candidates rather than to confirm them. Census 2 ran
+it, and ran it under a discipline the first census did not have —
+**every cell, both readings of the bar, the primary cell, the readiness
+criterion and the parking criterion were committed before a single
+number existed**, in [`../P1E_CENSUS2_DECLARATION.md`](../P1E_CENSUS2_DECLARATION.md).
+The enforcement record is the sha ordering: declaration `155d6f0`, then
+the run commit. Artifact: `bench/retrieval/results/embed-census2-2026-08-11.json`.
+
+The corpus question is closed and does not reappear here: the arm under
+test is **per-store self-trained**, which is the product's natural form
+— every install would derive its own vectors from its own store,
+locally, with no external corpus and no network. Gutenberg is parked on
+census 1's topicality wall, recorded in
+[`../THIRD_INSTRUMENT.md`](../THIRD_INSTRUMENT.md).
+
+**The declared prediction held, and it matters.** Reading B re-estimated
+the incumbent at each challenger width by uniformly subsampling its
+emitted terms. Across 25 widths the mean lands between 0.2736 and
+0.2750 against the incumbent's own 0.2743 — unbiased, as declared,
+because the committed tables emit an unordered set with no score a
+narrower cut could exploit. **So the width comparison is not doing the
+work, and census 1's narrow-cell readings stand.** Had this drifted, the
+0.989x headline would have been an artifact of narrowing; it was
+declared as a falsifiable check in advance rather than assumed.
+
+**The veto works.** It improves precision in every one of the sixteen
+`centred / nobridge` cells, and it does so by removing candidates rather
+than by adding any:
+
+| cell | veto off | veto on |
+| --- | --- | --- |
+| k1, cos>=0.95 | 0.1984 | 0.2311 |
+| k1, cos>=0.98 | 0.2146 | 0.2419 |
+| k1, cos>=0.995 | 0.2712 | **0.3214** |
+| k2, cos>=0.995 | 0.2168 | 0.2524 |
+| k3, cos>=0.995 | 0.1719 | 0.2128 |
+
+That is the census's genuine positive: census 1's agreement rule made
+things worse by intersecting ranks, and the diagnosis it produced — that
+rank agreement selects for frequent, undiscriminating pairs — pointed at
+a veto instead, and the veto behaves as the diagnosis predicted.
+
+**Four cells clear the gate. All of them are narrow, and none of them
+counts.**
+
+| cell | precision | x bar | terms/probe | p vs incumbent |
+| --- | --- | --- | --- | --- |
+| centred, k1, cos>=0.995, veto | 0.3214 | **1.172** | 2.80 | 0.3691 |
+| centred, k1, cos>=0.995, veto, bridge | 0.3167 | 1.155 | 3.00 | 0.4084 |
+| raw, k1, cos>=0.995, veto | 0.2952 | 1.076 | 2.62 | 0.6938 |
+| raw, k1, cos>=0.995, veto, bridge | 0.2870 | 1.046 | 2.88 | 0.8059 |
+
+Every one emits roughly half the incumbent's 5.65 terms per probe, so
+every one fails **Reading A** — the replacement reading, declared in
+advance: *a source that matches the incumbent's precision while emitting
+half as many terms is narrower, not better.* And none is statistically
+distinguishable from the incumbent anyway; the p-values run from 0.37 to
+0.81 on samples of about 110 terms.
+
+**The primary cell fails.** `centred / k2 / cos>=0.99 / veto / no
+bridge`, named by the declaration's stated rule before any run: 0.1953
+at 8.45 terms per probe, **0.712x**, 95% interval [0.1565, 0.2409].
+R1 fails (below the gate) and R3 fails (its interval's lower bound sits
+under the incumbent's). R2 and R4 pass. The best cell anywhere in the
+family at or above the incumbent's width is 0.858x.
+
+**Verdict, by the criterion written before the numbers: the lane is
+parked.** The primary cell misses R1 and no cell in the declared family
+reaches the gate while emitting at least the incumbent's terms per
+probe. That is the at-width reading failing family-wide, which is
+exactly what the declaration said would retire the self-trained dense
+source at personal-store scale.
+
+**What the declaration bought.** Without it, the honest-looking headline
+here is "the veto clears the bar at 1.172x" — a real number, from a real
+mechanism, that would have been selected as the maximum of 128 cells
+after the fact and would have quietly dropped the width it was won at.
+The declaration's primary cell and Reading A were both fixed in advance
+precisely so that number could not become the finding. **Naming the
+cell first is what turns a grid into evidence.**
+
 ### Measured and killed on the way: RM3 as an equal leg
 
 Pseudo-relevance feedback — top-k first-pass documents contributing

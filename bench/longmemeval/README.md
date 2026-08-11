@@ -744,6 +744,36 @@ veto rather than to confirm — is named in the retrieval README and was
 deliberately not run, because a grid explored until something passes
 stops being evidence.
 
+### Census 2 parks the lane, under a declaration written first
+
+The one mechanism census 1 named and did not run — sparse counts as a
+*veto* on the dense model's candidates rather than as a co-selector —
+was run in census 2, with every cell, both readings of the bar, the
+primary cell and the readiness criterion committed **before any number
+existed** (`../P1E_CENSUS2_DECLARATION.md`, sha ordering: declaration
+`155d6f0`, then the run). Full table in `../retrieval/README.md`;
+artifact `bench/retrieval/results/embed-census2-2026-08-11.json`.
+
+The veto is a real improvement — it raises precision in every cell of
+the primary arm. Four cells clear P1a's gate outright. **All four emit
+about half the incumbent's terms per probe**, so all four fail the
+at-width reading the declaration fixed in advance, and none is
+statistically separable from the incumbent besides. The declared
+primary cell lands at 0.712x and misses two of its four conditions.
+
+**Verdict, by the pre-written criterion: the lane is parked.** No cell
+in the declared family reaches the gate while emitting at least the
+incumbent's terms per probe.
+
+Two things are worth carrying forward. The declaration's falsifiable
+side-check held: re-estimating the incumbent at each challenger width by
+subsampling reproduced its precision at every width, so census 1's
+narrow-cell readings were sound rather than a width artifact. And the
+value of declaring first is now measured rather than asserted — the
+selectable headline here was "1.172x, the veto clears the bar", and it
+is a real number that the pre-named primary cell and the at-width
+reading correctly refuse to promote.
+
 ## Round 6 — the evidence-scaled vote clears the line, and the dev gate stops it, 2026-08-11
 
 Five kills all named the same untested cause: `_hybrid_fuse` fuses by
