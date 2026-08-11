@@ -1136,6 +1136,39 @@ _RESCUE_LEG_MIN_EVIDENCE = 2
 # amplifying change would need a different safety argument.
 _EVIDENCE_FULL_AT = 3
 
+# Whether the leg's weight is SCALED by its evidence, or flat above the
+# floor. **Default off: the shipped lane uses the flat weight.**
+#
+# Both forms were preregistered, implemented and measured (addenda 9 and
+# 10). The scaled forms win on conversational stores and lose on
+# technical ones, and the decision follows from who actually turns this
+# lane on. Measured on the gold set, by the preregistered dev gates'
+# own verdicts:
+#
+#     form                        asked r@1/r@5   control r@1/r@5
+#     flat (this default)         0.55 / 0.90     0.50 / 0.85
+#     scaled (m-1)/(F-1)          0.55 / 0.80     0.50 / 0.80
+#     scaled m/F                  0.55 / 0.80     0.50 / 0.85
+#
+# The scaled forms' compensating gains land on LongMemEval's
+# conversational stores (macro@5 0.8823 flat -> 0.8926 / 0.8901
+# scaled) — and every one of those figures is BELOW that corpus's
+# lane-off baseline of 0.8935, so a conversational store is better
+# served leaving `rescue_expansion` off entirely than by any form of it.
+# The audience that turns the lane on is a store whose owner knows it
+# holds technical prose, and for that audience flat is strictly better.
+#
+# Round 8 is why this is a knob rather than an inference: no cheap store
+# statistic separates the two corpora by anything near the twofold the
+# weight would have to move (best 1.70x, and filler-token share — the
+# quantity the lane's own premise names — only 1.13x). The engine cannot
+# tell which corpus it is holding, so the owner does.
+#
+# The scaled form stays committed and exercisable rather than deleted:
+# it is the campaign's best held-out configuration and the record for
+# it is published. `bench/*/run.py --evidence-scaling on` drives it.
+_RESCUE_LEG_EVIDENCE_SCALING = False
+
 # Document-frequency floor for the QUERY_FILLER_WORDS list, as a
 # fraction of the priced collection. Memory bodies are technical prose,
 # so conversational filler is corpus-RARE, and Okapi IDF prices it like
@@ -2445,10 +2478,15 @@ def _leg_evidence_weight(evidence: int) -> float:
 
     Returns 0.0 below `_RESCUE_LEG_MIN_EVIDENCE` — the round-5 rule,
     unchanged: a leg resting on one matched term is a coincidence and
-    votes nothing. Above the floor the weight is the fraction of the
-    full-evidence bar the leg's own evidence reaches,
-    `evidence / _EVIDENCE_FULL_AT`, capped at 1 — so the result is
-    always within [0, `_RESCUE_LEG_WEIGHT`].
+    votes nothing.
+
+    Above the floor the SHIPPED form is flat, the full
+    `_RESCUE_LEG_WEIGHT`, because that is what measures best for the
+    audience that turns this lane on — see `_RESCUE_LEG_EVIDENCE_SCALING`
+    for the arms and the reasoning. With scaling enabled the weight is
+    instead the fraction of the full-evidence bar the leg's own evidence
+    reaches, `evidence / _EVIDENCE_FULL_AT`, capped at 1. Either way the
+    result is within [0, `_RESCUE_LEG_WEIGHT`].
 
     Round 6 used `(evidence - 1) / (_EVIDENCE_FULL_AT - 1)` instead. The
     offset existed only to map the floor to exactly half weight, which
@@ -2465,6 +2503,8 @@ def _leg_evidence_weight(evidence: int) -> float:
     """
     if evidence < _RESCUE_LEG_MIN_EVIDENCE:
         return 0.0
+    if not _RESCUE_LEG_EVIDENCE_SCALING:
+        return _RESCUE_LEG_WEIGHT
     scale = min(1.0, evidence / max(1, _EVIDENCE_FULL_AT))
     return _RESCUE_LEG_WEIGHT * scale
 

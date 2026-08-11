@@ -588,6 +588,16 @@ def main() -> int:
         ),
     )
     p.add_argument(
+        "--evidence-scaling",
+        choices=("on", "off"),
+        default="off",
+        help=(
+            "Scale the rescue leg's weight by its evidence instead of the "
+            "shipped flat weight. Default off — the shipped lane form. 'on' "
+            "reproduces the round-6/7 arms."
+        ),
+    )
+    p.add_argument(
         "--ablate",
         choices=ABLATIONS,
         default="none",
@@ -617,6 +627,8 @@ def main() -> int:
     RESCUE_EXPANSION = args.rescue_expansion == "on"
     ABLATION = args.ablate
     LEG_MARGIN_CAP = args.leg_margin_cap == "on"
+    if args.evidence_scaling == "on":
+        _engine._RESCUE_LEG_EVIDENCE_SCALING = True
     if not LEG_MARGIN_CAP:
         _engine._RESCUE_LEG_MIN_EVIDENCE = 0
     if ABLATION != "none" and not RESCUE_EXPANSION:
@@ -710,6 +722,7 @@ def main() -> int:
         "rescue_expansion": RESCUE_EXPANSION,
         "ablation": ABLATION,
         "leg_margin_cap": LEG_MARGIN_CAP,
+        "evidence_scaling": args.evidence_scaling == "on",
         "notes": notes,
     }
 

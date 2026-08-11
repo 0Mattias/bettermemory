@@ -719,6 +719,16 @@ def main() -> int:
             "control for the capped arm."
         ),
     )
+    parser.add_argument(
+        "--evidence-scaling",
+        choices=("on", "off"),
+        default="off",
+        help=(
+            "Scale the rescue leg's weight by its evidence instead of the "
+            "shipped flat weight. Default off — the shipped lane form. 'on' "
+            "reproduces the round-6/7 arms."
+        ),
+    )
     parser.add_argument("--json", action="store_true", help="Emit JSON.")
     args = parser.parse_args()
 
@@ -728,9 +738,12 @@ def main() -> int:
     global RESCUE_EXPANSION, LEG_MARGIN_CAP
     RESCUE_EXPANSION = args.rescue_expansion == "on"
     LEG_MARGIN_CAP = args.leg_margin_cap == "on"
-    if not LEG_MARGIN_CAP:
-        import bettermemory.search as _engine
 
+    import bettermemory.search as _engine
+
+    if args.evidence_scaling == "on":
+        _engine._RESCUE_LEG_EVIDENCE_SCALING = True
+    if not LEG_MARGIN_CAP:
         _engine._RESCUE_LEG_MIN_EVIDENCE = 0
 
     corpus_path = Path(args.corpus).expanduser()
@@ -891,6 +904,7 @@ def main() -> int:
                     "prefilter_cap": PREFILTER_CAP,
                     "rescue_expansion": RESCUE_EXPANSION,
                     "leg_margin_cap": LEG_MARGIN_CAP,
+                    "evidence_scaling": args.evidence_scaling == "on",
                     "notes": notes,
                     "results": [
                         {

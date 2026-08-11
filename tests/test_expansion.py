@@ -36,6 +36,7 @@ from bettermemory.models import Confidence, Memory, Source, generate_ulid
 from bettermemory.search import (
     _EVIDENCE_FULL_AT,
     _EXPANSION_TABLES,
+    _RESCUE_LEG_EVIDENCE_SCALING,
     _RESCUE_LEG_MIN_EVIDENCE,
     _RESCUE_LEG_WEIGHT,
     _STOPWORDS,
@@ -762,13 +763,64 @@ def test_the_evidence_bar_is_the_preregistered_one() -> None:
     assert _RESCUE_LEG_MIN_EVIDENCE == 2
 
 
-def test_the_leg_weight_scales_with_its_evidence() -> None:
-    """The curve: withheld below the floor, two thirds of full weight
+def test_the_shipped_lane_form_is_the_flat_weight() -> None:
+    """The lane ships FLAT above the evidence floor, and the scaled form
+    is a committed non-default variant.
+
+    The decision follows the audience. Both forms were preregistered and
+    measured; scaling wins on conversational stores and loses on
+    technical ones, and every scaled figure on the conversational corpus
+    is still below that corpus's lane-off baseline — so a conversational
+    store is better off leaving the lane off entirely than running any
+    form of it. The audience that turns it on holds technical prose, and
+    for them flat measured 0.90 as-asked recall@5 against 0.80 under
+    both scaled forms.
+    """
+    assert _RESCUE_LEG_EVIDENCE_SCALING is False
+    assert _leg_evidence_weight(2) == pytest.approx(_RESCUE_LEG_WEIGHT)
+    assert _leg_evidence_weight(9) == pytest.approx(_RESCUE_LEG_WEIGHT)
+    # The floor is untouched by the form.
+    assert _leg_evidence_weight(1) == 0.0
+
+
+def test_the_scaled_variant_is_still_reachable_and_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Kept rather than deleted: it is the campaign's best held-out
+    configuration and its record is published. It must stay bounded and
+    monotone so the safety argument survives the demotion."""
+    monkeypatch.setattr("bettermemory.search._RESCUE_LEG_EVIDENCE_SCALING", True)
+    weights = [_leg_evidence_weight(m) for m in range(0, 12)]
+    assert all(0.0 <= w <= _RESCUE_LEG_WEIGHT for w in weights)
+    assert weights == sorted(weights)
+    assert _leg_evidence_weight(2) == pytest.approx(_RESCUE_LEG_WEIGHT * 2 / 3)
+    assert _leg_evidence_weight(3) == pytest.approx(_RESCUE_LEG_WEIGHT)
+
+
+def test_the_lane_form_is_invisible_with_the_lane_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Neither form may be observable to a default install."""
+    memories = _corpus()
+    query = "do we ever rip the old toggles back out"
+    baseline = search(memories, query, max_results=3)
+    for scaling in (False, True):
+        monkeypatch.setattr("bettermemory.search._RESCUE_LEG_EVIDENCE_SCALING", scaling)
+        got = search(memories, query, max_results=3)
+        assert [h.id for h in got] == [h.id for h in baseline], scaling
+        assert [h.score for h in got] == [h.score for h in baseline], scaling
+
+
+def test_the_leg_weight_scales_with_its_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The variant curve: withheld below the floor, two thirds of full weight
     at the floor, full weight at `_EVIDENCE_FULL_AT`, capped above.
 
     The floor value is `2/3` because the weight is the fraction of the
     full-evidence bar the leg reaches — round 7 replaced round 6's
     offset form, which put it at 1/2 and cost the dev set."""
+    monkeypatch.setattr("bettermemory.search._RESCUE_LEG_EVIDENCE_SCALING", True)
     assert _leg_evidence_weight(0) == 0.0
     assert _leg_evidence_weight(1) == 0.0
     assert _leg_evidence_weight(2) == pytest.approx(_RESCUE_LEG_WEIGHT * 2 / 3)
@@ -776,10 +828,13 @@ def test_the_leg_weight_scales_with_its_evidence() -> None:
     assert _leg_evidence_weight(9) == pytest.approx(_RESCUE_LEG_WEIGHT)
 
 
-def test_the_leg_weight_is_bounded_and_monotone() -> None:
+def test_the_leg_weight_is_bounded_and_monotone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Bounded in [0, _RESCUE_LEG_WEIGHT] by construction, so the change
     can only ever REDUCE the leg's influence relative to the flat
     weight, never amplify it — the safety argument addendum 9 makes."""
+    monkeypatch.setattr("bettermemory.search._RESCUE_LEG_EVIDENCE_SCALING", True)
     weights = [_leg_evidence_weight(m) for m in range(0, 12)]
     assert all(0.0 <= w <= _RESCUE_LEG_WEIGHT for w in weights)
     assert weights == sorted(weights)
