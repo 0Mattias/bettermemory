@@ -557,7 +557,7 @@ def test_every_ablation_arm_is_a_committed_patch() -> None:
     from a clean checkout at a sha. This pins the patch each mode
     applies, because a silently-neutered ablation measures the
     unablated engine and looks like a result."""
-    assert bm.ABLATIONS == ("none", "floor-only", "leg-only")
+    assert bm.ABLATIONS == ("none", "floor-only", "leg-only", "floor-off")
     assert bm.ABLATION == "none", "the runner default must be the unablated lane"
 
     import bettermemory.search as engine
@@ -589,6 +589,20 @@ def test_every_ablation_arm_is_a_committed_patch() -> None:
         engine._EXPANSION_TABLES = engine._EXPANSION_TABLES._replace(
             filler_stems=filler_before
         )
+
+        # `floor-off` disables the FLOOR only. The table survives, so
+        # the 5.1.1 emission filter still keeps filler out of the leg —
+        # which is the whole reason this mode exists beside `leg-only`,
+        # where emptying the table conflates the two mechanisms.
+        floor_stats = engine._filler_floor_stats
+        try:
+            notes = bm.apply_ablation("floor-off")
+            assert engine._filler_floor_stats("passthrough", ["x"], 1) == "passthrough"
+            assert engine._EXPANSION_TABLES.filler_stems == filler_before
+            assert engine._RESCUE_COVERAGE_GATE == gate_before
+            assert any("floor-off" in n for n in notes)
+        finally:
+            engine._filler_floor_stats = floor_stats
 
     with pytest.raises(ValueError, match="unknown ablation"):
         bm.apply_ablation("nope")

@@ -426,6 +426,16 @@ rank-1 barely clears its rank-2 withholds its vote. θ = 0.12, derived
 from this instrument alone; the held-out set is deliberately not read
 before the run.
 
+**Round 4 replaces that fixed threshold with a self-calibrating one.**
+Round 3 gained the campaign's first held-out ground (macro@5 0.8770 →
+0.8830) and missed on calibration: θ sat above this corpus's median leg
+separation and below the held-out corpus's, so one constant was
+aggressive where it came from and permissive where it was aimed.
+Addendum 6 (2026-08-10) judges a leg against its OWN internal gap
+structure — `gap[0] / mean(other gaps) ≥ 2.5` over the leg's top 12
+candidates — so the comparison set is drawn from the store being
+ranked. The derivation rule, not a value, is what is preregistered.
+
 Unpadded corpus (`results/unpadded-2026-08-09.json`):
 
 | arm | probe | recall@1 | recall@5 |

@@ -108,6 +108,12 @@ def leg_for(memories: list[Memory], query: str) -> dict[str, Any] | None:
     ordered = sorted(leg, key=lambda x: (x[1], x[0].created, x[0].id), reverse=True)
     top_score = ordered[0][1]
     runner_up = ordered[1][1] if len(ordered) > 1 else 0.0
+    # The leg's own score shape, which is what a SELF-CALIBRATING
+    # criterion reads: a threshold derived from the leg's internal gap
+    # distribution needs the gaps, not just the top two scores. Capped
+    # at 12 because the tail is flat and the artifact is committed.
+    scores = [round(sc, 6) for _m, sc, _t in ordered[:12]]
+    gaps = [round(a - b, 6) for a, b in zip(scores, scores[1:])]
     return {
         "coverage": round(coverage, 4),
         "leg_size": len(ordered),
@@ -119,6 +125,8 @@ def leg_for(memories: list[Memory], query: str) -> dict[str, Any] | None:
         else 0.0,
         "top_matched": len(ordered[0][2]),
         "terms": len(exp_terms),
+        "scores": scores,
+        "gaps": gaps,
         "top_id": ordered[0][0].id,
         "ranked_ids": [m.id for m, _, _ in ordered[:10]],
     }

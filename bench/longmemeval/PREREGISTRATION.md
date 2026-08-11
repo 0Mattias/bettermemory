@@ -1131,3 +1131,292 @@ arm lands within **1.05×** the uncapped arm in the same session.
 - **Not that `margin_ratio` is the best available signal** — only that
   it is the best of the five the dev census measured, and the only one
   of the two that separate which can transfer across corpora.
+
+## Addendum 6 — round-4 experiment: the cap carries its own calibration, 2026-08-10
+
+Round 3 gained the campaign's first held-out ground and then failed on
+calibration, not on direction. This addendum fixes the calibration
+problem the round-3 results section states. Predictions continue the
+numbering — P1–P5, P6–P8, P9–P15, P16–P21 — so this document owns
+**P22–P28**.
+
+### What round 3 established
+
+| arm | macro@1 | macro@5 | macro@10 |
+| --- | --- | --- | --- |
+| baseline, lane off | 0.5246 | 0.8935 | 0.9443 |
+| lane on, no cap | 0.4772 | 0.8770 | 0.9471 |
+| lane on, fixed θ = 0.12 | 0.4916 | 0.8830 | 0.9466 |
+
+Conditioning the leg's vote recovered 30% of the macro@1 loss and 36%
+of the macro@5 loss — the first mechanism to move this corpus toward
+baseline. It missed the 0.8900 line and cost the dev set three
+questions at recall@5.
+
+**The measured cause was calibration, not mechanism.** θ = 0.12 sits
+*above* the dev set's median engaged-leg `margin_ratio` (0.0698) and
+*below* the held-out median (0.1359), so one constant was aggressive
+on the corpus it came from and permissive on the corpus it was aimed
+at. It fired on 61% of engaged dev legs and 43.9% of held-out ones.
+Scale-free was necessary and not sufficient: the ratio ignores
+collection size, but its *distribution* still differs by corpus, and a
+fixed quantile is not a fixed value.
+
+### Hypothesis
+
+> **A leg has no opinion when its top candidate does not stand out
+> against the leg's OWN internal structure — and that comparison, being
+> drawn entirely from the leg being judged, calibrates itself to
+> whatever store the leg was built on.**
+
+The prediction that makes it falsifiable is not about recall alone: a
+self-calibrating criterion should fire at a **comparable rate on both
+corpora**, where the fixed θ fired at 61% and 43.9%. P22 is that test,
+and it can fail even if recall improves.
+
+### The derivation rule — this, not a value, is what is preregistered
+
+Every input, the statistic, the window, the bounds and the degenerate
+cases are fixed here, before any code exists.
+
+**Statistic — `standout`.** Over the leg's own fusion ordering
+(`(score, created, id)` descending, the ordering `_id_order` applies,
+so the rank-1 judged is the rank-1 that would vote):
+
+```
+scores = [s0, s1, ... ]            # the leg's top _STANDOUT_WINDOW candidates
+gaps   = [s0-s1, s1-s2, ... ]      # adjacent differences
+standout = gaps[0] / mean(gaps[1:])
+```
+
+The top gap, measured against the average gap elsewhere in the same
+leg. **The leg votes iff `standout >= K`.**
+
+**Window — the leg's top 12 candidates (`_STANDOUT_WINDOW = 12`).**
+Load-bearing and fixed here because the constant means nothing without
+it: a long flat tail would drag `mean(gaps[1:])` toward zero and make
+every leg look like a standout. 12 is the window the dev census
+recorded and therefore the window K is derived on; engine and census
+must read the same shape or the number does not transfer for a reason
+that has nothing to do with corpora.
+
+**Degenerate cases — all fail OPEN (the leg votes), matching the
+df-gate's "a stale index degrades the gate to today's behaviour, never
+to silent deletion":**
+
+- fewer than 3 candidates → no comparison set exists → vote;
+- `mean(gaps[1:]) <= 0` (everything below rank 1 tied) with a positive
+  top gap → a perfect standout → vote;
+- the same with a zero top gap → a total plateau, no opinion → **do not
+  vote**. This is the one degenerate case that withholds, and it is the
+  shape the whole mechanism is named for.
+
+**K = 2.5, by the same preserve-then-take-the-largest rule addenda 4
+and 5 used:** the largest round value strictly below the minimum
+`standout` among the dev set's correct legs (2.6618). Not the value
+that scores best — at n=41 that is fitting noise.
+
+**Why `standout` and not the four alternatives.** All five were
+computed on the same committed census
+(`bench/retrieval/results/leg-census-2026-08-10.json`), and the choice
+is stated so it cannot be re-litigated after results:
+
+| statistic | separation (right p50 / wrong p50) | best precision keeping ALL 14 correct legs |
+| --- | --- | --- |
+| `gap[0] / mean(other gaps)` | 4.04× | **0.583 (1.71×)** |
+| `gap[0] / median(other gaps)` | 6.40× | 0.483 (1.41×) |
+| `(s0−s1) / (s0−s_last)` | 2.92× | 0.560 (1.64×) |
+| plateau fraction within 10% of top | 0.50× | 0.378 (1.11×) |
+| round 3's `margin_ratio` (fixed level) | 4.0× | — kills 2 correct legs |
+
+`gap/median` separates hardest and discriminates worst under the
+preserve constraint, which is why the selection criterion is stated as
+"precision achievable while keeping every correct leg" rather than
+"separation": round 3 failed on the legs it dropped, not on the ones it
+kept.
+
+**Why this should transfer where θ could not.** `margin_ratio`
+normalises by ONE number, the top score, so it inherits whatever the
+corpus does to score magnitudes but nothing about the shape of the
+competition. `standout` normalises by the leg's whole gap structure —
+n−1 numbers drawn from the same store, same query, same scorer — so a
+corpus whose legs are uniformly more or less compressed moves numerator
+and denominator together. That is the argument; P22 is the test, and a
+firing-rate gap as wide as round 3's falsifies it regardless of what
+recall does.
+
+**Measured consequence on the dev census, stated in advance:** K = 2.5
+keeps **all 14** correct legs (round 3's θ dropped 2), drops 17 of 27
+incorrect ones, fires on **41.5%** of engaged legs (round 3: 61%), and
+lifts kept-leg precision from 0.341 to **0.583** (1.71×, against round
+3's 2.20× — deliberately less aggressive).
+
+**This REPLACES the fixed θ.** `_RESCUE_LEG_MIN_MARGIN` and its helper
+are removed rather than stacked; round 3's results section retires the
+fixed global threshold, and keeping both would leave two constants
+where the campaign has argued for none.
+
+### What "default-on" means for a self-calibrating mechanism
+
+Stated before results because the phrase is now ambiguous. Flipping
+`rescue_expansion` default-on would ship **the lane with the derivation
+rule active and K at its committed value** — the rule is part of the
+mechanism, not a tuning knob layered on top, and there is no
+configuration in which the lane runs with the leg unconditioned. K is a
+source constant with a stated derivation, like
+`_RESCUE_COVERAGE_GATE` and `_RESCUE_LEG_WEIGHT`; it is not exposed as
+a config key, and no store-specific value is written anywhere. "Carries
+its own calibration" means the STATISTIC adapts to the store, not that
+the constant is fitted per store — nothing is learned, persisted, or
+derived at install time, which is what keeps the lane deterministic and
+reviewable under the WaC rules.
+
+### Instrument A — `bench/retrieval/` (DEVELOPMENT set)
+
+```sh
+.venv/bin/python bench/retrieval/run.py --rescue-expansion on --json
+.venv/bin/python bench/retrieval/run.py --rescue-expansion on --pad-to 600 --prefilter both --json
+.venv/bin/python bench/retrieval/run.py --rescue-expansion on --index-threshold 180 --prefilter both --json
+```
+
+Cap off (`--leg-margin-cap off`) must reproduce
+`rebaseline-lane-*-2026-08-10.json` exactly.
+
+### Instrument B — this directory (HELD-OUT set)
+
+500 questions, sha256 `d6f21ea9…c3a442`, depth 200, lexical arm,
+`--per-question` mandatory. **Five arms:**
+
+1. **baseline, lane off** — must reproduce 0.5246 / 0.8935 / 0.9443.
+   **If it does not, STOP.**
+2. **lane on, no cap** — must reproduce 0.4772 / 0.8770 / 0.9471.
+3. **lane on, standout cap at K** — the experiment.
+4. **lane on, standout cap, `--ablate floor-off`** — the floor
+   interaction, cleanly. Round 3 measured leg-only+cap (0.8870) above
+   full-lane+cap (0.8830), but `leg-only` empties the filler table and
+   so disables the floor AND the 5.1.1 emission filter at once. The new
+   `floor-off` mode disables only the floor, which is the arm that can
+   actually attribute that 0.0040.
+5. **`--ablate leg-only` + standout cap** — kept for comparability with
+   round 3's arm 4.
+
+All artifacts carry `provenance.tree_dirty == false`; every arm is a
+committed flag. K is frozen before Instrument B runs.
+
+### Predictions
+
+**P22 — the rule self-calibrates. THE test of the hypothesis, and it is
+about firing rate, not recall.** The cap's firing rate on engaged
+held-out questions lands within **±10 percentage points** of its
+firing rate on engaged dev questions (41.5%), i.e. in **[31.5%,
+51.5%]**. Round 3's fixed θ spanned 61% → 43.9%, a 17-point gap.
+**MISSED if** outside that band — the statistic is no more
+self-calibrating than the one it replaced, and any recall result below
+is a coincidence of this corpus rather than a property of the rule.
+
+**P23 — the dev-set win survives intact this time.** Unpadded lexical:
+asked **exactly 50%/90%**, requery **exactly 80%/100%**, control
+**exactly 45%/85%**. Not "within a question" — the rule keeps all 14
+correct legs by construction, so anything less is the correctness proxy
+failing again. **MISSED if** any cell moves.
+
+**P24 — no held-out regression. THE kill criterion, at the line that
+has stood three rounds.** macro@5 ≥ **0.8900**. Below that the default
+does not flip.
+
+**P25 — it beats round 3.** macro@5 > **0.8830** and macro@1 >
+**0.4916**. Mechanism: the rule withholds fewer legs (41.5% vs 61% on
+dev) while keeping every correct one, so it should lose less of the
+lane's benefit while still removing the opinionless votes. **MISSED
+if** either is at or below round 3 — a gentler rule that gains nothing
+means the fixed θ's aggression was doing the work, and self-calibration
+is not the lever.
+
+**P26 — the filler floor is not paying for itself under a cap.** Arm 4
+(floor off) ≥ arm 3 (floor on) at macro@5. Mechanism: round 3 measured
+the floor costing 0.0040 in combination, and the floor's own ablation
+reproduces baseline exactly, so it contributes nothing here while
+interacting with the leg. **MISSED if** arm 4 < arm 3 — the round-3
+reading was the `leg-only` confound rather than the floor, and the
+floor should stay.
+
+**P27 — reach is preserved.** macro@10 ≥ **0.9443** (baseline).
+
+**P28 — the expected shape is a NULL, declared so it cannot be sold as
+a win.** macro@5 in **[0.8900, 0.8990]** and macro@1 in **[0.5046,
+0.5346]**. The cap is not predicted to help conversational stores; it
+is predicted to stop hurting them.
+
+### Kill criteria
+
+1. **Baseline does not reproduce to four decimals** → stop.
+2. **Uncapped arm does not reproduce 0.4772 / 0.8770 / 0.9471** → stop.
+3. **macro@5 < 0.8900** → the default does not flip (P24).
+4. **Any dev-set cell moves** → the rule is not free on technical
+   stores (P23).
+5. **Firing rate outside [31.5%, 51.5%]** → the rule does not
+   self-calibrate; any recall result is corpus-specific (P22).
+6. **macro@5 ≤ 0.8830** → no gain over round 3 (P25).
+7. **`tree_dirty` true on any artifact** → run void.
+
+### What would justify flipping `rescue_expansion` default-on
+
+**All eight, conjunctively.**
+
+1. macro@5 ≥ 0.8900 (P24).
+2. macro@5 ≥ **0.8935**, the baseline itself — the held-out set pays
+   nothing for the dev set's win.
+3. macro@1 ≥ 0.5046 (P26's sibling, P28's band).
+4. macro@10 ≥ 0.9443 (P27).
+5. Dev-set cells all unmoved (P23).
+6. Firing rate inside the P22 band on BOTH corpora — the mechanism has
+   to be shown self-calibrating, not merely lucky.
+7. Both determinism reproductions exact, `tree_dirty: false`, artifacts
+   committed.
+8. The flip lands as its own reviewed change citing this document.
+
+**What does NOT justify a flip:** a larger dev-set win; a gain
+concentrated in one question class; an improvement only at @10; or a
+recall gain with a firing rate outside the P22 band, which would mean
+the number came from this corpus rather than from the rule.
+
+### Declared confounds
+
+**1. K is still fitted to 41 dev observations**, 14 of them the
+correct-leg population the preserve rule keys on. The rule choice is
+better argued than round 3's; the sample is the same size.
+
+**2. The correctness proxy is unchanged and was round 3's undoing.**
+"Correct" still means the leg's rank-1 is the gold document, and a leg
+whose rank-1 is wrong can still lift the gold document. Round 3's cost
+came from exactly this. The mitigation is that K preserves ALL correct
+legs rather than 12 of 14, which bounds the damage the proxy can do —
+P23 is the guard, and it is stated as exact equality for that reason.
+
+**3. The window is a third constant.** `_STANDOUT_WINDOW = 12` is
+inherited from the census rather than derived, and a different window
+would move K. It is fixed here so it cannot drift, but it is not
+independently justified.
+
+**4. Above the index threshold the leg ranks a nominated slice**, so
+its gap structure is drawn from a pool already biased toward the
+caller's vocabulary. Instrument A measures that regime; Instrument B
+never has.
+
+**5. Small stores make the rule inert.** Fewer than 3 candidates fails
+open by construction, so on a small scope most legs vote unconditioned
+— the same shape round 3's single-candidate case had.
+
+**6. n=20 on the dev set.** One question is 5 points.
+
+**7. Cost.** One pass over at most 12 already-computed scores. Runtime
+guard: within **1.05×** the uncapped arm in the same session.
+
+### What is not claimed
+
+- **Not that the cap helps conversational stores.** P28 predicts a null.
+- **Not that `standout` is optimal** — only that it is the best of the
+  five the dev census measured under a stated selection criterion.
+- **Not helpfulness, correctness, or staleness.**
+- **Not a comparative claim.** No claude-mem arm runs in round 4.
+- **Not the above-threshold regime on Instrument B.**

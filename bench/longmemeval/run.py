@@ -169,7 +169,7 @@ LEG_MARGIN_CAP = True
 # only — `src/` is untouched, and `apply_ablation` states each edit and
 # what it isolates.
 ABLATION = "none"
-ABLATIONS = ("none", "floor-only", "leg-only")
+ABLATIONS = ("none", "floor-only", "leg-only", "floor-off")
 
 
 def apply_ablation(mode: str) -> list[str]:
@@ -185,6 +185,9 @@ def apply_ablation(mode: str) -> list[str]:
       Emptying the table also removes the 5.1.1 filter that keeps
       filler out of the emitted terms, which is correct for this arm:
       it isolates the leg as the leg exists, table and all.
+    - `floor-off` disables the FLOOR only, leaving the table (and so
+      the emission filter) intact — the clean way to price the floor's
+      ranking contribution beside another mechanism.
 
     Idempotent per process; the runner calls it once from `main`.
     """
@@ -199,6 +202,19 @@ def apply_ablation(mode: str) -> list[str]:
             "engage, so the rescue leg never runs and this arm measures "
             "the filler df-floor alone. Committed patch, not a working-"
             "tree edit; see apply_ablation in run.py."
+        ]
+    if mode == "floor-off":
+        # The floor alone is disabled; the filler table stays intact, so
+        # the 5.1.1 emission filter still keeps filler OUT of the leg.
+        # `leg-only` cannot serve this purpose: emptying the table
+        # disables both mechanisms at once, which conflates them.
+        _engine._filler_floor_stats = lambda stats, tokens, n: stats
+        return [
+            "ABLATION floor-off — the filler df-floor is patched to a "
+            "pass-through while the filler TABLE stays intact, so the "
+            "emission filter still applies. Isolates the floor's ranking "
+            "effect from its emission effect. Committed patch; see "
+            "apply_ablation in run.py."
         ]
     tables = _engine._EXPANSION_TABLES
     _engine._EXPANSION_TABLES = tables._replace(filler_stems=frozenset())
