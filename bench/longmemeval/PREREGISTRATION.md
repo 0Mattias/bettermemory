@@ -1703,3 +1703,15 @@ Any successor experiment that adapts expansion vocabulary to the store
 (rather than adapting which legs vote) should say so in its first
 paragraph and budget for that instrument.
 
+**That instrument was searched for on 2026-08-11 and not found.**
+Every conversational long-term-memory corpus surveyed is either
+non-commercial (LoCoMo, DailyDialog, EmpatheticDialogues), carries no
+identifiable license (PerLTQA, Cornell Movie-Dialogs), or ships its
+data separately from its permissively-licensed code with no
+redistribution grant (MSC). Synthesising one is licence-clean and
+methodologically disqualified — a held-out set whose paraphrase gaps
+its own author chose cannot check a paraphrase mechanism that author
+designed. The candidates, the evidence and the three ways forward are
+in [`../THIRD_INSTRUMENT.md`](../THIRD_INSTRUMENT.md). **P1a is blocked
+on it and is deliberately not preregistered.**
+
