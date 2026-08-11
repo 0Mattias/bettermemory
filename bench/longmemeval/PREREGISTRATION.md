@@ -2081,3 +2081,187 @@ nonetheless wrong, this changes nothing, and P44 is where that shows.
 - Not helpfulness, correctness or staleness.
 - Not a comparative claim; no claude-mem arm runs.
 
+---
+
+## Addendum 10 — round 7: the same mechanism, a structural curve, 2026-08-11
+
+Round 6 confirmed the fusion hypothesis and failed its dev gate. This
+recalibrates the curve and nothing else. Predictions continue — this
+document owns **P49–P55**.
+
+### What round 6 settled, and what it broke
+
+| arm | macro@1 | macro@5 | macro@10 |
+| --- | --- | --- | --- |
+| baseline, lane off | 0.5246 | 0.8935 | 0.9443 |
+| lane on, flat weight (round 5) | 0.5014 | 0.8823 | 0.9476 |
+| lane on, scaled `(m-1)/(F-1)` (round 6) | 0.5134 | **0.8926** | 0.9463 |
+
+Round 6 cleared the 0.8900 kill line for the first time in six rounds
+and landed 0.0009 under baseline. It also cost the dev set two
+questions at recall@5 (asked 90%→80%, control 85%→80%), which is a
+preregistered kill, so the default did not flip and the blind
+instrument was not spent.
+
+The diagnosis is specific: the damping fires on ~79% of voting legs,
+because the two-matched-terms stratum is most of the population, and
+the dev labels put that stratum at **68.2% helpful**. Round 6 halved
+its vote. **The mechanism is right; the weight at the floor is too
+aggressive.**
+
+### The curve, and why this is a structural change rather than a fit
+
+Round 6 used `scale(m) = (m - 1) / (F - 1)`. That form has an offset
+whose only justification was that it maps the floor to exactly 0.5 —
+which was a choice, not a derivation, and it is the choice that cost
+the dev set.
+
+**Round 7 uses the quantity the mechanism actually names:**
+
+```
+scale(m) = 0.0                       if m < _RESCUE_LEG_MIN_EVIDENCE
+         = min(1.0, m / _EVIDENCE_FULL_AT)   otherwise
+weight   = _RESCUE_LEG_WEIGHT * scale(m)
+```
+
+A leg's weight is **the fraction of the full-evidence bar its own
+evidence reaches**. There is no offset to justify, and:
+
+**Round 7 introduces ZERO new constants.** `_EVIDENCE_FULL_AT` stays 3,
+derived in addendum 9 by a stated rule (the count at which the dev
+labels first read 100% helpful). `_RESCUE_LEG_MIN_EVIDENCE` stays 2 and
+`_RESCUE_LEG_WEIGHT` stays 0.7. Only the FORM changes, from a rescaled
+offset to the plain ratio.
+
+| m | round 6 weight | **round 7 weight** |
+| --- | --- | --- |
+| < 2 | 0.000 (withheld) | 0.000 (withheld) |
+| 2 | 0.350 | **0.467** |
+| ≥ 3 | 0.700 | 0.700 |
+
+**The convergence, stated as evidence rather than as a fit.** The
+structural form puts the floor stratum at **2/3 = 0.6667** of full
+weight. The round-5 labels independently measure that stratum at
+**68.2% helpful**. The gap is **1.5 points**, and the two numbers come
+from different places: one from the mechanism's own arithmetic
+(evidence over the full-evidence bar), one from counting outcomes on
+39 labelled legs. Neither was derived from the other. **That agreement
+is corroboration; had the structural form been fitted to 0.682 it would
+read 0.682, and it does not.**
+
+Three fitted constants have died in this arc (a df threshold, a fixed
+margin, a self-calibrating ratio). This one is not fitted at all.
+
+### Contamination statement, required and explicit
+
+**Curve selection used no LongMemEval outcome from round 6.** The form
+comes from the mechanism's own quantities; the anchor `F = 3` was fixed
+in addendum 9 before round 6 ran; the corroborating 68.2% is from the
+round-5 label artifact, which predates round 6 entirely. **The 0.8926
+figure played no part in choosing this curve**, and it must not be
+tuned against in any successor either — it is dev-contaminated for
+curve selection from here on.
+
+### The blind instrument
+
+`bench/heldout` is scored **once, last, and if and only if the dev
+gates below pass.** That protection has now saved it twice — from P1a
+and from round 6.
+
+**No-read attestation:** no gold label or question text from that
+instrument has been read by the implementer at the time of writing.
+The enforcement record is the sha ordering: data `35227dd` < this
+commit < any run commit.
+
+### Predictions
+
+**P49 — the lane-off path is byte-identical. An arm, not an
+assumption.** Dev cells identical with `rescue_expansion=False`, and a
+LongMemEval baseline arm reproducing 0.5246 / 0.8935 / 0.9443 to four
+decimals. **MISSED if** anything moves — scope violated, revert.
+
+**P50 — the dev set is preserved at its current lane-on figures. The
+gate round 6 failed, stated exactly.** Unpadded lexical:
+
+- asked **recall@1 ≥ 55%** and **recall@5 ≥ 90%**
+- requery **exactly 80% / 100%**
+- control **recall@1 ≥ 50%** and **recall@5 ≥ 85%**
+
+**MISSED if** any of those falls. A gentler curve that still costs the
+gold set is the same failure round 6 had.
+
+**P51 — LongMemEval macro@5 ≥ 0.8900**, the kill line, six rounds
+standing.
+
+**P52 — macro@5 ≥ 0.8935**, the baseline itself. This is the bar that
+matters for a default flip: the lane must cost the corpus nothing, not
+merely stay above the kill line.
+
+**P53 — macro@1 ≥ 0.5134**, round 6's figure, and the flip case
+additionally needs ≥ 0.5246 (baseline).
+
+**P54 — macro@10 ≥ 0.9443.**
+
+**P55 — the held-out instrument confirms, if it runs.** `bench/heldout`
+macro@5 ≥ its own lane-off baseline. The clean instrument holds a veto:
+a mechanism that helps two dev-informed corpora and harms the blind one
+is overfitting with extra steps.
+
+### Kill criteria
+
+1. P49 fails → scope violated; revert, publish, stop.
+2. Any P50 figure falls → not free on technical stores; **the blind
+   instrument is NOT spent.**
+3. macro@5 < 0.8900 → the default does not flip.
+4. Held-out macro@5 below its lane-off baseline → the blind instrument
+   vetoes.
+5. `tree_dirty` true on any artifact → run void.
+
+### The preregistered case for `rescue_expansion` default-on
+
+**If and only if ALL SEVEN hold, the case is MADE:**
+
+1. **P49 holds** — lane-off byte-identical on both instruments.
+2. **Dev set at or above its current lane-on figures** — asked ≥
+   55%/90%, requery exactly 80%/100%, control ≥ 50%/85% (P50).
+3. **LongMemEval macro@5 ≥ 0.8935** — the baseline, not the kill line
+   (P52).
+4. **LongMemEval macro@1 ≥ 0.5246** — the baseline (P53).
+5. **LongMemEval macro@10 ≥ 0.9443** (P54).
+6. **`bench/heldout` macro@5 ≥ its lane-off baseline** (P55) — the
+   blind instrument confirms rather than merely failing to contradict.
+7. **Provenance clean everywhere**: `tree_dirty: false` on every
+   artifact, both determinism arms exact, all artifacts committed.
+
+**Protocol, explicit: even with all seven, the implementer does NOT
+flip the default.** The finding is reported as *the preregistered case
+is MADE*, quoting this list with each item's measured value, and the
+owner executes the flip and the release as its own reviewed change
+citing this document. Anything short of all seven and the case is NOT
+made and the lane stays opt-in — including the specific case where
+macro@5 lands between 0.8900 and 0.8935, which clears the kill line and
+still means the lane costs the corpus something.
+
+### Declared confounds
+
+**1. `F = 3` rests on six legs.** Unchanged from addendum 9 and still
+the weakest anchor in the design.
+
+**2. The convergence could be coincidence.** Two numbers agreeing to
+1.5 points on one dev corpus is corroboration, not proof. If round 7
+succeeds, the honest follow-up is whether `m/F` holds its shape on a
+different corpus — and the blind instrument can only answer that once.
+
+**3. Damping cannot fix a leg that is simply wrong**, unchanged from
+addendum 9.
+
+**4. Instrument B is dev-contaminated** and labelled so in every row.
+
+### What is not claimed
+
+- Not that the base legs should change — `H-fusion-general` remains
+  out of scope for this window, as recorded in addendum 9.
+- Not that `m/F` is optimal; only that it is structural, introduces no
+  constant, and corroborates independently.
+- Not a comparative claim; no claude-mem arm runs.
+
