@@ -597,7 +597,10 @@ def test_every_ablation_arm_is_a_committed_patch() -> None:
         floor_stats = engine._filler_floor_stats
         try:
             notes = bm.apply_ablation("floor-off")
-            assert engine._filler_floor_stats("passthrough", ["x"], 1) == "passthrough"
+            # A pass-through returns its first argument untouched;
+            # `None` is a real `CorpusStats | None` value, so the check
+            # stays inside the signature it is probing.
+            assert engine._filler_floor_stats(None, ["x"], 1) is None
             assert engine._EXPANSION_TABLES.filler_stems == filler_before
             assert engine._RESCUE_COVERAGE_GATE == gate_before
             assert any("floor-off" in n for n in notes)
@@ -622,7 +625,7 @@ def test_the_leg_margin_cap_has_a_committed_off_switch() -> None:
     assert bm.LEG_MARGIN_CAP is True
 
     engine = importlib.import_module("bettermemory.search")
-    assert engine._RESCUE_LEG_MIN_MARGIN == 0.12
+    assert engine._RESCUE_LEG_STANDOUT == 2.5
 
 
 def test_the_ablation_artifacts_declare_their_dirty_tree() -> None:

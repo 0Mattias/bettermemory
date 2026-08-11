@@ -1211,6 +1211,19 @@ to silent deletion":**
   vote**. This is the one degenerate case that withholds, and it is the
   shape the whole mechanism is named for.
 
+> **Correction, 2026-08-10, made during implementation and before any
+> arm ran.** Addenda 5 and 6 both describe a withheld leg as leaving
+> the query "byte-identical to `rescue_expansion=False`". That is
+> wrong, and the unit tests caught it: the filler df-floor is keyed on
+> `rescue_expansion`, not on the leg, so it still applies when the leg
+> is withheld. A withheld leg reproduces **a lane-on query whose leg
+> found nothing**, which is the same shape the lane already has when
+> `exp_terms` comes back empty. On a store where the floor is inert the
+> two coincide, which is why the overstatement survived round 3. The
+> mechanism is unchanged and no prediction moves — arm 4 (`floor-off`)
+> is in fact the arm that prices the difference — but the claim was
+> wrong and is corrected here rather than quietly.
+
 **K = 2.5, by the same preserve-then-take-the-largest rule addenda 4
 and 5 used:** the largest round value strictly below the minimum
 `standout` among the dev set's correct legs (2.6618). Not the value

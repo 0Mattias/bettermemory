@@ -12,6 +12,7 @@ from __future__ import annotations
 from ._mcp import call_tool
 
 import inspect
+import math
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -35,10 +36,11 @@ from bettermemory.handlers.search import RankingInputs, resolve_ranking_inputs
 from bettermemory.models import Confidence, Memory, Source, generate_ulid
 from bettermemory.search import (
     _EXPANSION_TABLES,
-    _RESCUE_LEG_MIN_MARGIN,
+    _RESCUE_LEG_STANDOUT,
+    _STANDOUT_WINDOW,
     _STOPWORDS,
     _kebab_parts,
-    _leg_margin_ratio,
+    _leg_standout,
     _stem_token,
     reciprocal_rank_fusion,
     search,
@@ -671,38 +673,71 @@ def _scored(*scores: float) -> list[tuple[Memory, float, list[str]]]:
     ]
 
 
-def test_leg_margin_ratio_is_the_separation_of_the_legs_own_top_two() -> None:
-    assert _leg_margin_ratio(_scored(10.0, 8.0)) == pytest.approx(0.2)
-    assert _leg_margin_ratio(_scored(10.0, 0.0)) == pytest.approx(1.0)
-    assert _leg_margin_ratio(_scored(10.0, 9.9)) == pytest.approx(0.01)
+def test_leg_standout_measures_the_top_gap_against_the_legs_own_gaps() -> None:
+    """`gaps[0] / mean(gaps[1:])`. A leg whose top candidate pulls away
+    scores high; a leg descending in even steps scores 1.0."""
+    # gaps 5, 1, 1 -> 5 / 1.0
+    assert _leg_standout(_scored(10.0, 5.0, 4.0, 3.0)) == pytest.approx(5.0)
+    # even steps: no standout at all
+    assert _leg_standout(_scored(4.0, 3.0, 2.0, 1.0)) == pytest.approx(1.0)
 
 
-def test_leg_margin_ratio_reads_the_fusion_ordering_not_list_order() -> None:
+def test_leg_standout_reads_the_fusion_ordering_not_list_order() -> None:
     """`_id_order` sorts by `(score, created, id)` before fusion, so the
-    rank-1 the cap judges must be the rank-1 that would have voted — not
-    whatever order `_score_bm25` happened to return."""
-    unsorted = _scored(3.0, 12.0, 7.0)
-    assert _leg_margin_ratio(unsorted) == pytest.approx((12.0 - 7.0) / 12.0)
+    rank-1 the cap judges must be the rank-1 that would have voted."""
+    assert _leg_standout(_scored(3.0, 12.0, 4.0, 3.0)) == pytest.approx(
+        _leg_standout(_scored(12.0, 4.0, 3.0, 3.0))
+    )
 
 
-def test_a_single_candidate_leg_is_maximally_separated() -> None:
-    """Nothing competes with it, so the cap must never fire on that
-    shape. On a small store this is most legs — stated as a confound in
-    addendum 5, and pinned here."""
-    assert _leg_margin_ratio(_scored(0.4)) == 1.0
+def test_leg_standout_reads_only_the_committed_window() -> None:
+    """The window is load-bearing: a long flat tail would drag the
+    denominator toward zero and make every leg look like a standout, so
+    engine and census must read the same shape."""
+    assert _STANDOUT_WINDOW == 12
+    short = _scored(10.0, 5.0, 4.0, 3.0)
+    padded = _scored(10.0, 5.0, 4.0, 3.0, *[3.0] * 30)
+    assert _leg_standout(padded) != pytest.approx(_leg_standout(short))
+    # …and the tail beyond the window cannot move the verdict at all.
+    a = _scored(*([10.0, 5.0] + [4.0 - 0.1 * i for i in range(10)]))
+    b = _scored(*([10.0, 5.0] + [4.0 - 0.1 * i for i in range(10)] + [0.0] * 20))
+    assert _leg_standout(a) == pytest.approx(_leg_standout(b))
 
 
-def test_an_empty_or_scoreless_leg_has_no_opinion() -> None:
-    assert _leg_margin_ratio([]) == 0.0
-    assert _leg_margin_ratio(_scored(0.0, 0.0)) == 0.0
-    assert _leg_margin_ratio(_scored(-1.0)) == 0.0
+@pytest.mark.parametrize(
+    "leg",
+    [
+        [],
+        _scored(5.0),
+        _scored(5.0, 4.0),
+    ],
+)
+def test_a_leg_too_small_to_judge_fails_open(
+    leg: list[tuple[Memory, float, list[str]]],
+) -> None:
+    """No comparison set exists, so the statistic declines rather than
+    withholding — the same principle `compute_idf` applies to a corpus
+    df of 0. On a small store this is most legs."""
+    assert _leg_standout(leg) == math.inf
+
+
+def test_a_leg_tied_below_rank_one_is_a_perfect_standout() -> None:
+    """Everything below the top is tied, so the top gap is the only
+    structure there is."""
+    assert _leg_standout(_scored(9.0, 2.0, 2.0, 2.0)) == math.inf
+
+
+def test_a_totally_flat_leg_has_no_opinion() -> None:
+    """The one degenerate shape that withholds — the shape the whole
+    mechanism is named for."""
+    assert _leg_standout(_scored(2.0, 2.0, 2.0, 2.0)) == 0.0
 
 
 def test_the_threshold_is_the_preregistered_one() -> None:
-    """Addendum 5 fixed θ before this code existed, by a stated rule
-    over the committed dev census. A later edit re-opens a preregistered
-    experiment on changed rules."""
-    assert _RESCUE_LEG_MIN_MARGIN == 0.12
+    """Addendum 6 fixed K before this code existed, by a stated rule
+    over the committed dev census. A later edit re-opens a
+    preregistered experiment on changed rules."""
+    assert _RESCUE_LEG_STANDOUT == 2.5
 
 
 def test_a_well_separated_leg_still_rescues() -> None:
@@ -720,43 +755,61 @@ def test_a_well_separated_leg_still_rescues() -> None:
     assert legs[hits[0].id] == "expansion"
 
 
-def test_an_unseparated_leg_is_withheld_and_the_result_matches_the_flag_off(
+def test_an_unseparated_leg_is_withheld_from_the_fusion(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The whole contract: below θ the leg does not run, and the query
-    comes back byte-identical to `rescue_expansion=False` — the same
-    shape the lane already had when `exp_terms` came back empty.
+    """The withholding wiring, isolated from fixture luck.
 
-    Driven by moving θ rather than by hunting a fixture, so the test
-    pins the MECHANISM and cannot rot when the corpus changes.
+    The statistic is pinned by its own unit tests above; what this pins
+    is that `search()` acts on its verdict. Driving `_leg_standout`
+    directly rather than hunting a corpus whose leg happens to be flat
+    is deliberate — most small legs are tied below rank 1 and so fail
+    OPEN by design, which would make a fixture-based version of this
+    test quietly vacuous.
+
+    What is asserted is the RANKING, not score equality with
+    `rescue_expansion=False`: the filler df-floor is keyed on
+    `rescue_expansion` rather than on the leg, so it still prices the
+    base legs when the leg is withheld. Addenda 5 and 6 both overstated
+    that as "byte-identical", corrected in the preregistration.
     """
-    memories = _corpus()
+    now = datetime.now(timezone.utc)
+    memories = _corpus() + [
+        _memory(f"note {i} about flags toggles and rollout staging", created=now)
+        for i in range(6)
+    ]
     query = "do we ever rip the old toggles back out"
 
-    legs_on: dict[str, str] = {}
-    monkeypatch.setattr("bettermemory.search._RESCUE_LEG_MIN_MARGIN", 0.0)
-    uncapped = search(
-        memories, query, max_results=3, matched_leg_out=legs_on, rescue_expansion=True
-    )
-
-    monkeypatch.setattr("bettermemory.search._RESCUE_LEG_MIN_MARGIN", 1.01)
-    legs_capped: dict[str, str] = {}
-    capped = search(
+    legs_voting: dict[str, str] = {}
+    monkeypatch.setattr("bettermemory.search._leg_standout", lambda leg: math.inf)
+    voting = search(
         memories,
         query,
         max_results=3,
-        matched_leg_out=legs_capped,
+        matched_leg_out=legs_voting,
+        rescue_expansion=True,
+    )
+
+    legs_withheld: dict[str, str] = {}
+    monkeypatch.setattr("bettermemory.search._leg_standout", lambda leg: 0.0)
+    withheld = search(
+        memories,
+        query,
+        max_results=3,
+        matched_leg_out=legs_withheld,
         rescue_expansion=True,
     )
     off = search(memories, query, max_results=3, rescue_expansion=False)
 
-    assert [h.id for h in capped] == [h.id for h in off]
-    assert [h.score for h in capped] == [h.score for h in off]
-    assert "expansion" not in legs_capped.values()
-    # And the cap really did something — the uncapped run differs.
-    assert [h.id for h in uncapped] != [h.id for h in capped] or (
-        "expansion" in legs_on.values()
-    )
+    assert "expansion" not in legs_withheld.values()
+    assert [h.id for h in withheld] == [h.id for h in off]
+    # The withheld run is the base fusion; the voting run is not.
+    assert [h.score for h in withheld] != [h.score for h in voting]
+    # Scores match flag-off here only because the filler floor happens
+    # to be inert on this fixture. That is a property of the corpus,
+    # not of the mechanism, so it is stated rather than asserted — the
+    # floor is keyed on `rescue_expansion`, and on a store where it
+    # bites, a withheld leg and a flag-off query differ by exactly it.
 
 
 def test_the_cap_never_touches_a_query_the_gate_already_skips(
@@ -767,8 +820,8 @@ def test_the_cap_never_touches_a_query_the_gate_already_skips(
     memories = _corpus()
     query = "feature flag removal owner deadline"
     baseline = search(memories, query, max_results=3, rescue_expansion=True)
-    for theta in (0.0, 0.5, 1.01):
-        monkeypatch.setattr("bettermemory.search._RESCUE_LEG_MIN_MARGIN", theta)
+    for theta in (0.0, 2.5, math.inf):
+        monkeypatch.setattr("bettermemory.search._RESCUE_LEG_STANDOUT", theta)
         got = search(memories, query, max_results=3, rescue_expansion=True)
         assert [h.id for h in got] == [h.id for h in baseline], theta
         assert [h.score for h in got] == [h.score for h in baseline], theta
@@ -779,8 +832,8 @@ def test_the_cap_is_inert_with_the_lane_off(monkeypatch: pytest.MonkeyPatch) -> 
     memories = _corpus()
     query = "do we ever rip the old toggles back out"
     baseline = search(memories, query, max_results=3)
-    for theta in (0.0, 0.12, 1.01):
-        monkeypatch.setattr("bettermemory.search._RESCUE_LEG_MIN_MARGIN", theta)
+    for theta in (0.0, 2.5, math.inf):
+        monkeypatch.setattr("bettermemory.search._RESCUE_LEG_STANDOUT", theta)
         got = search(memories, query, max_results=3)
         assert [h.id for h in got] == [h.id for h in baseline], theta
         assert [h.score for h in got] == [h.score for h in baseline], theta

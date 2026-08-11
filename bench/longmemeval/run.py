@@ -618,7 +618,7 @@ def main() -> int:
     ABLATION = args.ablate
     LEG_MARGIN_CAP = args.leg_margin_cap == "on"
     if not LEG_MARGIN_CAP:
-        _engine._RESCUE_LEG_MIN_MARGIN = 0.0
+        _engine._RESCUE_LEG_STANDOUT = 0.0
     if ABLATION != "none" and not RESCUE_EXPANSION:
         print(
             f"--ablate {ABLATION} isolates half of the rescue lane, which is "

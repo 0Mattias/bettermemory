@@ -1070,35 +1070,55 @@ _RESCUE_COVERAGE_GATE = 0.60
 # overturned.
 _RESCUE_LEG_WEIGHT = 0.7
 
-# Minimum internal separation the rescue leg must show before its vote
-# counts: `(top score - runner-up score) / top score`, measured on the
-# leg's own ordering. Below this the leg is withheld entirely and the
-# result is byte-identical to `rescue_expansion=False` for that query.
+# How far the rescue leg's top candidate must stand out from the leg's
+# OWN internal structure before its vote counts: the top adjacent gap
+# divided by the mean of the leg's other adjacent gaps, over the top
+# `_STANDOUT_WINDOW` candidates. Below this the leg is withheld
+# entirely, leaving the base fusion exactly as it stood. Note what that
+# does NOT mean: the lane's other mechanism, the filler df-floor, is
+# keyed on `rescue_expansion` rather than on the leg, so it still
+# applies. A withheld leg reproduces a lane-on query whose leg found
+# nothing — not a `rescue_expansion=False` query.
 #
 # Why the leg needs a confidence test at all: `_hybrid_fuse` fuses by
 # RANK, so a leg contributes `_RESCUE_LEG_WEIGHT / (rrf_k + rank)`
 # whether its rank-1 was found by a discriminating synonym or by a
 # near-tie among candidates it can barely tell apart. IDF only reorders
-# WITHIN the leg; it cannot reduce the leg's influence. So a leg with no
-# real opinion still votes at full strength — which is the mechanism the
-# round-2 kill isolated (bench/longmemeval/PREREGISTRATION.md addendum
-# 4: the terms that carried the regression were individually RARE, so
-# the damage was never vocabulary commonness).
+# WITHIN the leg; it cannot reduce the leg's influence. A leg with no
+# real opinion otherwise votes at full strength — the mechanism the
+# round-2 kill isolated when df-gating failed and the harmful terms
+# turned out to be individually RARE.
 #
-# Why a RATIO and not a score or a raw margin: both of those depend on
-# collection size, average document length and the IDF scale, none of
-# which are comparable between corpora — and a mechanism that must be a
-# function of the store cannot be an absolute constant. A ratio of two
-# scores drawn from the same leg on the same collection is scale-free by
-# construction.
+# Why a SELF-CALIBRATING comparison and not a fixed level: round 3
+# capped on `(top - runner_up) / top >= 0.12`, which is scale-free but
+# whose DISTRIBUTION still differs by corpus — 0.12 sat above the dev
+# set's median engaged-leg value (0.0698) and below the held-out set's
+# (0.1359), so one constant was aggressive on the corpus it came from
+# and permissive on the corpus it was aimed at (it fired on 61% and
+# 43.9% respectively, and cost the dev set three questions). That
+# statistic normalises by ONE number, the top score, so it inherits
+# whatever a corpus does to magnitudes and nothing about the shape of
+# the competition. This one normalises by the leg's whole gap
+# structure — n-1 numbers from the same store, query and scorer — so a
+# corpus whose legs are uniformly more or less compressed moves
+# numerator and denominator together.
 #
-# 0.12 is the largest round value below the dev set's correct-leg p25
-# (0.1235) — preserve first, then take the largest, rather than taking
-# the value that scores best on 41 observations. Measured consequence on
-# that census: 12 of 14 correct legs kept, 23 of 27 incorrect dropped,
-# kept-leg precision 0.341 -> 0.750. Preregistered in addendum 5 before
-# this code existed; see bench/leg_census.py for the instrument.
-_RESCUE_LEG_MIN_MARGIN = 0.12
+# 2.5 is the largest round value strictly below the minimum standout
+# among the dev set's CORRECT legs (2.6618) — preserve first, then take
+# the largest, rather than the value that scores best on 41
+# observations. Measured consequence on that census: all 14 correct
+# legs kept (round 3's fixed cap dropped 2), 17 of 27 incorrect legs
+# dropped, 41.5% firing, kept-leg precision 0.341 -> 0.583.
+# Preregistered in bench/longmemeval/PREREGISTRATION.md addendum 6
+# before this code existed; bench/leg_census.py is the instrument.
+_RESCUE_LEG_STANDOUT = 2.5
+
+# The window the standout statistic reads. Load-bearing, and fixed
+# alongside the constant it scales: a long flat tail would drag the
+# denominator toward zero and make every leg look like a standout. 12
+# is the window the dev census recorded, so engine and census read the
+# same shape.
+_STANDOUT_WINDOW = 12
 
 # Document-frequency floor for the QUERY_FILLER_WORDS list, as a
 # fraction of the priced collection. Memory bodies are technical prose,
@@ -2391,26 +2411,35 @@ def _id_order(
     return [memory.id for memory, _, _ in scored_sorted]
 
 
-def _leg_margin_ratio(scored: list[tuple[Memory, float, list[str]]]) -> float:
-    """The rescue leg's own internal separation, in [0, 1].
+def _leg_standout(scored: list[tuple[Memory, float, list[str]]]) -> float:
+    """How far the leg's top candidate stands out from the leg itself.
 
-    `(top - runner_up) / top` over the leg's own ordering — the SAME
-    `(score, created, id)` ordering `_id_order` applies before fusion, so
-    the rank-1 this judges is the rank-1 that would have voted.
+    `gaps[0] / mean(gaps[1:])` over the leg's top `_STANDOUT_WINDOW`
+    candidates, ordered the way `_id_order` orders them before fusion —
+    so the rank-1 this judges is the rank-1 that would have voted.
 
-    A single-candidate leg returns 1.0: nothing competes with it, so it
-    is maximally separated and the cap must never fire on that shape. A
-    non-positive top score returns 0.0 — a leg that matched nothing has
-    no opinion to weigh, and dividing by it is undefined anyway.
+    Every degenerate shape fails OPEN (returns infinity, so the leg
+    votes), on the same principle `compute_idf` applies to a corpus df
+    of 0: a shape the statistic cannot read degrades the cap to today's
+    behaviour, never to silent withholding. The one exception is a
+    total plateau — a leg whose top gap is zero has demonstrably no
+    opinion, which is the shape this mechanism is named for, and it
+    returns 0.0.
     """
-    if not scored:
-        return 0.0
+    if len(scored) < 3:
+        return math.inf  # no comparison set exists
     ordered = sorted(scored, key=lambda x: (x[1], x[0].created, x[0].id), reverse=True)
-    top = ordered[0][1]
-    if top <= 0.0:
-        return 0.0
-    runner_up = ordered[1][1] if len(ordered) > 1 else 0.0
-    return (top - runner_up) / top
+    scores = [score for _memory, score, _matched in ordered[:_STANDOUT_WINDOW]]
+    gaps = [a - b for a, b in zip(scores, scores[1:])]
+    if len(gaps) < 2:
+        return math.inf
+    top, others = gaps[0], gaps[1:]
+    mean_other = sum(others) / len(others)
+    if mean_other <= 0.0:
+        # Everything below rank 1 is tied: a positive top gap is a
+        # perfect standout, a zero one is a flat leg with no opinion.
+        return math.inf if top > 0.0 else 0.0
+    return top / mean_other
 
 
 def _hybrid_fuse(
@@ -2829,11 +2858,13 @@ def search(
                     # would contribute exactly as much as a confident
                     # one; withholding it is the only way the fusion can
                     # tell them apart. A withheld leg leaves `scored` as
-                    # the base fusion, so the result is byte-identical to
-                    # `rescue_expansion=False` for this query — the same
-                    # shape the lane already has when `exp_terms` comes
-                    # back empty. See `_RESCUE_LEG_MIN_MARGIN`.
-                    if exp_leg and _leg_margin_ratio(exp_leg) < _RESCUE_LEG_MIN_MARGIN:
+                    # the base fusion, so the result reproduces
+                    # a lane-on query whose leg found nothing — the
+                    # same shape the lane already has when `exp_terms`
+                    # comes back empty. The filler floor above is keyed
+                    # on `rescue_expansion`, not on the leg, so it
+                    # stays. See `_RESCUE_LEG_STANDOUT`.
+                    if exp_leg and _leg_standout(exp_leg) < _RESCUE_LEG_STANDOUT:
                         exp_leg = []
                     if exp_leg:
                         expansion_ids = {m.id for m, _, _ in exp_leg}

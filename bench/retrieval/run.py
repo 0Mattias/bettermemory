@@ -731,7 +731,7 @@ def main() -> int:
     if not LEG_MARGIN_CAP:
         import bettermemory.search as _engine
 
-        _engine._RESCUE_LEG_MIN_MARGIN = 0.0
+        _engine._RESCUE_LEG_STANDOUT = 0.0
 
     corpus_path = Path(args.corpus).expanduser()
     if not corpus_path.is_absolute():
