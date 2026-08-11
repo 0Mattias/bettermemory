@@ -9,6 +9,36 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+### Changed — the rescue leg's vote scales with its evidence (opt-in lane only)
+
+`[behavior] rescue_expansion` remains **off by default**, and the
+default engine's fusion path is **byte-identical** — asserted as a
+preregistered arm rather than assumed, and confirmed on both
+instruments.
+
+Inside the lane, the leg's contribution is no longer a constant. RRF
+fuses by rank, so the leg previously contributed the same 0.7 whether
+its rank-1 rested on a discriminating synonym or a single coincidental
+token. It now scales with the leg's own evidence: nothing below the
+round-5 floor, half weight at the floor, full weight at three matched
+terms, bounded so the change can only reduce the leg's influence and
+never amplify it.
+
+Preregistered as addendum 9, the experiment five prior kills had all
+pointed at without testing. **It produced the campaign's best held-out
+figures** — macro@5 **0.8926**, clearing the 0.8900 kill line for the
+first time in six rounds and landing 0.0009 below baseline, and
+macro@1 **0.5134**, recovering 76% of the lane's loss. **And it failed
+its dev gate**: the gold set lost two questions at recall@5, because
+the damping fires on ~79% of voting legs and that stratum is helpful
+two times in three.
+
+So the default does not flip, and the blind held-out instrument was
+not spent — addendum 9 scores it only if the dev gates pass, the same
+protection that kept it unspent when P1a failed. The mechanism is
+demonstrated; the constant is too aggressive for a technical store,
+which is a round-7 question with its own preregistration.
+
 ### Bench — a held-out instrument, and P1a killed at its gate
 
 No shipped behaviour changes; `[behavior] rescue_expansion` remains off

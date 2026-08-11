@@ -68,11 +68,11 @@ def label_leg(memories: list[Memory], query: str, gold: str) -> dict[str, Any] |
     Returns None when the leg never engages — there is nothing to label.
 
     Both arms run the shipped `search()`. The withheld arm is produced
-    by driving the cap's PREDICATE to "no evidence" rather than by
-    raising its constant, so every leg is suppressed regardless of
-    shape — the counterfactual the label needs.
+    by driving the leg's WEIGHT to zero rather than by moving a
+    threshold, so every leg is suppressed regardless of shape — the
+    counterfactual the label needs.
     """
-    saved_predicate = engine._leg_top_evidence
+    saved_weight = engine._leg_evidence_weight
     saved_bar = engine._RESCUE_LEG_MIN_EVIDENCE
     saved_gate = engine._RESCUE_COVERAGE_GATE
 
@@ -93,17 +93,22 @@ def label_leg(memories: list[Memory], query: str, gold: str) -> dict[str, Any] |
         return None  # confident base ranking: no leg to label
 
     try:
-        engine._RESCUE_LEG_MIN_EVIDENCE = 0  # every leg votes
+        # Forced at the WEIGHT, not the count. Since round 6 the leg's
+        # contribution is `_leg_evidence_weight(evidence)`, which is zero
+        # at one matched term regardless of the floor — so lowering the
+        # floor no longer makes a thin leg vote, and the counterfactual
+        # would silently be missing exactly those legs.
+        engine._RESCUE_LEG_MIN_EVIDENCE = 0
+        engine._leg_evidence_weight = lambda evidence: engine._RESCUE_LEG_WEIGHT
         voting = engine.search(
             memories, query, max_results=DEPTH, rescue_expansion=True
         )
-        engine._leg_top_evidence = lambda leg: 0  # every leg withheld
-        engine._RESCUE_LEG_MIN_EVIDENCE = 1
+        engine._leg_evidence_weight = lambda evidence: 0.0
         withheld = engine.search(
             memories, query, max_results=DEPTH, rescue_expansion=True
         )
     finally:
-        engine._leg_top_evidence = saved_predicate
+        engine._leg_evidence_weight = saved_weight
         engine._RESCUE_LEG_MIN_EVIDENCE = saved_bar
 
     with_leg = _rank_of(voting, gold)

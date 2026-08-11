@@ -1,0 +1,63 @@
+{
+  "provenance": {
+    "bettermemory_version": "5.2.0",
+    "commit": "69db7a5",
+    "tree_dirty": true,
+    "date": "2026-08-11",
+    "machine": {
+      "os": "Darwin 25.5.0",
+      "machine": "arm64",
+      "python": "3.13.13"
+    }
+  },
+  "corpus": "corpus.jsonl",
+  "corpus_sha256": "c40acee95ce1bb70ac6ea788e0fb4a9a1c6eff1fc55fe4569b651b5b156ea2ea",
+  "corpus_size": 180,
+  "index_threshold": 500,
+  "index_threshold_forced": null,
+  "above_threshold": false,
+  "padded": false,
+  "prefilter_mode": "off",
+  "prefilter_cap": 50,
+  "rescue_expansion": true,
+  "leg_margin_cap": true,
+  "notes": [
+    "rescue-expansion repairs ON (the 5.1 lane: filler df-floor + coverage-gated vocabulary leg). The product DEFAULT is off \u2014 the lane's preregistered held-out check killed default-on; see the README's 5.1 section and bench/longmemeval/."
+  ],
+  "results": [
+    {
+      "arm": "lexical",
+      "probe": "asked",
+      "prefilter": false,
+      "n": 20,
+      "recall_at_1": 0.55,
+      "recall_at_5": 0.8,
+      "engaged": 0,
+      "gold_nominated": 1.0,
+      "mean_pool_size": 180.0
+    },
+    {
+      "arm": "lexical",
+      "probe": "requery",
+      "prefilter": false,
+      "n": 20,
+      "recall_at_1": 0.8,
+      "recall_at_5": 1.0,
+      "engaged": 0,
+      "gold_nominated": 1.0,
+      "mean_pool_size": 180.0
+    },
+    {
+      "arm": "lexical",
+      "probe": "control",
+      "prefilter": false,
+      "n": 20,
+      "recall_at_1": 0.5,
+      "recall_at_5": 0.8,
+      "engaged": 0,
+      "gold_nominated": 1.0,
+      "mean_pool_size": 180.0
+    }
+  ],
+  "prefilter_delta": []
+}

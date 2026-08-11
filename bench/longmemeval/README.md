@@ -639,6 +639,87 @@ picture has to change the FUSION — give the leg a contribution that
 scales with its evidence instead of with its rank — and no number here
 licenses that.
 
+## Round 6 — the evidence-scaled vote clears the line, and the dev gate stops it, 2026-08-11
+
+Five kills all named the same untested cause: `_hybrid_fuse` fuses by
+RANK, so the rescue leg contributed the same 0.7 whether its rank-1
+rested on a discriminating synonym or a single coincidental token.
+Addendum 9 changed the vote itself — nothing below the round-5 evidence
+floor, half weight at the floor, full weight at three matched terms.
+
+**It produced the campaign's best held-out figure and cleared the kill
+line for the first time in six rounds. It also cost the dev set two
+questions, which is a preregistered kill, so the sealed instrument was
+not spent.**
+
+### Arms
+
+| arm | macro@1 | macro@5 | macro@10 |
+| --- | --- | --- | --- |
+| baseline, lane off | 0.5246 | 0.8935 | 0.9443 |
+| lane on, no cap (round 1) | 0.4772 | 0.8770 | 0.9471 |
+| lane on, flat weight + evidence rule (round 5) | 0.5014 | 0.8823 | 0.9476 |
+| **lane on, evidence-scaled weight** | **0.5134** | **0.8926** | **0.9463** |
+
+### Scored predictions
+
+| # | prediction | measured | outcome |
+| --- | --- | --- | --- |
+| P42 | lane-off byte-identical | dev cells identical; LongMemEval 0.5246/0.8935/0.9443 exactly | **HELD** |
+| P43 | dev set does not regress | asked @5 **90%→80%**, control @5 **85%→80%** | **MISSED — KILL** |
+| P44 | beats round 5 | **0.8926 > 0.8823**, **0.5134 > 0.5014** | **HELD** |
+| P45 | macro@5 ≥ 0.8900 — the kill line | **0.8926** | **HELD** — first time in six rounds |
+| P46 | macro@10 ≥ 0.9443 | **0.9463** | **HELD** |
+| P47 | damping fires on some but not all | dev 78.6%, held-out 81.9% of voting legs damped | **HELD** |
+| P48 | held-out confirms | **not run** — dev gate failed | — |
+
+Five of seven held. Kill criterion 2 fired.
+
+### What this establishes
+
+**The fusion hypothesis is correct.** Six rounds argued that the leg's
+influence was independent of its evidence, and the first experiment to
+change that recovers **76% of the lane's macro@1 loss** (0.4772 →
+0.5134 against a 0.5246 baseline) and lands macro@5 **0.0009 below
+baseline**. Compare the three vote-conditioning rounds, which plateaued
+at 0.8790 / 0.8823 / 0.8830, and P1a, which never reached the
+incumbent's precision. Nothing else in the campaign has come close.
+
+**And the curve is mis-calibrated on the dev side.** The damping fires
+on ~79% of voting legs — the m=2 stratum is most of the population, and
+the dev labels put it at 68% helpful. Halving the vote of a stratum
+that is helpful two times in three costs the gold set two questions at
+recall@5, while the same damping is what buys the conversational
+corpus its gain. The mechanism is right and the constant is too
+aggressive for a technical store.
+
+### Why the sealed instrument did not run
+
+Addendum 9 scores `bench/heldout` "only if the dev gates pass". P43 is
+a dev gate and it failed, so the instrument stays unspent — the same
+protection that kept it from being burned on P1a. It has still never
+been scored.
+
+That is the correct outcome even though the LongMemEval number is
+tempting. The default-flip definition requires the dev set at or above
+its current figures, so this result could not have flipped the default
+whatever the blind instrument said, and spending a single-use check to
+satisfy curiosity about a disqualified configuration is exactly what
+the gate exists to prevent.
+
+### What the record now supports
+
+A round 7 with a **gentler curve**, preregistered against the same
+three instruments, is the obvious next experiment: the mechanism is
+demonstrated, and only the weight at the floor stratum is wrong. Any
+such attempt has to fix its curve from dev evidence before code, as
+this one did, and must not be tuned against the 0.8926 already
+observed — that number is now dev-contaminated for curve selection.
+
+**No number here licenses that experiment**; it needs its own
+preregistration, and the blind instrument is still available to check
+it exactly once.
+
 ## The pre-4.0 headline: parity, not victory (dated record)
 
 On third-party ground, against labels neither party authored,
