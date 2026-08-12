@@ -1,0 +1,65 @@
+{
+  "provenance": {
+    "bettermemory_version": "5.3.0",
+    "commit": "a1fd750",
+    "tree_dirty": false,
+    "date": "2026-08-12",
+    "machine": {
+      "os": "Darwin 25.5.0",
+      "machine": "arm64",
+      "python": "3.13.13"
+    }
+  },
+  "corpus": "corpus.jsonl",
+  "corpus_sha256": "c40acee95ce1bb70ac6ea788e0fb4a9a1c6eff1fc55fe4569b651b5b156ea2ea",
+  "corpus_size": 600,
+  "index_threshold": 500,
+  "index_threshold_forced": null,
+  "above_threshold": true,
+  "padded": true,
+  "prefilter_mode": "off",
+  "prefilter_cap": 50,
+  "rescue_expansion": false,
+  "leg_margin_cap": true,
+  "evidence_scaling": false,
+  "base_withhold": false,
+  "notes": [
+    "corpus is above the index threshold, but this runner ranks the full corpus \u2014 production would prefilter through SQLite bm25 first. Treat this as an upper bound."
+  ],
+  "results": [
+    {
+      "arm": "lexical",
+      "probe": "asked",
+      "prefilter": false,
+      "n": 20,
+      "recall_at_1": 0.25,
+      "recall_at_5": 0.6,
+      "engaged": 0,
+      "gold_nominated": 1.0,
+      "mean_pool_size": 600.0
+    },
+    {
+      "arm": "lexical",
+      "probe": "requery",
+      "prefilter": false,
+      "n": 20,
+      "recall_at_1": 0.7,
+      "recall_at_5": 1.0,
+      "engaged": 0,
+      "gold_nominated": 1.0,
+      "mean_pool_size": 600.0
+    },
+    {
+      "arm": "lexical",
+      "probe": "control",
+      "prefilter": false,
+      "n": 20,
+      "recall_at_1": 0.25,
+      "recall_at_5": 0.6,
+      "engaged": 0,
+      "gold_nominated": 1.0,
+      "mean_pool_size": 600.0
+    }
+  ],
+  "prefilter_delta": []
+}

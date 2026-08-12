@@ -1,0 +1,38 @@
+{
+  "provenance": {
+    "bettermemory_version": "5.3.0",
+    "commit": "a1fd750",
+    "tree_dirty": false,
+    "date": "2026-08-12",
+    "machine": {
+      "os": "Darwin 25.5.0",
+      "machine": "arm64",
+      "python": "3.13.13"
+    }
+  },
+  "depth": 50,
+  "seconds": 23.2,
+  "note": "P64: on tie probes the mechanism-on engine must be byte-identical to mechanism-off across the full depth window (ids and scores). P65: withheld_share must be > 0 and < 0.5 in both regimes.",
+  "arms": {
+    "unpadded": {
+      "collection_size": 180,
+      "pad_to": null,
+      "probes": 60,
+      "tie_probes": 48,
+      "tie_probes_byte_identical": 48,
+      "p64_violations": [],
+      "withheld_probes": 12,
+      "withheld_share": 0.2
+    },
+    "padded600": {
+      "collection_size": 600,
+      "pad_to": 600,
+      "probes": 60,
+      "tie_probes": 43,
+      "tie_probes_byte_identical": 43,
+      "p64_violations": [],
+      "withheld_probes": 17,
+      "withheld_share": 0.2833
+    }
+  }
+}

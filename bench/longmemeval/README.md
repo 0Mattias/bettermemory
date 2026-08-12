@@ -1015,6 +1015,130 @@ What is left is not another lever on this lane. Every one measured —
 which legs vote, what they contain, how hard they vote, and whether the
 store can say how hard — is now closed with evidence.
 
+## Round 9 — the trailing base leg is withheld, and the corpora split the verdict, 2026-08-12
+
+Addendum 9 closed with H-fusion-general as a named future hypothesis:
+the BASE legs also vote by rank, so a keyword or BM25 leg whose rank-1
+rests on one coincidental token votes as hard as one whose top matched
+four query terms. Addendum 12 tested it with a mechanism that owns no
+graded constant — the scalar rounds 6–7 measured as unresolvable across
+corpora. The base-leg census (`bench/base_leg_census.py`, artifact
+`base-leg-labels-2026-08-12.json`) found that absolute rank-1 evidence
+does not stratify base-leg helpfulness (BM25 runs backwards under it),
+but RELATIVE evidence does: leading legs helped 20/29 labelled cases,
+trailing legs 2/29, none of twelve at a deficit of two or more. The
+rule: the trailing leg does not vote; ties — 80% of dev probes — fuse
+byte-identically.
+
+**It produced the campaign's largest dev-set gains — census-exact, with
+recall@5 untouched — and cost the conversational corpus on all three
+macros, which is a preregistered kill. The default does not change and
+the sealed instrument was not spent, for the fifth time.**
+
+### Arms (LongMemEval, lane off)
+
+| arm | macro@1 | macro@5 | macro@10 |
+| --- | --- | --- | --- |
+| baseline, mechanism off | 0.5246 | 0.8935 | 0.9443 |
+| **mechanism on** | **0.5131** | **0.8861** | **0.9429** |
+
+### Dev cells (recall@1/recall@5, lane off)
+
+| regime | probe | off | on |
+| --- | --- | --- | --- |
+| unpadded | asked | 35/60 | 35/60 |
+| unpadded | requery | 80/100 | **85**/100 |
+| unpadded | control | 35/60 | 35/60 |
+| padded-600 | asked | 25/60 | **35**/60 |
+| padded-600 | requery | 70/100 | **85**/100 |
+| padded-600 | control | 25/60 | **35**/60 |
+| prefilter above-threshold, on-cells | asked | 30/60 | **35**/60 |
+| prefilter above-threshold, on-cells | requery | 75/100 | **85**/100 |
+| prefilter above-threshold, on-cells | control | 30/60 | 30/60 |
+| prefilter forced-180, on-cells | asked | 35/60 | 35/60 |
+| prefilter forced-180, on-cells | requery | 80/100 | **85**/100 |
+| prefilter forced-180, on-cells | control | 35/60 | 35/60 |
+
+Lane-on regression pair (unpadded): asked 55/90 → 55/90, requery
+80/100 → 85/100, control 50/85 → 55/85. Artifacts:
+`retrieval/results/round9-*-2026-08-12.json`, all at `a1fd750`,
+tree clean.
+
+### Scored predictions
+
+| # | prediction | measured | outcome |
+| --- | --- | --- | --- |
+| P63 | off-arm byte-identity (dev cells + LME to four decimals) | every off cell = its committed baseline; LME 0.5246/0.8935/0.9443 exact | **HELD** |
+| P64 | tie probes byte-identical, full depth window | 48/48 unpadded, 43/43 padded, zero violations (`round9-tie-identity`) | **HELD** |
+| P65 | withholding real and bounded (0 < share < 0.5) | 20.0% / 28.3% | **HELD** |
+| P66 | dev does not regress, any stratum, any regime | no cell fell anywhere; the lane-on requery clause written "= 80/100" measured **85**/100 | **HELD in substance; one clause missed upward** (below) |
+| P67 | census-sharp improvements | padded @1 35/85/35 (+10/+15/+10), unpadded requery 85 (+5), recall@5 unchanged in every cell | **HELD — every cell exact** |
+| P68 | LME costs nothing (all three ≥ baseline) | 0.5131 / 0.8861 / 0.9429 — **all three below** (−1.15 / −0.74 / −0.14 pts) | **MISSED — KILL** |
+| P69 | held-out confirms (instrument #1, first spend) | not run — kill 3 fired first | — |
+| P70 | provenance | `tree_dirty` false on every artifact, all at `a1fd750` | **HELD** |
+
+Kill criterion 3 fired. Per addendum 12's own outcome clause, the
+constant ships False: the code stays committed and exercisable
+(`--base-withhold on` in all three runners), the DEFAULT engine is
+byte-identical to 5.3.0 (P63 and P64 are the proof), and this section
+is the published record.
+
+### The mis-specified clause, disclosed
+
+P66's lane-on line predicted "requery exactly 80/100", copied from
+rounds 5–7 — where it was an invariant because those mechanisms only
+damped the rescue leg, which requery's high coverage never engages.
+Round 9 changes the BASE fusion, which requery absolutely can feel, and
+P67 itself predicted the +5 on the identical underlying queries. The
+measurement (85/100) exceeded the equality. Scored missed-as-written;
+no kill keys on it (kill 2 reads "falls below baseline"). The lesson:
+an equality prediction is a claim about the mechanism's REACH — copy
+the number, re-derive the reach.
+
+### Where the damage lands (per-question sidecars, both arms)
+
+Only **56 of 500 questions** saw any evidence-rank movement — the
+LongMemEval blast radius is 11.2%, against 20–28% of dev probes. The
+loss is thin and wide rather than concentrated: at recall@1 the flips
+run 3 up / 13 down, and every question type except
+single-session-assistant loses somewhere —
+single-session-preference −6.7 pts at @1, multi-session −1.5,
+single-session-user −1.4, temporal-reasoning −0.6. The one gain is
+multi-session at recall@5 (+0.6, 3 up / 1 down), historically this
+instrument's weakest column. Sidecars:
+`results/per-question/round9-{off,withhold}-pq-2026-08-12.json`.
+
+The read: on conversational stores the trailing leg is RIGHT often
+enough that silencing it costs almost everywhere — the exact inverse
+of the dev labels, where trailing legs helped 2 of 29. The same
+quantity, relative rank-1 evidence, predicts helpfulness on technical
+prose and mis-predicts it on conversational chat.
+
+### What this establishes
+
+**C1 now has a base-pair measurement.** Eight rounds measured the
+corpus sign-flip on the rescue lane; round 9 measures it on the BASE
+fusion. The same withholding that buys the technical corpus its largest
+gains of the campaign (+10/+15/+10 at recall@1, nothing lost anywhere,
+byte-identical ties, census-exact reproduction) costs the
+conversational corpus on all three macros. What separates the corpora
+is semantic (round 8), it governs the base legs too (round 9), and no
+constant — graded or zero–one — satisfies both.
+
+**The census methodology is validated end-to-end.** P67's cells were
+predicted from the committed labels before the arms ran, and every cell
+landed exactly: the counterfactual arms reproduce through the shipped
+engine 1:1. Future mechanisms whose blast radius is expressible as
+census counterfactuals can preregister sharp cells instead of hedged
+floors.
+
+**Named open option, owner-shaped (recorded, not built):** the
+mechanism is knob-polarised exactly like the rescue lane — it helps the
+audience that turns `rescue_expansion` on and harms the store shape
+that leaves it off. Whether that means a second `[behavior]` knob, one
+combined technical-store switch, or nothing, is a product-surface
+decision for the owner. No number here licenses it.
+
 ## The pre-4.0 headline: parity, not victory (dated record)
 
 On third-party ground, against labels neither party authored,
