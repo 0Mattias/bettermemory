@@ -2383,3 +2383,238 @@ does not separate register in general.
 
 **3. Instrument B is dev-contaminated** and labelled so in every row.
 
+---
+
+## Addendum 12 — round 9: H-fusion-general — the trailing base leg does not vote, 2026-08-12
+
+Predictions continue — this document owns **P63–P70**.
+
+### Why this, and why now
+
+Addendum 9 closed with a named future hypothesis, recorded so it would
+not be rediscovered as a surprise:
+
+> **H-fusion-general: the base legs may have the same problem.** Keyword
+> and BM25 also contribute by rank, so a base leg with a weak top hit
+> votes as hard as one with a strong one.
+
+The rescue-leg version of that hypothesis is the only mechanism in
+eight rounds that moved the conversational corpus (round 6 recovered
+76% of the lane's macro@1 loss and cleared the kill line for the first
+time). Its curve — the graded weight between 0 and 1 — is what failed
+two dev gates, and round 7 located why: the right graded constant
+differs monotonically and oppositely between corpora, and round 8
+measured that the store cannot supply it. This addendum tests the
+general hypothesis with a mechanism that owns NO graded constant.
+
+### The dev evidence
+
+`bench/base_leg_census.py` (committed `f0182e3`), artifact
+`bench/retrieval/results/base-leg-labels-2026-08-12.json` (committed
+`07ad967`): counterfactual labels for both base legs — the gold
+document's fused rank with the leg voting and with its weight driven to
+zero, the method `bench/leg_labels.py` established for the rescue leg —
+over 60 probes per corpus regime (20 questions × asked/requery/control),
+unpadded and padded-600.
+
+**Absolute evidence does not stratify base-leg helpfulness.** Keyword
+at m=2/3/4+: 0% / 0% / 20% helped (unpadded). BM25 INVERTS: 60% / 57% /
+10%. The rescue leg's absolute-count story does not transfer to the
+base pair — at a base leg's rank-1, the matched-term count mostly
+measures query length.
+
+**Relative evidence stratifies it sharply.** Pooling both legs and both
+corpus regimes, by the leg's evidence delta at rank-1:
+
+| stratum | n | helped | hurt | % helped |
+| --- | --- | --- | --- | --- |
+| leading (Δ ≥ +1) | 29 | 20 | 6 | 69% |
+| tied (Δ = 0) | 182 | 29 | 36 | 16% |
+| trailing by 1 | 17 | 2 | 7 | 11.8% |
+| trailing by 2+ | 12 | 0 | 6 | **0%** |
+
+(The tied stratum's helped/hurt counts are the two legs' complementary
+counterfactuals, listed for population context — a relative rule cannot
+touch a tie.)
+
+Structurally, with exactly two legs in the base fusion, ONLY the weight
+ratio matters — scaling both legs equally is a no-op. So the labels
+locate the entire design space in one question: what happens to the
+trailing leg.
+
+### Hypothesis
+
+> **A base leg whose rank-1 evidence trails its peer's does not get to
+> vote.** Withholding-entirely is already the shipped grammar for thin
+> evidence (`_RESCUE_LEG_MIN_EVIDENCE`: "a leg with one word of
+> evidence does not get to vote"); this generalizes it to the base pair
+> as "a leg whose top candidate matched fewer query terms than its
+> peer's does not get to vote." Ties — 80% of dev probes — change
+> nothing, byte-identically.
+
+### The rule, and why it is not a curve
+
+```
+m_kw, m_bm = matched-term count at each base leg's rank-1
+             (the existing _leg_top_evidence, unchanged)
+tie (m_kw == m_bm)  ->  weights None — byte-identical shipped fusion
+else                ->  leading leg 1.0, trailing leg 0.0
+```
+
+**Zero graded constants.** The stated derivation from the labels: every
+trailing stratum is net-harmful (2 helped vs 13 hurt pooled; 0% helped
+at Δ ≤ −2), so the trailing leg's expected contribution is negative at
+every measured deficit; and any weight BETWEEN 0 and 1 is precisely the
+scalar rounds 6–7 measured as unresolvable across corpora (monotone,
+opposite optima). This mechanism declines to own such a scalar.
+Withholding is also count-relative and scale-free — no distribution
+spread to shift between corpora, the property round 8's kill demands of
+anything that hopes to transfer.
+
+The withheld leg's ranking stays IN the fusion at weight 0 (its unique
+candidates keep tail positions rather than vanishing) — the exact
+counterfactual the census measured, so the labels transfer 1:1.
+
+### Scope, binding
+
+- Applies to the base pair in BOTH hybrid fusion calls (the base fuse
+  and, when the lane is on, the three-leg rescue fuse) — one code path,
+  no fork. The rescue leg's own weight machinery is untouched.
+- Skipped on the stopword fallback, exactly as the rescue leg is — the
+  fallback's TF stream has different matched semantics.
+- `keyword` and `bm25` single-leg modes untouched (no fusion there).
+- A module constant (`_BASE_LEG_TRAILING_WITHHOLD`) exists so the off
+  arm reproduces the pre-change engine exactly; it ships True if and
+  only if every gate below passes.
+
+### Instrument assignment — declared before any arm runs
+
+Two sealed instruments now exist. **This experiment's held-out check is
+instrument #1 (`bench/heldout/data/`, committed `35227dd`, never
+scored).** Instrument #2 (`bench/heldout/data2/`, committed `9524b88`,
+blind-authored today under the same protocol) is RESERVED for P2a and
+is not read, not scored, and not cited by any arm here — declared now
+so two live mechanisms never face one bullet.
+
+**No-read attestation:** no gold label or question text from
+`bench/heldout/data/` or `bench/heldout/data2/` has been read by the
+implementer at the time of writing. Sha ordering: data `35227dd` <
+data2 `9524b88` < this commit < any run commit.
+
+**Ordering disclosure:** the base-leg-labels artifact predates this
+document, exactly as addenda 4, 8 and 9 disclosed for their censuses.
+The rule above is read off the labels by the stated derivation; the
+sharp dev predictions below are deducible from those committed labels
+(ties are byte-identical and a withheld-leg query IS the census's own
+counterfactual arm), which is disclosed rather than hidden. LongMemEval
+and the held-out instrument remain genuinely unmeasured.
+
+### Arms
+
+**Instrument A — `bench/retrieval` (dev).** Unpadded and padded-600,
+both prefilter regimes, LANE OFF (the default engine this changes) —
+mechanism off vs on. Plus a lane-ON regression pair (unpadded), because
+the lane-on path inherits the base weights.
+
+**Instrument B — this directory (dev-contaminated, labelled so in
+every row).** Baseline (mechanism off) vs mechanism on, lane off both.
+
+**Instrument C — `bench/heldout/data/` (blind, sealed, instrument #1).**
+Scored once, last, and only if every dev gate passes: mechanism off vs
+on in the single scoring session. This is the instrument's first and
+only spend.
+
+### Predictions
+
+**P63 — off-arm byte-identity.** With the constant False, dev cells
+(ids AND scores) and the LongMemEval baseline reproduce exactly
+(0.5246 / 0.8935 / 0.9443 to four decimals; reproduction of the
+baseline at `693da40` confirmed before this document was committed).
+**MISSED if** anything moves — revert regardless of every other result.
+
+**P64 — tie-stratum byte-identity.** On every dev probe where
+m_kw == m_bm, mechanism-on output (ids and scores) is byte-identical to
+mechanism-off. The blast radius is exactly the trailing-leg queries.
+
+**P65 — the withholding is real and bounded.** The fraction of dev
+probes with a withheld leg is > 0 and < 50% on both corpus regimes
+(census read: 20.0% unpadded, 28.3% padded).
+
+**P66 — dev does not regress, any stratum, any regime.** Lane off:
+asked ≥ 35%/60%, requery ≥ 80%/100%, control ≥ 35%/60% unpadded;
+asked ≥ 25%/60%, requery ≥ 70%/100%, control ≥ 25%/60% padded-600;
+prefilter-on cells at or above their committed baselines (asked 30/60,
+requery 75/100, control 30/60 above-threshold; 35/60, 80/100, 35/60
+forced-180). Lane on (unpadded): asked ≥ 55%/90%, requery = 80%/100%,
+control ≥ 50%/85%.
+
+**P67 — dev improves where the labels locate the damage.** Padded-600
+lane-off recall@1: asked 35% (+10), requery 85% (+15), control 35%
+(+10). Unpadded recall@1: requery 85% (+5), asked and control
+unchanged at 35%. recall@5 unchanged in every lane-off cell. Sharp
+because deducible from the committed labels; a deviation means the
+census's counterfactual arms do not reproduce, which is itself a
+finding.
+
+**P68 — LongMemEval costs nothing.** macro@5 ≥ 0.8935 AND
+macro@1 ≥ 0.5246 AND macro@10 ≥ 0.9443 — the baseline itself on all
+three. The hope is a gain toward the 0.9160 line; the GATE is no-cost.
+
+**P69 — held-out confirms, if it runs.** Instrument #1 mechanism-on
+macro@5 ≥ mechanism-off macro@5 AND macro@1 ≥ mechanism-off macro@1,
+both arms from the same spend.
+
+**P70 — provenance.** `tree_dirty` false on every artifact.
+
+### Kill criteria
+
+1. **P63 fails** → revert, publish, stop.
+2. **Any dev stratum falls below its committed baseline** (P66) → the
+   mechanism does not ship. Publish the miss. Instrument #1 NOT spent.
+3. **Any of the three LongMemEval macros falls below baseline** (P68)
+   → does not ship; instrument #1 NOT spent. Publish.
+4. **The blind instrument vetoes** (P69) → the default does not change.
+   The mechanism survives only as measured record, published.
+5. **`tree_dirty` true on any artifact** → run void.
+
+### What ships, stated exactly
+
+`_BASE_LEG_TRAILING_WITHHOLD = True` as the DEFAULT engine — all of
+P63–P70, conjunctively, with P67 read as "dev strictly improves at
+least at padded asked@1 and requery@1". The flip lands as its own
+commit citing this document (one-hop revertable), under the standing
+full-ship grant; the session report to the owner leads with it.
+Anything short and the constant ships False — code present, default
+unchanged, record published.
+
+### Declared confounds
+
+**1. Trailing strata are small.** n=17 at deficit 1, n=12 at deficit
+2+. The rule's floor rests on 0/12, which is why it is stated as a
+withholding (the shipped grammar for thin evidence) rather than a
+fitted weight.
+
+**2. The proxy is one step removed.** "Helped" means the leg moved the
+gold document, dev corpus only; LongMemEval and the held-out set can
+only be scored, not diagnosed.
+
+**3. The padded regime drives the headline gains** (asked +10 at @1),
+and padding's df shifts are exactly what moves BM25's top candidate
+onto lower-evidence docs. That is production's corpus shape
+(above-threshold), but it is one synthetic corpus's version of it.
+
+**4. Instrument B is dev-contaminated** and labelled so in every row.
+
+**5. The census ran without the prefilter.** Prefilter-regime cells
+are gated at no-regression (P66) but their gains are not predicted.
+
+### What is not claimed
+
+- Not that the rescue leg's graded curve was wrong to reject — this
+  mechanism deliberately owns no such scalar.
+- Not helpfulness, correctness or staleness.
+- Not a comparative claim; no claude-mem arm runs.
+- Not that the campaign's success bar (as-asked ≥ 60 at recall@1 /
+  macro@5 ≥ 0.9160) is reached — P67's ceiling is 35% as-asked at @1.
+  This is one mechanism, not the campaign.
+
