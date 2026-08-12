@@ -208,3 +208,19 @@ a held-out set that does not exist, which is the one thing a
 preregistration must not do. The campaign is blocked on this note, by
 design, rather than proceeding on an instrument that cannot support the
 conclusion.
+
+### 2026-08-12 — owner decision: option 2 authorized for MSC
+
+The email (option 1) is deferred, not sent. The owner authorized
+option 2 for MSC: a deliberately non-committed corpus with a pinned
+sha256 and a documented fetch, the `bench/longmemeval/data/` pattern —
+the decision this note said must be the owner's and not a bench
+author's. Requirement 3 is therefore knowingly broken for local work,
+on record. `bench/msc/` now holds the loader, the store construction
+(single-episode and store-scale aggregate), the corpus fingerprint,
+and a plumbing smoke, with pins in `tests/test_msc_loader.py`; see
+`bench/msc/README.md` for what is deliberately NOT built (no census
+without its own declaration, no self-authored gold labels, no
+`SOURCES` registration). A COMMITTED third instrument still needs the
+redistribution grant, so option 1 remains open and option 3 (a
+blind-authored human set) remains the licence-clean alternative.

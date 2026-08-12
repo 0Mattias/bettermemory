@@ -61,3 +61,4 @@ htmlcov/
 bench/longmemeval/data/
 bench/longmemeval/results/*.log
 bench/longmemeval/vendor/
+bench/msc/data/
