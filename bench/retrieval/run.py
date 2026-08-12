@@ -729,6 +729,16 @@ def main() -> int:
             "reproduces the round-6/7 arms."
         ),
     )
+    parser.add_argument(
+        "--base-withhold",
+        choices=("on", "off"),
+        default="off",
+        help=(
+            "Withhold the trailing base leg from hybrid fusion (round 9, "
+            "addendum 12). Default off — the shipped engine. 'on' is the "
+            "mechanism arm."
+        ),
+    )
     parser.add_argument("--json", action="store_true", help="Emit JSON.")
     args = parser.parse_args()
 
@@ -743,6 +753,8 @@ def main() -> int:
 
     if args.evidence_scaling == "on":
         _engine._RESCUE_LEG_EVIDENCE_SCALING = True
+    if args.base_withhold == "on":
+        _engine._BASE_LEG_TRAILING_WITHHOLD = True
     if not LEG_MARGIN_CAP:
         _engine._RESCUE_LEG_MIN_EVIDENCE = 0
 
@@ -905,6 +917,7 @@ def main() -> int:
                     "rescue_expansion": RESCUE_EXPANSION,
                     "leg_margin_cap": LEG_MARGIN_CAP,
                     "evidence_scaling": args.evidence_scaling == "on",
+                    "base_withhold": args.base_withhold == "on",
                     "notes": notes,
                     "results": [
                         {

@@ -1169,6 +1169,42 @@ _EVIDENCE_FULL_AT = 3
 # it is published. `bench/*/run.py --evidence-scaling on` drives it.
 _RESCUE_LEG_EVIDENCE_SCALING = False
 
+# Whether a BASE leg whose rank-1 evidence trails its peer's is withheld
+# from the hybrid fusion. **Default off until round 9's gates pass: the
+# shipped base fusion is unchanged.**
+#
+# Why the base pair should be weighted at all: `_hybrid_fuse` reads
+# rank, not evidence, so a keyword or BM25 leg whose rank-1 rests on one
+# coincidental token votes exactly as hard as one whose top candidate
+# matched four query terms. That is the same defect the rescue leg's
+# machinery above corrects — addendum 9 named the generalisation as a
+# future hypothesis, and the base-leg census measured it
+# (bench/base_leg_census.py, artifact
+# bench/retrieval/results/base-leg-labels-2026-08-12.json).
+#
+# Why RELATIVE evidence and not the rescue leg's absolute count: at a
+# base leg's rank-1 the matched-term count mostly measures query length,
+# and the census found it does not stratify helpfulness (BM25 runs
+# backwards under it). The leg's evidence relative to its peer's does
+# stratify, sharply: leading legs helped 20/29 labelled cases, trailing
+# legs 2/29, zero of twelve at a deficit of two or more. With exactly
+# two base legs only the weight RATIO matters, so the whole design
+# space is what happens to the trailing leg.
+#
+# Why withholding rather than a graded weight: rounds 6-7 measured that
+# a graded constant between 0 and 1 has monotone OPPOSITE optima on a
+# technical and a conversational corpus, and round 8 measured that the
+# store cannot supply the constant. This rule declines to own such a
+# scalar. Withholding is already the lane's grammar for thin evidence
+# ("a leg with one word of evidence does not get to vote"); this is the
+# same sentence with "fewer words than its peer" as the predicate. Ties
+# — 80% of dev probes — return None and fuse byte-identically.
+#
+# Preregistered in bench/longmemeval/PREREGISTRATION.md addendum 12
+# (round 9) before this code existed. `bench/*/run.py --base-withhold
+# on` drives the mechanism arm.
+_BASE_LEG_TRAILING_WITHHOLD = False
+
 # Document-frequency floor for the QUERY_FILLER_WORDS list, as a
 # fraction of the priced collection. Memory bodies are technical prose,
 # so conversational filler is corpus-RARE, and Okapi IDF prices it like
@@ -2509,6 +2545,32 @@ def _leg_evidence_weight(evidence: int) -> float:
     return _RESCUE_LEG_WEIGHT * scale
 
 
+def _base_leg_weights(
+    rankings: list[list[tuple[Memory, float, list[str]]]],
+) -> list[float] | None:
+    """Fusion weights for the base pair — None for the shipped flat 1.0s.
+
+    With `_BASE_LEG_TRAILING_WITHHOLD` on and one base leg's rank-1
+    matching strictly fewer query terms than the other's, the trailing
+    leg is withheld (weight 0.0) and the leading leg keeps its full
+    vote. Ties — the overwhelmingly common case — return None, so the
+    fusion is byte-identical to the pre-round-9 engine.
+
+    The withheld leg's ranking stays IN the fusion at weight zero (its
+    unique candidates keep tail positions rather than vanishing) — the
+    exact counterfactual the base-leg census labelled, so its labels
+    transfer 1:1. See `_BASE_LEG_TRAILING_WITHHOLD` for the derivation
+    and addendum 12 for the preregistration.
+    """
+    if not _BASE_LEG_TRAILING_WITHHOLD or len(rankings) != 2:
+        return None
+    m_a = _leg_top_evidence(rankings[0])
+    m_b = _leg_top_evidence(rankings[1])
+    if m_a == m_b:
+        return None
+    return [1.0, 0.0] if m_a > m_b else [0.0, 1.0]
+
+
 def _hybrid_fuse(
     rankings: list[list[tuple[Memory, float, list[str]]]],
     *,
@@ -2864,7 +2926,13 @@ def search(
             lexical_ids = {
                 memory.id for ranking in rankings for memory, _, _ in ranking
             }
-        scored = _hybrid_fuse(rankings, rrf_k=rrf_k)
+        # Round 9: a base leg whose rank-1 evidence trails its peer's is
+        # withheld. Skipped on the stopword fallback exactly as the
+        # rescue leg is — the fallback's TF stream has different matched
+        # semantics. None (every tie, and the shipped default) fuses
+        # byte-identically.
+        base_weights = None if stopword_fallback else _base_leg_weights(rankings)
+        scored = _hybrid_fuse(rankings, rrf_k=rrf_k, weights=base_weights)
 
         # Rescue expansion: one extra, down-weighted BM25 leg over
         # synthesized vocabulary, engaged only when the base fusion is
@@ -2941,10 +3009,14 @@ def search(
                         exp_leg = []
                     if exp_leg:
                         expansion_ids = {m.id for m, _, _ in exp_leg}
+                        # The base pair keeps the SAME weights it fused
+                        # with above — one code path, no fork (addendum
+                        # 12's scope): a lane-on query must not restore
+                        # a vote the base fusion just withheld.
                         scored = _hybrid_fuse(
                             rankings + [exp_leg],
                             rrf_k=rrf_k,
-                            weights=[1.0, 1.0, leg_weight],
+                            weights=[*(base_weights or (1.0, 1.0)), leg_weight],
                         )
                         # `match_terms` stays a subset of the CALLER's
                         # tokens — synthesized terms explain the leg,

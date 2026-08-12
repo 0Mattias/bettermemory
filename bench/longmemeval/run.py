@@ -598,6 +598,16 @@ def main() -> int:
         ),
     )
     p.add_argument(
+        "--base-withhold",
+        choices=("on", "off"),
+        default="off",
+        help=(
+            "Withhold the trailing base leg from hybrid fusion (round 9, "
+            "addendum 12). Default off — the shipped engine. 'on' is the "
+            "mechanism arm."
+        ),
+    )
+    p.add_argument(
         "--ablate",
         choices=ABLATIONS,
         default="none",
@@ -629,6 +639,8 @@ def main() -> int:
     LEG_MARGIN_CAP = args.leg_margin_cap == "on"
     if args.evidence_scaling == "on":
         _engine._RESCUE_LEG_EVIDENCE_SCALING = True
+    if args.base_withhold == "on":
+        _engine._BASE_LEG_TRAILING_WITHHOLD = True
     if not LEG_MARGIN_CAP:
         _engine._RESCUE_LEG_MIN_EVIDENCE = 0
     if ABLATION != "none" and not RESCUE_EXPANSION:
@@ -723,6 +735,7 @@ def main() -> int:
         "ablation": ABLATION,
         "leg_margin_cap": LEG_MARGIN_CAP,
         "evidence_scaling": args.evidence_scaling == "on",
+        "base_withhold": args.base_withhold == "on",
         "notes": notes,
     }
 

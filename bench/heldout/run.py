@@ -37,6 +37,7 @@ _SRC = _HERE.parents[1] / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
+import bettermemory.search as _engine  # noqa: E402
 from bettermemory.search import search as run_search  # noqa: E402
 from bettermemory.store import Store  # noqa: E402
 
@@ -429,7 +430,19 @@ def main() -> int:
     p.add_argument("--json", action="store_true")
     p.add_argument("--per-question", default=None, metavar="PATH")
     p.add_argument("--out", default=None, metavar="PATH")
+    p.add_argument(
+        "--base-withhold",
+        choices=("on", "off"),
+        default="off",
+        help=(
+            "Withhold the trailing base leg from hybrid fusion (round 9, "
+            "addendum 12). Default off — the shipped engine. 'on' is the "
+            "mechanism arm."
+        ),
+    )
     args = p.parse_args()
+    if args.base_withhold == "on":
+        _engine._BASE_LEG_TRAILING_WITHHOLD = True
 
     data_dir = Path(args.data).expanduser()
     if not data_dir.is_absolute():
@@ -467,6 +480,7 @@ def main() -> int:
         },
         "retrieval_depth": RETRIEVAL_DEPTH,
         "k_values": list(K_VALUES),
+        "base_withhold": args.base_withhold == "on",
         "envelope_warnings": warnings,
         "summary": summary,
     }
