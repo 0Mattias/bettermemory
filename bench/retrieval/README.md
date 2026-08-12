@@ -809,6 +809,49 @@ missing is any NON-lexical opinion about what deserves the head. That
 is Track B's question, and the two lanes were partitioned exactly so
 this park would sharpen it rather than end the campaign.
 
+### Dense scoring — the census parks the arc's last form, 2026-08-12
+
+Track B asked Track A's open question at its sharpest point: emission
+is dead (census 2), but can store-trained geometry at least RANK the
+right document, on the far/absent pool no lexical rerank reaches?
+[`../DENSE_SCORING_CENSUS_DECLARATION.md`](../DENSE_SCORING_CENSUS_DECLARATION.md)
+(committed `7ab21f8`) fixed the 8-cell family — pooling × postproc ×
+query-side bridging over the census-1 trainer at its declared
+defaults — plus the reach bar, the routing rule, and the parking
+criterion. Artifact:
+`bench/retrieval/results/dense-scoring-census-2026-08-12.json`.
+
+**Zero reach, family-wide.** No cell of the eight places a single
+far/absent gold inside rank 10 of 180; the primary cell's medians on
+that pool run 72–131 — chance territory. The preservation read fails
+with it (hit@1 pool median 65), and the strata INVERT: the near-miss
+pool dense-ranks worst of all (median 131), so no tie-breaker
+fallback hides in the family either. The anti-gate-shopping clause
+never fires because there is nothing to shop. The 20-question
+LongMemEval glance — per-haystack training, the product shape, on
+corpora twice the store's token mass — reads at chance: first
+evidence in the top ten on 5 of 20 questions of ~45 sessions each.
+
+Training is not the excuse: the model converges (final loss 0.011,
+vocab 1104 over 35,025 tokens, deterministic by the trainer's own
+`--twice` property). **The wall is information, not optimization.** A
+personal store's worth of text does not carry enough co-occurrence to
+place documents, only — as census 1 already measured — not enough to
+name neighbours either. Emission and scoring are different mechanism
+families with the same corpus, and the corpus is the ceiling.
+
+**Verdict, by the criterion written before the numbers: store-trained
+dense retrieval is parked at personal-store scale, in both of its
+forms.** Both sealed instruments remain unspent — protected now
+through P1a, rounds 6–9, censuses 1–2, and both of tonight's parks,
+and never scored. What the two censuses bought, jointly, is the
+campaign's sharpest negative result at its cheapest possible price:
+the as-asked bar has no live mechanism at this store scale, measured
+twice from opposite directions in one evening, with zero
+preregistrations spent and the pre-4.0 record still standing as proof
+the mechanism CLASS clears the bar the moment the corpus constraint
+moves.
+
 ### Measured and killed on the way: RM3 as an equal leg
 
 Pseudo-relevance feedback — top-k first-pass documents contributing
