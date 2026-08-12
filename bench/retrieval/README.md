@@ -757,6 +757,58 @@ The declaration's primary cell and Reading A were both fixed in advance
 precisely so that number could not become the finding. **Naming the
 cell first is what turns a grid into evidence.**
 
+### P2a — the feature census parks the learned rerank, 2026-08-12
+
+The natural mechanism after round 9: a learned linear rerank over the
+head of the shipped ranking, feeding on the near-miss mass the
+committed labels locate (a perfect top-5 rerank on the asked probes
+lands exactly on the 60% bar). Before any preregistration,
+[`../P2A_CENSUS_DECLARATION.md`](../P2A_CENSUS_DECLARATION.md)
+(committed `3c26ea1`) froze seven features with a-priori directions,
+the gold-vs-distractor pair rule on both corpora, and the R1/R2
+criterion that alone could license the prereg. Artifact:
+`bench/retrieval/results/rerank-feature-census-2026-08-12.json`, with
+every recomputed dev rank validated against the base-leg labels and
+every LongMemEval evidence rank against the round-9 sidecar.
+
+**Zero R1 qualifiers. Every eligible feature anti-separates, on both
+corpora, in the same direction.**
+
+| feature (window 2..8) | dev share | LME share |
+| --- | --- | --- |
+| `leg_agreement` | — (83/83 ties) | — (322/322 ties) |
+| `best_leg_rank` | 0.31 | 0.15 |
+| `evidence_max` / `evidence_sum` / `coverage` | 0.23 | 0.13 |
+| `recency` (LME only) | — | 0.54 |
+
+The population reading is the finding: a near-missed gold's
+distractors are not coincidental tokens the fusion over-trusted — they
+match MORE query terms, sit higher in BOTH legs, and both legs list
+every head candidate (leg agreement is a universal tie, so it cannot
+discriminate at all). An oracle picking the best eligible feature per
+probe recovers 10 of 169 LongMemEval near-misses — six percent, with
+zero training generalisation spent. Lexically, the near-miss head is
+DOMINATED, and a linear model over lexical features can only re-derive
+the ranking that put gold behind.
+
+**The family-shape footnote proves the clauses earned their place.**
+In the one slice a shopper would have led with — dev asked probes,
+window 2..5 — `best_leg_rank` reads 0.83/0.86. The declaration
+pre-labelled exactly that slice non-qualifying, and LongMemEval
+disposes of it independently: the same feature at the same window
+reads **0.13** on the conversational corpus. The C1 sign-flip that has
+now killed nine fusion-weight mechanisms claimed this one before it
+was born, at the cost of one census instead of a round.
+
+**Verdict, by the criterion written before the numbers: Q′ is empty,
+Addendum 13 is not licensed, and P2a is parked at personal-store
+scale.** What stays live is the door the same artifact measures: on
+the padded corpus, production's own prefilter serves the gold in its
+pool on 37 of 40 asked+control probes — the reach exists, and what is
+missing is any NON-lexical opinion about what deserves the head. That
+is Track B's question, and the two lanes were partitioned exactly so
+this park would sharpen it rather than end the campaign.
+
 ### Measured and killed on the way: RM3 as an equal leg
 
 Pseudo-relevance feedback — top-k first-pass documents contributing
