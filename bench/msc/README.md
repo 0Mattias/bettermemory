@@ -72,15 +72,17 @@ the download is absent — which is every CI run.
 
 ## What is deliberately NOT here
 
-- **No census.** The scale question ("does store-trained dense
-  retrieval work at a thousand-item conversational store, given that
-  it fails at a 180-document technical one?") is real, and its census
-  script is deliberately unwritten: a census is the mechanical half
-  of a declared-first document that fixes its family, pools, and
-  criteria before any number exists, and pre-building the script
-  would bake those choices in without the declaration. When that
-  session comes, the loader, the aggregate store, the fingerprint,
-  and the trainer pipeline are the pieces it composes.
+- **The census happened — through the gate, not around it.** The
+  scale question ("does store-trained dense retrieval work at a
+  thousand-item conversational store, given that it fails at a
+  180-document technical one?") was put under test on 2026-08-12,
+  declaration first: `bench/MSC_SCALE_CENSUS_DECLARATION.md`
+  (committed `04a1907`), then `bench/msc_scale_census.py` composing
+  exactly the pieces this directory built, artifact
+  `bench/retrieval/results/msc-scale-census-2026-08-12.json` (run
+  `7247c8e`). The answer is no — park, family-wide, at every scale,
+  by the declaration's own ladder; the record lives in
+  `bench/retrieval/README.md`.
 - **No gold labels, no instrument.** MSC text plus self-authored
   questions would be the self-contamination
   `bench/THIRD_INSTRUMENT.md` rejects. An instrument over MSC gets

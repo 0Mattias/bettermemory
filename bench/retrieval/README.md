@@ -865,6 +865,69 @@ whichever sibling is densest in subsystem vocabulary wins the leg.
 What survived the kill is the shape constraint the shipped lane obeys:
 expansion must be a gated, down-weighted RESCUE, never a peer ranker.
 
+### MSC scale census — the wall holds in register and at scale, 2026-08-12
+
+The dense park above was measured on this instrument's technical
+corpus; the one lever it left standing was the corpus itself. The MSC
+scale census moved it:
+[`../MSC_SCALE_CENSUS_DECLARATION.md`](../MSC_SCALE_CENSUS_DECLARATION.md)
+(committed `04a1907`, before any cell ran) fixed three mechanical
+store scales over the MSC test split — every episode alone (`E1`), the
+40-episode aggregate (`A40`, 1208 items over 200 sessions), and a
+160-episode aggregate (`A160`, 4841 items over 800) — with probes
+drawn solely from MSC's own per-turn persona annotations: 16591
+declared lines, gold fixed to the annotated session, ambiguous lines
+dropped by rule, and a turn-for-turn alignment gate between the
+annotation files and the store construction. No authored gold, no
+corpus text in the artifact:
+`results/msc-scale-census-2026-08-12.json` (run `7247c8e`).
+
+**Park, family-wide, on the bottom rung of the declared ladder.** The
+`A40` far/absent pool — the 225 probes whose gold the shipped engine
+ranks outside its top ten or not at all — is reached at ten by the
+best of the eight cells on 16 probes (share 0.0711) and by the
+primary on 13 (0.0578), against a licensing bar of 0.50 and a twitch
+line of 0.25. Preservation fails alongside: on the probes lexical
+already serves at rank one, the dense medians run 67–73 of 200
+sessions — barely off chance — and the per-stratum medians are flat
+everywhere, which is what a geometry that carries no document signal
+looks like.
+
+Two reads sharpen the dev park's finding rather than merely repeating
+it. The `E1` anchor: among just the FIVE sessions of one speaker
+pair, the primary cell puts the gold session first on 0.169 of probes
+— below the one-in-five chance line — while the shipped engine does
+it on 0.6599. Register alone defeats the store-trained model before a
+single distractor pair enters. And the mass axis: `A160` doubles the
+in-register training text and the primary's unconditional reach share
+halves, 0.0722 to 0.0361 — each scale riding just above its own
+chance rate (top ten of 200 vs of 800). More conversational text is
+not the missing input; the information wall the dev census named
+holds in register.
+
+The overlap diagnostic says where that wall is. Probe tokens overlap
+the gold session's content at 0.89 mean in the hit@1 stratum, 0.58 in
+far, 0.03 in absent: the far/absent pool is a genuine
+annotator-paraphrase vocabulary gap — C1's failure domain, measured
+at store scale — and vectors trained on the store cannot bridge what
+its text never co-locates. Worth recording as shape, no gate
+attached: the shipped lexical engine serves the annotated gold at
+rank one on 697 of 1385 probes and inside the top five on 1069, on
+first-person paraphrase probes over a mixed-pair conversational
+store.
+
+**What the three censuses now say jointly: store-trained dense
+retrieval is dead in every register-by-scale quadrant measured** —
+emission and scoring on the technical corpus, scoring at
+conversational store scale from five sessions to 800. The campaign's
+door D closes negatively, at the cost of one declaration and zero
+preregistrations; both sealed instruments remain unspent. The one
+dense question left standing is the pretrained-weights doctrine
+(door C) — the pre-4.0 record proves the mechanism class clears the
+bar the moment the from-scratch constraint moves, and this census,
+like the last, neither opens nor closes that door: it is the owner's,
+not a measurement's.
+
 ## Results — v1 corpus (superseded), 2026-07-26
 
 bettermemory 3.29.0, corpus of 188 (20 gold + 168 distractors), 12-core
