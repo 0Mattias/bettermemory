@@ -1,0 +1,5484 @@
+{
+  "provenance": {
+    "bettermemory_version": "5.4.0",
+    "commit": "fa21b5e",
+    "tree_dirty": false,
+    "date": "2026-08-12",
+    "machine": {
+      "os": "Darwin 25.5.0",
+      "machine": "arm64",
+      "python": "3.13.13"
+    }
+  },
+  "declaration": "bench/DENSE_SCORING_CENSUS_DECLARATION.md",
+  "model": {
+    "corpus": "store",
+    "trainer_sha256": "32ca1d138b4b172f7555fd8614f7621ce7e1376c143210bbaf7295b50a162cf4",
+    "parameters": {
+      "window": 5,
+      "min_count": 5,
+      "max_vocab": 20000,
+      "min_cooc": 1.0,
+      "dim": 64,
+      "epochs": 15,
+      "lr": 0.05,
+      "xmax": 50.0,
+      "alpha": 0.75,
+      "seed": 20260811,
+      "round": 8
+    },
+    "corpus_stats": {
+      "files": 1,
+      "units": 281,
+      "tokens": 35025,
+      "vocab": 1104,
+      "cooccurrence_cells": 33691
+    },
+    "corpus_manifest_sha256": "2f06b98fde1789bbbd563f2fc3a3ae5c5927e27413b8315117216cf14d3a70cd",
+    "final_loss": 0.011431
+  },
+  "grid": {
+    "pooling": [
+      "mean",
+      "idf"
+    ],
+    "postproc": [
+      "raw",
+      "centred"
+    ],
+    "bridging": [
+      "off",
+      "on"
+    ]
+  },
+  "reach_rank": 10,
+  "note": "STATISTICS ONLY \u2014 gold document ranks under pooled query-document cosine from a store-trained model, over the declared 8-cell family. Pools read off base-leg-labels-2026-08-12.json. No fusion, no ranking change, no engine integration.",
+  "dev": {
+    "collection_size": 180,
+    "corpus": "corpus.jsonl",
+    "corpus_sha256": "c40acee95ce1bb70ac6ea788e0fb4a9a1c6eff1fc55fe4569b651b5b156ea2ea",
+    "cells": {
+      "mean_raw_nobridge": {
+        "unpooled_docs": 0,
+        "probes": [
+          {
+            "slug": "how-database-migrations-are-rolled-back",
+            "probe": "asked",
+            "stratum": "mid(6-10)",
+            "dense_rank": 24,
+            "query_tokens": 15,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "how-database-migrations-are-rolled-back",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 118,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "how-database-migrations-are-rolled-back",
+            "probe": "control",
+            "stratum": "mid(6-10)",
+            "dense_rank": 21,
+            "query_tokens": 14,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "how-feature-flags-get-cleaned-up",
+            "probe": "asked",
+            "stratum": "far(11+)",
+            "dense_rank": 151,
+            "query_tokens": 12,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "how-feature-flags-get-cleaned-up",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 26,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "how-feature-flags-get-cleaned-up",
+            "probe": "control",
+            "stratum": "far(11+)",
+            "dense_rank": 144,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "how-nightly-backups-are-verified-not-just-taken",
+            "probe": "asked",
+            "stratum": "mid(6-10)",
+            "dense_rank": 45,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "how-nightly-backups-are-verified-not-just-taken",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 140,
+            "query_tokens": 7,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "how-nightly-backups-are-verified-not-just-taken",
+            "probe": "control",
+            "stratum": "near(2-5)",
+            "dense_rank": 141,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "how-oncall-escalation-actually-works-here",
+            "probe": "asked",
+            "stratum": "near(2-5)",
+            "dense_rank": 44,
+            "query_tokens": 7,
+            "bridged": 0,
+            "dropped": 5
+          },
+          {
+            "slug": "how-oncall-escalation-actually-works-here",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 16,
+            "query_tokens": 7,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "how-oncall-escalation-actually-works-here",
+            "probe": "control",
+            "stratum": "near(2-5)",
+            "dense_rank": 44,
+            "query_tokens": 7,
+            "bridged": 0,
+            "dropped": 5
+          },
+          {
+            "slug": "how-rate-limiting-is-tuned-for-the-public-api",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 101,
+            "query_tokens": 14,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "how-rate-limiting-is-tuned-for-the-public-api",
+            "probe": "requery",
+            "stratum": "near(2-5)",
+            "dense_rank": 73,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "how-rate-limiting-is-tuned-for-the-public-api",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 69,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "how-secrets-reach-containers-at-runtime",
+            "probe": "asked",
+            "stratum": "mid(6-10)",
+            "dense_rank": 19,
+            "query_tokens": 10,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "how-secrets-reach-containers-at-runtime",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 127,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "how-secrets-reach-containers-at-runtime",
+            "probe": "control",
+            "stratum": "far(11+)",
+            "dense_rank": 21,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "the-agreement-about-code-review-turnaround",
+            "probe": "asked",
+            "stratum": "near(2-5)",
+            "dense_rank": 144,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "the-agreement-about-code-review-turnaround",
+            "probe": "requery",
+            "stratum": "near(2-5)",
+            "dense_rank": 26,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "the-agreement-about-code-review-turnaround",
+            "probe": "control",
+            "stratum": "near(2-5)",
+            "dense_rank": 127,
+            "query_tokens": 10,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "the-convention-for-naming-background-jobs",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 10,
+            "query_tokens": 12,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "the-convention-for-naming-background-jobs",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 22,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "the-convention-for-naming-background-jobs",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 10,
+            "query_tokens": 12,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "the-cutover-plan-for-the-legacy-billing-service",
+            "probe": "asked",
+            "stratum": "far(11+)",
+            "dense_rank": 87,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "the-cutover-plan-for-the-legacy-billing-service",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 134,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "the-cutover-plan-for-the-legacy-billing-service",
+            "probe": "control",
+            "stratum": "far(11+)",
+            "dense_rank": 20,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "the-decision-to-stop-using-a-monorepo",
+            "probe": "asked",
+            "stratum": "absent",
+            "dense_rank": 115,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "the-decision-to-stop-using-a-monorepo",
+            "probe": "requery",
+            "stratum": "near(2-5)",
+            "dense_rank": 108,
+            "query_tokens": 6,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "the-decision-to-stop-using-a-monorepo",
+            "probe": "control",
+            "stratum": "absent",
+            "dense_rank": 119,
+            "query_tokens": 7,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "the-policy-on-adding-new-runtime-dependencies",
+            "probe": "asked",
+            "stratum": "far(11+)",
+            "dense_rank": 85,
+            "query_tokens": 13,
+            "bridged": 0,
+            "dropped": 5
+          },
+          {
+            "slug": "the-policy-on-adding-new-runtime-dependencies",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 73,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 1
+          },
+          {
+            "slug": "the-policy-on-adding-new-runtime-dependencies",
+            "probe": "control",
+            "stratum": "far(11+)",
+            "dense_rank": 85,
+            "query_tokens": 12,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "the-reason-log-retention-is-only-14-days",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 164,
+            "query_tokens": 18,
+            "bridged": 0,
+            "dropped": 5
+          },
+          {
+            "slug": "the-reason-log-retention-is-only-14-days",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 161,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "the-reason-log-retention-is-only-14-days",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 164,
+            "query_tokens": 16,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "the-rule-about-never-force-pushing-shared-branches",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 58,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "the-rule-about-never-force-pushing-shared-branches",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 55,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 1
+          },
+          {
+            "slug": "the-rule-about-never-force-pushing-shared-branches",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 56,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "why-error-tracking-ignores-a-specific-exception-class",
+            "probe": "asked",
+            "stratum": "near(2-5)",
+            "dense_rank": 157,
+            "query_tokens": 16,
+            "bridged": 0,
+            "dropped": 6
+          },
+          {
+            "slug": "why-error-tracking-ignores-a-specific-exception-class",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 4,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "why-error-tracking-ignores-a-specific-exception-class",
+            "probe": "control",
+            "stratum": "mid(6-10)",
+            "dense_rank": 160,
+            "query_tokens": 14,
+            "bridged": 0,
+            "dropped": 6
+          },
+          {
+            "slug": "why-integration-tests-run-serially",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 9,
+            "query_tokens": 10,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "why-integration-tests-run-serially",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 7,
+            "query_tokens": 7,
+            "bridged": 0,
+            "dropped": 1
+          },
+          {
+            "slug": "why-integration-tests-run-serially",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 123,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "why-postgres-connection-pooling-was-moved-out-of-the-app",
+            "probe": "asked",
+            "stratum": "near(2-5)",
+            "dense_rank": 71,
+            "query_tokens": 13,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "why-postgres-connection-pooling-was-moved-out-of-the-app",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 64,
+            "query_tokens": 7,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "why-postgres-connection-pooling-was-moved-out-of-the-app",
+            "probe": "control",
+            "stratum": "near(2-5)",
+            "dense_rank": 74,
+            "query_tokens": 10,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "why-the-frontend-build-is-not-cached-in-ci",
+            "probe": "asked",
+            "stratum": "near(2-5)",
+            "dense_rank": 147,
+            "query_tokens": 21,
+            "bridged": 0,
+            "dropped": 5
+          },
+          {
+            "slug": "why-the-frontend-build-is-not-cached-in-ci",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 142,
+            "query_tokens": 10,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "why-the-frontend-build-is-not-cached-in-ci",
+            "probe": "control",
+            "stratum": "near(2-5)",
+            "dense_rank": 147,
+            "query_tokens": 21,
+            "bridged": 0,
+            "dropped": 5
+          },
+          {
+            "slug": "why-the-staging-environment-shares-one-database",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 115,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 5
+          },
+          {
+            "slug": "why-the-staging-environment-shares-one-database",
+            "probe": "requery",
+            "stratum": "near(2-5)",
+            "dense_rank": 56,
+            "query_tokens": 7,
+            "bridged": 0,
+            "dropped": 1
+          },
+          {
+            "slug": "why-the-staging-environment-shares-one-database",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 115,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "why-we-pin-the-base-image-by-digest",
+            "probe": "asked",
+            "stratum": "mid(6-10)",
+            "dense_rank": 136,
+            "query_tokens": 10,
+            "bridged": 0,
+            "dropped": 0
+          },
+          {
+            "slug": "why-we-pin-the-base-image-by-digest",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 136,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "why-we-pin-the-base-image-by-digest",
+            "probe": "control",
+            "stratum": "mid(6-10)",
+            "dense_rank": 135,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 0
+          },
+          {
+            "slug": "why-we-stopped-using-a-shared-dev-server",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 25,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 1
+          },
+          {
+            "slug": "why-we-stopped-using-a-shared-dev-server",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 76,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 1
+          },
+          {
+            "slug": "why-we-stopped-using-a-shared-dev-server",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 25,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 1
+          }
+        ]
+      },
+      "mean_raw_bridge": {
+        "unpooled_docs": 0,
+        "probes": [
+          {
+            "slug": "how-database-migrations-are-rolled-back",
+            "probe": "asked",
+            "stratum": "mid(6-10)",
+            "dense_rank": 36,
+            "query_tokens": 15,
+            "bridged": 2,
+            "dropped": 2
+          },
+          {
+            "slug": "how-database-migrations-are-rolled-back",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 145,
+            "query_tokens": 9,
+            "bridged": 2,
+            "dropped": 1
+          },
+          {
+            "slug": "how-database-migrations-are-rolled-back",
+            "probe": "control",
+            "stratum": "mid(6-10)",
+            "dense_rank": 30,
+            "query_tokens": 14,
+            "bridged": 2,
+            "dropped": 2
+          },
+          {
+            "slug": "how-feature-flags-get-cleaned-up",
+            "probe": "asked",
+            "stratum": "far(11+)",
+            "dense_rank": 148,
+            "query_tokens": 12,
+            "bridged": 1,
+            "dropped": 3
+          },
+          {
+            "slug": "how-feature-flags-get-cleaned-up",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 29,
+            "query_tokens": 9,
+            "bridged": 1,
+            "dropped": 2
+          },
+          {
+            "slug": "how-feature-flags-get-cleaned-up",
+            "probe": "control",
+            "stratum": "far(11+)",
+            "dense_rank": 144,
+            "query_tokens": 9,
+            "bridged": 1,
+            "dropped": 3
+          },
+          {
+            "slug": "how-nightly-backups-are-verified-not-just-taken",
+            "probe": "asked",
+            "stratum": "mid(6-10)",
+            "dense_rank": 45,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "how-nightly-backups-are-verified-not-just-taken",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 139,
+            "query_tokens": 7,
+            "bridged": 2,
+            "dropped": 0
+          },
+          {
+            "slug": "how-nightly-backups-are-verified-not-just-taken",
+            "probe": "control",
+            "stratum": "near(2-5)",
+            "dense_rank": 141,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "how-oncall-escalation-actually-works-here",
+            "probe": "asked",
+            "stratum": "near(2-5)",
+            "dense_rank": 157,
+            "query_tokens": 7,
+            "bridged": 2,
+            "dropped": 3
+          },
+          {
+            "slug": "how-oncall-escalation-actually-works-here",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 31,
+            "query_tokens": 7,
+            "bridged": 3,
+            "dropped": 0
+          },
+          {
+            "slug": "how-oncall-escalation-actually-works-here",
+            "probe": "control",
+            "stratum": "near(2-5)",
+            "dense_rank": 157,
+            "query_tokens": 7,
+            "bridged": 2,
+            "dropped": 3
+          },
+          {
+            "slug": "how-rate-limiting-is-tuned-for-the-public-api",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 101,
+            "query_tokens": 14,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "how-rate-limiting-is-tuned-for-the-public-api",
+            "probe": "requery",
+            "stratum": "near(2-5)",
+            "dense_rank": 73,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "how-rate-limiting-is-tuned-for-the-public-api",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 69,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "how-secrets-reach-containers-at-runtime",
+            "probe": "asked",
+            "stratum": "mid(6-10)",
+            "dense_rank": 19,
+            "query_tokens": 10,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "how-secrets-reach-containers-at-runtime",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 138,
+            "query_tokens": 8,
+            "bridged": 2,
+            "dropped": 2
+          },
+          {
+            "slug": "how-secrets-reach-containers-at-runtime",
+            "probe": "control",
+            "stratum": "far(11+)",
+            "dense_rank": 21,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "the-agreement-about-code-review-turnaround",
+            "probe": "asked",
+            "stratum": "near(2-5)",
+            "dense_rank": 147,
+            "query_tokens": 11,
+            "bridged": 2,
+            "dropped": 2
+          },
+          {
+            "slug": "the-agreement-about-code-review-turnaround",
+            "probe": "requery",
+            "stratum": "near(2-5)",
+            "dense_rank": 26,
+            "query_tokens": 8,
+            "bridged": 1,
+            "dropped": 1
+          },
+          {
+            "slug": "the-agreement-about-code-review-turnaround",
+            "probe": "control",
+            "stratum": "near(2-5)",
+            "dense_rank": 147,
+            "query_tokens": 10,
+            "bridged": 2,
+            "dropped": 2
+          },
+          {
+            "slug": "the-convention-for-naming-background-jobs",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 26,
+            "query_tokens": 12,
+            "bridged": 2,
+            "dropped": 2
+          },
+          {
+            "slug": "the-convention-for-naming-background-jobs",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 22,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "the-convention-for-naming-background-jobs",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 26,
+            "query_tokens": 12,
+            "bridged": 2,
+            "dropped": 2
+          },
+          {
+            "slug": "the-cutover-plan-for-the-legacy-billing-service",
+            "probe": "asked",
+            "stratum": "far(11+)",
+            "dense_rank": 128,
+            "query_tokens": 9,
+            "bridged": 1,
+            "dropped": 2
+          },
+          {
+            "slug": "the-cutover-plan-for-the-legacy-billing-service",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 134,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "the-cutover-plan-for-the-legacy-billing-service",
+            "probe": "control",
+            "stratum": "far(11+)",
+            "dense_rank": 92,
+            "query_tokens": 8,
+            "bridged": 1,
+            "dropped": 2
+          },
+          {
+            "slug": "the-decision-to-stop-using-a-monorepo",
+            "probe": "asked",
+            "stratum": "absent",
+            "dense_rank": 115,
+            "query_tokens": 9,
+            "bridged": 2,
+            "dropped": 1
+          },
+          {
+            "slug": "the-decision-to-stop-using-a-monorepo",
+            "probe": "requery",
+            "stratum": "near(2-5)",
+            "dense_rank": 108,
+            "query_tokens": 6,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "the-decision-to-stop-using-a-monorepo",
+            "probe": "control",
+            "stratum": "absent",
+            "dense_rank": 115,
+            "query_tokens": 7,
+            "bridged": 2,
+            "dropped": 1
+          },
+          {
+            "slug": "the-policy-on-adding-new-runtime-dependencies",
+            "probe": "asked",
+            "stratum": "far(11+)",
+            "dense_rank": 88,
+            "query_tokens": 13,
+            "bridged": 3,
+            "dropped": 2
+          },
+          {
+            "slug": "the-policy-on-adding-new-runtime-dependencies",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 73,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 1
+          },
+          {
+            "slug": "the-policy-on-adding-new-runtime-dependencies",
+            "probe": "control",
+            "stratum": "far(11+)",
+            "dense_rank": 81,
+            "query_tokens": 12,
+            "bridged": 2,
+            "dropped": 2
+          },
+          {
+            "slug": "the-reason-log-retention-is-only-14-days",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 164,
+            "query_tokens": 18,
+            "bridged": 2,
+            "dropped": 3
+          },
+          {
+            "slug": "the-reason-log-retention-is-only-14-days",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 82,
+            "query_tokens": 9,
+            "bridged": 1,
+            "dropped": 1
+          },
+          {
+            "slug": "the-reason-log-retention-is-only-14-days",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 164,
+            "query_tokens": 16,
+            "bridged": 1,
+            "dropped": 3
+          },
+          {
+            "slug": "the-rule-about-never-force-pushing-shared-branches",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 58,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "the-rule-about-never-force-pushing-shared-branches",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 55,
+            "query_tokens": 8,
+            "bridged": 1,
+            "dropped": 0
+          },
+          {
+            "slug": "the-rule-about-never-force-pushing-shared-branches",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 56,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "why-error-tracking-ignores-a-specific-exception-class",
+            "probe": "asked",
+            "stratum": "near(2-5)",
+            "dense_rank": 143,
+            "query_tokens": 16,
+            "bridged": 2,
+            "dropped": 4
+          },
+          {
+            "slug": "why-error-tracking-ignores-a-specific-exception-class",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 13,
+            "query_tokens": 9,
+            "bridged": 3,
+            "dropped": 0
+          },
+          {
+            "slug": "why-error-tracking-ignores-a-specific-exception-class",
+            "probe": "control",
+            "stratum": "mid(6-10)",
+            "dense_rank": 157,
+            "query_tokens": 14,
+            "bridged": 2,
+            "dropped": 4
+          },
+          {
+            "slug": "why-integration-tests-run-serially",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 9,
+            "query_tokens": 10,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "why-integration-tests-run-serially",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 7,
+            "query_tokens": 7,
+            "bridged": 0,
+            "dropped": 1
+          },
+          {
+            "slug": "why-integration-tests-run-serially",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 123,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "why-postgres-connection-pooling-was-moved-out-of-the-app",
+            "probe": "asked",
+            "stratum": "near(2-5)",
+            "dense_rank": 71,
+            "query_tokens": 13,
+            "bridged": 3,
+            "dropped": 1
+          },
+          {
+            "slug": "why-postgres-connection-pooling-was-moved-out-of-the-app",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 70,
+            "query_tokens": 7,
+            "bridged": 2,
+            "dropped": 1
+          },
+          {
+            "slug": "why-postgres-connection-pooling-was-moved-out-of-the-app",
+            "probe": "control",
+            "stratum": "near(2-5)",
+            "dense_rank": 71,
+            "query_tokens": 10,
+            "bridged": 3,
+            "dropped": 1
+          },
+          {
+            "slug": "why-the-frontend-build-is-not-cached-in-ci",
+            "probe": "asked",
+            "stratum": "near(2-5)",
+            "dense_rank": 147,
+            "query_tokens": 21,
+            "bridged": 1,
+            "dropped": 4
+          },
+          {
+            "slug": "why-the-frontend-build-is-not-cached-in-ci",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 124,
+            "query_tokens": 10,
+            "bridged": 2,
+            "dropped": 2
+          },
+          {
+            "slug": "why-the-frontend-build-is-not-cached-in-ci",
+            "probe": "control",
+            "stratum": "near(2-5)",
+            "dense_rank": 147,
+            "query_tokens": 21,
+            "bridged": 1,
+            "dropped": 4
+          },
+          {
+            "slug": "why-the-staging-environment-shares-one-database",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 115,
+            "query_tokens": 9,
+            "bridged": 3,
+            "dropped": 2
+          },
+          {
+            "slug": "why-the-staging-environment-shares-one-database",
+            "probe": "requery",
+            "stratum": "near(2-5)",
+            "dense_rank": 54,
+            "query_tokens": 7,
+            "bridged": 1,
+            "dropped": 0
+          },
+          {
+            "slug": "why-the-staging-environment-shares-one-database",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 115,
+            "query_tokens": 8,
+            "bridged": 3,
+            "dropped": 1
+          },
+          {
+            "slug": "why-we-pin-the-base-image-by-digest",
+            "probe": "asked",
+            "stratum": "mid(6-10)",
+            "dense_rank": 136,
+            "query_tokens": 10,
+            "bridged": 0,
+            "dropped": 0
+          },
+          {
+            "slug": "why-we-pin-the-base-image-by-digest",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 136,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "why-we-pin-the-base-image-by-digest",
+            "probe": "control",
+            "stratum": "mid(6-10)",
+            "dense_rank": 135,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 0
+          },
+          {
+            "slug": "why-we-stopped-using-a-shared-dev-server",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 25,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 1
+          },
+          {
+            "slug": "why-we-stopped-using-a-shared-dev-server",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 76,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 1
+          },
+          {
+            "slug": "why-we-stopped-using-a-shared-dev-server",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 25,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 1
+          }
+        ]
+      },
+      "mean_centred_nobridge": {
+        "unpooled_docs": 0,
+        "probes": [
+          {
+            "slug": "how-database-migrations-are-rolled-back",
+            "probe": "asked",
+            "stratum": "mid(6-10)",
+            "dense_rank": 18,
+            "query_tokens": 15,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "how-database-migrations-are-rolled-back",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 104,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "how-database-migrations-are-rolled-back",
+            "probe": "control",
+            "stratum": "mid(6-10)",
+            "dense_rank": 18,
+            "query_tokens": 14,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "how-feature-flags-get-cleaned-up",
+            "probe": "asked",
+            "stratum": "far(11+)",
+            "dense_rank": 111,
+            "query_tokens": 12,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "how-feature-flags-get-cleaned-up",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 30,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "how-feature-flags-get-cleaned-up",
+            "probe": "control",
+            "stratum": "far(11+)",
+            "dense_rank": 91,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "how-nightly-backups-are-verified-not-just-taken",
+            "probe": "asked",
+            "stratum": "mid(6-10)",
+            "dense_rank": 103,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "how-nightly-backups-are-verified-not-just-taken",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 145,
+            "query_tokens": 7,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "how-nightly-backups-are-verified-not-just-taken",
+            "probe": "control",
+            "stratum": "near(2-5)",
+            "dense_rank": 132,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "how-oncall-escalation-actually-works-here",
+            "probe": "asked",
+            "stratum": "near(2-5)",
+            "dense_rank": 54,
+            "query_tokens": 7,
+            "bridged": 0,
+            "dropped": 5
+          },
+          {
+            "slug": "how-oncall-escalation-actually-works-here",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 13,
+            "query_tokens": 7,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "how-oncall-escalation-actually-works-here",
+            "probe": "control",
+            "stratum": "near(2-5)",
+            "dense_rank": 54,
+            "query_tokens": 7,
+            "bridged": 0,
+            "dropped": 5
+          },
+          {
+            "slug": "how-rate-limiting-is-tuned-for-the-public-api",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 121,
+            "query_tokens": 14,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "how-rate-limiting-is-tuned-for-the-public-api",
+            "probe": "requery",
+            "stratum": "near(2-5)",
+            "dense_rank": 55,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "how-rate-limiting-is-tuned-for-the-public-api",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 111,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "how-secrets-reach-containers-at-runtime",
+            "probe": "asked",
+            "stratum": "mid(6-10)",
+            "dense_rank": 45,
+            "query_tokens": 10,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "how-secrets-reach-containers-at-runtime",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 107,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "how-secrets-reach-containers-at-runtime",
+            "probe": "control",
+            "stratum": "far(11+)",
+            "dense_rank": 40,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "the-agreement-about-code-review-turnaround",
+            "probe": "asked",
+            "stratum": "near(2-5)",
+            "dense_rank": 122,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "the-agreement-about-code-review-turnaround",
+            "probe": "requery",
+            "stratum": "near(2-5)",
+            "dense_rank": 37,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "the-agreement-about-code-review-turnaround",
+            "probe": "control",
+            "stratum": "near(2-5)",
+            "dense_rank": 119,
+            "query_tokens": 10,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "the-convention-for-naming-background-jobs",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 31,
+            "query_tokens": 12,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "the-convention-for-naming-background-jobs",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 39,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "the-convention-for-naming-background-jobs",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 31,
+            "query_tokens": 12,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "the-cutover-plan-for-the-legacy-billing-service",
+            "probe": "asked",
+            "stratum": "far(11+)",
+            "dense_rank": 71,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "the-cutover-plan-for-the-legacy-billing-service",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 90,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "the-cutover-plan-for-the-legacy-billing-service",
+            "probe": "control",
+            "stratum": "far(11+)",
+            "dense_rank": 48,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "the-decision-to-stop-using-a-monorepo",
+            "probe": "asked",
+            "stratum": "absent",
+            "dense_rank": 116,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "the-decision-to-stop-using-a-monorepo",
+            "probe": "requery",
+            "stratum": "near(2-5)",
+            "dense_rank": 94,
+            "query_tokens": 6,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "the-decision-to-stop-using-a-monorepo",
+            "probe": "control",
+            "stratum": "absent",
+            "dense_rank": 124,
+            "query_tokens": 7,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "the-policy-on-adding-new-runtime-dependencies",
+            "probe": "asked",
+            "stratum": "far(11+)",
+            "dense_rank": 96,
+            "query_tokens": 13,
+            "bridged": 0,
+            "dropped": 5
+          },
+          {
+            "slug": "the-policy-on-adding-new-runtime-dependencies",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 58,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 1
+          },
+          {
+            "slug": "the-policy-on-adding-new-runtime-dependencies",
+            "probe": "control",
+            "stratum": "far(11+)",
+            "dense_rank": 96,
+            "query_tokens": 12,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "the-reason-log-retention-is-only-14-days",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 172,
+            "query_tokens": 18,
+            "bridged": 0,
+            "dropped": 5
+          },
+          {
+            "slug": "the-reason-log-retention-is-only-14-days",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 161,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "the-reason-log-retention-is-only-14-days",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 168,
+            "query_tokens": 16,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "the-rule-about-never-force-pushing-shared-branches",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 47,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "the-rule-about-never-force-pushing-shared-branches",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 34,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 1
+          },
+          {
+            "slug": "the-rule-about-never-force-pushing-shared-branches",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 39,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "why-error-tracking-ignores-a-specific-exception-class",
+            "probe": "asked",
+            "stratum": "near(2-5)",
+            "dense_rank": 114,
+            "query_tokens": 16,
+            "bridged": 0,
+            "dropped": 6
+          },
+          {
+            "slug": "why-error-tracking-ignores-a-specific-exception-class",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 13,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "why-error-tracking-ignores-a-specific-exception-class",
+            "probe": "control",
+            "stratum": "mid(6-10)",
+            "dense_rank": 123,
+            "query_tokens": 14,
+            "bridged": 0,
+            "dropped": 6
+          },
+          {
+            "slug": "why-integration-tests-run-serially",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 9,
+            "query_tokens": 10,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "why-integration-tests-run-serially",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 7,
+            "query_tokens": 7,
+            "bridged": 0,
+            "dropped": 1
+          },
+          {
+            "slug": "why-integration-tests-run-serially",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 175,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "why-postgres-connection-pooling-was-moved-out-of-the-app",
+            "probe": "asked",
+            "stratum": "near(2-5)",
+            "dense_rank": 115,
+            "query_tokens": 13,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "why-postgres-connection-pooling-was-moved-out-of-the-app",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 32,
+            "query_tokens": 7,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "why-postgres-connection-pooling-was-moved-out-of-the-app",
+            "probe": "control",
+            "stratum": "near(2-5)",
+            "dense_rank": 136,
+            "query_tokens": 10,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "why-the-frontend-build-is-not-cached-in-ci",
+            "probe": "asked",
+            "stratum": "near(2-5)",
+            "dense_rank": 151,
+            "query_tokens": 21,
+            "bridged": 0,
+            "dropped": 5
+          },
+          {
+            "slug": "why-the-frontend-build-is-not-cached-in-ci",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 142,
+            "query_tokens": 10,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "why-the-frontend-build-is-not-cached-in-ci",
+            "probe": "control",
+            "stratum": "near(2-5)",
+            "dense_rank": 151,
+            "query_tokens": 21,
+            "bridged": 0,
+            "dropped": 5
+          },
+          {
+            "slug": "why-the-staging-environment-shares-one-database",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 61,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 5
+          },
+          {
+            "slug": "why-the-staging-environment-shares-one-database",
+            "probe": "requery",
+            "stratum": "near(2-5)",
+            "dense_rank": 3,
+            "query_tokens": 7,
+            "bridged": 0,
+            "dropped": 1
+          },
+          {
+            "slug": "why-the-staging-environment-shares-one-database",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 61,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "why-we-pin-the-base-image-by-digest",
+            "probe": "asked",
+            "stratum": "mid(6-10)",
+            "dense_rank": 91,
+            "query_tokens": 10,
+            "bridged": 0,
+            "dropped": 0
+          },
+          {
+            "slug": "why-we-pin-the-base-image-by-digest",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 34,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "why-we-pin-the-base-image-by-digest",
+            "probe": "control",
+            "stratum": "mid(6-10)",
+            "dense_rank": 15,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 0
+          },
+          {
+            "slug": "why-we-stopped-using-a-shared-dev-server",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 24,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 1
+          },
+          {
+            "slug": "why-we-stopped-using-a-shared-dev-server",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 127,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 1
+          },
+          {
+            "slug": "why-we-stopped-using-a-shared-dev-server",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 24,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 1
+          }
+        ]
+      },
+      "mean_centred_bridge": {
+        "unpooled_docs": 0,
+        "probes": [
+          {
+            "slug": "how-database-migrations-are-rolled-back",
+            "probe": "asked",
+            "stratum": "mid(6-10)",
+            "dense_rank": 69,
+            "query_tokens": 15,
+            "bridged": 2,
+            "dropped": 2
+          },
+          {
+            "slug": "how-database-migrations-are-rolled-back",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 133,
+            "query_tokens": 9,
+            "bridged": 2,
+            "dropped": 1
+          },
+          {
+            "slug": "how-database-migrations-are-rolled-back",
+            "probe": "control",
+            "stratum": "mid(6-10)",
+            "dense_rank": 42,
+            "query_tokens": 14,
+            "bridged": 2,
+            "dropped": 2
+          },
+          {
+            "slug": "how-feature-flags-get-cleaned-up",
+            "probe": "asked",
+            "stratum": "far(11+)",
+            "dense_rank": 111,
+            "query_tokens": 12,
+            "bridged": 1,
+            "dropped": 3
+          },
+          {
+            "slug": "how-feature-flags-get-cleaned-up",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 38,
+            "query_tokens": 9,
+            "bridged": 1,
+            "dropped": 2
+          },
+          {
+            "slug": "how-feature-flags-get-cleaned-up",
+            "probe": "control",
+            "stratum": "far(11+)",
+            "dense_rank": 104,
+            "query_tokens": 9,
+            "bridged": 1,
+            "dropped": 3
+          },
+          {
+            "slug": "how-nightly-backups-are-verified-not-just-taken",
+            "probe": "asked",
+            "stratum": "mid(6-10)",
+            "dense_rank": 103,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "how-nightly-backups-are-verified-not-just-taken",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 120,
+            "query_tokens": 7,
+            "bridged": 2,
+            "dropped": 0
+          },
+          {
+            "slug": "how-nightly-backups-are-verified-not-just-taken",
+            "probe": "control",
+            "stratum": "near(2-5)",
+            "dense_rank": 132,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "how-oncall-escalation-actually-works-here",
+            "probe": "asked",
+            "stratum": "near(2-5)",
+            "dense_rank": 151,
+            "query_tokens": 7,
+            "bridged": 2,
+            "dropped": 3
+          },
+          {
+            "slug": "how-oncall-escalation-actually-works-here",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 21,
+            "query_tokens": 7,
+            "bridged": 3,
+            "dropped": 0
+          },
+          {
+            "slug": "how-oncall-escalation-actually-works-here",
+            "probe": "control",
+            "stratum": "near(2-5)",
+            "dense_rank": 151,
+            "query_tokens": 7,
+            "bridged": 2,
+            "dropped": 3
+          },
+          {
+            "slug": "how-rate-limiting-is-tuned-for-the-public-api",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 121,
+            "query_tokens": 14,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "how-rate-limiting-is-tuned-for-the-public-api",
+            "probe": "requery",
+            "stratum": "near(2-5)",
+            "dense_rank": 55,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "how-rate-limiting-is-tuned-for-the-public-api",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 111,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "how-secrets-reach-containers-at-runtime",
+            "probe": "asked",
+            "stratum": "mid(6-10)",
+            "dense_rank": 45,
+            "query_tokens": 10,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "how-secrets-reach-containers-at-runtime",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 116,
+            "query_tokens": 8,
+            "bridged": 2,
+            "dropped": 2
+          },
+          {
+            "slug": "how-secrets-reach-containers-at-runtime",
+            "probe": "control",
+            "stratum": "far(11+)",
+            "dense_rank": 40,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "the-agreement-about-code-review-turnaround",
+            "probe": "asked",
+            "stratum": "near(2-5)",
+            "dense_rank": 131,
+            "query_tokens": 11,
+            "bridged": 2,
+            "dropped": 2
+          },
+          {
+            "slug": "the-agreement-about-code-review-turnaround",
+            "probe": "requery",
+            "stratum": "near(2-5)",
+            "dense_rank": 29,
+            "query_tokens": 8,
+            "bridged": 1,
+            "dropped": 1
+          },
+          {
+            "slug": "the-agreement-about-code-review-turnaround",
+            "probe": "control",
+            "stratum": "near(2-5)",
+            "dense_rank": 130,
+            "query_tokens": 10,
+            "bridged": 2,
+            "dropped": 2
+          },
+          {
+            "slug": "the-convention-for-naming-background-jobs",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 39,
+            "query_tokens": 12,
+            "bridged": 2,
+            "dropped": 2
+          },
+          {
+            "slug": "the-convention-for-naming-background-jobs",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 39,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "the-convention-for-naming-background-jobs",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 39,
+            "query_tokens": 12,
+            "bridged": 2,
+            "dropped": 2
+          },
+          {
+            "slug": "the-cutover-plan-for-the-legacy-billing-service",
+            "probe": "asked",
+            "stratum": "far(11+)",
+            "dense_rank": 88,
+            "query_tokens": 9,
+            "bridged": 1,
+            "dropped": 2
+          },
+          {
+            "slug": "the-cutover-plan-for-the-legacy-billing-service",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 90,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "the-cutover-plan-for-the-legacy-billing-service",
+            "probe": "control",
+            "stratum": "far(11+)",
+            "dense_rank": 72,
+            "query_tokens": 8,
+            "bridged": 1,
+            "dropped": 2
+          },
+          {
+            "slug": "the-decision-to-stop-using-a-monorepo",
+            "probe": "asked",
+            "stratum": "absent",
+            "dense_rank": 121,
+            "query_tokens": 9,
+            "bridged": 2,
+            "dropped": 1
+          },
+          {
+            "slug": "the-decision-to-stop-using-a-monorepo",
+            "probe": "requery",
+            "stratum": "near(2-5)",
+            "dense_rank": 94,
+            "query_tokens": 6,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "the-decision-to-stop-using-a-monorepo",
+            "probe": "control",
+            "stratum": "absent",
+            "dense_rank": 129,
+            "query_tokens": 7,
+            "bridged": 2,
+            "dropped": 1
+          },
+          {
+            "slug": "the-policy-on-adding-new-runtime-dependencies",
+            "probe": "asked",
+            "stratum": "far(11+)",
+            "dense_rank": 92,
+            "query_tokens": 13,
+            "bridged": 3,
+            "dropped": 2
+          },
+          {
+            "slug": "the-policy-on-adding-new-runtime-dependencies",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 58,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 1
+          },
+          {
+            "slug": "the-policy-on-adding-new-runtime-dependencies",
+            "probe": "control",
+            "stratum": "far(11+)",
+            "dense_rank": 78,
+            "query_tokens": 12,
+            "bridged": 2,
+            "dropped": 2
+          },
+          {
+            "slug": "the-reason-log-retention-is-only-14-days",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 170,
+            "query_tokens": 18,
+            "bridged": 2,
+            "dropped": 3
+          },
+          {
+            "slug": "the-reason-log-retention-is-only-14-days",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 1,
+            "query_tokens": 9,
+            "bridged": 1,
+            "dropped": 1
+          },
+          {
+            "slug": "the-reason-log-retention-is-only-14-days",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 168,
+            "query_tokens": 16,
+            "bridged": 1,
+            "dropped": 3
+          },
+          {
+            "slug": "the-rule-about-never-force-pushing-shared-branches",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 47,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "the-rule-about-never-force-pushing-shared-branches",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 35,
+            "query_tokens": 8,
+            "bridged": 1,
+            "dropped": 0
+          },
+          {
+            "slug": "the-rule-about-never-force-pushing-shared-branches",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 39,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "why-error-tracking-ignores-a-specific-exception-class",
+            "probe": "asked",
+            "stratum": "near(2-5)",
+            "dense_rank": 91,
+            "query_tokens": 16,
+            "bridged": 2,
+            "dropped": 4
+          },
+          {
+            "slug": "why-error-tracking-ignores-a-specific-exception-class",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 45,
+            "query_tokens": 9,
+            "bridged": 3,
+            "dropped": 0
+          },
+          {
+            "slug": "why-error-tracking-ignores-a-specific-exception-class",
+            "probe": "control",
+            "stratum": "mid(6-10)",
+            "dense_rank": 114,
+            "query_tokens": 14,
+            "bridged": 2,
+            "dropped": 4
+          },
+          {
+            "slug": "why-integration-tests-run-serially",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 9,
+            "query_tokens": 10,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "why-integration-tests-run-serially",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 7,
+            "query_tokens": 7,
+            "bridged": 0,
+            "dropped": 1
+          },
+          {
+            "slug": "why-integration-tests-run-serially",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 175,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "why-postgres-connection-pooling-was-moved-out-of-the-app",
+            "probe": "asked",
+            "stratum": "near(2-5)",
+            "dense_rank": 25,
+            "query_tokens": 13,
+            "bridged": 3,
+            "dropped": 1
+          },
+          {
+            "slug": "why-postgres-connection-pooling-was-moved-out-of-the-app",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 36,
+            "query_tokens": 7,
+            "bridged": 2,
+            "dropped": 1
+          },
+          {
+            "slug": "why-postgres-connection-pooling-was-moved-out-of-the-app",
+            "probe": "control",
+            "stratum": "near(2-5)",
+            "dense_rank": 105,
+            "query_tokens": 10,
+            "bridged": 3,
+            "dropped": 1
+          },
+          {
+            "slug": "why-the-frontend-build-is-not-cached-in-ci",
+            "probe": "asked",
+            "stratum": "near(2-5)",
+            "dense_rank": 151,
+            "query_tokens": 21,
+            "bridged": 1,
+            "dropped": 4
+          },
+          {
+            "slug": "why-the-frontend-build-is-not-cached-in-ci",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 104,
+            "query_tokens": 10,
+            "bridged": 2,
+            "dropped": 2
+          },
+          {
+            "slug": "why-the-frontend-build-is-not-cached-in-ci",
+            "probe": "control",
+            "stratum": "near(2-5)",
+            "dense_rank": 151,
+            "query_tokens": 21,
+            "bridged": 1,
+            "dropped": 4
+          },
+          {
+            "slug": "why-the-staging-environment-shares-one-database",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 65,
+            "query_tokens": 9,
+            "bridged": 3,
+            "dropped": 2
+          },
+          {
+            "slug": "why-the-staging-environment-shares-one-database",
+            "probe": "requery",
+            "stratum": "near(2-5)",
+            "dense_rank": 3,
+            "query_tokens": 7,
+            "bridged": 1,
+            "dropped": 0
+          },
+          {
+            "slug": "why-the-staging-environment-shares-one-database",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 65,
+            "query_tokens": 8,
+            "bridged": 3,
+            "dropped": 1
+          },
+          {
+            "slug": "why-we-pin-the-base-image-by-digest",
+            "probe": "asked",
+            "stratum": "mid(6-10)",
+            "dense_rank": 91,
+            "query_tokens": 10,
+            "bridged": 0,
+            "dropped": 0
+          },
+          {
+            "slug": "why-we-pin-the-base-image-by-digest",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 34,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "why-we-pin-the-base-image-by-digest",
+            "probe": "control",
+            "stratum": "mid(6-10)",
+            "dense_rank": 15,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 0
+          },
+          {
+            "slug": "why-we-stopped-using-a-shared-dev-server",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 24,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 1
+          },
+          {
+            "slug": "why-we-stopped-using-a-shared-dev-server",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 127,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 1
+          },
+          {
+            "slug": "why-we-stopped-using-a-shared-dev-server",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 24,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 1
+          }
+        ]
+      },
+      "idf_raw_nobridge": {
+        "unpooled_docs": 0,
+        "probes": [
+          {
+            "slug": "how-database-migrations-are-rolled-back",
+            "probe": "asked",
+            "stratum": "mid(6-10)",
+            "dense_rank": 169,
+            "query_tokens": 15,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "how-database-migrations-are-rolled-back",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 166,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "how-database-migrations-are-rolled-back",
+            "probe": "control",
+            "stratum": "mid(6-10)",
+            "dense_rank": 169,
+            "query_tokens": 14,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "how-feature-flags-get-cleaned-up",
+            "probe": "asked",
+            "stratum": "far(11+)",
+            "dense_rank": 46,
+            "query_tokens": 12,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "how-feature-flags-get-cleaned-up",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 7,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "how-feature-flags-get-cleaned-up",
+            "probe": "control",
+            "stratum": "far(11+)",
+            "dense_rank": 132,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "how-nightly-backups-are-verified-not-just-taken",
+            "probe": "asked",
+            "stratum": "mid(6-10)",
+            "dense_rank": 75,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "how-nightly-backups-are-verified-not-just-taken",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 90,
+            "query_tokens": 7,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "how-nightly-backups-are-verified-not-just-taken",
+            "probe": "control",
+            "stratum": "near(2-5)",
+            "dense_rank": 50,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "how-oncall-escalation-actually-works-here",
+            "probe": "asked",
+            "stratum": "near(2-5)",
+            "dense_rank": 46,
+            "query_tokens": 7,
+            "bridged": 0,
+            "dropped": 5
+          },
+          {
+            "slug": "how-oncall-escalation-actually-works-here",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 40,
+            "query_tokens": 7,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "how-oncall-escalation-actually-works-here",
+            "probe": "control",
+            "stratum": "near(2-5)",
+            "dense_rank": 46,
+            "query_tokens": 7,
+            "bridged": 0,
+            "dropped": 5
+          },
+          {
+            "slug": "how-rate-limiting-is-tuned-for-the-public-api",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 66,
+            "query_tokens": 14,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "how-rate-limiting-is-tuned-for-the-public-api",
+            "probe": "requery",
+            "stratum": "near(2-5)",
+            "dense_rank": 64,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "how-rate-limiting-is-tuned-for-the-public-api",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 57,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "how-secrets-reach-containers-at-runtime",
+            "probe": "asked",
+            "stratum": "mid(6-10)",
+            "dense_rank": 16,
+            "query_tokens": 10,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "how-secrets-reach-containers-at-runtime",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 162,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "how-secrets-reach-containers-at-runtime",
+            "probe": "control",
+            "stratum": "far(11+)",
+            "dense_rank": 16,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "the-agreement-about-code-review-turnaround",
+            "probe": "asked",
+            "stratum": "near(2-5)",
+            "dense_rank": 157,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "the-agreement-about-code-review-turnaround",
+            "probe": "requery",
+            "stratum": "near(2-5)",
+            "dense_rank": 25,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "the-agreement-about-code-review-turnaround",
+            "probe": "control",
+            "stratum": "near(2-5)",
+            "dense_rank": 157,
+            "query_tokens": 10,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "the-convention-for-naming-background-jobs",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 21,
+            "query_tokens": 12,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "the-convention-for-naming-background-jobs",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 124,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "the-convention-for-naming-background-jobs",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 21,
+            "query_tokens": 12,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "the-cutover-plan-for-the-legacy-billing-service",
+            "probe": "asked",
+            "stratum": "far(11+)",
+            "dense_rank": 23,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "the-cutover-plan-for-the-legacy-billing-service",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 69,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "the-cutover-plan-for-the-legacy-billing-service",
+            "probe": "control",
+            "stratum": "far(11+)",
+            "dense_rank": 64,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "the-decision-to-stop-using-a-monorepo",
+            "probe": "asked",
+            "stratum": "absent",
+            "dense_rank": 135,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "the-decision-to-stop-using-a-monorepo",
+            "probe": "requery",
+            "stratum": "near(2-5)",
+            "dense_rank": 156,
+            "query_tokens": 6,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "the-decision-to-stop-using-a-monorepo",
+            "probe": "control",
+            "stratum": "absent",
+            "dense_rank": 156,
+            "query_tokens": 7,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "the-policy-on-adding-new-runtime-dependencies",
+            "probe": "asked",
+            "stratum": "far(11+)",
+            "dense_rank": 97,
+            "query_tokens": 13,
+            "bridged": 0,
+            "dropped": 5
+          },
+          {
+            "slug": "the-policy-on-adding-new-runtime-dependencies",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 41,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 1
+          },
+          {
+            "slug": "the-policy-on-adding-new-runtime-dependencies",
+            "probe": "control",
+            "stratum": "far(11+)",
+            "dense_rank": 97,
+            "query_tokens": 12,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "the-reason-log-retention-is-only-14-days",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 142,
+            "query_tokens": 18,
+            "bridged": 0,
+            "dropped": 5
+          },
+          {
+            "slug": "the-reason-log-retention-is-only-14-days",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 50,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "the-reason-log-retention-is-only-14-days",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 126,
+            "query_tokens": 16,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "the-rule-about-never-force-pushing-shared-branches",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 28,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "the-rule-about-never-force-pushing-shared-branches",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 1,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 1
+          },
+          {
+            "slug": "the-rule-about-never-force-pushing-shared-branches",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 26,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "why-error-tracking-ignores-a-specific-exception-class",
+            "probe": "asked",
+            "stratum": "near(2-5)",
+            "dense_rank": 36,
+            "query_tokens": 16,
+            "bridged": 0,
+            "dropped": 6
+          },
+          {
+            "slug": "why-error-tracking-ignores-a-specific-exception-class",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 9,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "why-error-tracking-ignores-a-specific-exception-class",
+            "probe": "control",
+            "stratum": "mid(6-10)",
+            "dense_rank": 59,
+            "query_tokens": 14,
+            "bridged": 0,
+            "dropped": 6
+          },
+          {
+            "slug": "why-integration-tests-run-serially",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 7,
+            "query_tokens": 10,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "why-integration-tests-run-serially",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 4,
+            "query_tokens": 7,
+            "bridged": 0,
+            "dropped": 1
+          },
+          {
+            "slug": "why-integration-tests-run-serially",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 36,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "why-postgres-connection-pooling-was-moved-out-of-the-app",
+            "probe": "asked",
+            "stratum": "near(2-5)",
+            "dense_rank": 75,
+            "query_tokens": 13,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "why-postgres-connection-pooling-was-moved-out-of-the-app",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 5,
+            "query_tokens": 7,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "why-postgres-connection-pooling-was-moved-out-of-the-app",
+            "probe": "control",
+            "stratum": "near(2-5)",
+            "dense_rank": 64,
+            "query_tokens": 10,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "why-the-frontend-build-is-not-cached-in-ci",
+            "probe": "asked",
+            "stratum": "near(2-5)",
+            "dense_rank": 56,
+            "query_tokens": 21,
+            "bridged": 0,
+            "dropped": 5
+          },
+          {
+            "slug": "why-the-frontend-build-is-not-cached-in-ci",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 85,
+            "query_tokens": 10,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "why-the-frontend-build-is-not-cached-in-ci",
+            "probe": "control",
+            "stratum": "near(2-5)",
+            "dense_rank": 56,
+            "query_tokens": 21,
+            "bridged": 0,
+            "dropped": 5
+          },
+          {
+            "slug": "why-the-staging-environment-shares-one-database",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 72,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 5
+          },
+          {
+            "slug": "why-the-staging-environment-shares-one-database",
+            "probe": "requery",
+            "stratum": "near(2-5)",
+            "dense_rank": 94,
+            "query_tokens": 7,
+            "bridged": 0,
+            "dropped": 1
+          },
+          {
+            "slug": "why-the-staging-environment-shares-one-database",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 72,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "why-we-pin-the-base-image-by-digest",
+            "probe": "asked",
+            "stratum": "mid(6-10)",
+            "dense_rank": 126,
+            "query_tokens": 10,
+            "bridged": 0,
+            "dropped": 0
+          },
+          {
+            "slug": "why-we-pin-the-base-image-by-digest",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 118,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "why-we-pin-the-base-image-by-digest",
+            "probe": "control",
+            "stratum": "mid(6-10)",
+            "dense_rank": 120,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 0
+          },
+          {
+            "slug": "why-we-stopped-using-a-shared-dev-server",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 72,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 1
+          },
+          {
+            "slug": "why-we-stopped-using-a-shared-dev-server",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 123,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 1
+          },
+          {
+            "slug": "why-we-stopped-using-a-shared-dev-server",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 72,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 1
+          }
+        ]
+      },
+      "idf_raw_bridge": {
+        "unpooled_docs": 0,
+        "probes": [
+          {
+            "slug": "how-database-migrations-are-rolled-back",
+            "probe": "asked",
+            "stratum": "mid(6-10)",
+            "dense_rank": 169,
+            "query_tokens": 15,
+            "bridged": 2,
+            "dropped": 2
+          },
+          {
+            "slug": "how-database-migrations-are-rolled-back",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 168,
+            "query_tokens": 9,
+            "bridged": 2,
+            "dropped": 1
+          },
+          {
+            "slug": "how-database-migrations-are-rolled-back",
+            "probe": "control",
+            "stratum": "mid(6-10)",
+            "dense_rank": 169,
+            "query_tokens": 14,
+            "bridged": 2,
+            "dropped": 2
+          },
+          {
+            "slug": "how-feature-flags-get-cleaned-up",
+            "probe": "asked",
+            "stratum": "far(11+)",
+            "dense_rank": 177,
+            "query_tokens": 12,
+            "bridged": 1,
+            "dropped": 3
+          },
+          {
+            "slug": "how-feature-flags-get-cleaned-up",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 5,
+            "query_tokens": 9,
+            "bridged": 1,
+            "dropped": 2
+          },
+          {
+            "slug": "how-feature-flags-get-cleaned-up",
+            "probe": "control",
+            "stratum": "far(11+)",
+            "dense_rank": 168,
+            "query_tokens": 9,
+            "bridged": 1,
+            "dropped": 3
+          },
+          {
+            "slug": "how-nightly-backups-are-verified-not-just-taken",
+            "probe": "asked",
+            "stratum": "mid(6-10)",
+            "dense_rank": 75,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "how-nightly-backups-are-verified-not-just-taken",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 91,
+            "query_tokens": 7,
+            "bridged": 2,
+            "dropped": 0
+          },
+          {
+            "slug": "how-nightly-backups-are-verified-not-just-taken",
+            "probe": "control",
+            "stratum": "near(2-5)",
+            "dense_rank": 50,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "how-oncall-escalation-actually-works-here",
+            "probe": "asked",
+            "stratum": "near(2-5)",
+            "dense_rank": 159,
+            "query_tokens": 7,
+            "bridged": 2,
+            "dropped": 3
+          },
+          {
+            "slug": "how-oncall-escalation-actually-works-here",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 50,
+            "query_tokens": 7,
+            "bridged": 3,
+            "dropped": 0
+          },
+          {
+            "slug": "how-oncall-escalation-actually-works-here",
+            "probe": "control",
+            "stratum": "near(2-5)",
+            "dense_rank": 159,
+            "query_tokens": 7,
+            "bridged": 2,
+            "dropped": 3
+          },
+          {
+            "slug": "how-rate-limiting-is-tuned-for-the-public-api",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 66,
+            "query_tokens": 14,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "how-rate-limiting-is-tuned-for-the-public-api",
+            "probe": "requery",
+            "stratum": "near(2-5)",
+            "dense_rank": 64,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "how-rate-limiting-is-tuned-for-the-public-api",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 57,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "how-secrets-reach-containers-at-runtime",
+            "probe": "asked",
+            "stratum": "mid(6-10)",
+            "dense_rank": 16,
+            "query_tokens": 10,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "how-secrets-reach-containers-at-runtime",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 163,
+            "query_tokens": 8,
+            "bridged": 2,
+            "dropped": 2
+          },
+          {
+            "slug": "how-secrets-reach-containers-at-runtime",
+            "probe": "control",
+            "stratum": "far(11+)",
+            "dense_rank": 16,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "the-agreement-about-code-review-turnaround",
+            "probe": "asked",
+            "stratum": "near(2-5)",
+            "dense_rank": 157,
+            "query_tokens": 11,
+            "bridged": 2,
+            "dropped": 2
+          },
+          {
+            "slug": "the-agreement-about-code-review-turnaround",
+            "probe": "requery",
+            "stratum": "near(2-5)",
+            "dense_rank": 23,
+            "query_tokens": 8,
+            "bridged": 1,
+            "dropped": 1
+          },
+          {
+            "slug": "the-agreement-about-code-review-turnaround",
+            "probe": "control",
+            "stratum": "near(2-5)",
+            "dense_rank": 157,
+            "query_tokens": 10,
+            "bridged": 2,
+            "dropped": 2
+          },
+          {
+            "slug": "the-convention-for-naming-background-jobs",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 97,
+            "query_tokens": 12,
+            "bridged": 2,
+            "dropped": 2
+          },
+          {
+            "slug": "the-convention-for-naming-background-jobs",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 124,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "the-convention-for-naming-background-jobs",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 97,
+            "query_tokens": 12,
+            "bridged": 2,
+            "dropped": 2
+          },
+          {
+            "slug": "the-cutover-plan-for-the-legacy-billing-service",
+            "probe": "asked",
+            "stratum": "far(11+)",
+            "dense_rank": 67,
+            "query_tokens": 9,
+            "bridged": 1,
+            "dropped": 2
+          },
+          {
+            "slug": "the-cutover-plan-for-the-legacy-billing-service",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 69,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "the-cutover-plan-for-the-legacy-billing-service",
+            "probe": "control",
+            "stratum": "far(11+)",
+            "dense_rank": 24,
+            "query_tokens": 8,
+            "bridged": 1,
+            "dropped": 2
+          },
+          {
+            "slug": "the-decision-to-stop-using-a-monorepo",
+            "probe": "asked",
+            "stratum": "absent",
+            "dense_rank": 128,
+            "query_tokens": 9,
+            "bridged": 2,
+            "dropped": 1
+          },
+          {
+            "slug": "the-decision-to-stop-using-a-monorepo",
+            "probe": "requery",
+            "stratum": "near(2-5)",
+            "dense_rank": 156,
+            "query_tokens": 6,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "the-decision-to-stop-using-a-monorepo",
+            "probe": "control",
+            "stratum": "absent",
+            "dense_rank": 144,
+            "query_tokens": 7,
+            "bridged": 2,
+            "dropped": 1
+          },
+          {
+            "slug": "the-policy-on-adding-new-runtime-dependencies",
+            "probe": "asked",
+            "stratum": "far(11+)",
+            "dense_rank": 105,
+            "query_tokens": 13,
+            "bridged": 3,
+            "dropped": 2
+          },
+          {
+            "slug": "the-policy-on-adding-new-runtime-dependencies",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 41,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 1
+          },
+          {
+            "slug": "the-policy-on-adding-new-runtime-dependencies",
+            "probe": "control",
+            "stratum": "far(11+)",
+            "dense_rank": 100,
+            "query_tokens": 12,
+            "bridged": 2,
+            "dropped": 2
+          },
+          {
+            "slug": "the-reason-log-retention-is-only-14-days",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 126,
+            "query_tokens": 18,
+            "bridged": 2,
+            "dropped": 3
+          },
+          {
+            "slug": "the-reason-log-retention-is-only-14-days",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 9,
+            "query_tokens": 9,
+            "bridged": 1,
+            "dropped": 1
+          },
+          {
+            "slug": "the-reason-log-retention-is-only-14-days",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 56,
+            "query_tokens": 16,
+            "bridged": 1,
+            "dropped": 3
+          },
+          {
+            "slug": "the-rule-about-never-force-pushing-shared-branches",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 28,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "the-rule-about-never-force-pushing-shared-branches",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 16,
+            "query_tokens": 8,
+            "bridged": 1,
+            "dropped": 0
+          },
+          {
+            "slug": "the-rule-about-never-force-pushing-shared-branches",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 26,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "why-error-tracking-ignores-a-specific-exception-class",
+            "probe": "asked",
+            "stratum": "near(2-5)",
+            "dense_rank": 6,
+            "query_tokens": 16,
+            "bridged": 2,
+            "dropped": 4
+          },
+          {
+            "slug": "why-error-tracking-ignores-a-specific-exception-class",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 10,
+            "query_tokens": 9,
+            "bridged": 3,
+            "dropped": 0
+          },
+          {
+            "slug": "why-error-tracking-ignores-a-specific-exception-class",
+            "probe": "control",
+            "stratum": "mid(6-10)",
+            "dense_rank": 3,
+            "query_tokens": 14,
+            "bridged": 2,
+            "dropped": 4
+          },
+          {
+            "slug": "why-integration-tests-run-serially",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 7,
+            "query_tokens": 10,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "why-integration-tests-run-serially",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 4,
+            "query_tokens": 7,
+            "bridged": 0,
+            "dropped": 1
+          },
+          {
+            "slug": "why-integration-tests-run-serially",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 36,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "why-postgres-connection-pooling-was-moved-out-of-the-app",
+            "probe": "asked",
+            "stratum": "near(2-5)",
+            "dense_rank": 66,
+            "query_tokens": 13,
+            "bridged": 3,
+            "dropped": 1
+          },
+          {
+            "slug": "why-postgres-connection-pooling-was-moved-out-of-the-app",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 59,
+            "query_tokens": 7,
+            "bridged": 2,
+            "dropped": 1
+          },
+          {
+            "slug": "why-postgres-connection-pooling-was-moved-out-of-the-app",
+            "probe": "control",
+            "stratum": "near(2-5)",
+            "dense_rank": 26,
+            "query_tokens": 10,
+            "bridged": 3,
+            "dropped": 1
+          },
+          {
+            "slug": "why-the-frontend-build-is-not-cached-in-ci",
+            "probe": "asked",
+            "stratum": "near(2-5)",
+            "dense_rank": 58,
+            "query_tokens": 21,
+            "bridged": 1,
+            "dropped": 4
+          },
+          {
+            "slug": "why-the-frontend-build-is-not-cached-in-ci",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 4,
+            "query_tokens": 10,
+            "bridged": 2,
+            "dropped": 2
+          },
+          {
+            "slug": "why-the-frontend-build-is-not-cached-in-ci",
+            "probe": "control",
+            "stratum": "near(2-5)",
+            "dense_rank": 58,
+            "query_tokens": 21,
+            "bridged": 1,
+            "dropped": 4
+          },
+          {
+            "slug": "why-the-staging-environment-shares-one-database",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 78,
+            "query_tokens": 9,
+            "bridged": 3,
+            "dropped": 2
+          },
+          {
+            "slug": "why-the-staging-environment-shares-one-database",
+            "probe": "requery",
+            "stratum": "near(2-5)",
+            "dense_rank": 94,
+            "query_tokens": 7,
+            "bridged": 1,
+            "dropped": 0
+          },
+          {
+            "slug": "why-the-staging-environment-shares-one-database",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 78,
+            "query_tokens": 8,
+            "bridged": 3,
+            "dropped": 1
+          },
+          {
+            "slug": "why-we-pin-the-base-image-by-digest",
+            "probe": "asked",
+            "stratum": "mid(6-10)",
+            "dense_rank": 126,
+            "query_tokens": 10,
+            "bridged": 0,
+            "dropped": 0
+          },
+          {
+            "slug": "why-we-pin-the-base-image-by-digest",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 118,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "why-we-pin-the-base-image-by-digest",
+            "probe": "control",
+            "stratum": "mid(6-10)",
+            "dense_rank": 120,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 0
+          },
+          {
+            "slug": "why-we-stopped-using-a-shared-dev-server",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 72,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 1
+          },
+          {
+            "slug": "why-we-stopped-using-a-shared-dev-server",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 123,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 1
+          },
+          {
+            "slug": "why-we-stopped-using-a-shared-dev-server",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 72,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 1
+          }
+        ]
+      },
+      "idf_centred_nobridge": {
+        "unpooled_docs": 0,
+        "probes": [
+          {
+            "slug": "how-database-migrations-are-rolled-back",
+            "probe": "asked",
+            "stratum": "mid(6-10)",
+            "dense_rank": 172,
+            "query_tokens": 15,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "how-database-migrations-are-rolled-back",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 163,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "how-database-migrations-are-rolled-back",
+            "probe": "control",
+            "stratum": "mid(6-10)",
+            "dense_rank": 168,
+            "query_tokens": 14,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "how-feature-flags-get-cleaned-up",
+            "probe": "asked",
+            "stratum": "far(11+)",
+            "dense_rank": 165,
+            "query_tokens": 12,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "how-feature-flags-get-cleaned-up",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 32,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "how-feature-flags-get-cleaned-up",
+            "probe": "control",
+            "stratum": "far(11+)",
+            "dense_rank": 157,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "how-nightly-backups-are-verified-not-just-taken",
+            "probe": "asked",
+            "stratum": "mid(6-10)",
+            "dense_rank": 30,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "how-nightly-backups-are-verified-not-just-taken",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 138,
+            "query_tokens": 7,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "how-nightly-backups-are-verified-not-just-taken",
+            "probe": "control",
+            "stratum": "near(2-5)",
+            "dense_rank": 18,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "how-oncall-escalation-actually-works-here",
+            "probe": "asked",
+            "stratum": "near(2-5)",
+            "dense_rank": 27,
+            "query_tokens": 7,
+            "bridged": 0,
+            "dropped": 5
+          },
+          {
+            "slug": "how-oncall-escalation-actually-works-here",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 22,
+            "query_tokens": 7,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "how-oncall-escalation-actually-works-here",
+            "probe": "control",
+            "stratum": "near(2-5)",
+            "dense_rank": 27,
+            "query_tokens": 7,
+            "bridged": 0,
+            "dropped": 5
+          },
+          {
+            "slug": "how-rate-limiting-is-tuned-for-the-public-api",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 124,
+            "query_tokens": 14,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "how-rate-limiting-is-tuned-for-the-public-api",
+            "probe": "requery",
+            "stratum": "near(2-5)",
+            "dense_rank": 70,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "how-rate-limiting-is-tuned-for-the-public-api",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 71,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "how-secrets-reach-containers-at-runtime",
+            "probe": "asked",
+            "stratum": "mid(6-10)",
+            "dense_rank": 23,
+            "query_tokens": 10,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "how-secrets-reach-containers-at-runtime",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 145,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "how-secrets-reach-containers-at-runtime",
+            "probe": "control",
+            "stratum": "far(11+)",
+            "dense_rank": 25,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "the-agreement-about-code-review-turnaround",
+            "probe": "asked",
+            "stratum": "near(2-5)",
+            "dense_rank": 154,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "the-agreement-about-code-review-turnaround",
+            "probe": "requery",
+            "stratum": "near(2-5)",
+            "dense_rank": 23,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "the-agreement-about-code-review-turnaround",
+            "probe": "control",
+            "stratum": "near(2-5)",
+            "dense_rank": 154,
+            "query_tokens": 10,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "the-convention-for-naming-background-jobs",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 19,
+            "query_tokens": 12,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "the-convention-for-naming-background-jobs",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 112,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "the-convention-for-naming-background-jobs",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 19,
+            "query_tokens": 12,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "the-cutover-plan-for-the-legacy-billing-service",
+            "probe": "asked",
+            "stratum": "far(11+)",
+            "dense_rank": 25,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "the-cutover-plan-for-the-legacy-billing-service",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 106,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "the-cutover-plan-for-the-legacy-billing-service",
+            "probe": "control",
+            "stratum": "far(11+)",
+            "dense_rank": 24,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "the-decision-to-stop-using-a-monorepo",
+            "probe": "asked",
+            "stratum": "absent",
+            "dense_rank": 149,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "the-decision-to-stop-using-a-monorepo",
+            "probe": "requery",
+            "stratum": "near(2-5)",
+            "dense_rank": 127,
+            "query_tokens": 6,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "the-decision-to-stop-using-a-monorepo",
+            "probe": "control",
+            "stratum": "absent",
+            "dense_rank": 136,
+            "query_tokens": 7,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "the-policy-on-adding-new-runtime-dependencies",
+            "probe": "asked",
+            "stratum": "far(11+)",
+            "dense_rank": 165,
+            "query_tokens": 13,
+            "bridged": 0,
+            "dropped": 5
+          },
+          {
+            "slug": "the-policy-on-adding-new-runtime-dependencies",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 107,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 1
+          },
+          {
+            "slug": "the-policy-on-adding-new-runtime-dependencies",
+            "probe": "control",
+            "stratum": "far(11+)",
+            "dense_rank": 165,
+            "query_tokens": 12,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "the-reason-log-retention-is-only-14-days",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 162,
+            "query_tokens": 18,
+            "bridged": 0,
+            "dropped": 5
+          },
+          {
+            "slug": "the-reason-log-retention-is-only-14-days",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 36,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "the-reason-log-retention-is-only-14-days",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 162,
+            "query_tokens": 16,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "the-rule-about-never-force-pushing-shared-branches",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 35,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "the-rule-about-never-force-pushing-shared-branches",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 23,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 1
+          },
+          {
+            "slug": "the-rule-about-never-force-pushing-shared-branches",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 33,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "why-error-tracking-ignores-a-specific-exception-class",
+            "probe": "asked",
+            "stratum": "near(2-5)",
+            "dense_rank": 116,
+            "query_tokens": 16,
+            "bridged": 0,
+            "dropped": 6
+          },
+          {
+            "slug": "why-error-tracking-ignores-a-specific-exception-class",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 75,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "why-error-tracking-ignores-a-specific-exception-class",
+            "probe": "control",
+            "stratum": "mid(6-10)",
+            "dense_rank": 122,
+            "query_tokens": 14,
+            "bridged": 0,
+            "dropped": 6
+          },
+          {
+            "slug": "why-integration-tests-run-serially",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 44,
+            "query_tokens": 10,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "why-integration-tests-run-serially",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 5,
+            "query_tokens": 7,
+            "bridged": 0,
+            "dropped": 1
+          },
+          {
+            "slug": "why-integration-tests-run-serially",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 88,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "why-postgres-connection-pooling-was-moved-out-of-the-app",
+            "probe": "asked",
+            "stratum": "near(2-5)",
+            "dense_rank": 66,
+            "query_tokens": 13,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "why-postgres-connection-pooling-was-moved-out-of-the-app",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 1,
+            "query_tokens": 7,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "why-postgres-connection-pooling-was-moved-out-of-the-app",
+            "probe": "control",
+            "stratum": "near(2-5)",
+            "dense_rank": 111,
+            "query_tokens": 10,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "why-the-frontend-build-is-not-cached-in-ci",
+            "probe": "asked",
+            "stratum": "near(2-5)",
+            "dense_rank": 159,
+            "query_tokens": 21,
+            "bridged": 0,
+            "dropped": 5
+          },
+          {
+            "slug": "why-the-frontend-build-is-not-cached-in-ci",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 131,
+            "query_tokens": 10,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "why-the-frontend-build-is-not-cached-in-ci",
+            "probe": "control",
+            "stratum": "near(2-5)",
+            "dense_rank": 159,
+            "query_tokens": 21,
+            "bridged": 0,
+            "dropped": 5
+          },
+          {
+            "slug": "why-the-staging-environment-shares-one-database",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 55,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 5
+          },
+          {
+            "slug": "why-the-staging-environment-shares-one-database",
+            "probe": "requery",
+            "stratum": "near(2-5)",
+            "dense_rank": 96,
+            "query_tokens": 7,
+            "bridged": 0,
+            "dropped": 1
+          },
+          {
+            "slug": "why-the-staging-environment-shares-one-database",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 55,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "why-we-pin-the-base-image-by-digest",
+            "probe": "asked",
+            "stratum": "mid(6-10)",
+            "dense_rank": 153,
+            "query_tokens": 10,
+            "bridged": 0,
+            "dropped": 0
+          },
+          {
+            "slug": "why-we-pin-the-base-image-by-digest",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 150,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "why-we-pin-the-base-image-by-digest",
+            "probe": "control",
+            "stratum": "mid(6-10)",
+            "dense_rank": 150,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 0
+          },
+          {
+            "slug": "why-we-stopped-using-a-shared-dev-server",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 59,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 1
+          },
+          {
+            "slug": "why-we-stopped-using-a-shared-dev-server",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 86,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 1
+          },
+          {
+            "slug": "why-we-stopped-using-a-shared-dev-server",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 59,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 1
+          }
+        ]
+      },
+      "idf_centred_bridge": {
+        "unpooled_docs": 0,
+        "probes": [
+          {
+            "slug": "how-database-migrations-are-rolled-back",
+            "probe": "asked",
+            "stratum": "mid(6-10)",
+            "dense_rank": 170,
+            "query_tokens": 15,
+            "bridged": 2,
+            "dropped": 2
+          },
+          {
+            "slug": "how-database-migrations-are-rolled-back",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 163,
+            "query_tokens": 9,
+            "bridged": 2,
+            "dropped": 1
+          },
+          {
+            "slug": "how-database-migrations-are-rolled-back",
+            "probe": "control",
+            "stratum": "mid(6-10)",
+            "dense_rank": 171,
+            "query_tokens": 14,
+            "bridged": 2,
+            "dropped": 2
+          },
+          {
+            "slug": "how-feature-flags-get-cleaned-up",
+            "probe": "asked",
+            "stratum": "far(11+)",
+            "dense_rank": 163,
+            "query_tokens": 12,
+            "bridged": 1,
+            "dropped": 3
+          },
+          {
+            "slug": "how-feature-flags-get-cleaned-up",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 9,
+            "query_tokens": 9,
+            "bridged": 1,
+            "dropped": 2
+          },
+          {
+            "slug": "how-feature-flags-get-cleaned-up",
+            "probe": "control",
+            "stratum": "far(11+)",
+            "dense_rank": 158,
+            "query_tokens": 9,
+            "bridged": 1,
+            "dropped": 3
+          },
+          {
+            "slug": "how-nightly-backups-are-verified-not-just-taken",
+            "probe": "asked",
+            "stratum": "mid(6-10)",
+            "dense_rank": 30,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "how-nightly-backups-are-verified-not-just-taken",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 136,
+            "query_tokens": 7,
+            "bridged": 2,
+            "dropped": 0
+          },
+          {
+            "slug": "how-nightly-backups-are-verified-not-just-taken",
+            "probe": "control",
+            "stratum": "near(2-5)",
+            "dense_rank": 18,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "how-oncall-escalation-actually-works-here",
+            "probe": "asked",
+            "stratum": "near(2-5)",
+            "dense_rank": 157,
+            "query_tokens": 7,
+            "bridged": 2,
+            "dropped": 3
+          },
+          {
+            "slug": "how-oncall-escalation-actually-works-here",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 23,
+            "query_tokens": 7,
+            "bridged": 3,
+            "dropped": 0
+          },
+          {
+            "slug": "how-oncall-escalation-actually-works-here",
+            "probe": "control",
+            "stratum": "near(2-5)",
+            "dense_rank": 157,
+            "query_tokens": 7,
+            "bridged": 2,
+            "dropped": 3
+          },
+          {
+            "slug": "how-rate-limiting-is-tuned-for-the-public-api",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 124,
+            "query_tokens": 14,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "how-rate-limiting-is-tuned-for-the-public-api",
+            "probe": "requery",
+            "stratum": "near(2-5)",
+            "dense_rank": 70,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "how-rate-limiting-is-tuned-for-the-public-api",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 71,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "how-secrets-reach-containers-at-runtime",
+            "probe": "asked",
+            "stratum": "mid(6-10)",
+            "dense_rank": 23,
+            "query_tokens": 10,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "how-secrets-reach-containers-at-runtime",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 147,
+            "query_tokens": 8,
+            "bridged": 2,
+            "dropped": 2
+          },
+          {
+            "slug": "how-secrets-reach-containers-at-runtime",
+            "probe": "control",
+            "stratum": "far(11+)",
+            "dense_rank": 25,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "the-agreement-about-code-review-turnaround",
+            "probe": "asked",
+            "stratum": "near(2-5)",
+            "dense_rank": 154,
+            "query_tokens": 11,
+            "bridged": 2,
+            "dropped": 2
+          },
+          {
+            "slug": "the-agreement-about-code-review-turnaround",
+            "probe": "requery",
+            "stratum": "near(2-5)",
+            "dense_rank": 22,
+            "query_tokens": 8,
+            "bridged": 1,
+            "dropped": 1
+          },
+          {
+            "slug": "the-agreement-about-code-review-turnaround",
+            "probe": "control",
+            "stratum": "near(2-5)",
+            "dense_rank": 154,
+            "query_tokens": 10,
+            "bridged": 2,
+            "dropped": 2
+          },
+          {
+            "slug": "the-convention-for-naming-background-jobs",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 14,
+            "query_tokens": 12,
+            "bridged": 2,
+            "dropped": 2
+          },
+          {
+            "slug": "the-convention-for-naming-background-jobs",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 112,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "the-convention-for-naming-background-jobs",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 14,
+            "query_tokens": 12,
+            "bridged": 2,
+            "dropped": 2
+          },
+          {
+            "slug": "the-cutover-plan-for-the-legacy-billing-service",
+            "probe": "asked",
+            "stratum": "far(11+)",
+            "dense_rank": 105,
+            "query_tokens": 9,
+            "bridged": 1,
+            "dropped": 2
+          },
+          {
+            "slug": "the-cutover-plan-for-the-legacy-billing-service",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 106,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "the-cutover-plan-for-the-legacy-billing-service",
+            "probe": "control",
+            "stratum": "far(11+)",
+            "dense_rank": 103,
+            "query_tokens": 8,
+            "bridged": 1,
+            "dropped": 2
+          },
+          {
+            "slug": "the-decision-to-stop-using-a-monorepo",
+            "probe": "asked",
+            "stratum": "absent",
+            "dense_rank": 150,
+            "query_tokens": 9,
+            "bridged": 2,
+            "dropped": 1
+          },
+          {
+            "slug": "the-decision-to-stop-using-a-monorepo",
+            "probe": "requery",
+            "stratum": "near(2-5)",
+            "dense_rank": 127,
+            "query_tokens": 6,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "the-decision-to-stop-using-a-monorepo",
+            "probe": "control",
+            "stratum": "absent",
+            "dense_rank": 144,
+            "query_tokens": 7,
+            "bridged": 2,
+            "dropped": 1
+          },
+          {
+            "slug": "the-policy-on-adding-new-runtime-dependencies",
+            "probe": "asked",
+            "stratum": "far(11+)",
+            "dense_rank": 111,
+            "query_tokens": 13,
+            "bridged": 3,
+            "dropped": 2
+          },
+          {
+            "slug": "the-policy-on-adding-new-runtime-dependencies",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 107,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 1
+          },
+          {
+            "slug": "the-policy-on-adding-new-runtime-dependencies",
+            "probe": "control",
+            "stratum": "far(11+)",
+            "dense_rank": 109,
+            "query_tokens": 12,
+            "bridged": 2,
+            "dropped": 2
+          },
+          {
+            "slug": "the-reason-log-retention-is-only-14-days",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 159,
+            "query_tokens": 18,
+            "bridged": 2,
+            "dropped": 3
+          },
+          {
+            "slug": "the-reason-log-retention-is-only-14-days",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 1,
+            "query_tokens": 9,
+            "bridged": 1,
+            "dropped": 1
+          },
+          {
+            "slug": "the-reason-log-retention-is-only-14-days",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 51,
+            "query_tokens": 16,
+            "bridged": 1,
+            "dropped": 3
+          },
+          {
+            "slug": "the-rule-about-never-force-pushing-shared-branches",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 35,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "the-rule-about-never-force-pushing-shared-branches",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 31,
+            "query_tokens": 8,
+            "bridged": 1,
+            "dropped": 0
+          },
+          {
+            "slug": "the-rule-about-never-force-pushing-shared-branches",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 33,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 4
+          },
+          {
+            "slug": "why-error-tracking-ignores-a-specific-exception-class",
+            "probe": "asked",
+            "stratum": "near(2-5)",
+            "dense_rank": 13,
+            "query_tokens": 16,
+            "bridged": 2,
+            "dropped": 4
+          },
+          {
+            "slug": "why-error-tracking-ignores-a-specific-exception-class",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 48,
+            "query_tokens": 9,
+            "bridged": 3,
+            "dropped": 0
+          },
+          {
+            "slug": "why-error-tracking-ignores-a-specific-exception-class",
+            "probe": "control",
+            "stratum": "mid(6-10)",
+            "dense_rank": 4,
+            "query_tokens": 14,
+            "bridged": 2,
+            "dropped": 4
+          },
+          {
+            "slug": "why-integration-tests-run-serially",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 44,
+            "query_tokens": 10,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "why-integration-tests-run-serially",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 5,
+            "query_tokens": 7,
+            "bridged": 0,
+            "dropped": 1
+          },
+          {
+            "slug": "why-integration-tests-run-serially",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 88,
+            "query_tokens": 9,
+            "bridged": 0,
+            "dropped": 3
+          },
+          {
+            "slug": "why-postgres-connection-pooling-was-moved-out-of-the-app",
+            "probe": "asked",
+            "stratum": "near(2-5)",
+            "dense_rank": 1,
+            "query_tokens": 13,
+            "bridged": 3,
+            "dropped": 1
+          },
+          {
+            "slug": "why-postgres-connection-pooling-was-moved-out-of-the-app",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 66,
+            "query_tokens": 7,
+            "bridged": 2,
+            "dropped": 1
+          },
+          {
+            "slug": "why-postgres-connection-pooling-was-moved-out-of-the-app",
+            "probe": "control",
+            "stratum": "near(2-5)",
+            "dense_rank": 105,
+            "query_tokens": 10,
+            "bridged": 3,
+            "dropped": 1
+          },
+          {
+            "slug": "why-the-frontend-build-is-not-cached-in-ci",
+            "probe": "asked",
+            "stratum": "near(2-5)",
+            "dense_rank": 61,
+            "query_tokens": 21,
+            "bridged": 1,
+            "dropped": 4
+          },
+          {
+            "slug": "why-the-frontend-build-is-not-cached-in-ci",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 5,
+            "query_tokens": 10,
+            "bridged": 2,
+            "dropped": 2
+          },
+          {
+            "slug": "why-the-frontend-build-is-not-cached-in-ci",
+            "probe": "control",
+            "stratum": "near(2-5)",
+            "dense_rank": 61,
+            "query_tokens": 21,
+            "bridged": 1,
+            "dropped": 4
+          },
+          {
+            "slug": "why-the-staging-environment-shares-one-database",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 68,
+            "query_tokens": 9,
+            "bridged": 3,
+            "dropped": 2
+          },
+          {
+            "slug": "why-the-staging-environment-shares-one-database",
+            "probe": "requery",
+            "stratum": "near(2-5)",
+            "dense_rank": 96,
+            "query_tokens": 7,
+            "bridged": 1,
+            "dropped": 0
+          },
+          {
+            "slug": "why-the-staging-environment-shares-one-database",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 68,
+            "query_tokens": 8,
+            "bridged": 3,
+            "dropped": 1
+          },
+          {
+            "slug": "why-we-pin-the-base-image-by-digest",
+            "probe": "asked",
+            "stratum": "mid(6-10)",
+            "dense_rank": 153,
+            "query_tokens": 10,
+            "bridged": 0,
+            "dropped": 0
+          },
+          {
+            "slug": "why-we-pin-the-base-image-by-digest",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 150,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 2
+          },
+          {
+            "slug": "why-we-pin-the-base-image-by-digest",
+            "probe": "control",
+            "stratum": "mid(6-10)",
+            "dense_rank": 150,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 0
+          },
+          {
+            "slug": "why-we-stopped-using-a-shared-dev-server",
+            "probe": "asked",
+            "stratum": "hit@1",
+            "dense_rank": 59,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 1
+          },
+          {
+            "slug": "why-we-stopped-using-a-shared-dev-server",
+            "probe": "requery",
+            "stratum": "hit@1",
+            "dense_rank": 86,
+            "query_tokens": 8,
+            "bridged": 0,
+            "dropped": 1
+          },
+          {
+            "slug": "why-we-stopped-using-a-shared-dev-server",
+            "probe": "control",
+            "stratum": "hit@1",
+            "dense_rank": 59,
+            "query_tokens": 11,
+            "bridged": 0,
+            "dropped": 1
+          }
+        ]
+      }
+    }
+  },
+  "summary": {
+    "mean_raw_nobridge": {
+      "far_absent_pool": 9,
+      "far_absent_reached_at_10": 0,
+      "far_absent_unreached_none": 0,
+      "hit1_ranks": {
+        "n": 14,
+        "p25": 25,
+        "median": 69,
+        "p75": 115
+      },
+      "hit1_unpooled": 0,
+      "hit1_median_none_as_inf": 69,
+      "unpooled_docs": 0,
+      "by_stratum": {
+        "asked": {
+          "absent": {
+            "n": 1,
+            "p25": 115,
+            "median": 115,
+            "p75": 115
+          },
+          "far(11+)": {
+            "n": 3,
+            "p25": 85,
+            "median": 87,
+            "p75": 151
+          },
+          "hit@1": {
+            "n": 7,
+            "p25": 10,
+            "median": 58,
+            "p75": 115
+          },
+          "mid(6-10)": {
+            "n": 4,
+            "p25": 24,
+            "median": 45,
+            "p75": 136
+          },
+          "near(2-5)": {
+            "n": 5,
+            "p25": 71,
+            "median": 144,
+            "p75": 147
+          }
+        },
+        "control": {
+          "absent": {
+            "n": 1,
+            "p25": 119,
+            "median": 119,
+            "p75": 119
+          },
+          "far(11+)": {
+            "n": 4,
+            "p25": 21,
+            "median": 85,
+            "p75": 144
+          },
+          "hit@1": {
+            "n": 7,
+            "p25": 25,
+            "median": 69,
+            "p75": 123
+          },
+          "mid(6-10)": {
+            "n": 3,
+            "p25": 21,
+            "median": 135,
+            "p75": 160
+          },
+          "near(2-5)": {
+            "n": 5,
+            "p25": 74,
+            "median": 127,
+            "p75": 141
+          }
+        },
+        "requery": {
+          "hit@1": {
+            "n": 16,
+            "p25": 26,
+            "median": 76,
+            "p75": 136
+          },
+          "near(2-5)": {
+            "n": 4,
+            "p25": 56,
+            "median": 73,
+            "p75": 108
+          }
+        }
+      }
+    },
+    "mean_raw_bridge": {
+      "far_absent_pool": 9,
+      "far_absent_reached_at_10": 0,
+      "far_absent_unreached_none": 0,
+      "hit1_ranks": {
+        "n": 14,
+        "p25": 26,
+        "median": 69,
+        "p75": 115
+      },
+      "hit1_unpooled": 0,
+      "hit1_median_none_as_inf": 69,
+      "unpooled_docs": 0,
+      "by_stratum": {
+        "asked": {
+          "absent": {
+            "n": 1,
+            "p25": 115,
+            "median": 115,
+            "p75": 115
+          },
+          "far(11+)": {
+            "n": 3,
+            "p25": 88,
+            "median": 128,
+            "p75": 148
+          },
+          "hit@1": {
+            "n": 7,
+            "p25": 25,
+            "median": 58,
+            "p75": 115
+          },
+          "mid(6-10)": {
+            "n": 4,
+            "p25": 36,
+            "median": 45,
+            "p75": 136
+          },
+          "near(2-5)": {
+            "n": 5,
+            "p25": 143,
+            "median": 147,
+            "p75": 147
+          }
+        },
+        "control": {
+          "absent": {
+            "n": 1,
+            "p25": 115,
+            "median": 115,
+            "p75": 115
+          },
+          "far(11+)": {
+            "n": 4,
+            "p25": 81,
+            "median": 92,
+            "p75": 144
+          },
+          "hit@1": {
+            "n": 7,
+            "p25": 26,
+            "median": 69,
+            "p75": 123
+          },
+          "mid(6-10)": {
+            "n": 3,
+            "p25": 30,
+            "median": 135,
+            "p75": 157
+          },
+          "near(2-5)": {
+            "n": 5,
+            "p25": 141,
+            "median": 147,
+            "p75": 147
+          }
+        },
+        "requery": {
+          "hit@1": {
+            "n": 16,
+            "p25": 31,
+            "median": 76,
+            "p75": 136
+          },
+          "near(2-5)": {
+            "n": 4,
+            "p25": 54,
+            "median": 73,
+            "p75": 108
+          }
+        }
+      }
+    },
+    "mean_centred_nobridge": {
+      "far_absent_pool": 9,
+      "far_absent_reached_at_10": 0,
+      "far_absent_unreached_none": 0,
+      "hit1_ranks": {
+        "n": 14,
+        "p25": 31,
+        "median": 61,
+        "p75": 121
+      },
+      "hit1_unpooled": 0,
+      "hit1_median_none_as_inf": 61,
+      "unpooled_docs": 0,
+      "by_stratum": {
+        "asked": {
+          "absent": {
+            "n": 1,
+            "p25": 116,
+            "median": 116,
+            "p75": 116
+          },
+          "far(11+)": {
+            "n": 3,
+            "p25": 71,
+            "median": 96,
+            "p75": 111
+          },
+          "hit@1": {
+            "n": 7,
+            "p25": 24,
+            "median": 47,
+            "p75": 121
+          },
+          "mid(6-10)": {
+            "n": 4,
+            "p25": 45,
+            "median": 91,
+            "p75": 103
+          },
+          "near(2-5)": {
+            "n": 5,
+            "p25": 114,
+            "median": 115,
+            "p75": 122
+          }
+        },
+        "control": {
+          "absent": {
+            "n": 1,
+            "p25": 124,
+            "median": 124,
+            "p75": 124
+          },
+          "far(11+)": {
+            "n": 4,
+            "p25": 48,
+            "median": 91,
+            "p75": 96
+          },
+          "hit@1": {
+            "n": 7,
+            "p25": 31,
+            "median": 61,
+            "p75": 168
+          },
+          "mid(6-10)": {
+            "n": 3,
+            "p25": 15,
+            "median": 18,
+            "p75": 123
+          },
+          "near(2-5)": {
+            "n": 5,
+            "p25": 119,
+            "median": 132,
+            "p75": 136
+          }
+        },
+        "requery": {
+          "hit@1": {
+            "n": 16,
+            "p25": 32,
+            "median": 58,
+            "p75": 127
+          },
+          "near(2-5)": {
+            "n": 4,
+            "p25": 37,
+            "median": 55,
+            "p75": 94
+          }
+        }
+      }
+    },
+    "mean_centred_bridge": {
+      "far_absent_pool": 9,
+      "far_absent_reached_at_10": 0,
+      "far_absent_unreached_none": 0,
+      "hit1_ranks": {
+        "n": 14,
+        "p25": 39,
+        "median": 65,
+        "p75": 121
+      },
+      "hit1_unpooled": 0,
+      "hit1_median_none_as_inf": 65,
+      "unpooled_docs": 0,
+      "by_stratum": {
+        "asked": {
+          "absent": {
+            "n": 1,
+            "p25": 121,
+            "median": 121,
+            "p75": 121
+          },
+          "far(11+)": {
+            "n": 3,
+            "p25": 88,
+            "median": 92,
+            "p75": 111
+          },
+          "hit@1": {
+            "n": 7,
+            "p25": 24,
+            "median": 47,
+            "p75": 121
+          },
+          "mid(6-10)": {
+            "n": 4,
+            "p25": 69,
+            "median": 91,
+            "p75": 103
+          },
+          "near(2-5)": {
+            "n": 5,
+            "p25": 91,
+            "median": 131,
+            "p75": 151
+          }
+        },
+        "control": {
+          "absent": {
+            "n": 1,
+            "p25": 129,
+            "median": 129,
+            "p75": 129
+          },
+          "far(11+)": {
+            "n": 4,
+            "p25": 72,
+            "median": 78,
+            "p75": 104
+          },
+          "hit@1": {
+            "n": 7,
+            "p25": 39,
+            "median": 65,
+            "p75": 168
+          },
+          "mid(6-10)": {
+            "n": 3,
+            "p25": 15,
+            "median": 42,
+            "p75": 114
+          },
+          "near(2-5)": {
+            "n": 5,
+            "p25": 130,
+            "median": 132,
+            "p75": 151
+          }
+        },
+        "requery": {
+          "hit@1": {
+            "n": 16,
+            "p25": 35,
+            "median": 45,
+            "p75": 116
+          },
+          "near(2-5)": {
+            "n": 4,
+            "p25": 29,
+            "median": 55,
+            "p75": 94
+          }
+        }
+      }
+    },
+    "idf_raw_nobridge": {
+      "far_absent_pool": 9,
+      "far_absent_reached_at_10": 0,
+      "far_absent_unreached_none": 0,
+      "hit1_ranks": {
+        "n": 14,
+        "p25": 26,
+        "median": 66,
+        "p75": 72
+      },
+      "hit1_unpooled": 0,
+      "hit1_median_none_as_inf": 66,
+      "unpooled_docs": 0,
+      "by_stratum": {
+        "asked": {
+          "absent": {
+            "n": 1,
+            "p25": 135,
+            "median": 135,
+            "p75": 135
+          },
+          "far(11+)": {
+            "n": 3,
+            "p25": 23,
+            "median": 46,
+            "p75": 97
+          },
+          "hit@1": {
+            "n": 7,
+            "p25": 21,
+            "median": 66,
+            "p75": 72
+          },
+          "mid(6-10)": {
+            "n": 4,
+            "p25": 75,
+            "median": 126,
+            "p75": 169
+          },
+          "near(2-5)": {
+            "n": 5,
+            "p25": 46,
+            "median": 56,
+            "p75": 75
+          }
+        },
+        "control": {
+          "absent": {
+            "n": 1,
+            "p25": 156,
+            "median": 156,
+            "p75": 156
+          },
+          "far(11+)": {
+            "n": 4,
+            "p25": 64,
+            "median": 97,
+            "p75": 132
+          },
+          "hit@1": {
+            "n": 7,
+            "p25": 26,
+            "median": 57,
+            "p75": 72
+          },
+          "mid(6-10)": {
+            "n": 3,
+            "p25": 59,
+            "median": 120,
+            "p75": 169
+          },
+          "near(2-5)": {
+            "n": 5,
+            "p25": 50,
+            "median": 56,
+            "p75": 64
+          }
+        },
+        "requery": {
+          "hit@1": {
+            "n": 16,
+            "p25": 9,
+            "median": 69,
+            "p75": 123
+          },
+          "near(2-5)": {
+            "n": 4,
+            "p25": 64,
+            "median": 94,
+            "p75": 156
+          }
+        }
+      }
+    },
+    "idf_raw_bridge": {
+      "far_absent_pool": 9,
+      "far_absent_reached_at_10": 0,
+      "far_absent_unreached_none": 0,
+      "hit1_ranks": {
+        "n": 14,
+        "p25": 36,
+        "median": 72,
+        "p75": 78
+      },
+      "hit1_unpooled": 0,
+      "hit1_median_none_as_inf": 72,
+      "unpooled_docs": 0,
+      "by_stratum": {
+        "asked": {
+          "absent": {
+            "n": 1,
+            "p25": 128,
+            "median": 128,
+            "p75": 128
+          },
+          "far(11+)": {
+            "n": 3,
+            "p25": 67,
+            "median": 105,
+            "p75": 177
+          },
+          "hit@1": {
+            "n": 7,
+            "p25": 28,
+            "median": 72,
+            "p75": 97
+          },
+          "mid(6-10)": {
+            "n": 4,
+            "p25": 75,
+            "median": 126,
+            "p75": 169
+          },
+          "near(2-5)": {
+            "n": 5,
+            "p25": 58,
+            "median": 66,
+            "p75": 157
+          }
+        },
+        "control": {
+          "absent": {
+            "n": 1,
+            "p25": 144,
+            "median": 144,
+            "p75": 144
+          },
+          "far(11+)": {
+            "n": 4,
+            "p25": 24,
+            "median": 100,
+            "p75": 168
+          },
+          "hit@1": {
+            "n": 7,
+            "p25": 36,
+            "median": 57,
+            "p75": 78
+          },
+          "mid(6-10)": {
+            "n": 3,
+            "p25": 3,
+            "median": 120,
+            "p75": 169
+          },
+          "near(2-5)": {
+            "n": 5,
+            "p25": 50,
+            "median": 58,
+            "p75": 157
+          }
+        },
+        "requery": {
+          "hit@1": {
+            "n": 16,
+            "p25": 10,
+            "median": 59,
+            "p75": 123
+          },
+          "near(2-5)": {
+            "n": 4,
+            "p25": 64,
+            "median": 94,
+            "p75": 156
+          }
+        }
+      }
+    },
+    "idf_centred_nobridge": {
+      "far_absent_pool": 9,
+      "far_absent_reached_at_10": 0,
+      "far_absent_unreached_none": 0,
+      "hit1_ranks": {
+        "n": 14,
+        "p25": 35,
+        "median": 59,
+        "p75": 88
+      },
+      "hit1_unpooled": 0,
+      "hit1_median_none_as_inf": 59,
+      "unpooled_docs": 0,
+      "by_stratum": {
+        "asked": {
+          "absent": {
+            "n": 1,
+            "p25": 149,
+            "median": 149,
+            "p75": 149
+          },
+          "far(11+)": {
+            "n": 3,
+            "p25": 25,
+            "median": 165,
+            "p75": 165
+          },
+          "hit@1": {
+            "n": 7,
+            "p25": 35,
+            "median": 55,
+            "p75": 124
+          },
+          "mid(6-10)": {
+            "n": 4,
+            "p25": 30,
+            "median": 153,
+            "p75": 172
+          },
+          "near(2-5)": {
+            "n": 5,
+            "p25": 66,
+            "median": 116,
+            "p75": 154
+          }
+        },
+        "control": {
+          "absent": {
+            "n": 1,
+            "p25": 136,
+            "median": 136,
+            "p75": 136
+          },
+          "far(11+)": {
+            "n": 4,
+            "p25": 25,
+            "median": 157,
+            "p75": 165
+          },
+          "hit@1": {
+            "n": 7,
+            "p25": 33,
+            "median": 59,
+            "p75": 88
+          },
+          "mid(6-10)": {
+            "n": 3,
+            "p25": 122,
+            "median": 150,
+            "p75": 168
+          },
+          "near(2-5)": {
+            "n": 5,
+            "p25": 27,
+            "median": 111,
+            "p75": 154
+          }
+        },
+        "requery": {
+          "hit@1": {
+            "n": 16,
+            "p25": 32,
+            "median": 106,
+            "p75": 138
+          },
+          "near(2-5)": {
+            "n": 4,
+            "p25": 70,
+            "median": 96,
+            "p75": 127
+          }
+        }
+      }
+    },
+    "idf_centred_bridge": {
+      "far_absent_pool": 9,
+      "far_absent_reached_at_10": 0,
+      "far_absent_unreached_none": 0,
+      "hit1_ranks": {
+        "n": 14,
+        "p25": 35,
+        "median": 59,
+        "p75": 71
+      },
+      "hit1_unpooled": 0,
+      "hit1_median_none_as_inf": 59,
+      "unpooled_docs": 0,
+      "by_stratum": {
+        "asked": {
+          "absent": {
+            "n": 1,
+            "p25": 150,
+            "median": 150,
+            "p75": 150
+          },
+          "far(11+)": {
+            "n": 3,
+            "p25": 105,
+            "median": 111,
+            "p75": 163
+          },
+          "hit@1": {
+            "n": 7,
+            "p25": 35,
+            "median": 59,
+            "p75": 124
+          },
+          "mid(6-10)": {
+            "n": 4,
+            "p25": 30,
+            "median": 153,
+            "p75": 170
+          },
+          "near(2-5)": {
+            "n": 5,
+            "p25": 13,
+            "median": 61,
+            "p75": 154
+          }
+        },
+        "control": {
+          "absent": {
+            "n": 1,
+            "p25": 144,
+            "median": 144,
+            "p75": 144
+          },
+          "far(11+)": {
+            "n": 4,
+            "p25": 103,
+            "median": 109,
+            "p75": 158
+          },
+          "hit@1": {
+            "n": 7,
+            "p25": 33,
+            "median": 59,
+            "p75": 71
+          },
+          "mid(6-10)": {
+            "n": 3,
+            "p25": 4,
+            "median": 150,
+            "p75": 171
+          },
+          "near(2-5)": {
+            "n": 5,
+            "p25": 61,
+            "median": 105,
+            "p75": 154
+          }
+        },
+        "requery": {
+          "hit@1": {
+            "n": 16,
+            "p25": 23,
+            "median": 86,
+            "p75": 136
+          },
+          "near(2-5)": {
+            "n": 4,
+            "p25": 70,
+            "median": 96,
+            "p75": 127
+          }
+        }
+      }
+    }
+  },
+  "lme_glance": {
+    "corpus": "longmemeval_s_cleaned.json",
+    "corpus_sha256": "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442",
+    "slice": 20,
+    "cell": "mean_centred_bridge",
+    "questions": [
+      {
+        "qid": "e47becba",
+        "type": "single-session-user",
+        "trained": true,
+        "vocab": 2269,
+        "items": 277,
+        "items_pooled": 277,
+        "query_bridged": 1,
+        "query_dropped": 1,
+        "n_evidence": 1,
+        "evidence_dense_ranks": [
+          26
+        ]
+      },
+      {
+        "qid": "118b2229",
+        "type": "single-session-user",
+        "trained": true,
+        "vocab": 2247,
+        "items": 244,
+        "items_pooled": 244,
+        "query_bridged": 0,
+        "query_dropped": 0,
+        "n_evidence": 1,
+        "evidence_dense_ranks": [
+          24
+        ]
+      },
+      {
+        "qid": "51a45a95",
+        "type": "single-session-user",
+        "trained": true,
+        "vocab": 2259,
+        "items": 266,
+        "items_pooled": 266,
+        "query_bridged": 0,
+        "query_dropped": 2,
+        "n_evidence": 1,
+        "evidence_dense_ranks": [
+          35
+        ]
+      },
+      {
+        "qid": "58bf7951",
+        "type": "single-session-user",
+        "trained": true,
+        "vocab": 2381,
+        "items": 311,
+        "items_pooled": 311,
+        "query_bridged": 1,
+        "query_dropped": 0,
+        "n_evidence": 1,
+        "evidence_dense_ranks": [
+          4
+        ]
+      },
+      {
+        "qid": "1e043500",
+        "type": "single-session-user",
+        "trained": true,
+        "vocab": 2273,
+        "items": 257,
+        "items_pooled": 257,
+        "query_bridged": 0,
+        "query_dropped": 1,
+        "n_evidence": 1,
+        "evidence_dense_ranks": [
+          12
+        ]
+      },
+      {
+        "qid": "c5e8278d",
+        "type": "single-session-user",
+        "trained": true,
+        "vocab": 2204,
+        "items": 236,
+        "items_pooled": 236,
+        "query_bridged": 1,
+        "query_dropped": 0,
+        "n_evidence": 1,
+        "evidence_dense_ranks": [
+          7
+        ]
+      },
+      {
+        "qid": "6ade9755",
+        "type": "single-session-user",
+        "trained": true,
+        "vocab": 2245,
+        "items": 261,
+        "items_pooled": 261,
+        "query_bridged": 0,
+        "query_dropped": 0,
+        "n_evidence": 1,
+        "evidence_dense_ranks": [
+          11
+        ]
+      },
+      {
+        "qid": "6f9b354f",
+        "type": "single-session-user",
+        "trained": true,
+        "vocab": 2362,
+        "items": 253,
+        "items_pooled": 253,
+        "query_bridged": 0,
+        "query_dropped": 2,
+        "n_evidence": 1,
+        "evidence_dense_ranks": [
+          17
+        ]
+      },
+      {
+        "qid": "58ef2f1c",
+        "type": "single-session-user",
+        "trained": true,
+        "vocab": 2178,
+        "items": 262,
+        "items_pooled": 262,
+        "query_bridged": 0,
+        "query_dropped": 0,
+        "n_evidence": 1,
+        "evidence_dense_ranks": [
+          3
+        ]
+      },
+      {
+        "qid": "f8c5f88b",
+        "type": "single-session-user",
+        "trained": true,
+        "vocab": 2250,
+        "items": 246,
+        "items_pooled": 246,
+        "query_bridged": 0,
+        "query_dropped": 0,
+        "n_evidence": 1,
+        "evidence_dense_ranks": [
+          13
+        ]
+      },
+      {
+        "qid": "5d3d2817",
+        "type": "single-session-user",
+        "trained": true,
+        "vocab": 2305,
+        "items": 259,
+        "items_pooled": 259,
+        "query_bridged": 0,
+        "query_dropped": 0,
+        "n_evidence": 1,
+        "evidence_dense_ranks": [
+          43
+        ]
+      },
+      {
+        "qid": "7527f7e2",
+        "type": "single-session-user",
+        "trained": true,
+        "vocab": 2265,
+        "items": 247,
+        "items_pooled": 247,
+        "query_bridged": 1,
+        "query_dropped": 1,
+        "n_evidence": 1,
+        "evidence_dense_ranks": [
+          11
+        ]
+      },
+      {
+        "qid": "c960da58",
+        "type": "single-session-user",
+        "trained": true,
+        "vocab": 2315,
+        "items": 254,
+        "items_pooled": 254,
+        "query_bridged": 0,
+        "query_dropped": 1,
+        "n_evidence": 1,
+        "evidence_dense_ranks": [
+          1
+        ]
+      },
+      {
+        "qid": "3b6f954b",
+        "type": "single-session-user",
+        "trained": true,
+        "vocab": 2220,
+        "items": 238,
+        "items_pooled": 238,
+        "query_bridged": 2,
+        "query_dropped": 0,
+        "n_evidence": 1,
+        "evidence_dense_ranks": [
+          31
+        ]
+      },
+      {
+        "qid": "726462e0",
+        "type": "single-session-user",
+        "trained": true,
+        "vocab": 2288,
+        "items": 252,
+        "items_pooled": 252,
+        "query_bridged": 0,
+        "query_dropped": 0,
+        "n_evidence": 1,
+        "evidence_dense_ranks": [
+          41
+        ]
+      },
+      {
+        "qid": "94f70d80",
+        "type": "single-session-user",
+        "trained": true,
+        "vocab": 2086,
+        "items": 256,
+        "items_pooled": 256,
+        "query_bridged": 1,
+        "query_dropped": 1,
+        "n_evidence": 1,
+        "evidence_dense_ranks": [
+          40
+        ]
+      },
+      {
+        "qid": "66f24dbb",
+        "type": "single-session-user",
+        "trained": true,
+        "vocab": 2211,
+        "items": 255,
+        "items_pooled": 255,
+        "query_bridged": 0,
+        "query_dropped": 0,
+        "n_evidence": 1,
+        "evidence_dense_ranks": [
+          1
+        ]
+      },
+      {
+        "qid": "ad7109d1",
+        "type": "single-session-user",
+        "trained": true,
+        "vocab": 2227,
+        "items": 234,
+        "items_pooled": 234,
+        "query_bridged": 0,
+        "query_dropped": 0,
+        "n_evidence": 1,
+        "evidence_dense_ranks": [
+          13
+        ]
+      },
+      {
+        "qid": "af8d2e46",
+        "type": "single-session-user",
+        "trained": true,
+        "vocab": 2267,
+        "items": 249,
+        "items_pooled": 249,
+        "query_bridged": 1,
+        "query_dropped": 2,
+        "n_evidence": 1,
+        "evidence_dense_ranks": [
+          41
+        ]
+      },
+      {
+        "qid": "dccbc061",
+        "type": "single-session-user",
+        "trained": true,
+        "vocab": 2237,
+        "items": 255,
+        "items_pooled": 255,
+        "query_bridged": 1,
+        "query_dropped": 0,
+        "n_evidence": 1,
+        "evidence_dense_ranks": [
+          38
+        ]
+      }
+    ]
+  },
+  "readiness": {
+    "primary_cell": "mean_centred_bridge",
+    "R1_reach": false,
+    "R2_preservation": false,
+    "family_far_absent_reached": {
+      "mean_raw_nobridge": 0,
+      "mean_raw_bridge": 0,
+      "mean_centred_nobridge": 0,
+      "mean_centred_bridge": 0,
+      "idf_raw_nobridge": 0,
+      "idf_raw_bridge": 0,
+      "idf_centred_nobridge": 0,
+      "idf_centred_bridge": 0
+    },
+    "prereg_licensed": false,
+    "routing": null,
+    "parked": true,
+    "anti_gate_shopping_fired": false
+  }
+}
