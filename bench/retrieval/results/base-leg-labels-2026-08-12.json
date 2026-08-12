@@ -1,0 +1,4677 @@
+{
+  "provenance": {
+    "bettermemory_version": "5.3.0",
+    "commit": "f0182e3",
+    "tree_dirty": false,
+    "date": "2026-08-12",
+    "machine": {
+      "os": "Darwin 25.5.0",
+      "machine": "arm64",
+      "python": "3.13.13"
+    }
+  },
+  "k": 5,
+  "depth": 50,
+  "seconds": 31.0,
+  "note": "STATISTICS ONLY \u2014 each base leg's counterfactual label (the gold document's fused rank with the leg voting and with its weight driven to zero) against the evidence behind the leg's own rank-1, over the shipped engine. H-fusion-general's design census; no curve, no constant, no ranking change.",
+  "arms": {
+    "unpadded": {
+      "corpus": "corpus.jsonl",
+      "corpus_sha256": "c40acee95ce1bb70ac6ea788e0fb4a9a1c6eff1fc55fe4569b651b5b156ea2ea",
+      "collection_size": 180,
+      "pad_to": null,
+      "summary": {
+        "probes": 60,
+        "tops_agree": 37,
+        "keyword": {
+          "verdicts": {
+            "neutral": 33,
+            "harmed": 17,
+            "improved": 9,
+            "rescued": 1
+          },
+          "identical_ordering": 0,
+          "by_evidence": {
+            "2": {
+              "n": 4,
+              "helped": 0,
+              "hurt": 2,
+              "neutral": 2,
+              "pct_helped": 0.0,
+              "gold_to_rank1": 0,
+              "gold_off_rank1": 2
+            },
+            "3": {
+              "n": 7,
+              "helped": 0,
+              "hurt": 4,
+              "neutral": 3,
+              "pct_helped": 0.0,
+              "gold_to_rank1": 0,
+              "gold_off_rank1": 2
+            },
+            "4+": {
+              "n": 49,
+              "helped": 10,
+              "hurt": 11,
+              "neutral": 28,
+              "pct_helped": 0.2041,
+              "gold_to_rank1": 4,
+              "gold_off_rank1": 5
+            }
+          },
+          "by_evidence_delta": {
+            "+1": {
+              "n": 5,
+              "helped": 4,
+              "hurt": 0,
+              "neutral": 1,
+              "pct_helped": 0.8,
+              "gold_to_rank1": 2,
+              "gold_off_rank1": 0
+            },
+            "+2+": {
+              "n": 4,
+              "helped": 2,
+              "hurt": 2,
+              "neutral": 0,
+              "pct_helped": 0.5,
+              "gold_to_rank1": 2,
+              "gold_off_rank1": 2
+            },
+            "-1": {
+              "n": 3,
+              "helped": 1,
+              "hurt": 1,
+              "neutral": 1,
+              "pct_helped": 0.3333,
+              "gold_to_rank1": 0,
+              "gold_off_rank1": 0
+            },
+            "0": {
+              "n": 48,
+              "helped": 3,
+              "hurt": 14,
+              "neutral": 31,
+              "pct_helped": 0.0625,
+              "gold_to_rank1": 0,
+              "gold_off_rank1": 7
+            }
+          }
+        },
+        "bm25": {
+          "verdicts": {
+            "neutral": 40,
+            "harmed": 8,
+            "rescued": 4,
+            "improved": 8
+          },
+          "identical_ordering": 0,
+          "by_evidence": {
+            "2": {
+              "n": 5,
+              "helped": 3,
+              "hurt": 1,
+              "neutral": 1,
+              "pct_helped": 0.6,
+              "gold_to_rank1": 0,
+              "gold_off_rank1": 0
+            },
+            "3": {
+              "n": 7,
+              "helped": 4,
+              "hurt": 0,
+              "neutral": 3,
+              "pct_helped": 0.5714,
+              "gold_to_rank1": 0,
+              "gold_off_rank1": 0
+            },
+            "4+": {
+              "n": 48,
+              "helped": 5,
+              "hurt": 7,
+              "neutral": 36,
+              "pct_helped": 0.1042,
+              "gold_to_rank1": 0,
+              "gold_off_rank1": 1
+            }
+          },
+          "by_evidence_delta": {
+            "+1": {
+              "n": 3,
+              "helped": 2,
+              "hurt": 1,
+              "neutral": 0,
+              "pct_helped": 0.6667,
+              "gold_to_rank1": 0,
+              "gold_off_rank1": 0
+            },
+            "-1": {
+              "n": 5,
+              "helped": 0,
+              "hurt": 2,
+              "neutral": 3,
+              "pct_helped": 0.0,
+              "gold_to_rank1": 0,
+              "gold_off_rank1": 1
+            },
+            "-2-": {
+              "n": 4,
+              "helped": 0,
+              "hurt": 0,
+              "neutral": 4,
+              "pct_helped": 0.0,
+              "gold_to_rank1": 0,
+              "gold_off_rank1": 0
+            },
+            "0": {
+              "n": 48,
+              "helped": 10,
+              "hurt": 5,
+              "neutral": 33,
+              "pct_helped": 0.2083,
+              "gold_to_rank1": 0,
+              "gold_off_rank1": 0
+            }
+          }
+        }
+      },
+      "records": [
+        {
+          "slug": "how-database-migrations-are-rolled-back",
+          "probe": "asked",
+          "query_unique": 15,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 5,
+              "coverage": 0.3333,
+              "leg_size": 170,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 9,
+              "gold_rank_without_leg": 9,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.3333,
+              "leg_size": 170,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 9,
+              "gold_rank_without_leg": 9,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "how-database-migrations-are-rolled-back",
+          "probe": "requery",
+          "query_unique": 9,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 5,
+              "coverage": 0.5556,
+              "leg_size": 81,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.5556,
+              "leg_size": 81,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "how-database-migrations-are-rolled-back",
+          "probe": "control",
+          "query_unique": 14,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 5,
+              "coverage": 0.3571,
+              "leg_size": 170,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 7,
+              "gold_rank_without_leg": 6,
+              "rank_delta": -1,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.3571,
+              "leg_size": 170,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 7,
+              "gold_rank_without_leg": 7,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "how-feature-flags-get-cleaned-up",
+          "probe": "asked",
+          "query_unique": 12,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 4,
+              "coverage": 0.3333,
+              "leg_size": 129,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 33,
+              "gold_rank_without_leg": 39,
+              "rank_delta": 6,
+              "crossed_k": false,
+              "verdict": "improved",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": -1
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.4167,
+              "leg_size": 129,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 33,
+              "gold_rank_without_leg": 32,
+              "rank_delta": -1,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 1
+            }
+          }
+        },
+        {
+          "slug": "how-feature-flags-get-cleaned-up",
+          "probe": "requery",
+          "query_unique": 9,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 6,
+              "coverage": 0.6667,
+              "leg_size": 76,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 6,
+              "coverage": 0.6667,
+              "leg_size": 76,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "how-feature-flags-get-cleaned-up",
+          "probe": "control",
+          "query_unique": 9,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 5,
+              "coverage": 0.5556,
+              "leg_size": 105,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 22,
+              "gold_rank_without_leg": 21,
+              "rank_delta": -1,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.5556,
+              "leg_size": 105,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 22,
+              "gold_rank_without_leg": 21,
+              "rank_delta": -1,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "how-nightly-backups-are-verified-not-just-taken",
+          "probe": "asked",
+          "query_unique": 11,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 4,
+              "coverage": 0.3636,
+              "leg_size": 106,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 7,
+              "gold_rank_without_leg": 5,
+              "rank_delta": -2,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 4,
+              "coverage": 0.3636,
+              "leg_size": 106,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 7,
+              "gold_rank_without_leg": 6,
+              "rank_delta": -1,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "how-nightly-backups-are-verified-not-just-taken",
+          "probe": "requery",
+          "query_unique": 7,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 5,
+              "coverage": 0.7143,
+              "leg_size": 65,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.7143,
+              "leg_size": 65,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "how-nightly-backups-are-verified-not-just-taken",
+          "probe": "control",
+          "query_unique": 8,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 3,
+              "coverage": 0.375,
+              "leg_size": 76,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 4,
+              "gold_rank_without_leg": 4,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 1
+            },
+            "bm25": {
+              "evidence": 2,
+              "coverage": 0.25,
+              "leg_size": 76,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 4,
+              "gold_rank_without_leg": 2,
+              "rank_delta": -2,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": -1
+            }
+          }
+        },
+        {
+          "slug": "how-oncall-escalation-actually-works-here",
+          "probe": "asked",
+          "query_unique": 7,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 2,
+              "coverage": 0.2857,
+              "leg_size": 79,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 3,
+              "gold_rank_without_leg": 0,
+              "rank_delta": -3,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 2,
+              "coverage": 0.2857,
+              "leg_size": 79,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 3,
+              "gold_rank_without_leg": 11,
+              "rank_delta": 8,
+              "crossed_k": true,
+              "verdict": "rescued",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "how-oncall-escalation-actually-works-here",
+          "probe": "requery",
+          "query_unique": 7,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 6,
+              "coverage": 0.8571,
+              "leg_size": 83,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 6,
+              "coverage": 0.8571,
+              "leg_size": 83,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "how-oncall-escalation-actually-works-here",
+          "probe": "control",
+          "query_unique": 7,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 2,
+              "coverage": 0.2857,
+              "leg_size": 79,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 3,
+              "gold_rank_without_leg": 0,
+              "rank_delta": -3,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 2,
+              "coverage": 0.2857,
+              "leg_size": 79,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 3,
+              "gold_rank_without_leg": 11,
+              "rank_delta": 8,
+              "crossed_k": true,
+              "verdict": "rescued",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "how-rate-limiting-is-tuned-for-the-public-api",
+          "probe": "asked",
+          "query_unique": 14,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 6,
+              "coverage": 0.4286,
+              "leg_size": 164,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 2,
+              "rank_delta": 2,
+              "crossed_k": false,
+              "verdict": "improved",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 2
+            },
+            "bm25": {
+              "evidence": 4,
+              "coverage": 0.2857,
+              "leg_size": 164,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": -2
+            }
+          }
+        },
+        {
+          "slug": "how-rate-limiting-is-tuned-for-the-public-api",
+          "probe": "requery",
+          "query_unique": 11,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 6,
+              "coverage": 0.5455,
+              "leg_size": 74,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 2,
+              "gold_rank_without_leg": 3,
+              "rank_delta": 1,
+              "crossed_k": false,
+              "verdict": "improved",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 1
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.4545,
+              "leg_size": 74,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 2,
+              "gold_rank_without_leg": 0,
+              "rank_delta": -2,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": -1
+            }
+          }
+        },
+        {
+          "slug": "how-rate-limiting-is-tuned-for-the-public-api",
+          "probe": "control",
+          "query_unique": 11,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 5,
+              "coverage": 0.4545,
+              "leg_size": 145,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 2,
+              "rank_delta": 2,
+              "crossed_k": false,
+              "verdict": "improved",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 2
+            },
+            "bm25": {
+              "evidence": 3,
+              "coverage": 0.2727,
+              "leg_size": 145,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": -2
+            }
+          }
+        },
+        {
+          "slug": "how-secrets-reach-containers-at-runtime",
+          "probe": "asked",
+          "query_unique": 10,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 4,
+              "coverage": 0.4,
+              "leg_size": 111,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 9,
+              "gold_rank_without_leg": 5,
+              "rank_delta": -4,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 4,
+              "coverage": 0.4,
+              "leg_size": 111,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 9,
+              "gold_rank_without_leg": 15,
+              "rank_delta": 6,
+              "crossed_k": false,
+              "verdict": "improved",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "how-secrets-reach-containers-at-runtime",
+          "probe": "requery",
+          "query_unique": 8,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 5,
+              "coverage": 0.625,
+              "leg_size": 46,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.625,
+              "leg_size": 46,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "how-secrets-reach-containers-at-runtime",
+          "probe": "control",
+          "query_unique": 9,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 4,
+              "coverage": 0.4444,
+              "leg_size": 109,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 38,
+              "gold_rank_without_leg": 31,
+              "rank_delta": -7,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 4,
+              "coverage": 0.4444,
+              "leg_size": 109,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 38,
+              "gold_rank_without_leg": 45,
+              "rank_delta": 7,
+              "crossed_k": false,
+              "verdict": "improved",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "the-agreement-about-code-review-turnaround",
+          "probe": "asked",
+          "query_unique": 11,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 3,
+              "coverage": 0.2727,
+              "leg_size": 104,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 3,
+              "gold_rank_without_leg": 0,
+              "rank_delta": -3,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 3,
+              "coverage": 0.2727,
+              "leg_size": 104,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 3,
+              "gold_rank_without_leg": 7,
+              "rank_delta": 4,
+              "crossed_k": true,
+              "verdict": "rescued",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "the-agreement-about-code-review-turnaround",
+          "probe": "requery",
+          "query_unique": 8,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 5,
+              "coverage": 0.625,
+              "leg_size": 131,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 1,
+              "gold_rank_without_leg": 0,
+              "rank_delta": -1,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.625,
+              "leg_size": 131,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 1,
+              "gold_rank_without_leg": 3,
+              "rank_delta": 2,
+              "crossed_k": false,
+              "verdict": "improved",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "the-agreement-about-code-review-turnaround",
+          "probe": "control",
+          "query_unique": 10,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 3,
+              "coverage": 0.3,
+              "leg_size": 102,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 1,
+              "gold_rank_without_leg": 0,
+              "rank_delta": -1,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 3,
+              "coverage": 0.3,
+              "leg_size": 102,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 1,
+              "gold_rank_without_leg": 5,
+              "rank_delta": 4,
+              "crossed_k": true,
+              "verdict": "rescued",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "the-convention-for-naming-background-jobs",
+          "probe": "asked",
+          "query_unique": 12,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 6,
+              "coverage": 0.5,
+              "leg_size": 150,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 6,
+              "coverage": 0.5,
+              "leg_size": 150,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "the-convention-for-naming-background-jobs",
+          "probe": "requery",
+          "query_unique": 9,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 7,
+              "coverage": 0.7778,
+              "leg_size": 95,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 7,
+              "coverage": 0.7778,
+              "leg_size": 95,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "the-convention-for-naming-background-jobs",
+          "probe": "control",
+          "query_unique": 12,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 6,
+              "coverage": 0.5,
+              "leg_size": 150,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 6,
+              "coverage": 0.5,
+              "leg_size": 150,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "the-cutover-plan-for-the-legacy-billing-service",
+          "probe": "asked",
+          "query_unique": 9,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 3,
+              "coverage": 0.3333,
+              "leg_size": 91,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 21,
+              "gold_rank_without_leg": 19,
+              "rank_delta": -2,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 3,
+              "coverage": 0.3333,
+              "leg_size": 91,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 21,
+              "gold_rank_without_leg": 22,
+              "rank_delta": 1,
+              "crossed_k": false,
+              "verdict": "improved",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "the-cutover-plan-for-the-legacy-billing-service",
+          "probe": "requery",
+          "query_unique": 8,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 5,
+              "coverage": 0.625,
+              "leg_size": 94,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.625,
+              "leg_size": 94,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "the-cutover-plan-for-the-legacy-billing-service",
+          "probe": "control",
+          "query_unique": 8,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 3,
+              "coverage": 0.375,
+              "leg_size": 87,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 19,
+              "gold_rank_without_leg": 17,
+              "rank_delta": -2,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 3,
+              "coverage": 0.375,
+              "leg_size": 87,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 19,
+              "gold_rank_without_leg": 20,
+              "rank_delta": 1,
+              "crossed_k": false,
+              "verdict": "improved",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "the-decision-to-stop-using-a-monorepo",
+          "probe": "asked",
+          "query_unique": 9,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 4,
+              "coverage": 0.4444,
+              "leg_size": 92,
+              "top_is_gold": false,
+              "gold_rank_with_leg": null,
+              "gold_rank_without_leg": null,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 4,
+              "coverage": 0.4444,
+              "leg_size": 92,
+              "top_is_gold": false,
+              "gold_rank_with_leg": null,
+              "gold_rank_without_leg": null,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "the-decision-to-stop-using-a-monorepo",
+          "probe": "requery",
+          "query_unique": 6,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 2,
+              "coverage": 0.3333,
+              "leg_size": 63,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 2,
+              "gold_rank_without_leg": 2,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 2,
+              "coverage": 0.3333,
+              "leg_size": 63,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 2,
+              "gold_rank_without_leg": 4,
+              "rank_delta": 2,
+              "crossed_k": false,
+              "verdict": "improved",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "the-decision-to-stop-using-a-monorepo",
+          "probe": "control",
+          "query_unique": 7,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 2,
+              "coverage": 0.2857,
+              "leg_size": 70,
+              "top_is_gold": false,
+              "gold_rank_with_leg": null,
+              "gold_rank_without_leg": null,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 2,
+              "coverage": 0.2857,
+              "leg_size": 70,
+              "top_is_gold": false,
+              "gold_rank_with_leg": null,
+              "gold_rank_without_leg": null,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "the-policy-on-adding-new-runtime-dependencies",
+          "probe": "asked",
+          "query_unique": 13,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 5,
+              "coverage": 0.3846,
+              "leg_size": 162,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 22,
+              "gold_rank_without_leg": 26,
+              "rank_delta": 4,
+              "crossed_k": false,
+              "verdict": "improved",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.3846,
+              "leg_size": 162,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 22,
+              "gold_rank_without_leg": 19,
+              "rank_delta": -3,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "the-policy-on-adding-new-runtime-dependencies",
+          "probe": "requery",
+          "query_unique": 11,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 6,
+              "coverage": 0.5455,
+              "leg_size": 116,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 6,
+              "coverage": 0.5455,
+              "leg_size": 116,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "the-policy-on-adding-new-runtime-dependencies",
+          "probe": "control",
+          "query_unique": 12,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 5,
+              "coverage": 0.4167,
+              "leg_size": 162,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 21,
+              "gold_rank_without_leg": 24,
+              "rank_delta": 3,
+              "crossed_k": false,
+              "verdict": "improved",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.4167,
+              "leg_size": 162,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 21,
+              "gold_rank_without_leg": 19,
+              "rank_delta": -2,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "the-reason-log-retention-is-only-14-days",
+          "probe": "asked",
+          "query_unique": 18,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 7,
+              "coverage": 0.3889,
+              "leg_size": 172,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 1,
+              "rank_delta": 1,
+              "crossed_k": false,
+              "verdict": "improved",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 1
+            },
+            "bm25": {
+              "evidence": 6,
+              "coverage": 0.3333,
+              "leg_size": 172,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": -1
+            }
+          }
+        },
+        {
+          "slug": "the-reason-log-retention-is-only-14-days",
+          "probe": "requery",
+          "query_unique": 9,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 6,
+              "coverage": 0.6667,
+              "leg_size": 150,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 6,
+              "coverage": 0.6667,
+              "leg_size": 150,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "the-reason-log-retention-is-only-14-days",
+          "probe": "control",
+          "query_unique": 16,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 7,
+              "coverage": 0.4375,
+              "leg_size": 168,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 1,
+              "rank_delta": 1,
+              "crossed_k": false,
+              "verdict": "improved",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 1
+            },
+            "bm25": {
+              "evidence": 6,
+              "coverage": 0.375,
+              "leg_size": 168,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": -1
+            }
+          }
+        },
+        {
+          "slug": "the-rule-about-never-force-pushing-shared-branches",
+          "probe": "asked",
+          "query_unique": 11,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 4,
+              "coverage": 0.3636,
+              "leg_size": 100,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 4,
+              "coverage": 0.3636,
+              "leg_size": 100,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "the-rule-about-never-force-pushing-shared-branches",
+          "probe": "requery",
+          "query_unique": 8,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 7,
+              "coverage": 0.875,
+              "leg_size": 84,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 7,
+              "coverage": 0.875,
+              "leg_size": 84,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "the-rule-about-never-force-pushing-shared-branches",
+          "probe": "control",
+          "query_unique": 9,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 3,
+              "coverage": 0.3333,
+              "leg_size": 81,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 3,
+              "coverage": 0.3333,
+              "leg_size": 81,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "why-error-tracking-ignores-a-specific-exception-class",
+          "probe": "asked",
+          "query_unique": 16,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 6,
+              "coverage": 0.375,
+              "leg_size": 165,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 1,
+              "gold_rank_without_leg": 4,
+              "rank_delta": 3,
+              "crossed_k": false,
+              "verdict": "improved",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 1
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.3125,
+              "leg_size": 165,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 1,
+              "gold_rank_without_leg": 1,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": -1
+            }
+          }
+        },
+        {
+          "slug": "why-error-tracking-ignores-a-specific-exception-class",
+          "probe": "requery",
+          "query_unique": 9,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 6,
+              "coverage": 0.6667,
+              "leg_size": 63,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 6,
+              "coverage": 0.6667,
+              "leg_size": 63,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "why-error-tracking-ignores-a-specific-exception-class",
+          "probe": "control",
+          "query_unique": 14,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 4,
+              "coverage": 0.2857,
+              "leg_size": 164,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 8,
+              "gold_rank_without_leg": 8,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": -1
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.3571,
+              "leg_size": 164,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 8,
+              "gold_rank_without_leg": 12,
+              "rank_delta": 4,
+              "crossed_k": false,
+              "verdict": "improved",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 1
+            }
+          }
+        },
+        {
+          "slug": "why-integration-tests-run-serially",
+          "probe": "asked",
+          "query_unique": 10,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 4,
+              "coverage": 0.4,
+              "leg_size": 109,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 4,
+              "coverage": 0.4,
+              "leg_size": 109,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "why-integration-tests-run-serially",
+          "probe": "requery",
+          "query_unique": 7,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 5,
+              "coverage": 0.7143,
+              "leg_size": 77,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.7143,
+              "leg_size": 77,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "why-integration-tests-run-serially",
+          "probe": "control",
+          "query_unique": 9,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 4,
+              "coverage": 0.4444,
+              "leg_size": 104,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 4,
+              "coverage": 0.4444,
+              "leg_size": 104,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "why-postgres-connection-pooling-was-moved-out-of-the-app",
+          "probe": "asked",
+          "query_unique": 13,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 4,
+              "coverage": 0.3077,
+              "leg_size": 122,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 1,
+              "gold_rank_without_leg": 0,
+              "rank_delta": -1,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 4,
+              "coverage": 0.3077,
+              "leg_size": 122,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 1,
+              "gold_rank_without_leg": 1,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "why-postgres-connection-pooling-was-moved-out-of-the-app",
+          "probe": "requery",
+          "query_unique": 7,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 5,
+              "coverage": 0.7143,
+              "leg_size": 25,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.7143,
+              "leg_size": 25,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "why-postgres-connection-pooling-was-moved-out-of-the-app",
+          "probe": "control",
+          "query_unique": 10,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 4,
+              "coverage": 0.4,
+              "leg_size": 109,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 1,
+              "gold_rank_without_leg": 0,
+              "rank_delta": -1,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 4,
+              "coverage": 0.4,
+              "leg_size": 109,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 1,
+              "gold_rank_without_leg": 1,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "why-the-frontend-build-is-not-cached-in-ci",
+          "probe": "asked",
+          "query_unique": 21,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 7,
+              "coverage": 0.3333,
+              "leg_size": 174,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 1,
+              "gold_rank_without_leg": 0,
+              "rank_delta": -1,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 2
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.2381,
+              "leg_size": 174,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 1,
+              "gold_rank_without_leg": 1,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": -2
+            }
+          }
+        },
+        {
+          "slug": "why-the-frontend-build-is-not-cached-in-ci",
+          "probe": "requery",
+          "query_unique": 10,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 5,
+              "coverage": 0.5,
+              "leg_size": 73,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.5,
+              "leg_size": 73,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "why-the-frontend-build-is-not-cached-in-ci",
+          "probe": "control",
+          "query_unique": 21,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 7,
+              "coverage": 0.3333,
+              "leg_size": 174,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 1,
+              "gold_rank_without_leg": 0,
+              "rank_delta": -1,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 2
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.2381,
+              "leg_size": 174,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 1,
+              "gold_rank_without_leg": 1,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": -2
+            }
+          }
+        },
+        {
+          "slug": "why-the-staging-environment-shares-one-database",
+          "probe": "asked",
+          "query_unique": 9,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 4,
+              "coverage": 0.4444,
+              "leg_size": 52,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 4,
+              "coverage": 0.4444,
+              "leg_size": 52,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "why-the-staging-environment-shares-one-database",
+          "probe": "requery",
+          "query_unique": 7,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 5,
+              "coverage": 0.7143,
+              "leg_size": 113,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 3,
+              "gold_rank_without_leg": 5,
+              "rank_delta": 2,
+              "crossed_k": true,
+              "verdict": "rescued",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.7143,
+              "leg_size": 113,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 3,
+              "gold_rank_without_leg": 1,
+              "rank_delta": -2,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "why-the-staging-environment-shares-one-database",
+          "probe": "control",
+          "query_unique": 8,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 4,
+              "coverage": 0.5,
+              "leg_size": 52,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 4,
+              "coverage": 0.5,
+              "leg_size": 52,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "why-we-pin-the-base-image-by-digest",
+          "probe": "asked",
+          "query_unique": 10,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 4,
+              "coverage": 0.4,
+              "leg_size": 126,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 8,
+              "gold_rank_without_leg": 6,
+              "rank_delta": -2,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": -1
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.5,
+              "leg_size": 126,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 8,
+              "gold_rank_without_leg": 11,
+              "rank_delta": 3,
+              "crossed_k": false,
+              "verdict": "improved",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 1
+            }
+          }
+        },
+        {
+          "slug": "why-we-pin-the-base-image-by-digest",
+          "probe": "requery",
+          "query_unique": 8,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 5,
+              "coverage": 0.625,
+              "leg_size": 85,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.625,
+              "leg_size": 85,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "why-we-pin-the-base-image-by-digest",
+          "probe": "control",
+          "query_unique": 8,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 3,
+              "coverage": 0.375,
+              "leg_size": 118,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 5,
+              "gold_rank_without_leg": 5,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 3,
+              "coverage": 0.375,
+              "leg_size": 118,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 5,
+              "gold_rank_without_leg": 5,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "why-we-stopped-using-a-shared-dev-server",
+          "probe": "asked",
+          "query_unique": 11,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 5,
+              "coverage": 0.4545,
+              "leg_size": 165,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.4545,
+              "leg_size": 165,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "why-we-stopped-using-a-shared-dev-server",
+          "probe": "requery",
+          "query_unique": 8,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 7,
+              "coverage": 0.875,
+              "leg_size": 100,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 7,
+              "coverage": 0.875,
+              "leg_size": 100,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "why-we-stopped-using-a-shared-dev-server",
+          "probe": "control",
+          "query_unique": 11,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 5,
+              "coverage": 0.4545,
+              "leg_size": 165,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.4545,
+              "leg_size": 165,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        }
+      ]
+    },
+    "padded600": {
+      "corpus": "corpus.jsonl",
+      "corpus_sha256": "c40acee95ce1bb70ac6ea788e0fb4a9a1c6eff1fc55fe4569b651b5b156ea2ea",
+      "collection_size": 600,
+      "pad_to": 600,
+      "summary": {
+        "probes": 60,
+        "tops_agree": 34,
+        "keyword": {
+          "verdicts": {
+            "neutral": 28,
+            "improved": 14,
+            "harmed": 14,
+            "rescued": 3,
+            "broke": 1
+          },
+          "identical_ordering": 0,
+          "by_evidence": {
+            "2": {
+              "n": 4,
+              "helped": 0,
+              "hurt": 2,
+              "neutral": 2,
+              "pct_helped": 0.0,
+              "gold_to_rank1": 0,
+              "gold_off_rank1": 2
+            },
+            "3": {
+              "n": 7,
+              "helped": 2,
+              "hurt": 3,
+              "neutral": 2,
+              "pct_helped": 0.2857,
+              "gold_to_rank1": 0,
+              "gold_off_rank1": 2
+            },
+            "4+": {
+              "n": 49,
+              "helped": 15,
+              "hurt": 10,
+              "neutral": 24,
+              "pct_helped": 0.3061,
+              "gold_to_rank1": 2,
+              "gold_off_rank1": 4
+            }
+          },
+          "by_evidence_delta": {
+            "+1": {
+              "n": 8,
+              "helped": 5,
+              "hurt": 1,
+              "neutral": 2,
+              "pct_helped": 0.625,
+              "gold_to_rank1": 2,
+              "gold_off_rank1": 0
+            },
+            "+2+": {
+              "n": 8,
+              "helped": 6,
+              "hurt": 2,
+              "neutral": 0,
+              "pct_helped": 0.75,
+              "gold_to_rank1": 0,
+              "gold_off_rank1": 2
+            },
+            "-1": {
+              "n": 1,
+              "helped": 0,
+              "hurt": 1,
+              "neutral": 0,
+              "pct_helped": 0.0,
+              "gold_to_rank1": 0,
+              "gold_off_rank1": 0
+            },
+            "0": {
+              "n": 43,
+              "helped": 6,
+              "hurt": 11,
+              "neutral": 26,
+              "pct_helped": 0.1395,
+              "gold_to_rank1": 0,
+              "gold_off_rank1": 6
+            }
+          }
+        },
+        "bm25": {
+          "verdicts": {
+            "improved": 8,
+            "neutral": 33,
+            "harmed": 15,
+            "rescued": 4
+          },
+          "identical_ordering": 0,
+          "by_evidence": {
+            "1": {
+              "n": 1,
+              "helped": 0,
+              "hurt": 0,
+              "neutral": 1,
+              "pct_helped": 0.0,
+              "gold_to_rank1": 0,
+              "gold_off_rank1": 0
+            },
+            "2": {
+              "n": 5,
+              "helped": 3,
+              "hurt": 2,
+              "neutral": 0,
+              "pct_helped": 0.6,
+              "gold_to_rank1": 0,
+              "gold_off_rank1": 1
+            },
+            "3": {
+              "n": 9,
+              "helped": 3,
+              "hurt": 4,
+              "neutral": 2,
+              "pct_helped": 0.3333,
+              "gold_to_rank1": 0,
+              "gold_off_rank1": 2
+            },
+            "4+": {
+              "n": 45,
+              "helped": 6,
+              "hurt": 9,
+              "neutral": 30,
+              "pct_helped": 0.1333,
+              "gold_to_rank1": 0,
+              "gold_off_rank1": 4
+            }
+          },
+          "by_evidence_delta": {
+            "+1": {
+              "n": 1,
+              "helped": 1,
+              "hurt": 0,
+              "neutral": 0,
+              "pct_helped": 1.0,
+              "gold_to_rank1": 0,
+              "gold_off_rank1": 0
+            },
+            "-1": {
+              "n": 8,
+              "helped": 1,
+              "hurt": 3,
+              "neutral": 4,
+              "pct_helped": 0.125,
+              "gold_to_rank1": 0,
+              "gold_off_rank1": 1
+            },
+            "-2-": {
+              "n": 8,
+              "helped": 0,
+              "hurt": 6,
+              "neutral": 2,
+              "pct_helped": 0.0,
+              "gold_to_rank1": 0,
+              "gold_off_rank1": 6
+            },
+            "0": {
+              "n": 43,
+              "helped": 10,
+              "hurt": 6,
+              "neutral": 27,
+              "pct_helped": 0.2326,
+              "gold_to_rank1": 0,
+              "gold_off_rank1": 0
+            }
+          }
+        }
+      },
+      "records": [
+        {
+          "slug": "how-database-migrations-are-rolled-back",
+          "probe": "asked",
+          "query_unique": 15,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 5,
+              "coverage": 0.3333,
+              "leg_size": 170,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 7,
+              "gold_rank_without_leg": 7,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.3333,
+              "leg_size": 170,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 7,
+              "gold_rank_without_leg": 9,
+              "rank_delta": 2,
+              "crossed_k": false,
+              "verdict": "improved",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "how-database-migrations-are-rolled-back",
+          "probe": "requery",
+          "query_unique": 9,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 5,
+              "coverage": 0.5556,
+              "leg_size": 81,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.5556,
+              "leg_size": 81,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "how-database-migrations-are-rolled-back",
+          "probe": "control",
+          "query_unique": 14,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 5,
+              "coverage": 0.3571,
+              "leg_size": 170,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 5,
+              "gold_rank_without_leg": 5,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.3571,
+              "leg_size": 170,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 5,
+              "gold_rank_without_leg": 7,
+              "rank_delta": 2,
+              "crossed_k": false,
+              "verdict": "improved",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "how-feature-flags-get-cleaned-up",
+          "probe": "asked",
+          "query_unique": 12,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 4,
+              "coverage": 0.3333,
+              "leg_size": 129,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 31,
+              "gold_rank_without_leg": 38,
+              "rank_delta": 7,
+              "crossed_k": false,
+              "verdict": "improved",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 4,
+              "coverage": 0.3333,
+              "leg_size": 129,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 31,
+              "gold_rank_without_leg": 32,
+              "rank_delta": 1,
+              "crossed_k": false,
+              "verdict": "improved",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "how-feature-flags-get-cleaned-up",
+          "probe": "requery",
+          "query_unique": 9,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 6,
+              "coverage": 0.6667,
+              "leg_size": 76,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 1,
+              "gold_rank_without_leg": 3,
+              "rank_delta": 2,
+              "crossed_k": false,
+              "verdict": "improved",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 4
+            },
+            "bm25": {
+              "evidence": 2,
+              "coverage": 0.2222,
+              "leg_size": 76,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 1,
+              "gold_rank_without_leg": 0,
+              "rank_delta": -1,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": -4
+            }
+          }
+        },
+        {
+          "slug": "how-feature-flags-get-cleaned-up",
+          "probe": "control",
+          "query_unique": 9,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 5,
+              "coverage": 0.5556,
+              "leg_size": 105,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 23,
+              "gold_rank_without_leg": 30,
+              "rank_delta": 7,
+              "crossed_k": false,
+              "verdict": "improved",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.5556,
+              "leg_size": 105,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 23,
+              "gold_rank_without_leg": 21,
+              "rank_delta": -2,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "how-nightly-backups-are-verified-not-just-taken",
+          "probe": "asked",
+          "query_unique": 11,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 4,
+              "coverage": 0.3636,
+              "leg_size": 106,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 8,
+              "gold_rank_without_leg": 7,
+              "rank_delta": -1,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 4,
+              "coverage": 0.3636,
+              "leg_size": 106,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 8,
+              "gold_rank_without_leg": 6,
+              "rank_delta": -2,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "how-nightly-backups-are-verified-not-just-taken",
+          "probe": "requery",
+          "query_unique": 7,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 5,
+              "coverage": 0.7143,
+              "leg_size": 65,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.7143,
+              "leg_size": 65,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "how-nightly-backups-are-verified-not-just-taken",
+          "probe": "control",
+          "query_unique": 8,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 3,
+              "coverage": 0.375,
+              "leg_size": 76,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 4,
+              "gold_rank_without_leg": 4,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 1
+            },
+            "bm25": {
+              "evidence": 2,
+              "coverage": 0.25,
+              "leg_size": 76,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 4,
+              "gold_rank_without_leg": 2,
+              "rank_delta": -2,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": -1
+            }
+          }
+        },
+        {
+          "slug": "how-oncall-escalation-actually-works-here",
+          "probe": "asked",
+          "query_unique": 7,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 2,
+              "coverage": 0.2857,
+              "leg_size": 79,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 4,
+              "gold_rank_without_leg": 0,
+              "rank_delta": -4,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 2,
+              "coverage": 0.2857,
+              "leg_size": 79,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 4,
+              "gold_rank_without_leg": 11,
+              "rank_delta": 7,
+              "crossed_k": true,
+              "verdict": "rescued",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "how-oncall-escalation-actually-works-here",
+          "probe": "requery",
+          "query_unique": 7,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 6,
+              "coverage": 0.8571,
+              "leg_size": 83,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 6,
+              "coverage": 0.8571,
+              "leg_size": 83,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "how-oncall-escalation-actually-works-here",
+          "probe": "control",
+          "query_unique": 7,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 2,
+              "coverage": 0.2857,
+              "leg_size": 79,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 4,
+              "gold_rank_without_leg": 0,
+              "rank_delta": -4,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 2,
+              "coverage": 0.2857,
+              "leg_size": 79,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 4,
+              "gold_rank_without_leg": 11,
+              "rank_delta": 7,
+              "crossed_k": true,
+              "verdict": "rescued",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "how-rate-limiting-is-tuned-for-the-public-api",
+          "probe": "asked",
+          "query_unique": 14,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 6,
+              "coverage": 0.4286,
+              "leg_size": 164,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 1,
+              "gold_rank_without_leg": 3,
+              "rank_delta": 2,
+              "crossed_k": false,
+              "verdict": "improved",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 2
+            },
+            "bm25": {
+              "evidence": 4,
+              "coverage": 0.2857,
+              "leg_size": 164,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 1,
+              "gold_rank_without_leg": 0,
+              "rank_delta": -1,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": -2
+            }
+          }
+        },
+        {
+          "slug": "how-rate-limiting-is-tuned-for-the-public-api",
+          "probe": "requery",
+          "query_unique": 11,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 6,
+              "coverage": 0.5455,
+              "leg_size": 74,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 3,
+              "gold_rank_without_leg": 6,
+              "rank_delta": 3,
+              "crossed_k": true,
+              "verdict": "rescued",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 1
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.4545,
+              "leg_size": 74,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 3,
+              "gold_rank_without_leg": 0,
+              "rank_delta": -3,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": -1
+            }
+          }
+        },
+        {
+          "slug": "how-rate-limiting-is-tuned-for-the-public-api",
+          "probe": "control",
+          "query_unique": 11,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 5,
+              "coverage": 0.4545,
+              "leg_size": 145,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 2,
+              "gold_rank_without_leg": 3,
+              "rank_delta": 1,
+              "crossed_k": false,
+              "verdict": "improved",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 2
+            },
+            "bm25": {
+              "evidence": 3,
+              "coverage": 0.2727,
+              "leg_size": 145,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 2,
+              "gold_rank_without_leg": 0,
+              "rank_delta": -2,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": -2
+            }
+          }
+        },
+        {
+          "slug": "how-secrets-reach-containers-at-runtime",
+          "probe": "asked",
+          "query_unique": 10,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 4,
+              "coverage": 0.4,
+              "leg_size": 111,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 15,
+              "gold_rank_without_leg": 12,
+              "rank_delta": -3,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 4,
+              "coverage": 0.4,
+              "leg_size": 111,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 15,
+              "gold_rank_without_leg": 15,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "how-secrets-reach-containers-at-runtime",
+          "probe": "requery",
+          "query_unique": 8,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 5,
+              "coverage": 0.625,
+              "leg_size": 46,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.625,
+              "leg_size": 46,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "how-secrets-reach-containers-at-runtime",
+          "probe": "control",
+          "query_unique": 9,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 4,
+              "coverage": 0.4444,
+              "leg_size": 109,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 43,
+              "gold_rank_without_leg": 40,
+              "rank_delta": -3,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 4,
+              "coverage": 0.4444,
+              "leg_size": 109,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 43,
+              "gold_rank_without_leg": 45,
+              "rank_delta": 2,
+              "crossed_k": false,
+              "verdict": "improved",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "the-agreement-about-code-review-turnaround",
+          "probe": "asked",
+          "query_unique": 11,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 3,
+              "coverage": 0.2727,
+              "leg_size": 104,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 3,
+              "gold_rank_without_leg": 0,
+              "rank_delta": -3,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 3,
+              "coverage": 0.2727,
+              "leg_size": 104,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 3,
+              "gold_rank_without_leg": 7,
+              "rank_delta": 4,
+              "crossed_k": true,
+              "verdict": "rescued",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "the-agreement-about-code-review-turnaround",
+          "probe": "requery",
+          "query_unique": 8,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 5,
+              "coverage": 0.625,
+              "leg_size": 131,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 2,
+              "gold_rank_without_leg": 1,
+              "rank_delta": -1,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.625,
+              "leg_size": 131,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 2,
+              "gold_rank_without_leg": 3,
+              "rank_delta": 1,
+              "crossed_k": false,
+              "verdict": "improved",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "the-agreement-about-code-review-turnaround",
+          "probe": "control",
+          "query_unique": 10,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 3,
+              "coverage": 0.3,
+              "leg_size": 102,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 3,
+              "gold_rank_without_leg": 0,
+              "rank_delta": -3,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 3,
+              "coverage": 0.3,
+              "leg_size": 102,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 3,
+              "gold_rank_without_leg": 5,
+              "rank_delta": 2,
+              "crossed_k": true,
+              "verdict": "rescued",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "the-convention-for-naming-background-jobs",
+          "probe": "asked",
+          "query_unique": 12,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 6,
+              "coverage": 0.5,
+              "leg_size": 150,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 1,
+              "gold_rank_without_leg": 2,
+              "rank_delta": 1,
+              "crossed_k": false,
+              "verdict": "improved",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 2
+            },
+            "bm25": {
+              "evidence": 4,
+              "coverage": 0.3333,
+              "leg_size": 150,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 1,
+              "gold_rank_without_leg": 0,
+              "rank_delta": -1,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": -2
+            }
+          }
+        },
+        {
+          "slug": "the-convention-for-naming-background-jobs",
+          "probe": "requery",
+          "query_unique": 9,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 7,
+              "coverage": 0.7778,
+              "leg_size": 95,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 7,
+              "coverage": 0.7778,
+              "leg_size": 95,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "the-convention-for-naming-background-jobs",
+          "probe": "control",
+          "query_unique": 12,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 6,
+              "coverage": 0.5,
+              "leg_size": 150,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 1,
+              "gold_rank_without_leg": 2,
+              "rank_delta": 1,
+              "crossed_k": false,
+              "verdict": "improved",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 2
+            },
+            "bm25": {
+              "evidence": 4,
+              "coverage": 0.3333,
+              "leg_size": 150,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 1,
+              "gold_rank_without_leg": 0,
+              "rank_delta": -1,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": -2
+            }
+          }
+        },
+        {
+          "slug": "the-cutover-plan-for-the-legacy-billing-service",
+          "probe": "asked",
+          "query_unique": 9,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 3,
+              "coverage": 0.3333,
+              "leg_size": 91,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 24,
+              "gold_rank_without_leg": 26,
+              "rank_delta": 2,
+              "crossed_k": false,
+              "verdict": "improved",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 3,
+              "coverage": 0.3333,
+              "leg_size": 91,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 24,
+              "gold_rank_without_leg": 22,
+              "rank_delta": -2,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "the-cutover-plan-for-the-legacy-billing-service",
+          "probe": "requery",
+          "query_unique": 8,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 5,
+              "coverage": 0.625,
+              "leg_size": 94,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 2,
+              "gold_rank_without_leg": 5,
+              "rank_delta": 3,
+              "crossed_k": true,
+              "verdict": "rescued",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 2
+            },
+            "bm25": {
+              "evidence": 3,
+              "coverage": 0.375,
+              "leg_size": 94,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 2,
+              "gold_rank_without_leg": 0,
+              "rank_delta": -2,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": -2
+            }
+          }
+        },
+        {
+          "slug": "the-cutover-plan-for-the-legacy-billing-service",
+          "probe": "control",
+          "query_unique": 8,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 3,
+              "coverage": 0.375,
+              "leg_size": 87,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 22,
+              "gold_rank_without_leg": 24,
+              "rank_delta": 2,
+              "crossed_k": false,
+              "verdict": "improved",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 3,
+              "coverage": 0.375,
+              "leg_size": 87,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 22,
+              "gold_rank_without_leg": 20,
+              "rank_delta": -2,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "the-decision-to-stop-using-a-monorepo",
+          "probe": "asked",
+          "query_unique": 9,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 4,
+              "coverage": 0.4444,
+              "leg_size": 92,
+              "top_is_gold": false,
+              "gold_rank_with_leg": null,
+              "gold_rank_without_leg": null,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 4,
+              "coverage": 0.4444,
+              "leg_size": 92,
+              "top_is_gold": false,
+              "gold_rank_with_leg": null,
+              "gold_rank_without_leg": null,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "the-decision-to-stop-using-a-monorepo",
+          "probe": "requery",
+          "query_unique": 6,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 2,
+              "coverage": 0.3333,
+              "leg_size": 63,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 2,
+              "gold_rank_without_leg": 2,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 2,
+              "coverage": 0.3333,
+              "leg_size": 63,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 2,
+              "gold_rank_without_leg": 4,
+              "rank_delta": 2,
+              "crossed_k": false,
+              "verdict": "improved",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "the-decision-to-stop-using-a-monorepo",
+          "probe": "control",
+          "query_unique": 7,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 2,
+              "coverage": 0.2857,
+              "leg_size": 70,
+              "top_is_gold": false,
+              "gold_rank_with_leg": null,
+              "gold_rank_without_leg": null,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 1
+            },
+            "bm25": {
+              "evidence": 1,
+              "coverage": 0.1429,
+              "leg_size": 70,
+              "top_is_gold": false,
+              "gold_rank_with_leg": null,
+              "gold_rank_without_leg": null,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": -1
+            }
+          }
+        },
+        {
+          "slug": "the-policy-on-adding-new-runtime-dependencies",
+          "probe": "asked",
+          "query_unique": 13,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 5,
+              "coverage": 0.3846,
+              "leg_size": 162,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 21,
+              "gold_rank_without_leg": 24,
+              "rank_delta": 3,
+              "crossed_k": false,
+              "verdict": "improved",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.3846,
+              "leg_size": 162,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 21,
+              "gold_rank_without_leg": 19,
+              "rank_delta": -2,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "the-policy-on-adding-new-runtime-dependencies",
+          "probe": "requery",
+          "query_unique": 11,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 6,
+              "coverage": 0.5455,
+              "leg_size": 116,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 6,
+              "coverage": 0.5455,
+              "leg_size": 116,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "the-policy-on-adding-new-runtime-dependencies",
+          "probe": "control",
+          "query_unique": 12,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 5,
+              "coverage": 0.4167,
+              "leg_size": 162,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 20,
+              "gold_rank_without_leg": 22,
+              "rank_delta": 2,
+              "crossed_k": false,
+              "verdict": "improved",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.4167,
+              "leg_size": 162,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 20,
+              "gold_rank_without_leg": 19,
+              "rank_delta": -1,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "the-reason-log-retention-is-only-14-days",
+          "probe": "asked",
+          "query_unique": 18,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 7,
+              "coverage": 0.3889,
+              "leg_size": 172,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 1,
+              "rank_delta": 1,
+              "crossed_k": false,
+              "verdict": "improved",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 1
+            },
+            "bm25": {
+              "evidence": 6,
+              "coverage": 0.3333,
+              "leg_size": 172,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": -1
+            }
+          }
+        },
+        {
+          "slug": "the-reason-log-retention-is-only-14-days",
+          "probe": "requery",
+          "query_unique": 9,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 6,
+              "coverage": 0.6667,
+              "leg_size": 150,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 6,
+              "coverage": 0.6667,
+              "leg_size": 150,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "the-reason-log-retention-is-only-14-days",
+          "probe": "control",
+          "query_unique": 16,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 7,
+              "coverage": 0.4375,
+              "leg_size": 168,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 1,
+              "rank_delta": 1,
+              "crossed_k": false,
+              "verdict": "improved",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 1
+            },
+            "bm25": {
+              "evidence": 6,
+              "coverage": 0.375,
+              "leg_size": 168,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": -1
+            }
+          }
+        },
+        {
+          "slug": "the-rule-about-never-force-pushing-shared-branches",
+          "probe": "asked",
+          "query_unique": 11,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 4,
+              "coverage": 0.3636,
+              "leg_size": 100,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 4,
+              "coverage": 0.3636,
+              "leg_size": 100,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "the-rule-about-never-force-pushing-shared-branches",
+          "probe": "requery",
+          "query_unique": 8,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 7,
+              "coverage": 0.875,
+              "leg_size": 84,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 7,
+              "coverage": 0.875,
+              "leg_size": 84,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "the-rule-about-never-force-pushing-shared-branches",
+          "probe": "control",
+          "query_unique": 9,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 3,
+              "coverage": 0.3333,
+              "leg_size": 81,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 3,
+              "coverage": 0.3333,
+              "leg_size": 81,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "why-error-tracking-ignores-a-specific-exception-class",
+          "probe": "asked",
+          "query_unique": 16,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 6,
+              "coverage": 0.375,
+              "leg_size": 165,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 1,
+              "gold_rank_without_leg": 2,
+              "rank_delta": 1,
+              "crossed_k": false,
+              "verdict": "improved",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 1
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.3125,
+              "leg_size": 165,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 1,
+              "gold_rank_without_leg": 1,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": -1
+            }
+          }
+        },
+        {
+          "slug": "why-error-tracking-ignores-a-specific-exception-class",
+          "probe": "requery",
+          "query_unique": 9,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 6,
+              "coverage": 0.6667,
+              "leg_size": 63,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 6,
+              "coverage": 0.6667,
+              "leg_size": 63,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "why-error-tracking-ignores-a-specific-exception-class",
+          "probe": "control",
+          "query_unique": 14,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 4,
+              "coverage": 0.2857,
+              "leg_size": 164,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 10,
+              "gold_rank_without_leg": 8,
+              "rank_delta": -2,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": -1
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.3571,
+              "leg_size": 164,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 10,
+              "gold_rank_without_leg": 12,
+              "rank_delta": 2,
+              "crossed_k": false,
+              "verdict": "improved",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 1
+            }
+          }
+        },
+        {
+          "slug": "why-integration-tests-run-serially",
+          "probe": "asked",
+          "query_unique": 10,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 4,
+              "coverage": 0.4,
+              "leg_size": 109,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 4,
+              "coverage": 0.4,
+              "leg_size": 109,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "why-integration-tests-run-serially",
+          "probe": "requery",
+          "query_unique": 7,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 5,
+              "coverage": 0.7143,
+              "leg_size": 77,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.7143,
+              "leg_size": 77,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "why-integration-tests-run-serially",
+          "probe": "control",
+          "query_unique": 9,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 4,
+              "coverage": 0.4444,
+              "leg_size": 104,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 4,
+              "coverage": 0.4444,
+              "leg_size": 104,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "why-postgres-connection-pooling-was-moved-out-of-the-app",
+          "probe": "asked",
+          "query_unique": 13,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 4,
+              "coverage": 0.3077,
+              "leg_size": 122,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 1,
+              "gold_rank_without_leg": 0,
+              "rank_delta": -1,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 4,
+              "coverage": 0.3077,
+              "leg_size": 122,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 1,
+              "gold_rank_without_leg": 1,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "why-postgres-connection-pooling-was-moved-out-of-the-app",
+          "probe": "requery",
+          "query_unique": 7,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 5,
+              "coverage": 0.7143,
+              "leg_size": 25,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.7143,
+              "leg_size": 25,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "why-postgres-connection-pooling-was-moved-out-of-the-app",
+          "probe": "control",
+          "query_unique": 10,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 4,
+              "coverage": 0.4,
+              "leg_size": 109,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 1,
+              "gold_rank_without_leg": 0,
+              "rank_delta": -1,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 4,
+              "coverage": 0.4,
+              "leg_size": 109,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 1,
+              "gold_rank_without_leg": 1,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "why-the-frontend-build-is-not-cached-in-ci",
+          "probe": "asked",
+          "query_unique": 21,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 7,
+              "coverage": 0.3333,
+              "leg_size": 174,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 1,
+              "gold_rank_without_leg": 0,
+              "rank_delta": -1,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 2
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.2381,
+              "leg_size": 174,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 1,
+              "gold_rank_without_leg": 1,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": -2
+            }
+          }
+        },
+        {
+          "slug": "why-the-frontend-build-is-not-cached-in-ci",
+          "probe": "requery",
+          "query_unique": 10,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 5,
+              "coverage": 0.5,
+              "leg_size": 73,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.5,
+              "leg_size": 73,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "why-the-frontend-build-is-not-cached-in-ci",
+          "probe": "control",
+          "query_unique": 21,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 7,
+              "coverage": 0.3333,
+              "leg_size": 174,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 1,
+              "gold_rank_without_leg": 0,
+              "rank_delta": -1,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 2
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.2381,
+              "leg_size": 174,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 1,
+              "gold_rank_without_leg": 1,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": -2
+            }
+          }
+        },
+        {
+          "slug": "why-the-staging-environment-shares-one-database",
+          "probe": "asked",
+          "query_unique": 9,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 4,
+              "coverage": 0.4444,
+              "leg_size": 52,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 4,
+              "coverage": 0.4444,
+              "leg_size": 52,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "why-the-staging-environment-shares-one-database",
+          "probe": "requery",
+          "query_unique": 7,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 5,
+              "coverage": 0.7143,
+              "leg_size": 113,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 4,
+              "gold_rank_without_leg": 6,
+              "rank_delta": 2,
+              "crossed_k": true,
+              "verdict": "rescued",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": 1
+            },
+            "bm25": {
+              "evidence": 4,
+              "coverage": 0.5714,
+              "leg_size": 113,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 4,
+              "gold_rank_without_leg": 1,
+              "rank_delta": -3,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": -1
+            }
+          }
+        },
+        {
+          "slug": "why-the-staging-environment-shares-one-database",
+          "probe": "control",
+          "query_unique": 8,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 4,
+              "coverage": 0.5,
+              "leg_size": 52,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 4,
+              "coverage": 0.5,
+              "leg_size": 52,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "why-we-pin-the-base-image-by-digest",
+          "probe": "asked",
+          "query_unique": 10,
+          "tops_agree": false,
+          "legs": {
+            "keyword": {
+              "evidence": 4,
+              "coverage": 0.4,
+              "leg_size": 126,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 9,
+              "gold_rank_without_leg": 6,
+              "rank_delta": -3,
+              "crossed_k": false,
+              "verdict": "harmed",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 1
+            },
+            "bm25": {
+              "evidence": 3,
+              "coverage": 0.3,
+              "leg_size": 126,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 9,
+              "gold_rank_without_leg": 11,
+              "rank_delta": 2,
+              "crossed_k": false,
+              "verdict": "improved",
+              "helped": true,
+              "identical_ordering": false,
+              "evidence_delta": -1
+            }
+          }
+        },
+        {
+          "slug": "why-we-pin-the-base-image-by-digest",
+          "probe": "requery",
+          "query_unique": 8,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 5,
+              "coverage": 0.625,
+              "leg_size": 85,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.625,
+              "leg_size": 85,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "why-we-pin-the-base-image-by-digest",
+          "probe": "control",
+          "query_unique": 8,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 3,
+              "coverage": 0.375,
+              "leg_size": 118,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 5,
+              "gold_rank_without_leg": 4,
+              "rank_delta": -1,
+              "crossed_k": true,
+              "verdict": "broke",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 3,
+              "coverage": 0.375,
+              "leg_size": 118,
+              "top_is_gold": false,
+              "gold_rank_with_leg": 5,
+              "gold_rank_without_leg": 5,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "why-we-stopped-using-a-shared-dev-server",
+          "probe": "asked",
+          "query_unique": 11,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 5,
+              "coverage": 0.4545,
+              "leg_size": 165,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.4545,
+              "leg_size": 165,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "why-we-stopped-using-a-shared-dev-server",
+          "probe": "requery",
+          "query_unique": 8,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 7,
+              "coverage": 0.875,
+              "leg_size": 100,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 7,
+              "coverage": 0.875,
+              "leg_size": 100,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        },
+        {
+          "slug": "why-we-stopped-using-a-shared-dev-server",
+          "probe": "control",
+          "query_unique": 11,
+          "tops_agree": true,
+          "legs": {
+            "keyword": {
+              "evidence": 5,
+              "coverage": 0.4545,
+              "leg_size": 165,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            },
+            "bm25": {
+              "evidence": 5,
+              "coverage": 0.4545,
+              "leg_size": 165,
+              "top_is_gold": true,
+              "gold_rank_with_leg": 0,
+              "gold_rank_without_leg": 0,
+              "rank_delta": 0,
+              "crossed_k": false,
+              "verdict": "neutral",
+              "helped": false,
+              "identical_ordering": false,
+              "evidence_delta": 0
+            }
+          }
+        }
+      ]
+    }
+  }
+}
