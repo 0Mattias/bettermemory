@@ -7,6 +7,63 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 5.4.0 - 2026-08-12
+
+A minor by the [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract).
+**Default ranking is byte-identical to 5.3.0**, and for the first time
+that sentence is a preregistered measurement rather than a review
+claim: the off-arm reproduced every committed dev baseline cell and the
+LongMemEval baseline to four decimals (P63), and 91/91 tied dev probes
+returned identical ids and scores across the full depth window (P64).
+Everything added is a default-off engine mechanism, bench instruments,
+and register fixes.
+
+### Added — round 9: the trailing base leg is withheld, measured, and killed at its gate
+
+`a1fd750` adds the campaign's H-fusion-general mechanism: `_hybrid_fuse`
+reads rank, not evidence, so a base leg that trails its peer's evidence
+at rank-1 voted exactly as hard as the leading leg. The base-leg census
+(`bench/base_leg_census.py` and its labels artifact) located the damage
+in RELATIVE evidence — trailing legs helped 2 of 29 labelled dev cases,
+none of twelve at a deficit of two or more — so the rule is withheld,
+not damped: the trailing leg does not vote, ties fuse byte-identically,
+and no graded constant exists to dispute across corpora.
+
+Preregistered as addendum 12 (P63–P70) and measured on three
+instruments. Dev gains were the campaign's largest and census-exact —
+padded-600 recall@1 rose 25/70/25 to 35/85/35 for asked/requery/control
+with recall@5 unchanged in every cell — and LongMemEval fell on all
+three macros (0.8861 vs 0.8935 at macro@5), which is a preregistered
+kill: C1 measured at the base pair. `_BASE_LEG_TRAILING_WITHHOLD` ships
+False; `--base-withhold` drives the arm in all three bench runners; the
+sealed held-out instrument was protected for the fifth time. The full
+record, including a disclosed upward-missed prediction clause and the
+per-question damage map, is the round-9 section of
+`bench/longmemeval/README.md`.
+
+### Added — a second blind-authored held-out instrument
+
+`bench/heldout/data2/` (9524b88): 15 personas, 135 sessions, 120
+questions, authored from `FORMAT.md` alone by an isolated agent under
+the proven seal protocol, validated with zero envelope warnings, and
+reserved by addendum 12 for the next mechanism — two live mechanisms
+never share one single-use check.
+
+### Bench
+
+The P1e census-2 close (the from-scratch dense term-emission lane
+parked by its own pre-declared criterion) landed in this window; its
+record lives in the P1e sections of `bench/longmemeval/README.md` and
+`bench/retrieval/README.md`.
+
+### Fixed
+
+- README: six bolded bullet leads reintroduced by the 5.0 measurement
+  purge are plain sentences again, per the public-docs register bar.
+- `bench/claims.py`: the usage block cites `.venv/bin/python` — the
+  interpreter path that actually exists — matching every sibling bench
+  docstring.
+
 ## 5.3.0 - 2026-08-11
 
 A minor by the [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract).
