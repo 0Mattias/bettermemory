@@ -9,10 +9,12 @@ record that the trainer's declared defaults are the sweep's best.
 Census 2 (`bench/P1E_CENSUS2_DECLARATION.md`, artifact
 `bench/retrieval/results/embed-census2-2026-08-11.json`) fixed its
 family and bars first, ran, and PARKED the emission lane at its own
-criterion: the primary cell reached 0.712 of the incumbent's
-precision and no cell in the family passed at width. Term EMISSION
-from store-trained vectors is dead at store scale, by its own
-declared rules, and nothing here relitigates it.
+criterion: the primary cell missed the incumbent's gate and no cell
+in the family passed at width — the margins live in that artifact,
+cited rather than restated, exactly as this document treats every
+number it did not itself produce. Term EMISSION from store-trained
+vectors is dead at store scale, by its own declared rules, and
+nothing here relitigates it.
 
 SCORING is a different mechanism family, and the owner's 2026-08-12
 decisions put it on the board: store-trained only (no external
