@@ -40,27 +40,27 @@ Offline, throwaway store.
 
 ## What it does
 
-- **Checks memory before believing it.** Every hit carries a staleness
+- Checks memory before believing it. Every hit carries a staleness
   verdict: calendar age, whether the paths it cites still exist, and
   the commits landed since it was last confirmed. Declared claims
   (`path`, `path::symbol`, `path::NAME=literal`) are re-checked
   against the working tree; a claim that stops being true blocks the
   stamp instead of riding along.
-- **Retrieval is deliberate.** Memory is a tool call, not an
+- Retrieval is deliberate. Memory is a tool call, not an
   injection. Write gates bounce transient state, secret-shaped tokens
   and near-duplicates; claims about *you* stage for confirmation.
-- **The code is the model.** Search is deterministic lexical ranking —
+- The code is the model. Search is deterministic lexical ranking —
   keyword + BM25, fused — over your own vocabulary. No embedding
   models, no downloads, nothing to warm up, same answer every time.
-- **Plain files.** One markdown file per memory. Greppable,
+- Plain files. One markdown file per memory. Greppable,
   git-syncable, no cloud, no account. The SQLite index beside the
   files is a derived cache you can delete; `bettermemory reindex`
   rebuilds it.
-- **Rot gets acted on, not accumulated.** Episodes journal per-session
+- Rot gets acted on, not accumulated. Episodes journal per-session
   run-state without polluting durable search; health telemetry and
   curation tools surface what drifted, what went cold, and what
   contradicts what.
-- **Receipts, not adjectives.** The claims above are measured by
+- Receipts, not adjectives. The claims above are measured by
   preregistered benchmarks with published artifacts — misses included
   — in [bench/][bench], and `bettermemory eval` scores whether memory
   actually helped against your own log ([ours is
