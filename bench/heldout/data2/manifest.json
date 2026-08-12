@@ -1,0 +1,10 @@
+{
+  "instrument": "heldout",
+  "version": "1",
+  "authored": "2026-08-12",
+  "author": "blind-authored by an isolated agent from FORMAT.md alone",
+  "license": "MIT",
+  "license_notes": "Original work authored for this instrument. Every persona, session and question was written for this purpose; no text is copied or adapted from any outside source. Redistributed under the repository's MIT license.",
+  "description": "A second, independently blind-authored held-out instrument for single-use scoring. Its content was written from the format specification alone, without reference to the retrieval system it measures or to the sibling instrument in bench/heldout/data/.",
+  "sealed": true
+}

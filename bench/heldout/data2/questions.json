@@ -1,0 +1,992 @@
+[
+  {
+    "question_id": "q001",
+    "persona_id": "nadia_okonkwo",
+    "question": "Where did I first put the rope nurseries in the water, and how many of them were there?",
+    "answer_session_ids": [
+      "nadia_okonkwo_s1"
+    ]
+  },
+  {
+    "question_id": "q002",
+    "persona_id": "nadia_okonkwo",
+    "question": "I asked the marine trust for one figure and was awarded another - what were the two numbers?",
+    "answer_session_ids": [
+      "nadia_okonkwo_s2",
+      "nadia_okonkwo_s4"
+    ]
+  },
+  {
+    "question_id": "q003",
+    "persona_id": "nadia_okonkwo",
+    "question": "How hot did the water get during the bleaching event, and how long did it stay there?",
+    "answer_session_ids": [
+      "nadia_okonkwo_s5"
+    ]
+  },
+  {
+    "question_id": "q004",
+    "persona_id": "nadia_okonkwo",
+    "question": "Who did I take on as field assistant, and what was he doing before that?",
+    "answer_session_ids": [
+      "nadia_okonkwo_s4"
+    ]
+  },
+  {
+    "question_id": "q005",
+    "persona_id": "nadia_okonkwo",
+    "question": "What depth and which site did the nursery move to after the summer?",
+    "answer_session_ids": [
+      "nadia_okonkwo_s6"
+    ]
+  },
+  {
+    "question_id": "q006",
+    "persona_id": "nadia_okonkwo",
+    "question": "How many fragments went out in the first outplanting, and onto which reef block?",
+    "answer_session_ids": [
+      "nadia_okonkwo_s3"
+    ]
+  },
+  {
+    "question_id": "q007",
+    "persona_id": "nadia_okonkwo",
+    "question": "What is my master's student working on, and how many genotypes has she tagged?",
+    "answer_session_ids": [
+      "nadia_okonkwo_s8"
+    ]
+  },
+  {
+    "question_id": "q008",
+    "persona_id": "nadia_okonkwo",
+    "question": "How did nursery survival change between the bleaching event and the autumn count?",
+    "answer_session_ids": [
+      "nadia_okonkwo_s5",
+      "nadia_okonkwo_s7"
+    ]
+  },
+  {
+    "question_id": "q009",
+    "persona_id": "tobias_lindqvist",
+    "question": "What year was the boat built, how long is she, and where is she kept?",
+    "answer_session_ids": [
+      "tobias_lindqvist_s1"
+    ]
+  },
+  {
+    "question_id": "q010",
+    "persona_id": "tobias_lindqvist",
+    "question": "What did the shipwright quote for the rotten frames, and what did I decide to do about it?",
+    "answer_session_ids": [
+      "tobias_lindqvist_s2",
+      "tobias_lindqvist_s3"
+    ]
+  },
+  {
+    "question_id": "q011",
+    "persona_id": "tobias_lindqvist",
+    "question": "What did I find burned into the keelson when the deck came up?",
+    "answer_session_ids": [
+      "tobias_lindqvist_s4"
+    ]
+  },
+  {
+    "question_id": "q012",
+    "persona_id": "tobias_lindqvist",
+    "question": "What engine went in to replace the old petrol one?",
+    "answer_session_ids": [
+      "tobias_lindqvist_s6"
+    ]
+  },
+  {
+    "question_id": "q013",
+    "persona_id": "tobias_lindqvist",
+    "question": "What did I use for the new standing rigging?",
+    "answer_session_ids": [
+      "tobias_lindqvist_s5"
+    ]
+  },
+  {
+    "question_id": "q014",
+    "persona_id": "tobias_lindqvist",
+    "question": "How long did she leak after the launch, and where did I sail her first?",
+    "answer_session_ids": [
+      "tobias_lindqvist_s7"
+    ]
+  },
+  {
+    "question_id": "q015",
+    "persona_id": "tobias_lindqvist",
+    "question": "What job did the wooden boat association give me, and what does it involve?",
+    "answer_session_ids": [
+      "tobias_lindqvist_s8"
+    ]
+  },
+  {
+    "question_id": "q016",
+    "persona_id": "tobias_lindqvist",
+    "question": "Who originally built the boat, and how many previous owners have I traced?",
+    "answer_session_ids": [
+      "tobias_lindqvist_s4",
+      "tobias_lindqvist_s9"
+    ]
+  },
+  {
+    "question_id": "q017",
+    "persona_id": "priya_raman",
+    "question": "What am I calling the bakery, and what is the concept?",
+    "answer_session_ids": [
+      "priya_raman_s1"
+    ]
+  },
+  {
+    "question_id": "q018",
+    "persona_id": "priya_raman",
+    "question": "What are the terms on the Falconer Street lease?",
+    "answer_session_ids": [
+      "priya_raman_s2"
+    ]
+  },
+  {
+    "question_id": "q019",
+    "persona_id": "priya_raman",
+    "question": "What did the oven cost me, all in?",
+    "answer_session_ids": [
+      "priya_raman_s4"
+    ]
+  },
+  {
+    "question_id": "q020",
+    "persona_id": "priya_raman",
+    "question": "Who did I hire, and for which roles?",
+    "answer_session_ids": [
+      "priya_raman_s6"
+    ]
+  },
+  {
+    "question_id": "q021",
+    "persona_id": "priya_raman",
+    "question": "What are the terms of the wholesale arrangement with the roaster?",
+    "answer_session_ids": [
+      "priya_raman_s8"
+    ]
+  },
+  {
+    "question_id": "q022",
+    "persona_id": "priya_raman",
+    "question": "How did the first full quarter come out, and what am I planning next?",
+    "answer_session_ids": [
+      "priya_raman_s9"
+    ]
+  },
+  {
+    "question_id": "q023",
+    "persona_id": "priya_raman",
+    "question": "What pushed the opening back, and how did the first day of service actually go?",
+    "answer_session_ids": [
+      "priya_raman_s5",
+      "priya_raman_s7"
+    ]
+  },
+  {
+    "question_id": "q024",
+    "persona_id": "priya_raman",
+    "question": "What are my current ingredient specs - the butter and the flour?",
+    "answer_session_ids": [
+      "priya_raman_s3",
+      "priya_raman_s9"
+    ]
+  },
+  {
+    "question_id": "q025",
+    "persona_id": "dmitri_haldane",
+    "question": "What recording gear did I buy with the first advance, and what did I do about a room?",
+    "answer_session_ids": [
+      "dmitri_haldane_s3"
+    ]
+  },
+  {
+    "question_id": "q026",
+    "persona_id": "dmitri_haldane",
+    "question": "What parameter drives the ambience system, and how many layers are there?",
+    "answer_session_ids": [
+      "dmitri_haldane_s4"
+    ]
+  },
+  {
+    "question_id": "q027",
+    "persona_id": "dmitri_haldane",
+    "question": "What revision and cancellation terms did I end up with?",
+    "answer_session_ids": [
+      "dmitri_haldane_s5"
+    ]
+  },
+  {
+    "question_id": "q028",
+    "persona_id": "dmitri_haldane",
+    "question": "What did I actually use to make the hull groan?",
+    "answer_session_ids": [
+      "dmitri_haldane_s6"
+    ]
+  },
+  {
+    "question_id": "q029",
+    "persona_id": "dmitri_haldane",
+    "question": "What are the loudness specs on the horror project?",
+    "answer_session_ids": [
+      "dmitri_haldane_s7"
+    ]
+  },
+  {
+    "question_id": "q030",
+    "persona_id": "dmitri_haldane",
+    "question": "What do the students build during the Bergen workshop?",
+    "answer_session_ids": [
+      "dmitri_haldane_s8"
+    ]
+  },
+  {
+    "question_id": "q031",
+    "persona_id": "dmitri_haldane",
+    "question": "What day rate did I start freelancing at, and what am I charging now?",
+    "answer_session_ids": [
+      "dmitri_haldane_s1",
+      "dmitri_haldane_s9"
+    ]
+  },
+  {
+    "question_id": "q032",
+    "persona_id": "dmitri_haldane",
+    "question": "Which project got nominated, and who made it?",
+    "answer_session_ids": [
+      "dmitri_haldane_s2",
+      "dmitri_haldane_s9"
+    ]
+  },
+  {
+    "question_id": "q033",
+    "persona_id": "esperanza_villalobos",
+    "question": "How many people are in the laundry unit, and how long have I worked there?",
+    "answer_session_ids": [
+      "esperanza_villalobos_s1"
+    ]
+  },
+  {
+    "question_id": "q034",
+    "persona_id": "esperanza_villalobos",
+    "question": "How many cards had we signed by the end of the house visits?",
+    "answer_session_ids": [
+      "esperanza_villalobos_s2"
+    ]
+  },
+  {
+    "question_id": "q035",
+    "persona_id": "esperanza_villalobos",
+    "question": "What was the counteroffer we rejected, and why?",
+    "answer_session_ids": [
+      "esperanza_villalobos_s5"
+    ]
+  },
+  {
+    "question_id": "q036",
+    "persona_id": "esperanza_villalobos",
+    "question": "What did the heat complaint win us?",
+    "answer_session_ids": [
+      "esperanza_villalobos_s6"
+    ]
+  },
+  {
+    "question_id": "q037",
+    "persona_id": "esperanza_villalobos",
+    "question": "What shift assignment rule did the first contract create?",
+    "answer_session_ids": [
+      "esperanza_villalobos_s8"
+    ]
+  },
+  {
+    "question_id": "q038",
+    "persona_id": "esperanza_villalobos",
+    "question": "What happened with the Pintado grievance?",
+    "answer_session_ids": [
+      "esperanza_villalobos_s9"
+    ]
+  },
+  {
+    "question_id": "q039",
+    "persona_id": "esperanza_villalobos",
+    "question": "What wage floor did we open with, and what did we settle at?",
+    "answer_session_ids": [
+      "esperanza_villalobos_s4",
+      "esperanza_villalobos_s8"
+    ]
+  },
+  {
+    "question_id": "q040",
+    "persona_id": "esperanza_villalobos",
+    "question": "How did the two big votes go - the election and the strike authorization?",
+    "answer_session_ids": [
+      "esperanza_villalobos_s3",
+      "esperanza_villalobos_s7"
+    ]
+  },
+  {
+    "question_id": "q041",
+    "persona_id": "henrik_baumann",
+    "question": "How do I treat for varroa, and what did the mite drop look like?",
+    "answer_session_ids": [
+      "henrik_baumann_s2"
+    ]
+  },
+  {
+    "question_id": "q042",
+    "persona_id": "henrik_baumann",
+    "question": "Why did I lose colonies over the winter, and what did I change?",
+    "answer_session_ids": [
+      "henrik_baumann_s3"
+    ]
+  },
+  {
+    "question_id": "q043",
+    "persona_id": "henrik_baumann",
+    "question": "How did my first attempt at queen rearing turn out?",
+    "answer_session_ids": [
+      "henrik_baumann_s4"
+    ]
+  },
+  {
+    "question_id": "q044",
+    "persona_id": "henrik_baumann",
+    "question": "What am I charging for honey and cider at the market?",
+    "answer_session_ids": [
+      "henrik_baumann_s7"
+    ]
+  },
+  {
+    "question_id": "q045",
+    "persona_id": "henrik_baumann",
+    "question": "What got into the hives, and how did I secure the apiary?",
+    "answer_session_ids": [
+      "henrik_baumann_s8"
+    ]
+  },
+  {
+    "question_id": "q046",
+    "persona_id": "henrik_baumann",
+    "question": "What does the quality label require of me?",
+    "answer_session_ids": [
+      "henrik_baumann_s9"
+    ]
+  },
+  {
+    "question_id": "q047",
+    "persona_id": "henrik_baumann",
+    "question": "How many hives did I start with, and how many am I going to?",
+    "answer_session_ids": [
+      "henrik_baumann_s1",
+      "henrik_baumann_s9"
+    ]
+  },
+  {
+    "question_id": "q048",
+    "persona_id": "henrik_baumann",
+    "question": "What is in the orchard I leased, and what did the fruit turn into?",
+    "answer_session_ids": [
+      "henrik_baumann_s5",
+      "henrik_baumann_s6"
+    ]
+  },
+  {
+    "question_id": "q049",
+    "persona_id": "ade_oyelaran",
+    "question": "How long was I at the old firm, and what was I costing there?",
+    "answer_session_ids": [
+      "ade_oyelaran_s1"
+    ]
+  },
+  {
+    "question_id": "q050",
+    "persona_id": "ade_oyelaran",
+    "question": "What course did I take, and how was it structured?",
+    "answer_session_ids": [
+      "ade_oyelaran_s2"
+    ]
+  },
+  {
+    "question_id": "q051",
+    "persona_id": "ade_oyelaran",
+    "question": "Where did the value engineering saving come from?",
+    "answer_session_ids": [
+      "ade_oyelaran_s4"
+    ]
+  },
+  {
+    "question_id": "q052",
+    "persona_id": "ade_oyelaran",
+    "question": "What procurement route did we use, and who is the contractor?",
+    "answer_session_ids": [
+      "ade_oyelaran_s5"
+    ]
+  },
+  {
+    "question_id": "q053",
+    "persona_id": "ade_oyelaran",
+    "question": "How many days did the contractor claim, and how many did I assess?",
+    "answer_session_ids": [
+      "ade_oyelaran_s6"
+    ]
+  },
+  {
+    "question_id": "q054",
+    "persona_id": "ade_oyelaran",
+    "question": "How many schemes went into the cost database, and how were they treated?",
+    "answer_session_ids": [
+      "ade_oyelaran_s8"
+    ]
+  },
+  {
+    "question_id": "q055",
+    "persona_id": "ade_oyelaran",
+    "question": "What rate did I carry on the first timber job, and how does it sit against the benchmark I published?",
+    "answer_session_ids": [
+      "ade_oyelaran_s3",
+      "ade_oyelaran_s8"
+    ]
+  },
+  {
+    "question_id": "q056",
+    "persona_id": "ade_oyelaran",
+    "question": "What did I name my practice, and who works there now?",
+    "answer_session_ids": [
+      "ade_oyelaran_s7",
+      "ade_oyelaran_s9"
+    ]
+  },
+  {
+    "question_id": "q057",
+    "persona_id": "wren_mackinnon",
+    "question": "How long was the thru-hike, how many days did it take, and what was my base weight?",
+    "answer_session_ids": [
+      "wren_mackinnon_s1"
+    ]
+  },
+  {
+    "question_id": "q058",
+    "persona_id": "wren_mackinnon",
+    "question": "Which landowner refused access, and how did I route around it?",
+    "answer_session_ids": [
+      "wren_mackinnon_s4"
+    ]
+  },
+  {
+    "question_id": "q059",
+    "persona_id": "wren_mackinnon",
+    "question": "What scale is the map, and how many copies did I print?",
+    "answer_session_ids": [
+      "wren_mackinnon_s5"
+    ]
+  },
+  {
+    "question_id": "q060",
+    "persona_id": "wren_mackinnon",
+    "question": "Which rescue team did I join, and what do I carry now?",
+    "answer_session_ids": [
+      "wren_mackinnon_s7"
+    ]
+  },
+  {
+    "question_id": "q061",
+    "persona_id": "wren_mackinnon",
+    "question": "What went wrong on the guided traverse, and what rule came out of it?",
+    "answer_session_ids": [
+      "wren_mackinnon_s8"
+    ]
+  },
+  {
+    "question_id": "q062",
+    "persona_id": "wren_mackinnon",
+    "question": "How many circuits is the park commission, and over what period?",
+    "answer_session_ids": [
+      "wren_mackinnon_s9"
+    ]
+  },
+  {
+    "question_id": "q063",
+    "persona_id": "wren_mackinnon",
+    "question": "What was the knee injury, and how did I get back to full days?",
+    "answer_session_ids": [
+      "wren_mackinnon_s2",
+      "wren_mackinnon_s6"
+    ]
+  },
+  {
+    "question_id": "q064",
+    "persona_id": "wren_mackinnon",
+    "question": "What mapping work do I have on - the connector and the commission?",
+    "answer_session_ids": [
+      "wren_mackinnon_s3",
+      "wren_mackinnon_s9"
+    ]
+  },
+  {
+    "question_id": "q065",
+    "persona_id": "mireille_soucy",
+    "question": "How many registers does the archive hold, and how far back do they go?",
+    "answer_session_ids": [
+      "mireille_soucy_s1"
+    ]
+  },
+  {
+    "question_id": "q066",
+    "persona_id": "mireille_soucy",
+    "question": "What metadata standard did I adopt, and what are the mandatory fields?",
+    "answer_session_ids": [
+      "mireille_soucy_s4"
+    ]
+  },
+  {
+    "question_id": "q067",
+    "persona_id": "mireille_soucy",
+    "question": "What did we find in the 1740 register, and what protocol did we agree?",
+    "answer_session_ids": [
+      "mireille_soucy_s5"
+    ]
+  },
+  {
+    "question_id": "q068",
+    "persona_id": "mireille_soucy",
+    "question": "How is the volunteers' transcription quality checked?",
+    "answer_session_ids": [
+      "mireille_soucy_s6"
+    ]
+  },
+  {
+    "question_id": "q069",
+    "persona_id": "mireille_soucy",
+    "question": "How did the portal's first month go?",
+    "answer_session_ids": [
+      "mireille_soucy_s8"
+    ]
+  },
+  {
+    "question_id": "q070",
+    "persona_id": "mireille_soucy",
+    "question": "What am I teaching, and what appointment did I take on?",
+    "answer_session_ids": [
+      "mireille_soucy_s9"
+    ]
+  },
+  {
+    "question_id": "q071",
+    "persona_id": "mireille_soucy",
+    "question": "How many images did we set out to capture, and did we get there?",
+    "answer_session_ids": [
+      "mireille_soucy_s2",
+      "mireille_soucy_s8"
+    ]
+  },
+  {
+    "question_id": "q072",
+    "persona_id": "mireille_soucy",
+    "question": "Which volumes have needed conservation work, and why?",
+    "answer_session_ids": [
+      "mireille_soucy_s3",
+      "mireille_soucy_s7"
+    ]
+  },
+  {
+    "question_id": "q073",
+    "persona_id": "jonah_pettigrew",
+    "question": "How big is the team, and what format do we compete in?",
+    "answer_session_ids": [
+      "jonah_pettigrew_s1"
+    ]
+  },
+  {
+    "question_id": "q074",
+    "persona_id": "jonah_pettigrew",
+    "question": "Who won top speaker at the first tournament?",
+    "answer_session_ids": [
+      "jonah_pettigrew_s2"
+    ]
+  },
+  {
+    "question_id": "q075",
+    "persona_id": "jonah_pettigrew",
+    "question": "What was the concern with the dental work, and how was it handled?",
+    "answer_session_ids": [
+      "jonah_pettigrew_s5"
+    ]
+  },
+  {
+    "question_id": "q076",
+    "persona_id": "jonah_pettigrew",
+    "question": "How did state finish, and what happened with the protest?",
+    "answer_session_ids": [
+      "jonah_pettigrew_s6"
+    ]
+  },
+  {
+    "question_id": "q077",
+    "persona_id": "jonah_pettigrew",
+    "question": "What is the feeder programme I am starting?",
+    "answer_session_ids": [
+      "jonah_pettigrew_s9"
+    ]
+  },
+  {
+    "question_id": "q078",
+    "persona_id": "jonah_pettigrew",
+    "question": "What does the dog sleep on, and what club did we join?",
+    "answer_session_ids": [
+      "jonah_pettigrew_s8"
+    ]
+  },
+  {
+    "question_id": "q079",
+    "persona_id": "jonah_pettigrew",
+    "question": "How has Pilot changed since we adopted him?",
+    "answer_session_ids": [
+      "jonah_pettigrew_s3",
+      "jonah_pettigrew_s8"
+    ]
+  },
+  {
+    "question_id": "q080",
+    "persona_id": "jonah_pettigrew",
+    "question": "How are we paying for things - the season budget and the summer institute?",
+    "answer_session_ids": [
+      "jonah_pettigrew_s4",
+      "jonah_pettigrew_s7"
+    ]
+  },
+  {
+    "question_id": "q081",
+    "persona_id": "anwar_belkacem",
+    "question": "Which disease did we confirm, and how are we containing it?",
+    "answer_session_ids": [
+      "anwar_belkacem_s3"
+    ]
+  },
+  {
+    "question_id": "q082",
+    "persona_id": "anwar_belkacem",
+    "question": "How bad is the salinity, and what is the remedy?",
+    "answer_session_ids": [
+      "anwar_belkacem_s4"
+    ]
+  },
+  {
+    "question_id": "q083",
+    "persona_id": "anwar_belkacem",
+    "question": "What does the cooperative do, and what was the first export deal?",
+    "answer_session_ids": [
+      "anwar_belkacem_s6"
+    ]
+  },
+  {
+    "question_id": "q084",
+    "persona_id": "anwar_belkacem",
+    "question": "What did the pollination trial show?",
+    "answer_session_ids": [
+      "anwar_belkacem_s7"
+    ]
+  },
+  {
+    "question_id": "q085",
+    "persona_id": "anwar_belkacem",
+    "question": "What am I growing under the palms, and what is on the western edge?",
+    "answer_session_ids": [
+      "anwar_belkacem_s8"
+    ]
+  },
+  {
+    "question_id": "q086",
+    "persona_id": "anwar_belkacem",
+    "question": "What did the training programme cover, and what did I publish?",
+    "answer_session_ids": [
+      "anwar_belkacem_s9"
+    ]
+  },
+  {
+    "question_id": "q087",
+    "persona_id": "anwar_belkacem",
+    "question": "What was the water table doing when I arrived, and what is it doing now?",
+    "answer_session_ids": [
+      "anwar_belkacem_s1",
+      "anwar_belkacem_s9"
+    ]
+  },
+  {
+    "question_id": "q088",
+    "persona_id": "anwar_belkacem",
+    "question": "What have I done to cut water use and energy cost?",
+    "answer_session_ids": [
+      "anwar_belkacem_s2",
+      "anwar_belkacem_s5"
+    ]
+  },
+  {
+    "question_id": "q089",
+    "persona_id": "lucia_ferraro",
+    "question": "Which technique method am I retraining with, and who teaches me?",
+    "answer_session_ids": [
+      "lucia_ferraro_s3"
+    ]
+  },
+  {
+    "question_id": "q090",
+    "persona_id": "lucia_ferraro",
+    "question": "What accommodation did we make for the soprano's role debut?",
+    "answer_session_ids": [
+      "lucia_ferraro_s4"
+    ]
+  },
+  {
+    "question_id": "q091",
+    "persona_id": "lucia_ferraro",
+    "question": "What piano did I buy, and what had to be done to it?",
+    "answer_session_ids": [
+      "lucia_ferraro_s5"
+    ]
+  },
+  {
+    "question_id": "q092",
+    "persona_id": "lucia_ferraro",
+    "question": "How did the season cut change my work?",
+    "answer_session_ids": [
+      "lucia_ferraro_s6"
+    ]
+  },
+  {
+    "question_id": "q093",
+    "persona_id": "lucia_ferraro",
+    "question": "Which language did I take on, and who checks my coaching?",
+    "answer_session_ids": [
+      "lucia_ferraro_s7"
+    ]
+  },
+  {
+    "question_id": "q094",
+    "persona_id": "lucia_ferraro",
+    "question": "How did we set up the recording sessions?",
+    "answer_session_ids": [
+      "lucia_ferraro_s8"
+    ]
+  },
+  {
+    "question_id": "q095",
+    "persona_id": "lucia_ferraro",
+    "question": "What is the arm problem, and how am I managing it now?",
+    "answer_session_ids": [
+      "lucia_ferraro_s2",
+      "lucia_ferraro_s9"
+    ]
+  },
+  {
+    "question_id": "q096",
+    "persona_id": "lucia_ferraro",
+    "question": "What Riccioli have I worked on?",
+    "answer_session_ids": [
+      "lucia_ferraro_s1",
+      "lucia_ferraro_s8"
+    ]
+  },
+  {
+    "question_id": "q097",
+    "persona_id": "bettina_hoss",
+    "question": "Where do I work, and how far through the exams was I?",
+    "answer_session_ids": [
+      "bettina_hoss_s1"
+    ]
+  },
+  {
+    "question_id": "q098",
+    "persona_id": "bettina_hoss",
+    "question": "What did the mortality assumption review change?",
+    "answer_session_ids": [
+      "bettina_hoss_s3"
+    ]
+  },
+  {
+    "question_id": "q099",
+    "persona_id": "bettina_hoss",
+    "question": "When did I qualify, and who mentored me?",
+    "answer_session_ids": [
+      "bettina_hoss_s5"
+    ]
+  },
+  {
+    "question_id": "q100",
+    "persona_id": "bettina_hoss",
+    "question": "What did I do with my fifth day?",
+    "answer_session_ids": [
+      "bettina_hoss_s7"
+    ]
+  },
+  {
+    "question_id": "q101",
+    "persona_id": "bettina_hoss",
+    "question": "What offers came in after the national show?",
+    "answer_session_ids": [
+      "bettina_hoss_s8"
+    ]
+  },
+  {
+    "question_id": "q102",
+    "persona_id": "bettina_hoss",
+    "question": "What did I decide about the fabric collection, and what did I start instead?",
+    "answer_session_ids": [
+      "bettina_hoss_s9"
+    ]
+  },
+  {
+    "question_id": "q103",
+    "persona_id": "bettina_hoss",
+    "question": "How have my show results gone over the years?",
+    "answer_session_ids": [
+      "bettina_hoss_s2",
+      "bettina_hoss_s8"
+    ]
+  },
+  {
+    "question_id": "q104",
+    "persona_id": "bettina_hoss",
+    "question": "What machine did I buy, and what did I make on it?",
+    "answer_session_ids": [
+      "bettina_hoss_s4",
+      "bettina_hoss_s6"
+    ]
+  },
+  {
+    "question_id": "q105",
+    "persona_id": "rafael_montenegro",
+    "question": "What figure did I reach on the first mirror, and how did I test it?",
+    "answer_session_ids": [
+      "rafael_montenegro_s2"
+    ]
+  },
+  {
+    "question_id": "q106",
+    "persona_id": "rafael_montenegro",
+    "question": "What is the mount made of, and how heavy is the telescope?",
+    "answer_session_ids": [
+      "rafael_montenegro_s3"
+    ]
+  },
+  {
+    "question_id": "q107",
+    "persona_id": "rafael_montenegro",
+    "question": "What did the council actually approve?",
+    "answer_session_ids": [
+      "rafael_montenegro_s5"
+    ]
+  },
+  {
+    "question_id": "q108",
+    "persona_id": "rafael_montenegro",
+    "question": "How well was I guiding on the imaging run?",
+    "answer_session_ids": [
+      "rafael_montenegro_s6"
+    ]
+  },
+  {
+    "question_id": "q109",
+    "persona_id": "rafael_montenegro",
+    "question": "How many members does the club have, and what do we do in schools?",
+    "answer_session_ids": [
+      "rafael_montenegro_s7"
+    ]
+  },
+  {
+    "question_id": "q110",
+    "persona_id": "rafael_montenegro",
+    "question": "Where has the dark sky reserve application got to?",
+    "answer_session_ids": [
+      "rafael_montenegro_s9"
+    ]
+  },
+  {
+    "question_id": "q111",
+    "persona_id": "rafael_montenegro",
+    "question": "Which mirrors have I made or started, and what sizes?",
+    "answer_session_ids": [
+      "rafael_montenegro_s1",
+      "rafael_montenegro_s8"
+    ]
+  },
+  {
+    "question_id": "q112",
+    "persona_id": "rafael_montenegro",
+    "question": "What sky brightness measurements do I have, and what are they for?",
+    "answer_session_ids": [
+      "rafael_montenegro_s4",
+      "rafael_montenegro_s9"
+    ]
+  },
+  {
+    "question_id": "q113",
+    "persona_id": "yuki_tanabe",
+    "question": "What is my clay body recipe, and how much does it shrink?",
+    "answer_session_ids": [
+      "yuki_tanabe_s3"
+    ]
+  },
+  {
+    "question_id": "q114",
+    "persona_id": "yuki_tanabe",
+    "question": "What are the terms of the apprenticeship?",
+    "answer_session_ids": [
+      "yuki_tanabe_s4"
+    ]
+  },
+  {
+    "question_id": "q115",
+    "persona_id": "yuki_tanabe",
+    "question": "How did the gallery show do?",
+    "answer_session_ids": [
+      "yuki_tanabe_s6"
+    ]
+  },
+  {
+    "question_id": "q116",
+    "persona_id": "yuki_tanabe",
+    "question": "How is the stoking organised on a workshop firing?",
+    "answer_session_ids": [
+      "yuki_tanabe_s7"
+    ]
+  },
+  {
+    "question_id": "q117",
+    "persona_id": "yuki_tanabe",
+    "question": "How am I handling the temple commission?",
+    "answer_session_ids": [
+      "yuki_tanabe_s8"
+    ]
+  },
+  {
+    "question_id": "q118",
+    "persona_id": "yuki_tanabe",
+    "question": "What was I offered abroad, and who wants to film?",
+    "answer_session_ids": [
+      "yuki_tanabe_s9"
+    ]
+  },
+  {
+    "question_id": "q119",
+    "persona_id": "yuki_tanabe",
+    "question": "How did my loss rate change between the first and second firings, and why?",
+    "answer_session_ids": [
+      "yuki_tanabe_s2",
+      "yuki_tanabe_s5"
+    ]
+  },
+  {
+    "question_id": "q120",
+    "persona_id": "yuki_tanabe",
+    "question": "How big is the kiln, and what repairs has it needed?",
+    "answer_session_ids": [
+      "yuki_tanabe_s1",
+      "yuki_tanabe_s9"
+    ]
+  }
+]

@@ -1,0 +1,3399 @@
+[
+  {
+    "persona_id": "nadia_okonkwo",
+    "sessions": [
+      {
+        "session_id": "nadia_okonkwo_s1",
+        "date": "2025-01-14",
+        "turns": [
+          {
+            "role": "user",
+            "text": "We finally got the coral nursery in the water at Mnazi Shoal this week - forty rope nurseries, all seeded with Acropora muricata fragments taken from the donor colonies on the north side."
+          },
+          {
+            "role": "assistant",
+            "text": "Forty ropes at Mnazi Shoal seeded with A. muricata. How are you getting out there, and how often can you dive it?"
+          },
+          {
+            "role": "user",
+            "text": "We run out on the Kipepeo, the department's old dive boat. Twenty-five minutes from the jetty, so I can dive the site twice a week without wrecking the fuel budget."
+          },
+          {
+            "role": "assistant",
+            "text": "Noted - Kipepeo, twenty-five minutes each way, two dives a week at the shoal."
+          }
+        ]
+      },
+      {
+        "session_id": "nadia_okonkwo_s2",
+        "date": "2025-02-27",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Spent the whole weekend on the Ostrander Marine Trust application. I asked for sixty-two thousand euros over two years, mostly staff time and boat time."
+          },
+          {
+            "role": "assistant",
+            "text": "Sixty-two thousand from the Ostrander Marine Trust. Are you applying on your own?"
+          },
+          {
+            "role": "user",
+            "text": "No, Halima Juma is co-investigator. She runs the water quality lab and she is the reason the temperature loggers exist at all. Submission closes on the fifteenth of March."
+          },
+          {
+            "role": "assistant",
+            "text": "Got it: co-investigator Dr. Halima Juma, deadline mid-March."
+          }
+        ]
+      },
+      {
+        "session_id": "nadia_okonkwo_s3",
+        "date": "2025-04-08",
+        "turns": [
+          {
+            "role": "user",
+            "text": "First outplanting is done. Four hundred and eighty fragments came off the ropes and onto Reef Block C."
+          },
+          {
+            "role": "assistant",
+            "text": "That is a big first day. How did you attach them?"
+          },
+          {
+            "role": "user",
+            "text": "Epoxy plugs into drilled holes, which took forever, but the cable-tie method kept failing in the surge here."
+          },
+          {
+            "role": "assistant",
+            "text": "Makes sense. What does the monitoring look like?"
+          },
+          {
+            "role": "user",
+            "text": "Survival counts every six weeks, photo quadrats at each of the twelve plots, and I log partial mortality separately from whole-colony loss."
+          },
+          {
+            "role": "assistant",
+            "text": "Six-week survival counts, twelve photo quadrat plots, partial and whole mortality recorded apart."
+          }
+        ]
+      },
+      {
+        "session_id": "nadia_okonkwo_s4",
+        "date": "2025-05-22",
+        "turns": [
+          {
+            "role": "user",
+            "text": "The trust came through, but at forty-seven thousand five hundred instead of what I asked for. They cut the boat time line entirely."
+          },
+          {
+            "role": "assistant",
+            "text": "That is a real cut. What are you going to do about staffing?"
+          },
+          {
+            "role": "user",
+            "text": "Hiring anyway. Baraka Mwinyi starts in June as field assistant - he has been a dive guide at the lodge for six years and knows the reef better than I do."
+          },
+          {
+            "role": "assistant",
+            "text": "Award of 47,500 and Baraka Mwinyi joining as field assistant in June."
+          }
+        ]
+      },
+      {
+        "session_id": "nadia_okonkwo_s5",
+        "date": "2025-07-03",
+        "turns": [
+          {
+            "role": "user",
+            "text": "It is bleaching. Sea surface temperature sat at 31.4 degrees for eleven straight days and the loggers show it never dropped below 30 even at nursery depth."
+          },
+          {
+            "role": "assistant",
+            "text": "Eleven days at 31.4 is brutal. How much of the nursery is affected?"
+          },
+          {
+            "role": "user",
+            "text": "We have lost thirty-eight percent of the nursery stock outright. The outplanted fragments on Reef Block C are pale but mostly hanging on."
+          },
+          {
+            "role": "assistant",
+            "text": "Thirty-eight percent nursery loss, outplants pale but alive. Is there anything you can do in the water right now?"
+          },
+          {
+            "role": "user",
+            "text": "Not much. I am triaging - moving the healthiest genotypes onto the deepest ropes and writing everything down so the event is at least documented properly."
+          },
+          {
+            "role": "assistant",
+            "text": "Triage to depth and document. That is the right call in the middle of it."
+          }
+        ]
+      },
+      {
+        "session_id": "nadia_okonkwo_s6",
+        "date": "2025-08-19",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Decision made: the nursery moves to Chole Channel, twelve metres instead of five. It runs two degrees cooler at the bottom on the worst days."
+          },
+          {
+            "role": "assistant",
+            "text": "Deeper and cooler. Any downside?"
+          },
+          {
+            "role": "user",
+            "text": "Less light, so growth will be slower. I am trialling shade cloth over half the ropes at the old depth as a control, so I can separate temperature from light."
+          },
+          {
+            "role": "assistant",
+            "text": "Nursery relocated to Chole Channel at twelve metres, with a shade cloth control left at five."
+          }
+        ]
+      },
+      {
+        "session_id": "nadia_okonkwo_s7",
+        "date": "2025-10-01",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Survival on the relocated ropes is back up to seventy-one percent. After the summer we had, I will take it."
+          },
+          {
+            "role": "assistant",
+            "text": "That is a strong recovery. Are you writing it up?"
+          },
+          {
+            "role": "user",
+            "text": "Yes, drafting for the Journal of Tropical Reef Science with Halima and Baraka as co-authors. The framing is depth refugia as a nursery strategy for shallow-water restoration."
+          },
+          {
+            "role": "assistant",
+            "text": "Seventy-one percent survival, paper drafted for the Journal of Tropical Reef Science on depth refugia."
+          }
+        ]
+      },
+      {
+        "session_id": "nadia_okonkwo_s8",
+        "date": "2025-11-14",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Tuula Rantanen started her master's with me. She is tagging genotypes so we can track which ones actually survive heat."
+          },
+          {
+            "role": "assistant",
+            "text": "How many genotypes is she working with?"
+          },
+          {
+            "role": "user",
+            "text": "Twelve, all from the original donor colonies, each with a numbered tag and a tissue sample in the freezer at the lab."
+          },
+          {
+            "role": "assistant",
+            "text": "Tuula Rantanen, master's student, twelve tagged genotypes with tissue archived."
+          }
+        ]
+      },
+      {
+        "session_id": "nadia_okonkwo_s9",
+        "date": "2026-01-20",
+        "turns": [
+          {
+            "role": "user",
+            "text": "The Mombasa reef conference accepted my talk - twenty minutes on the depth refugia work, on the second day."
+          },
+          {
+            "role": "assistant",
+            "text": "Congratulations. Is the renewal application going in as well?"
+          },
+          {
+            "role": "user",
+            "text": "Yes, and this time I am asking for a hundred and ten thousand over three years, with a replacement outboard written in as a capital item. The Kipepeo's engine finally died in December."
+          },
+          {
+            "role": "assistant",
+            "text": "Renewal at 110,000 over three years, including the outboard."
+          },
+          {
+            "role": "user",
+            "text": "Baraka is coming to the conference too. He is presenting the monitoring protocol as a poster, which he wrote most of anyway."
+          },
+          {
+            "role": "assistant",
+            "text": "Baraka presenting the monitoring poster - well earned."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "persona_id": "tobias_lindqvist",
+    "sessions": [
+      {
+        "session_id": "tobias_lindqvist_s1",
+        "date": "2025-01-09",
+        "turns": [
+          {
+            "role": "user",
+            "text": "I bought a boat. Forty-one years on the ferries and the day I hand back the keys I buy a leaking wooden sloop, eight point four metres, built in 1954."
+          },
+          {
+            "role": "assistant",
+            "text": "Congratulations, I think. Where is she kept?"
+          },
+          {
+            "role": "user",
+            "text": "Sandhamn boatyard, berth fourteen, up on the hard until I know what I am dealing with. She is called Vindra and the name stays."
+          },
+          {
+            "role": "assistant",
+            "text": "Vindra, 1954, 8.4 metres, on the hard at Sandhamn in berth fourteen."
+          }
+        ]
+      },
+      {
+        "session_id": "tobias_lindqvist_s2",
+        "date": "2025-01-30",
+        "turns": [
+          {
+            "role": "user",
+            "text": "The survey came back and it is worse than I hoped. Six frames rotten either side of the mast step, plus soft garboard fastenings."
+          },
+          {
+            "role": "assistant",
+            "text": "Did you get a price for the repair?"
+          },
+          {
+            "role": "user",
+            "text": "Osvald Renner, the shipwright at the yard, quoted thirty-four thousand kronor for the frames alone, and he was honest that it could grow once the planking comes off."
+          },
+          {
+            "role": "assistant",
+            "text": "Six rotten frames at the mast step, 34,000 kronor quoted by Osvald Renner."
+          }
+        ]
+      },
+      {
+        "session_id": "tobias_lindqvist_s3",
+        "date": "2025-02-25",
+        "turns": [
+          {
+            "role": "user",
+            "text": "I have decided to do the frames myself. Osvald will supervise and charge me by the hour when I get stuck, which is cheaper and much more interesting."
+          },
+          {
+            "role": "assistant",
+            "text": "That is a serious undertaking. What do you need to make it work?"
+          },
+          {
+            "role": "user",
+            "text": "A steam box, which I built out of a three metre plastic drainpipe and a wallpaper stripper, and green oak. I found the oak at a farm at Kvarnbacken - they felled two trees in the autumn storm and were going to burn them."
+          },
+          {
+            "role": "assistant",
+            "text": "Doing the frames yourself with Osvald on call, steaming green oak from the Kvarnbacken farm."
+          }
+        ]
+      },
+      {
+        "session_id": "tobias_lindqvist_s4",
+        "date": "2025-04-14",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Deck is off and rebedded. I went through eleven kilos of Marinflex 200 and I have not got the smell out of my hands yet."
+          },
+          {
+            "role": "assistant",
+            "text": "Eleven kilos is a lot of sealant for one deck."
+          },
+          {
+            "role": "user",
+            "text": "It is, but here is the thing that made the week: with the deck up I found the builder's mark burned into the keelson. H.S. 1954. Halvar Sjodin, who had a yard on the north shore until the sixties."
+          },
+          {
+            "role": "assistant",
+            "text": "Deck rebedded with 11 kg of Marinflex 200, and the keelson carries Halvar Sjodin's mark from 1954."
+          }
+        ]
+      },
+      {
+        "session_id": "tobias_lindqvist_s5",
+        "date": "2025-06-11",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Mast came out today on the yard crane. The standing rigging is original, or near enough, so all of it is being replaced."
+          },
+          {
+            "role": "assistant",
+            "text": "What are you replacing it with?"
+          },
+          {
+            "role": "user",
+            "text": "Six millimetre one-by-nineteen stainless wire, swaged ends, and new bronze chainplates because two of the old ones were cracked under the paint."
+          },
+          {
+            "role": "assistant",
+            "text": "New standing rigging in 6 mm 1x19 wire with bronze chainplates."
+          }
+        ]
+      },
+      {
+        "session_id": "tobias_lindqvist_s6",
+        "date": "2025-08-05",
+        "turns": [
+          {
+            "role": "user",
+            "text": "The old Albin petrol engine is out. It was original too, and it was also a fire waiting for an occasion."
+          },
+          {
+            "role": "assistant",
+            "text": "What went in instead?"
+          },
+          {
+            "role": "user",
+            "text": "A Tellus 14, fourteen horsepower diesel, and I had to rebuild the engine bed because the new mounts sit forty millimetres further aft. Two weekends of laminating."
+          },
+          {
+            "role": "assistant",
+            "text": "Albin replaced with a 14 hp Tellus 14 diesel, engine bed rebuilt to suit."
+          }
+        ]
+      },
+      {
+        "session_id": "tobias_lindqvist_s7",
+        "date": "2025-09-20",
+        "turns": [
+          {
+            "role": "user",
+            "text": "She went in the water on Saturday. I have never been so frightened of a boat I built half of myself."
+          },
+          {
+            "role": "assistant",
+            "text": "Did she leak?"
+          },
+          {
+            "role": "user",
+            "text": "Like a colander for three days, and then the planks took up and she went quiet. On the fourth day I sailed her out to Fjardholmen and anchored for the night just to prove it."
+          },
+          {
+            "role": "assistant",
+            "text": "Three days of taking up, then a first sail out to Fjardholmen."
+          }
+        ]
+      },
+      {
+        "session_id": "tobias_lindqvist_s8",
+        "date": "2025-11-08",
+        "turns": [
+          {
+            "role": "user",
+            "text": "I joined the wooden boat association over the winter and they made the mistake of electing me treasurer."
+          },
+          {
+            "role": "assistant",
+            "text": "What does the treasurer actually do there?"
+          },
+          {
+            "role": "user",
+            "text": "Chase eighty-odd members for two hundred kronor a year and organise the regatta at Grundsund in August, which is the real job. Last year it had thirty-one boats."
+          },
+          {
+            "role": "assistant",
+            "text": "Treasurer of the association, eighty members, Grundsund regatta in August with thirty-one boats last year."
+          }
+        ]
+      },
+      {
+        "session_id": "tobias_lindqvist_s9",
+        "date": "2026-02-17",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Elias, my grandson, has decided he wants to learn properly, so this summer we are doing a five-day cruise, just the two of us, no engine unless the harbour requires it."
+          },
+          {
+            "role": "assistant",
+            "text": "That sounds like a good way to learn. How old is he?"
+          },
+          {
+            "role": "user",
+            "text": "Thirteen, and already better on the helm than his father. Meanwhile I have been in the maritime museum archive tracing Vindra's owners - I have four of them now, back to the first, a doctor in Oskarshamn who commissioned her."
+          },
+          {
+            "role": "assistant",
+            "text": "Five-day engineless cruise with thirteen-year-old Elias, and four previous owners traced back to the original commission."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "persona_id": "priya_raman",
+    "sessions": [
+      {
+        "session_id": "priya_raman_s1",
+        "date": "2025-02-03",
+        "turns": [
+          {
+            "role": "user",
+            "text": "I handed in my notice at Hotel Verrine this morning. Six years on that pastry section and I am done making other people's petit fours."
+          },
+          {
+            "role": "assistant",
+            "text": "That is a big step. What is the plan?"
+          },
+          {
+            "role": "user",
+            "text": "A laminated-pastry bakery, croissants and viennoiserie, nothing else. I want to call it Ply, after the layers. I have thirty-eight thousand saved and no landlord yet."
+          },
+          {
+            "role": "assistant",
+            "text": "Leaving Hotel Verrine after six years to open Ply, a laminated-pastry bakery, with 38,000 in savings."
+          }
+        ]
+      },
+      {
+        "session_id": "priya_raman_s2",
+        "date": "2025-03-12",
+        "turns": [
+          {
+            "role": "user",
+            "text": "I think I have found the site. Sixty-two square metres on Falconer Street, one street back from the tram stop, with a yard at the rear for deliveries."
+          },
+          {
+            "role": "assistant",
+            "text": "What are the terms?"
+          },
+          {
+            "role": "user",
+            "text": "Two thousand one hundred and fifty a month, five-year lease with a break at three, and the landlord wants a three-month deposit up front. That is six and a half thousand gone before I bake anything."
+          },
+          {
+            "role": "assistant",
+            "text": "Falconer Street, 62 square metres, 2,150 a month with a three-month deposit."
+          }
+        ]
+      },
+      {
+        "session_id": "priya_raman_s3",
+        "date": "2025-04-22",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Formula is locked. Twenty percent poolish, three-day cold ferment, and a butter block of Alpage at eighty-two percent fat because anything lower tears at the third fold."
+          },
+          {
+            "role": "assistant",
+            "text": "Three days is a long production cycle for a small shop."
+          },
+          {
+            "role": "user",
+            "text": "It is, but it buys me flavour and a schedule I can actually staff. Day one mix, day two lamination and shaping, day three bake. Everything is on a rolling three-day board."
+          },
+          {
+            "role": "assistant",
+            "text": "Ply's croissant formula: 20 percent poolish, three-day cold ferment, Alpage butter at 82 percent fat, on a rolling three-day production board."
+          }
+        ]
+      },
+      {
+        "session_id": "priya_raman_s4",
+        "date": "2025-05-19",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Bought the oven. A used Hallberg D4, four decks, from a bakery in Marloes that closed in March."
+          },
+          {
+            "role": "assistant",
+            "text": "What did it cost?"
+          },
+          {
+            "role": "user",
+            "text": "Three thousand nine hundred, plus eight hundred to move it and rewire for three-phase. The seller cried when the lorry took it away, which I did not expect and will not forget."
+          },
+          {
+            "role": "assistant",
+            "text": "Used Hallberg D4 four-deck oven at 3,900, plus 800 for transport and three-phase wiring."
+          }
+        ]
+      },
+      {
+        "session_id": "priya_raman_s5",
+        "date": "2025-06-30",
+        "turns": [
+          {
+            "role": "user",
+            "text": "The inspection went badly. Not the kitchen - the drainage. They will not sign off without a grease trap and the plumbing runs under the neighbour's floor."
+          },
+          {
+            "role": "assistant",
+            "text": "How long does that set you back?"
+          },
+          {
+            "role": "user",
+            "text": "Five weeks, and about four thousand I did not budget. Opening moves from mid-July to late August and my three-day board becomes a three-day board of nothing."
+          },
+          {
+            "role": "assistant",
+            "text": "Grease trap requirement delays opening by five weeks and costs roughly 4,000 unbudgeted."
+          }
+        ]
+      },
+      {
+        "session_id": "priya_raman_s6",
+        "date": "2025-08-04",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Staff hired. Dario Sepulveda on the bench with me - he was second baker at a place in Marloes and he can shape faster than I can."
+          },
+          {
+            "role": "assistant",
+            "text": "And the front?"
+          },
+          {
+            "role": "user",
+            "text": "Nell Achterberg, who has never worked in food and is the best person I interviewed. She asked what happens to unsold pastry, which nobody else asked."
+          },
+          {
+            "role": "assistant",
+            "text": "Dario Sepulveda as baker, Nell Achterberg front of house."
+          }
+        ]
+      },
+      {
+        "session_id": "priya_raman_s7",
+        "date": "2025-08-30",
+        "turns": [
+          {
+            "role": "user",
+            "text": "We opened. Soft open, no sign outside, and we sold out of a hundred and eighty croissants by nine forty in the morning."
+          },
+          {
+            "role": "assistant",
+            "text": "That is a very fast sell-out for a first day."
+          },
+          {
+            "role": "user",
+            "text": "It was, and the real surprise is the kouign-amann. I made forty as an afterthought and they went before the croissants did. I am doubling them from Tuesday."
+          },
+          {
+            "role": "assistant",
+            "text": "Soft opening: 180 croissants sold out by 9:40, and the kouign-amann outsold everything."
+          }
+        ]
+      },
+      {
+        "session_id": "priya_raman_s8",
+        "date": "2025-10-15",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Third Rail, the roaster on the north side, wants a wholesale line. Ninety laminated items, three mornings a week, delivered by seven."
+          },
+          {
+            "role": "assistant",
+            "text": "Does that work with your production board?"
+          },
+          {
+            "role": "user",
+            "text": "Only if I shift lamination an hour earlier, which Dario has agreed to. It is thirty percent more volume for about half the margin, but it is money that arrives before the shop opens."
+          },
+          {
+            "role": "assistant",
+            "text": "Wholesale with Third Rail: 90 items, three mornings a week, delivered by seven."
+          }
+        ]
+      },
+      {
+        "session_id": "priya_raman_s9",
+        "date": "2026-01-27",
+        "turns": [
+          {
+            "role": "user",
+            "text": "First full quarter closed. Revenue is ahead of the plan by about eleven percent and I am finally paying myself something that resembles a wage."
+          },
+          {
+            "role": "assistant",
+            "text": "What are you doing with that?"
+          },
+          {
+            "role": "user",
+            "text": "Two things. A second deck oven, probably next autumn, and I have switched flour. We are on Bregenz Mill T65 now, stone ground, and the dough is noticeably more extensible."
+          },
+          {
+            "role": "assistant",
+            "text": "Quarter ahead by 11 percent, second oven planned for autumn, flour switched to Bregenz Mill T65."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "persona_id": "dmitri_haldane",
+    "sessions": [
+      {
+        "session_id": "dmitri_haldane_s1",
+        "date": "2025-01-21",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Last day at Grey Harbour Interactive was Friday. Four years of making menu clicks for other people's games and I am going out on my own."
+          },
+          {
+            "role": "assistant",
+            "text": "Congratulations. Have you set a rate?"
+          },
+          {
+            "role": "user",
+            "text": "Four hundred and eighty a day. That is under what the studios pay their usual contractors, but I have no reel of my own yet, only credits buried at the bottom of the list."
+          },
+          {
+            "role": "assistant",
+            "text": "Freelance from Friday, opening day rate of 480."
+          }
+        ]
+      },
+      {
+        "session_id": "dmitri_haldane_s2",
+        "date": "2025-02-18",
+        "turns": [
+          {
+            "role": "user",
+            "text": "First contract signed. A diving game called Undertow, five-person studio in Tallinn, nine weeks of work starting in March."
+          },
+          {
+            "role": "assistant",
+            "text": "What does the sound job look like on a diving game?"
+          },
+          {
+            "role": "user",
+            "text": "Almost everything happens underwater, so the entire mix is one long low-pass problem. I am borrowing two hydrophones and recording in the harbour and in a flooded quarry."
+          },
+          {
+            "role": "assistant",
+            "text": "Undertow with a five-person Tallinn studio, nine weeks, hydrophone recording planned."
+          }
+        ]
+      },
+      {
+        "session_id": "dmitri_haldane_s3",
+        "date": "2025-03-25",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Spent the advance on gear. A Corvid CX-2 shotgun and a Tessera 6 recorder, both used, both from the same seller who was leaving the industry."
+          },
+          {
+            "role": "assistant",
+            "text": "How are you handling the room? Freelance usually means recording in a flat."
+          },
+          {
+            "role": "user",
+            "text": "I stripped the coat closet and put eight absorption panels in it with a moving blanket over the door. It is airless and it is the quietest space I have ever worked in."
+          },
+          {
+            "role": "assistant",
+            "text": "Corvid CX-2, Tessera 6, and an eight-panel closet booth."
+          },
+          {
+            "role": "user",
+            "text": "Noise floor measured seventeen dB A-weighted at three in the morning, which is as good as I get without moving house."
+          },
+          {
+            "role": "assistant",
+            "text": "Noise floor of 17 dBA in the booth."
+          }
+        ]
+      },
+      {
+        "session_id": "dmitri_haldane_s4",
+        "date": "2025-04-29",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Implementation is in Cadence and the whole ambience system runs off a single parameter: depth."
+          },
+          {
+            "role": "assistant",
+            "text": "How is it structured?"
+          },
+          {
+            "role": "user",
+            "text": "Three layers - surface, mid-water, deep - crossfaded by a curve on the live depth value, and the reverb tail lengthens as the layers swap over. Nobody consciously notices it and that is the point."
+          },
+          {
+            "role": "assistant",
+            "text": "Three depth-driven ambience layers in Cadence with a lengthening reverb tail."
+          }
+        ]
+      },
+      {
+        "session_id": "dmitri_haldane_s5",
+        "date": "2025-05-27",
+        "turns": [
+          {
+            "role": "user",
+            "text": "We had a fight about revisions. They assumed unlimited passes because that is what their previous audio person allowed."
+          },
+          {
+            "role": "assistant",
+            "text": "How did you leave it?"
+          },
+          {
+            "role": "user",
+            "text": "Two rounds included per asset batch, anything beyond that at sixty an hour, and a kill fee of thirty percent of the remaining contract if they cancel."
+          },
+          {
+            "role": "assistant",
+            "text": "Two revision rounds, 60 an hour beyond that, 30 percent kill fee."
+          },
+          {
+            "role": "user",
+            "text": "It took three days of emails and I nearly caved twice, but the producer told me afterwards it was the clearest contract they had ever signed."
+          },
+          {
+            "role": "assistant",
+            "text": "Held the line and it landed well."
+          }
+        ]
+      },
+      {
+        "session_id": "dmitri_haldane_s6",
+        "date": "2025-07-08",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Best recording day of my life. Drove out to Lake Vindal at minus fourteen and recorded the ice for six hours."
+          },
+          {
+            "role": "assistant",
+            "text": "What were you after?"
+          },
+          {
+            "role": "user",
+            "text": "Pressure cracks. When the sheet shifts it makes a rising whine that travels hundreds of metres and sounds completely synthetic. Two hundred takes and I will use maybe nine."
+          },
+          {
+            "role": "assistant",
+            "text": "Two hundred ice takes at Lake Vindal at minus fourteen."
+          },
+          {
+            "role": "user",
+            "text": "The funny part is that the sound everyone will actually notice, the hull groan when the submersible is under stress, is not ice at all. It is a filing cabinet drawer dragged slowly with a contact mic taped inside it."
+          },
+          {
+            "role": "assistant",
+            "text": "Hull groan built from a contact-miked filing cabinet drawer."
+          }
+        ]
+      },
+      {
+        "session_id": "dmitri_haldane_s7",
+        "date": "2025-09-16",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Second client is a horror game, Ashen Hollow. Much bigger scope - three hundred and forty assets across four delivery batches."
+          },
+          {
+            "role": "assistant",
+            "text": "Any technical constraints to watch?"
+          },
+          {
+            "role": "user",
+            "text": "They master to minus twenty-three LUFS integrated with a true peak ceiling of minus one, stricter than Undertow was, so I am rebuilding my delivery template around it."
+          },
+          {
+            "role": "assistant",
+            "text": "Ashen Hollow: 340 assets in four batches at minus 23 LUFS integrated, minus 1 dBTP ceiling."
+          }
+        ]
+      },
+      {
+        "session_id": "dmitri_haldane_s8",
+        "date": "2025-11-04",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Teaching a workshop at the college in Bergen in January. Fourteen students, five days."
+          },
+          {
+            "role": "assistant",
+            "text": "What is the curriculum?"
+          },
+          {
+            "role": "user",
+            "text": "Impulse responses end to end. They record their own in a stairwell and a swimming pool, deconvolve them, and leave with a small reverb library they built themselves. No plugin they did not make."
+          },
+          {
+            "role": "assistant",
+            "text": "Five-day Bergen workshop, fourteen students, impulse responses from recording to deconvolution."
+          }
+        ]
+      },
+      {
+        "session_id": "dmitri_haldane_s9",
+        "date": "2026-01-13",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Undertow got nominated at the Northlight Game Audio Awards, best sound design on a small team."
+          },
+          {
+            "role": "assistant",
+            "text": "That is your first credit as lead. What does it change?"
+          },
+          {
+            "role": "user",
+            "text": "Practically, it means I can stop taking the first number offered. I have raised my day rate to five hundred and sixty and so far nobody has blinked."
+          },
+          {
+            "role": "assistant",
+            "text": "Nomination for Undertow, day rate now 560."
+          },
+          {
+            "role": "user",
+            "text": "I also bought the modular synth I have been circling for two years. Three cases of it. My accountant is unhappy and I have never been more productive."
+          },
+          {
+            "role": "assistant",
+            "text": "Modular rig acquired, three cases."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "persona_id": "esperanza_villalobos",
+    "sessions": [
+      {
+        "session_id": "esperanza_villalobos_s1",
+        "date": "2025-01-16",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Eleven years in the laundry at Saint Bertille Medical Center and I have finally started doing something about it. Sixty-two of us in that building and not one of us has a contract."
+          },
+          {
+            "role": "assistant",
+            "text": "What have you started?"
+          },
+          {
+            "role": "user",
+            "text": "Quiet conversations. Break room, parking lot, never on the floor where a supervisor can see. I keep a list of everyone by shift and I mark who will talk and who will not."
+          },
+          {
+            "role": "assistant",
+            "text": "Sixty-two workers in the laundry unit, eleven years there, organizing conversations underway."
+          },
+          {
+            "role": "user",
+            "text": "The mangle crew is the key. If the three women who run the flatwork ironers come in, everyone on nights follows them."
+          },
+          {
+            "role": "assistant",
+            "text": "Flatwork ironer crew identified as the anchor for the night shift."
+          }
+        ]
+      },
+      {
+        "session_id": "esperanza_villalobos_s2",
+        "date": "2025-02-20",
+        "turns": [
+          {
+            "role": "user",
+            "text": "House visits are finished. Thirty-eight of the sixty-two have signed cards."
+          },
+          {
+            "role": "assistant",
+            "text": "How is management responding?"
+          },
+          {
+            "role": "user",
+            "text": "Captive audience meetings twice a week, on the clock. They brought in a consultant who calls himself an employee relations advisor and tells people the union will take their overtime away."
+          },
+          {
+            "role": "assistant",
+            "text": "38 of 62 signed, twice-weekly captive audience meetings with an outside consultant."
+          }
+        ]
+      },
+      {
+        "session_id": "esperanza_villalobos_s3",
+        "date": "2025-04-03",
+        "turns": [
+          {
+            "role": "user",
+            "text": "We won. Forty-one to nineteen, with two challenged ballots that did not matter."
+          },
+          {
+            "role": "assistant",
+            "text": "Congratulations. What was the turnout?"
+          },
+          {
+            "role": "user",
+            "text": "Sixty of sixty-two voted. Two were out sick and one of them phoned me from home to apologize, which tells you everything about how that unit feels now."
+          },
+          {
+            "role": "assistant",
+            "text": "Election carried 41-19 with 60 of 62 voting."
+          }
+        ]
+      },
+      {
+        "session_id": "esperanza_villalobos_s4",
+        "date": "2025-05-15",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Bargaining committee is set. Five of us - me, Roselia Ibarra from days, Manny Tsosie from the sort room, and two from nights."
+          },
+          {
+            "role": "assistant",
+            "text": "What is the opening proposal?"
+          },
+          {
+            "role": "user",
+            "text": "A wage floor of twenty-one fifty an hour, one classification for the whole floor, and premium pay for the mangle room in summer."
+          },
+          {
+            "role": "assistant",
+            "text": "Committee of five including Roselia Ibarra and Manny Tsosie, opening ask of a 21.50 floor with a single classification."
+          }
+        ]
+      },
+      {
+        "session_id": "esperanza_villalobos_s5",
+        "date": "2025-06-26",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Their counter came back at eighteen seventy-five with a three-tier system. Anyone hired after ratification starts two dollars lower and takes six years to top out."
+          },
+          {
+            "role": "assistant",
+            "text": "How did the committee take it?"
+          },
+          {
+            "role": "user",
+            "text": "Rejected in nine minutes. Tiers are how you lose the next generation. Manny put it best - we are not selling people who have not been hired yet."
+          },
+          {
+            "role": "assistant",
+            "text": "Counteroffer of 18.75 with three tiers rejected outright."
+          }
+        ]
+      },
+      {
+        "session_id": "esperanza_villalobos_s6",
+        "date": "2025-07-31",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Filed a safety complaint over the mangle room. It hit forty-four degrees Celsius in there on the twelfth and a woman on nights fainted at the folder."
+          },
+          {
+            "role": "assistant",
+            "text": "What did the complaint ask for?"
+          },
+          {
+            "role": "user",
+            "text": "Ventilation, mandated breaks, and water. We came out with four industrial fans, a fifteen-minute cooling break every two hours whenever the room is over thirty-five, and a wet bulb thermometer they are not allowed to switch off."
+          },
+          {
+            "role": "assistant",
+            "text": "Heat complaint won four fans, 15-minute cooling breaks every two hours above 35 degrees, and a fixed wet bulb thermometer."
+          },
+          {
+            "role": "user",
+            "text": "That one win did more for the holdouts than six months of talking did."
+          },
+          {
+            "role": "assistant",
+            "text": "The heat win converted the holdouts."
+          }
+        ]
+      },
+      {
+        "session_id": "esperanza_villalobos_s7",
+        "date": "2025-09-11",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Strike authorization passed fifty-four to six."
+          },
+          {
+            "role": "assistant",
+            "text": "Did you have to use it?"
+          },
+          {
+            "role": "user",
+            "text": "Three days. An unfair labor practice strike over the two firings in August, not an economic strike, so nobody could be permanently replaced. We were back on Monday and both women had their jobs."
+          },
+          {
+            "role": "assistant",
+            "text": "Authorization 54-6, three-day unfair labor practice strike, both fired workers reinstated."
+          }
+        ]
+      },
+      {
+        "session_id": "esperanza_villalobos_s8",
+        "date": "2025-11-21",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Ratified. Ninety-one percent yes."
+          },
+          {
+            "role": "assistant",
+            "text": "What is in it?"
+          },
+          {
+            "role": "user",
+            "text": "A floor of twenty seventy-five, three percent a year for three years, no tiers at all, and shift bidding by seniority twice a year instead of the supervisor's clipboard."
+          },
+          {
+            "role": "assistant",
+            "text": "First contract: 20.75 floor, 3 percent annually for three years, no tiers, seniority shift bidding twice a year."
+          },
+          {
+            "role": "user",
+            "text": "The tier fight was the whole negotiation. Everything else moved in a week once they let it go."
+          },
+          {
+            "role": "assistant",
+            "text": "Tiers were the hinge of the deal."
+          }
+        ]
+      },
+      {
+        "session_id": "esperanza_villalobos_s9",
+        "date": "2026-02-05",
+        "turns": [
+          {
+            "role": "user",
+            "text": "They elected me chief steward. I have four new stewards to train and a stack of grievances that predate the contract."
+          },
+          {
+            "role": "assistant",
+            "text": "Any of them resolved yet?"
+          },
+          {
+            "role": "user",
+            "text": "Odalys Pintado, fired in December over a uniform infraction nobody has ever been written up for. Won it at step three with full back pay. That case will be quoted in that building for a decade."
+          },
+          {
+            "role": "assistant",
+            "text": "Chief steward with four stewards in training, Pintado grievance won at step three with back pay."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "persona_id": "henrik_baumann",
+    "sessions": [
+      {
+        "session_id": "henrik_baumann_s1",
+        "date": "2024-11-18",
+        "turns": [
+          {
+            "role": "user",
+            "text": "First full season is behind me. Nine hives on the south slope above Untersteg, all Carniolans, and sixty-two kilos of honey off them."
+          },
+          {
+            "role": "assistant",
+            "text": "That is a solid first harvest. What are they foraging on up there?"
+          },
+          {
+            "role": "user",
+            "text": "Dandelion in spring, a big sycamore flow in June, and if the weather holds, alpine rose in July. The alpine rose is what people drive up the valley for."
+          },
+          {
+            "role": "assistant",
+            "text": "Nine Carniolan colonies above Untersteg, 62 kg in the first season, alpine rose as the prize crop."
+          }
+        ]
+      },
+      {
+        "session_id": "henrik_baumann_s2",
+        "date": "2024-12-20",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Treated for varroa yesterday. Oxalic acid vaporisation, two grams a colony, done at dusk while they were clustered."
+          },
+          {
+            "role": "assistant",
+            "text": "How are you checking whether it worked?"
+          },
+          {
+            "role": "user",
+            "text": "Sticky boards under the mesh floors for a week. Colony four dropped over nine hundred mites, which frightened me. Everything else was under two hundred."
+          },
+          {
+            "role": "assistant",
+            "text": "Oxalic vaporisation at 2 g per colony, 900+ mite drop in colony four, under 200 elsewhere."
+          }
+        ]
+      },
+      {
+        "session_id": "henrik_baumann_s3",
+        "date": "2025-03-24",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Three of the nine did not make it through. I opened them yesterday and there was still capped honey a hand's width from the cluster."
+          },
+          {
+            "role": "assistant",
+            "text": "That usually means something other than starvation."
+          },
+          {
+            "role": "user",
+            "text": "Damp. The crownboards were running with condensation and the walls were black with mould. Not cold. Wet."
+          },
+          {
+            "role": "assistant",
+            "text": "Moisture rather than cold, then."
+          },
+          {
+            "role": "user",
+            "text": "So every hive gets an insulated quilt box filled with wood shavings this autumn, and the plastic sheeting comes off the roofs so they can breathe."
+          },
+          {
+            "role": "assistant",
+            "text": "Three winter losses to damp, quilt boxes with shavings going on all hives."
+          }
+        ]
+      },
+      {
+        "session_id": "henrik_baumann_s4",
+        "date": "2025-05-19",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Grafted for the first time. Twenty cells into a cell builder colony, fourteen took, and eleven queens have mated and are laying."
+          },
+          {
+            "role": "assistant",
+            "text": "That is a good take rate for a first attempt."
+          },
+          {
+            "role": "user",
+            "text": "The mothers are all from colony seven, which overwintered on almost nothing and is calm on the comb. I am calling it the Steg line and I intend to keep it going."
+          },
+          {
+            "role": "assistant",
+            "text": "Twenty grafts, fourteen accepted, eleven laying queens, all out of the colony seven Steg line."
+          }
+        ]
+      },
+      {
+        "session_id": "henrik_baumann_s5",
+        "date": "2025-09-29",
+        "turns": [
+          {
+            "role": "user",
+            "text": "I have leased the old orchard at the Ruderer farm. Forty trees, most of them older than my father, and nobody has pruned them since 2011."
+          },
+          {
+            "role": "assistant",
+            "text": "What is growing in there?"
+          },
+          {
+            "role": "user",
+            "text": "Bohnapfel mostly, a hard bitter thing nobody would eat off the tree, and a row of Gravensteiner at the top that are wonderful and rot on the ground every single year."
+          },
+          {
+            "role": "assistant",
+            "text": "Forty-tree lease at the Ruderer farm, Bohnapfel with a top row of Gravensteiner."
+          },
+          {
+            "role": "user",
+            "text": "First pressing gave me three hundred and eighty litres of juice on a hired belt press. Two days, my back is ruined, and it was the most satisfying thing I have done all year."
+          },
+          {
+            "role": "assistant",
+            "text": "380 litres from the first pressing on a hired belt press."
+          }
+        ]
+      },
+      {
+        "session_id": "henrik_baumann_s6",
+        "date": "2025-11-24",
+        "turns": [
+          {
+            "role": "user",
+            "text": "The cider is bottled. Wild ferment, no added yeast, and I keeved it - let the pectin raise a brown cap and racked the clear juice out from underneath."
+          },
+          {
+            "role": "assistant",
+            "text": "How did it finish?"
+          },
+          {
+            "role": "user",
+            "text": "Two hundred and forty bottles of seven hundred and fifty millilitres at six point two percent, with a light natural sparkle off the residual sugar. Two bottles exploded in the cellar, which I am treating as tuition."
+          },
+          {
+            "role": "assistant",
+            "text": "240 bottles of 750 ml keeved wild-ferment cider at 6.2 percent."
+          }
+        ]
+      },
+      {
+        "session_id": "henrik_baumann_s7",
+        "date": "2026-02-16",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Took a stall at the Saturday market in Untersteg for the first time. Fourteen euros for a five hundred gram jar of the alpine rose, nine for a bottle of cider."
+          },
+          {
+            "role": "assistant",
+            "text": "How did it go?"
+          },
+          {
+            "role": "user",
+            "text": "Sold everything I brought in two hours and had four people ask whether I supply wholesale. I do not, yet, and I am not certain I want to."
+          },
+          {
+            "role": "assistant",
+            "text": "Market prices of 14 per 500 g honey jar and 9 per cider bottle, sold out in two hours."
+          }
+        ]
+      },
+      {
+        "session_id": "henrik_baumann_s8",
+        "date": "2026-04-13",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Something turned over three hives in the night. Stone marten from the prints, not a bear, whatever the neighbours would prefer to believe."
+          },
+          {
+            "role": "assistant",
+            "text": "What are you doing about it?"
+          },
+          {
+            "role": "user",
+            "text": "Three-strand electric fence around the whole apiary on a solar energiser, and the hives go up on raised stands with guards on the legs."
+          },
+          {
+            "role": "assistant",
+            "text": "Solar three-strand electric fence and raised stands with marten guards."
+          },
+          {
+            "role": "user",
+            "text": "Separately and worse, Achermann sprayed his rape in full flower at midday and I lost a colony to it. He paid me three hundred without arguing, which surprised me, and has agreed to spray after eight in the evening from now on."
+          },
+          {
+            "role": "assistant",
+            "text": "Colony lost to daytime spraying, 300 in compensation and an evening-spraying agreement with the neighbour."
+          }
+        ]
+      },
+      {
+        "session_id": "henrik_baumann_s9",
+        "date": "2026-06-08",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Accepted into the Bergland quality label. No imported sugar feeding at all, only their own honey or the label's beet syrup, plus an annual residue test on the wax."
+          },
+          {
+            "role": "assistant",
+            "text": "Does that change how you overwinter?"
+          },
+          {
+            "role": "user",
+            "text": "It means leaving more honey on the hives, so my harvest drops maybe fifteen percent. In exchange I can charge nearly double. I am also going to sixteen hives this spring, which is the most I can work single-handed."
+          },
+          {
+            "role": "assistant",
+            "text": "Bergland label bars imported sugar and requires wax residue testing, expanding to sixteen hives."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "persona_id": "ade_oyelaran",
+    "sessions": [
+      {
+        "session_id": "ade_oyelaran_s1",
+        "date": "2025-01-28",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Twelve years at Marchetti and Boyle now, all of it costing concrete-frame commercial. Offices, a hospital wing, two car parks. I want out of that and into residential timber."
+          },
+          {
+            "role": "assistant",
+            "text": "What is driving the change?"
+          },
+          {
+            "role": "user",
+            "text": "Concrete is a solved problem and I am bored by it. Also every timber scheme that crosses my desk has been costed by somebody guessing, and I would rather be the person who is not guessing."
+          },
+          {
+            "role": "assistant",
+            "text": "Twelve years at Marchetti and Boyle on concrete-frame commercial, moving toward residential timber."
+          }
+        ]
+      },
+      {
+        "session_id": "ade_oyelaran_s2",
+        "date": "2025-03-18",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Enrolled on the cross-laminated timber costing course at the Institute of Timber Economics. Six modules, one weekend a month, finishing in September."
+          },
+          {
+            "role": "assistant",
+            "text": "What does it cover?"
+          },
+          {
+            "role": "user",
+            "text": "Panel schedules, connection detailing, transport and craneage - which is where most people's numbers actually go wrong - and the moisture management costs during erection that nobody puts in the plan at all."
+          },
+          {
+            "role": "assistant",
+            "text": "Six-module CLT costing course at the Institute of Timber Economics, running through September."
+          }
+        ]
+      },
+      {
+        "session_id": "ade_oyelaran_s3",
+        "date": "2025-06-10",
+        "turns": [
+          {
+            "role": "user",
+            "text": "First real CLT job. Twenty-four units in Ravensmoor, four storeys over a concrete podium, and I am writing the elemental cost plan from scratch."
+          },
+          {
+            "role": "assistant",
+            "text": "What rate are you carrying for the superstructure?"
+          },
+          {
+            "role": "user",
+            "text": "Eleven hundred and eighty per square metre for the CLT superstructure including connections and erection. The whole plan hangs off that number and I have triangulated it three ways."
+          },
+          {
+            "role": "assistant",
+            "text": "Ravensmoor: 24 units, four storeys, CLT superstructure at 1,180 per square metre."
+          },
+          {
+            "role": "user",
+            "text": "The podium stays concrete because of the groundwater. Nobody argued with that one."
+          },
+          {
+            "role": "assistant",
+            "text": "Concrete podium retained for groundwater reasons."
+          }
+        ]
+      },
+      {
+        "session_id": "ade_oyelaran_s4",
+        "date": "2025-08-05",
+        "turns": [
+          {
+            "role": "user",
+            "text": "The value engineering workshop was brutal and productive. We took eighty-four thousand out without touching the unit count."
+          },
+          {
+            "role": "assistant",
+            "text": "Where did it come from?"
+          },
+          {
+            "role": "user",
+            "text": "Glulam posts and beams instead of CLT wall panels through the internal circulation core, and dropping the non-loadbearing partition panels from a hundred and sixty millimetres to a hundred and forty. The acoustician signed off both."
+          },
+          {
+            "role": "assistant",
+            "text": "84,000 saved through glulam substitution and a 160 to 140 mm reduction on non-loadbearing panels."
+          }
+        ]
+      },
+      {
+        "session_id": "ade_oyelaran_s5",
+        "date": "2025-09-23",
+        "turns": [
+          {
+            "role": "user",
+            "text": "We are going two-stage on the tender. Contractor on board early for buildability, price fixed at stage two."
+          },
+          {
+            "role": "assistant",
+            "text": "Who is the preferred contractor?"
+          },
+          {
+            "role": "user",
+            "text": "Halloway Construction. They have done three timber schemes and they own their crane, which matters more than anything they wrote in the submission. The facade stays as a prime cost sum until the sample panel is approved."
+          },
+          {
+            "role": "assistant",
+            "text": "Two-stage tender with Halloway Construction, facade carried as a PC sum."
+          }
+        ]
+      },
+      {
+        "session_id": "ade_oyelaran_s6",
+        "date": "2025-11-12",
+        "turns": [
+          {
+            "role": "user",
+            "text": "The extension of time claim landed. Halloway want forty-six days, mostly weather and late panel deliveries."
+          },
+          {
+            "role": "assistant",
+            "text": "How are you assessing it?"
+          },
+          {
+            "role": "user",
+            "text": "Day by day against the baseline programme. The weather is genuine for eleven days, the panel delay belongs to their own subcontractor and is not a relevant event, and there is clear concurrency through the middle three weeks."
+          },
+          {
+            "role": "assistant",
+            "text": "46-day claim assessed line by line against the baseline programme."
+          },
+          {
+            "role": "user",
+            "text": "I have assessed nineteen days with no loss and expense. They will argue, but the record is solid - daily site diaries and every delivery note."
+          },
+          {
+            "role": "assistant",
+            "text": "Nineteen days awarded with no loss and expense, supported by site diaries and delivery notes."
+          }
+        ]
+      },
+      {
+        "session_id": "ade_oyelaran_s7",
+        "date": "2026-01-15",
+        "turns": [
+          {
+            "role": "user",
+            "text": "I resigned. Last day is the end of February and I am setting up as Oyelaran Cost Consulting."
+          },
+          {
+            "role": "assistant",
+            "text": "Do you have work lined up?"
+          },
+          {
+            "role": "user",
+            "text": "Three clients. A small developer in Ravensmoor who liked the way the delay claim went, a timber frame manufacturer who wants their own rates challenged, and an architecture practice who need somebody at concept stage."
+          },
+          {
+            "role": "assistant",
+            "text": "Leaving to found Oyelaran Cost Consulting with three clients from day one."
+          }
+        ]
+      },
+      {
+        "session_id": "ade_oyelaran_s8",
+        "date": "2026-03-30",
+        "turns": [
+          {
+            "role": "user",
+            "text": "The database is finished. Forty completed timber schemes, all normalised to a common base date and stripped of abnormals."
+          },
+          {
+            "role": "assistant",
+            "text": "What does it tell you?"
+          },
+          {
+            "role": "user",
+            "text": "A median all-in cost of two thousand two hundred and forty per square metre for mid-rise timber residential, and a spread far tighter than anyone expects once the one-off sites come out."
+          },
+          {
+            "role": "assistant",
+            "text": "Benchmark of 2,240 per square metre across 40 normalised timber schemes."
+          },
+          {
+            "role": "user",
+            "text": "I am publishing it. If the whole sector is guessing then the guessing is the problem, not my competitive advantage."
+          },
+          {
+            "role": "assistant",
+            "text": "Benchmark being published openly."
+          }
+        ]
+      },
+      {
+        "session_id": "ade_oyelaran_s9",
+        "date": "2026-05-20",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Hired my first employee. Ines Kolar, four years on a contractor's commercial team, starts in June."
+          },
+          {
+            "role": "assistant",
+            "text": "That is fast growth for a first year."
+          },
+          {
+            "role": "user",
+            "text": "It is the framework that did it. Fernbank Homes appointed us for five years as cost consultant across their whole development pipeline, which is roughly two hundred units a year."
+          },
+          {
+            "role": "assistant",
+            "text": "Ines Kolar hired, five-year Fernbank Homes framework covering about 200 units a year."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "persona_id": "wren_mackinnon",
+    "sessions": [
+      {
+        "session_id": "wren_mackinnon_s1",
+        "date": "2025-05-06",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Finished the Cairnway on Tuesday. Eleven hundred kilometres, forty-seven days including two rest days, and I have not slept in a bed since March."
+          },
+          {
+            "role": "assistant",
+            "text": "Congratulations. How did the kit hold up?"
+          },
+          {
+            "role": "user",
+            "text": "Base weight of six point eight kilos and I would change two things. The tent was perfect, the stove was overkill, and I carried a book the entire way that I read nine pages of."
+          },
+          {
+            "role": "assistant",
+            "text": "1,100 km in 47 days at a 6.8 kg base weight."
+          },
+          {
+            "role": "user",
+            "text": "The route itself is the real story, though. Two hundred kilometres of it is road walking that has no business being road walking, and that is what I want to fix."
+          },
+          {
+            "role": "assistant",
+            "text": "Road-walking sections flagged as the thing to change."
+          }
+        ]
+      },
+      {
+        "session_id": "wren_mackinnon_s2",
+        "date": "2025-06-24",
+        "turns": [
+          {
+            "role": "user",
+            "text": "The knee is not settling. It started somewhere around kilometre seven hundred and eighty on the descent off the Larrig plateau and I finished the last three hundred on poles."
+          },
+          {
+            "role": "assistant",
+            "text": "Have you had it looked at properly?"
+          },
+          {
+            "role": "user",
+            "text": "Patellar tendinopathy, diagnosed by a physiotherapist called Gil Trewin, and the plan is twelve weeks of heavy slow resistance work three times a week with no descents until week six."
+          },
+          {
+            "role": "assistant",
+            "text": "Patellar tendinopathy from km 780, twelve-week heavy slow resistance programme with Gil Trewin."
+          }
+        ]
+      },
+      {
+        "session_id": "wren_mackinnon_s3",
+        "date": "2025-08-12",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Started surveying the connector. The Slatefell Link, sixty-two kilometres, joining the Cairnway to the coast path so nobody has to walk the verge of a B road for a day and a half."
+          },
+          {
+            "role": "assistant",
+            "text": "How are you surveying it?"
+          },
+          {
+            "role": "user",
+            "text": "A handheld logging a track point every two seconds, a measuring wheel for the stretches where the canopy kills the signal, and a notebook for everything that actually matters - gates, stiles, water, and where the ground turns to bog after rain."
+          },
+          {
+            "role": "assistant",
+            "text": "62 km Slatefell Link surveyed by GPS track, wheel under canopy, and field notebook."
+          }
+        ]
+      },
+      {
+        "session_id": "wren_mackinnon_s4",
+        "date": "2025-09-30",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Access is the whole job, it turns out. Three landowners on the middle section and two of them were straightforward."
+          },
+          {
+            "role": "assistant",
+            "text": "And the third?"
+          },
+          {
+            "role": "user",
+            "text": "The Corrieburn estate said no in writing, twice. Grouse. They will not have people crossing the moor between August and December, and honestly I understand it, I just cannot route a long distance path around a five-month closure."
+          },
+          {
+            "role": "assistant",
+            "text": "Corrieburn estate refused access across the grouse moor."
+          },
+          {
+            "role": "user",
+            "text": "So the line goes north over the old right of way at Whin Gap. It adds four kilometres and two hundred metres of climb, and it is a better walk anyway, which is the sort of thing that happens when somebody tells you no."
+          },
+          {
+            "role": "assistant",
+            "text": "Rerouted over the Whin Gap right of way, adding 4 km and 200 m of ascent."
+          }
+        ]
+      },
+      {
+        "session_id": "wren_mackinnon_s5",
+        "date": "2025-11-18",
+        "turns": [
+          {
+            "role": "user",
+            "text": "The map is printed. One to forty thousand, double sided, on synthetic paper because this is not a country where paper maps survive a week."
+          },
+          {
+            "role": "assistant",
+            "text": "What print run?"
+          },
+          {
+            "role": "user",
+            "text": "Five thousand copies from a press in Marbury. The first thousand went to shops in the valley and were gone in eleven days, which I had not planned for at all."
+          },
+          {
+            "role": "assistant",
+            "text": "1:40,000 map, 5,000 copies printed in Marbury, first thousand sold in eleven days."
+          }
+        ]
+      },
+      {
+        "session_id": "wren_mackinnon_s6",
+        "date": "2026-01-06",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Knee update: I am back to twenty kilometre days with a full pack and no pain the following morning, which was the marker I set myself in October."
+          },
+          {
+            "role": "assistant",
+            "text": "What made the difference?"
+          },
+          {
+            "role": "user",
+            "text": "Single leg squats off a step, three seconds down, every other day for four months. Also new shoes with a four millimetre drop instead of the zero drop I was stubborn about for years."
+          },
+          {
+            "role": "assistant",
+            "text": "Back to 20 km days, rehab built on slow single-leg squats and a move to 4 mm drop shoes."
+          }
+        ]
+      },
+      {
+        "session_id": "wren_mackinnon_s7",
+        "date": "2026-02-24",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Quiet season, so I am building a proper route database. Every path I have surveyed with its condition notes, so the next revision is an edit rather than a resurvey."
+          },
+          {
+            "role": "assistant",
+            "text": "What else is the winter for?"
+          },
+          {
+            "role": "user",
+            "text": "I joined the Ardmuir mountain rescue team in November. Twelve callouts so far, mostly benighted walkers on the east side, and I now carry a satellite messenger even on a day walk, which I used to think was for other people."
+          },
+          {
+            "role": "assistant",
+            "text": "Route database under construction, joined Ardmuir mountain rescue, carrying a satellite messenger."
+          }
+        ]
+      },
+      {
+        "session_id": "wren_mackinnon_s8",
+        "date": "2026-04-14",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Led a group of eight across the high traverse, five days. Seven of them had a wonderful time."
+          },
+          {
+            "role": "assistant",
+            "text": "What happened to the eighth?"
+          },
+          {
+            "role": "user",
+            "text": "Mild hypothermia on day three, wind-driven rain on the plateau. Cotton base layer under a jacket that had stopped being waterproof two seasons ago. We got him into a bothy bag with two others, hot drink, dry layers, and he walked out fine in the morning."
+          },
+          {
+            "role": "assistant",
+            "text": "Hypothermia case on day three managed with a bothy bag and dry layers."
+          },
+          {
+            "role": "user",
+            "text": "New rule for my trips: I check waterproofs at the trailhead. Every jacket, in front of everybody, no exceptions and no embarrassment about it."
+          },
+          {
+            "role": "assistant",
+            "text": "Trailhead kit check added as a standing rule."
+          }
+        ]
+      },
+      {
+        "session_id": "wren_mackinnon_s9",
+        "date": "2026-06-02",
+        "turns": [
+          {
+            "role": "user",
+            "text": "The national park has commissioned me. Fourteen waymarked circuits to survey, map and sign, across two years."
+          },
+          {
+            "role": "assistant",
+            "text": "That is a substantial contract. Can you do it alone?"
+          },
+          {
+            "role": "user",
+            "text": "Not the signage. I will subcontract the posts and the fabrication and keep the surveying and cartography myself. It pays better than anything I have done and it means two summers of walking as a job."
+          },
+          {
+            "role": "assistant",
+            "text": "Two-year park commission for fourteen waymarked circuits, signage subcontracted."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "persona_id": "mireille_soucy",
+    "sessions": [
+      {
+        "session_id": "mireille_soucy_s1",
+        "date": "2025-02-11",
+        "turns": [
+          {
+            "role": "user",
+            "text": "The post is confirmed. I am archivist for the diocesan archive at Saint-Anselme, which holds three hundred and eighty parish registers, the oldest opening in 1687."
+          },
+          {
+            "role": "assistant",
+            "text": "How much of it is catalogued?"
+          },
+          {
+            "role": "user",
+            "text": "About a third, in a card index my predecessor kept beautifully and nobody has touched since 2009. The rest is a shelf list and a very good memory that retired with him."
+          },
+          {
+            "role": "assistant",
+            "text": "380 parish registers from 1687 onward, roughly a third catalogued on cards."
+          }
+        ]
+      },
+      {
+        "session_id": "mireille_soucy_s2",
+        "date": "2025-03-25",
+        "turns": [
+          {
+            "role": "user",
+            "text": "The digitisation project is funded. A hundred and forty thousand over three years from the provincial heritage fund."
+          },
+          {
+            "role": "assistant",
+            "text": "What does the capture setup look like?"
+          },
+          {
+            "role": "user",
+            "text": "An overhead scanner with a book cradle, six hundred dpi, twenty-four bit colour, and a colour target in every hundredth frame so the whole set can be corrected consistently years from now."
+          },
+          {
+            "role": "assistant",
+            "text": "Overhead cradle scanner at 600 dpi, 24-bit colour, with periodic colour targets."
+          },
+          {
+            "role": "user",
+            "text": "The target is ninety-two thousand images. Every register, cover to cover, blank pages included, because a blank page is evidence too."
+          },
+          {
+            "role": "assistant",
+            "text": "92,000 image target across the register series, funded at 140,000 over three years."
+          }
+        ]
+      },
+      {
+        "session_id": "mireille_soucy_s3",
+        "date": "2025-05-13",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Fourteen volumes cannot be scanned as they stand. Iron gall ink has eaten through the paper and turning a page costs you letters."
+          },
+          {
+            "role": "assistant",
+            "text": "What is the treatment?"
+          },
+          {
+            "role": "user",
+            "text": "Calcium phytate then calcium bicarbonate, then resizing with gelatine, all done by Colette Nadeau, who binds for three archives in the province. Two volumes at a time, six weeks per pair."
+          },
+          {
+            "role": "assistant",
+            "text": "14 iron gall corrosion volumes going to Colette Nadeau for phytate treatment, two at a time."
+          }
+        ]
+      },
+      {
+        "session_id": "mireille_soucy_s4",
+        "date": "2025-07-01",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Metadata schema decided, after four months of arguing with myself. We follow NAD-2 with six mandatory fields at item level."
+          },
+          {
+            "role": "assistant",
+            "text": "Which six?"
+          },
+          {
+            "role": "user",
+            "text": "Register title, parish, date range, act types present, language, and a condition note. Everything else is optional, and I would rather have six fields filled honestly than twenty filled by a volunteer guessing."
+          },
+          {
+            "role": "assistant",
+            "text": "NAD-2 with six mandatory item-level fields including a condition note."
+          }
+        ]
+      },
+      {
+        "session_id": "mireille_soucy_s5",
+        "date": "2025-08-26",
+        "turns": [
+          {
+            "role": "user",
+            "text": "We found something. A register from 1740 with twenty-two baptisms of enslaved and Indigenous people recorded in the margins, never indexed, never mentioned in any finding aid."
+          },
+          {
+            "role": "assistant",
+            "text": "How are you handling it?"
+          },
+          {
+            "role": "user",
+            "text": "Slowly, and not alone. I contacted Denis Awashish, who does liaison work for the community council, and we have spent two months on how this gets described and who is told first."
+          },
+          {
+            "role": "assistant",
+            "text": "1740 register with 22 unindexed baptisms, handled with Denis Awashish of the community council."
+          },
+          {
+            "role": "user",
+            "text": "The protocol we agreed is that descendant communities see the transcription and the finding aid language before publication, and their preferred terminology governs the description. It goes into the portal last, not first."
+          },
+          {
+            "role": "assistant",
+            "text": "Protocol: community review of transcription and description before release, their terminology governs."
+          }
+        ]
+      },
+      {
+        "session_id": "mireille_soucy_s6",
+        "date": "2025-10-14",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Eleven volunteer indexers trained and working. Retired teachers mostly, plus one nineteen-year-old who is faster than all of them put together."
+          },
+          {
+            "role": "assistant",
+            "text": "How do you control quality?"
+          },
+          {
+            "role": "user",
+            "text": "Double keying. Every act is transcribed independently by two people and the mismatches come to me. The disagreement rate runs about four percent and nearly all of it is surnames."
+          },
+          {
+            "role": "assistant",
+            "text": "Eleven volunteers, double-keyed transcription, roughly 4 percent mismatch concentrated in surnames."
+          }
+        ]
+      },
+      {
+        "session_id": "mireille_soucy_s7",
+        "date": "2025-12-02",
+        "turns": [
+          {
+            "role": "user",
+            "text": "A sprinkler head failed in stack four on Saturday night and nobody found it until Monday morning."
+          },
+          {
+            "role": "assistant",
+            "text": "How bad?"
+          },
+          {
+            "role": "user",
+            "text": "Sixty volumes wet, none of them seventeenth century, thank God. We had them frozen within eight hours in a fish plant freezer down the road and they are being freeze dried in batches of twelve."
+          },
+          {
+            "role": "assistant",
+            "text": "60 volumes wet, frozen within eight hours, freeze drying in batches of twelve."
+          },
+          {
+            "role": "user",
+            "text": "The insurance claim is straightforward. The lesson is not - there was no water detection in that stack and nobody on site at weekends. Both are being fixed."
+          },
+          {
+            "role": "assistant",
+            "text": "Water detection and weekend cover being added after the stack four leak."
+          }
+        ]
+      },
+      {
+        "session_id": "mireille_soucy_s8",
+        "date": "2026-03-10",
+        "turns": [
+          {
+            "role": "user",
+            "text": "The portal is live. Ninety-two thousand images, searchable by parish, year and act type, free, no account required."
+          },
+          {
+            "role": "assistant",
+            "text": "How has the first month gone?"
+          },
+          {
+            "role": "user",
+            "text": "Three thousand users and four hundred emails, about a third of them corrections to our own indexing, which is exactly what I hoped would happen."
+          },
+          {
+            "role": "assistant",
+            "text": "Portal live with all 92,000 images, 3,000 users and 400 emails in the first month."
+          }
+        ]
+      },
+      {
+        "session_id": "mireille_soucy_s9",
+        "date": "2026-05-19",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Appointed to the provincial archival council for a three-year term. I am the only diocesan archivist on it."
+          },
+          {
+            "role": "assistant",
+            "text": "What else is on your plate?"
+          },
+          {
+            "role": "user",
+            "text": "Palaeography teaching. Eight sessions on the secretary hand of the early eighteenth century, and enrolment filled in two days with a waiting list of thirty. There is an appetite for this that nobody in the profession believes exists."
+          },
+          {
+            "role": "assistant",
+            "text": "Three-year council appointment and an oversubscribed eight-session palaeography course."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "persona_id": "jonah_pettigrew",
+    "sessions": [
+      {
+        "session_id": "jonah_pettigrew_s1",
+        "date": "2025-09-05",
+        "turns": [
+          {
+            "role": "user",
+            "text": "New season starts. Twenty-two students on the Ridgemont debate team this year, the most I have ever had, and we run parliamentary format."
+          },
+          {
+            "role": "assistant",
+            "text": "How do you handle a squad that size?"
+          },
+          {
+            "role": "user",
+            "text": "Pairs. Eleven partnerships, and I make them switch partners twice before November so nobody gets comfortable. First tournament is at Coldwater Academy in three weeks."
+          },
+          {
+            "role": "assistant",
+            "text": "22 students in eleven parliamentary pairs at Ridgemont, opening at Coldwater Academy."
+          }
+        ]
+      },
+      {
+        "session_id": "jonah_pettigrew_s2",
+        "date": "2025-10-18",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Coldwater went better than it had any right to. Two pairs qualified for state, in October, which normally takes us until February."
+          },
+          {
+            "role": "assistant",
+            "text": "Any individual results?"
+          },
+          {
+            "role": "user",
+            "text": "Ifeoma Nwosu took top speaker. Fifteen judges and eleven of them ranked her first. She has been on the team for eleven months."
+          },
+          {
+            "role": "assistant",
+            "text": "Two pairs qualified for state and Ifeoma Nwosu won top speaker at Coldwater."
+          }
+        ]
+      },
+      {
+        "session_id": "jonah_pettigrew_s3",
+        "date": "2025-11-08",
+        "turns": [
+          {
+            "role": "user",
+            "text": "We adopted a greyhound. His name is Pilot, he is four, and he came off a track in July with a tattoo inside his left ear, which is how they are identified."
+          },
+          {
+            "role": "assistant",
+            "text": "How is he settling?"
+          },
+          {
+            "role": "user",
+            "text": "He does not know what stairs are, has never seen a window at floor level, and slept nineteen hours the first day. The adoption group warned me about all of it."
+          },
+          {
+            "role": "assistant",
+            "text": "Pilot, four-year-old retired racer, meeting a house for the first time."
+          },
+          {
+            "role": "user",
+            "text": "He wears a muzzle around cats and small dogs for now. He is not aggressive, he is built to chase and he has been rewarded for chasing his entire life."
+          },
+          {
+            "role": "assistant",
+            "text": "Muzzle policy around cats and small dogs during the adjustment period."
+          }
+        ]
+      },
+      {
+        "session_id": "jonah_pettigrew_s4",
+        "date": "2025-12-06",
+        "turns": [
+          {
+            "role": "user",
+            "text": "The budget meeting was a bloodbath. I asked the board for four thousand eight hundred and they granted two thousand six hundred."
+          },
+          {
+            "role": "assistant",
+            "text": "What does that not cover?"
+          },
+          {
+            "role": "user",
+            "text": "Entry fees for the spring circuit and any hotel night more than two hours from school. Which is most of the circuit."
+          },
+          {
+            "role": "assistant",
+            "text": "2,600 granted against a 4,800 request, leaving the spring circuit unfunded."
+          },
+          {
+            "role": "user",
+            "text": "So we fundraise. Kessler and Voight, the law firm on the square, have put in fifteen hundred a year for three years in exchange for their name on the tournament shirts, and two of their associates judge for us."
+          },
+          {
+            "role": "assistant",
+            "text": "Kessler and Voight sponsoring 1,500 a year for three years, plus judges."
+          }
+        ]
+      },
+      {
+        "session_id": "jonah_pettigrew_s5",
+        "date": "2026-01-17",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Pilot had six teeth out. Racing dogs get terrible teeth and nobody had ever cleaned his."
+          },
+          {
+            "role": "assistant",
+            "text": "Was the anaesthetic a worry?"
+          },
+          {
+            "role": "user",
+            "text": "Very. Sighthounds carry almost no body fat and clear anaesthetic differently, so Dr. Amaya Ocampo used a sighthound-specific protocol and kept him on fluids and a heat mat throughout. He was up and eating chicken by the evening."
+          },
+          {
+            "role": "assistant",
+            "text": "Six extractions under a sighthound anaesthetic protocol with Dr. Amaya Ocampo, home the same day."
+          }
+        ]
+      },
+      {
+        "session_id": "jonah_pettigrew_s6",
+        "date": "2026-03-07",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Third at state. Two rounds of the final we should have won and one we absolutely did win."
+          },
+          {
+            "role": "assistant",
+            "text": "What happened in that one?"
+          },
+          {
+            "role": "user",
+            "text": "A judge disclosed a decision that contradicted her own ballot notes and admitted as much in the hallway afterwards. I filed a protest with the tournament committee."
+          },
+          {
+            "role": "assistant",
+            "text": "Protest filed over a judging decision at state."
+          },
+          {
+            "role": "user",
+            "text": "Denied in about nine minutes, on the grounds that ballots are final once submitted. Which is a rule I actually agree with, and it still cost my kids a final."
+          },
+          {
+            "role": "assistant",
+            "text": "Protest denied on finality grounds despite the acknowledged error."
+          }
+        ]
+      },
+      {
+        "session_id": "jonah_pettigrew_s7",
+        "date": "2026-04-11",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Nine of them are going to the summer institute at Aldridge University. Two weeks, residential, and it is the thing that turns a good speaker into a coach."
+          },
+          {
+            "role": "assistant",
+            "text": "How is it being paid for?"
+          },
+          {
+            "role": "user",
+            "text": "The institute gives us four full scholarships on need, Kessler and Voight cover two places, and five families are paying their own way. Nobody who wanted to go is being left behind, which took six weeks of phone calls."
+          },
+          {
+            "role": "assistant",
+            "text": "Nine students to the Aldridge institute: four scholarships, two sponsored, five self-funded."
+          }
+        ]
+      },
+      {
+        "session_id": "jonah_pettigrew_s8",
+        "date": "2026-06-13",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Seven months with Pilot. He has put on three kilos, learned stairs in a weekend once he decided to, and he sleeps on a raised bed because greyhounds bruise on hard floors."
+          },
+          {
+            "role": "assistant",
+            "text": "How is he with other dogs now?"
+          },
+          {
+            "role": "user",
+            "text": "Fine, muzzle off, except he still cannot be trusted near anything under about eight kilos. We joined a lure coursing club so he gets to run flat out twice a month at something that is not a neighbour's cat."
+          },
+          {
+            "role": "assistant",
+            "text": "Three kilos gained, stairs mastered, raised bed, lure coursing twice a month, muzzle retired except around small animals."
+          }
+        ]
+      },
+      {
+        "session_id": "jonah_pettigrew_s9",
+        "date": "2026-08-01",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Starting a feeder programme at Hollis Middle School in September. Thirty sixth graders, one afternoon a week, and my seniors teach it."
+          },
+          {
+            "role": "assistant",
+            "text": "Why middle school?"
+          },
+          {
+            "role": "user",
+            "text": "Because I keep meeting fifteen-year-olds who would be extraordinary at this and have never heard of it. If we start them at eleven, Ridgemont has a pipeline instead of a recruiting problem."
+          },
+          {
+            "role": "assistant",
+            "text": "Feeder programme at Hollis Middle for thirty sixth graders, taught by Ridgemont seniors."
+          },
+          {
+            "role": "user",
+            "text": "Also Pilot passed his therapy dog evaluation and now does an hour at the public library on Thursdays while children read to him. He falls asleep every single time."
+          },
+          {
+            "role": "assistant",
+            "text": "Pilot certified as a therapy dog with weekly library reading sessions."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "persona_id": "anwar_belkacem",
+    "sessions": [
+      {
+        "session_id": "anwar_belkacem_s1",
+        "date": "2025-01-22",
+        "turns": [
+          {
+            "role": "user",
+            "text": "I have taken over technical management of the Tafilat oasis. One thousand two hundred palms, about seventy percent Deglet Nour and the rest Medjool, plus a scatter of old local varieties nobody has ever named properly."
+          },
+          {
+            "role": "assistant",
+            "text": "What is the state of it?"
+          },
+          {
+            "role": "user",
+            "text": "Productive but declining. The number that keeps me awake is the water table, which the monitoring wells put at eighty centimetres of drop a year."
+          },
+          {
+            "role": "assistant",
+            "text": "1,200 palms at Tafilat, mostly Deglet Nour with Medjool, water table falling 0.8 m per year."
+          },
+          {
+            "role": "user",
+            "text": "At that rate the shallow wells are dry within a decade and the oasis is finished. Everything I do here is downstream of that one number."
+          },
+          {
+            "role": "assistant",
+            "text": "Water table decline treated as the governing constraint."
+          }
+        ]
+      },
+      {
+        "session_id": "anwar_belkacem_s2",
+        "date": "2025-03-11",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Eighteen hectares converted from flood basins to subsurface drip. Emitters at forty centimetres depth, four to a palm, on a ring."
+          },
+          {
+            "role": "assistant",
+            "text": "What has it saved?"
+          },
+          {
+            "role": "user",
+            "text": "Thirty-four percent less water applied for the same soil moisture at root depth, measured against four hectares I deliberately left on flood as a control. The growers did not believe it until they read the meters themselves."
+          },
+          {
+            "role": "assistant",
+            "text": "18 ha on subsurface drip saving 34 percent water against a flood-irrigated control."
+          }
+        ]
+      },
+      {
+        "session_id": "anwar_belkacem_s3",
+        "date": "2025-05-06",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Bayoud confirmed. Forty palms in the northwest corner, Fusarium oxysporum albedinis in the laboratory results, and it is always fatal."
+          },
+          {
+            "role": "assistant",
+            "text": "What is the containment plan?"
+          },
+          {
+            "role": "user",
+            "text": "Burn the infected palms where they stand, no movement of offshoots or tools out of that block, and disinfect everything. Bayoud travels on a shared shovel far more than on the wind."
+          },
+          {
+            "role": "assistant",
+            "text": "40 palms confirmed with bayoud, burn-in-place containment and strict tool disinfection."
+          },
+          {
+            "role": "user",
+            "text": "Replanting with Amal-7, which is resistant and which the growers dislike because the fruit is smaller. I have three years to make them like it or the oasis loses its northwest quarter."
+          },
+          {
+            "role": "assistant",
+            "text": "Replanting with the resistant Amal-7 cultivar despite grower resistance."
+          }
+        ]
+      },
+      {
+        "session_id": "anwar_belkacem_s4",
+        "date": "2025-06-24",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Salinity is climbing. Electrical conductivity in the saturated paste extract has reached six point two decisiemens per metre in the older blocks, which is past the point where Deglet Nour starts losing yield."
+          },
+          {
+            "role": "assistant",
+            "text": "What can you do about it?"
+          },
+          {
+            "role": "user",
+            "text": "A leaching fraction built into the drip schedule, fifteen percent extra water on every fourth irrigation, and gypsum at four tonnes a hectare to push the sodium off the clay. And better drainage, which is the expensive part."
+          },
+          {
+            "role": "assistant",
+            "text": "EC at 6.2 dS/m, addressed with a 15 percent leaching fraction and 4 t/ha gypsum."
+          }
+        ]
+      },
+      {
+        "session_id": "anwar_belkacem_s5",
+        "date": "2025-08-12",
+        "turns": [
+          {
+            "role": "user",
+            "text": "The diesel pump is gone. Twenty-two kilowatts of solar now runs the main borehole, direct drive, no batteries."
+          },
+          {
+            "role": "assistant",
+            "text": "What is the payback?"
+          },
+          {
+            "role": "user",
+            "text": "Four years against the diesel we were burning, and after that the water is effectively free, which is a dangerous sentence in a place with a falling water table. I have written a pumping cap into the cooperative rules for exactly that reason."
+          },
+          {
+            "role": "assistant",
+            "text": "22 kW solar array replacing the diesel pump, four-year payback, pumping cap written into the rules."
+          }
+        ]
+      },
+      {
+        "session_id": "anwar_belkacem_s6",
+        "date": "2025-10-07",
+        "turns": [
+          {
+            "role": "user",
+            "text": "The cooperative is formally registered. Forty-six smallholders, one vote each regardless of how many palms they hold."
+          },
+          {
+            "role": "assistant",
+            "text": "What does it actually do for them?"
+          },
+          {
+            "role": "user",
+            "text": "A grading and packing shed with a cold room, so we stop selling to the man with the truck at whatever price he announces on the day."
+          },
+          {
+            "role": "assistant",
+            "text": "46-member cooperative with a shared grading and packing shed."
+          },
+          {
+            "role": "user",
+            "text": "And the first export contract: sixty tonnes of Medjool to a buyer in Marseille, graded and boxed here, at roughly double the farm gate price we were getting."
+          },
+          {
+            "role": "assistant",
+            "text": "60-tonne Medjool export contract to Marseille at about double farm gate."
+          }
+        ]
+      },
+      {
+        "session_id": "anwar_belkacem_s7",
+        "date": "2026-02-24",
+        "turns": [
+          {
+            "role": "user",
+            "text": "The pollination trial is finished. We ran a mechanical pollen duster against hand pollination across eighty palms."
+          },
+          {
+            "role": "assistant",
+            "text": "What came out of it?"
+          },
+          {
+            "role": "user",
+            "text": "Fruit set was slightly better by hand, as expected, but the duster does in one day what a climber does in four, and yield across the trial block was up twelve percent because we hit the receptive window instead of missing it on half the palms."
+          },
+          {
+            "role": "assistant",
+            "text": "Mechanical pollen duster lifted trial block yield 12 percent by hitting the receptive window."
+          }
+        ]
+      },
+      {
+        "session_id": "anwar_belkacem_s8",
+        "date": "2026-04-13",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Intercropping is in. Alfalfa in the wetter blocks for fodder, henna in the drier ones because it sells and it tolerates the salinity."
+          },
+          {
+            "role": "assistant",
+            "text": "Does the canopy work for them?"
+          },
+          {
+            "role": "user",
+            "text": "That is the whole point. Under the palms it runs four or five degrees cooler at midday and evaporation drops accordingly. I have also planted three hundred tamarisk as a windbreak along the western edge, which is where the sand comes from."
+          },
+          {
+            "role": "assistant",
+            "text": "Alfalfa and henna intercropped under the canopy, 300 tamarisk windbreak on the west edge."
+          }
+        ]
+      },
+      {
+        "session_id": "anwar_belkacem_s9",
+        "date": "2026-06-15",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Twenty-four young farmers finished the training programme. Six months, one day a fortnight, every one of them under thirty-five."
+          },
+          {
+            "role": "assistant",
+            "text": "What did you teach them?"
+          },
+          {
+            "role": "user",
+            "text": "Irrigation scheduling, salinity management, bayoud hygiene, and how to read their own soil test instead of trusting whoever sold them the fertiliser."
+          },
+          {
+            "role": "assistant",
+            "text": "24 farmers trained over six months in scheduling, salinity and disease hygiene."
+          },
+          {
+            "role": "user",
+            "text": "And the manual is printed, Arabic and French, a hundred and twenty pages. Best of all, the monitoring wells have flattened out - the table dropped eleven centimetres last year against eighty the year I arrived."
+          },
+          {
+            "role": "assistant",
+            "text": "Bilingual 120-page manual published, water table decline slowed to 11 cm last year."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "persona_id": "lucia_ferraro",
+    "sessions": [
+      {
+        "session_id": "lucia_ferraro_s1",
+        "date": "2025-02-06",
+        "turns": [
+          {
+            "role": "user",
+            "text": "First day at Teatro Marenco as repetiteur. We are reviving Riccioli's Il Fabbro di Vernazza, which nobody has staged in forty years, and I have a seven week rehearsal period."
+          },
+          {
+            "role": "assistant",
+            "text": "Who is conducting?"
+          },
+          {
+            "role": "user",
+            "text": "Kaspar Nilsen, who wants everything from the piano at performance tempo from day one. Seven weeks sounds generous until you learn the orchestral parts have never been edited and half my job is finding the mistakes before he does."
+          },
+          {
+            "role": "assistant",
+            "text": "Repetiteur at Teatro Marenco for a seven-week revival of Riccioli's Il Fabbro di Vernazza under Kaspar Nilsen."
+          }
+        ]
+      },
+      {
+        "session_id": "lucia_ferraro_s2",
+        "date": "2025-04-17",
+        "turns": [
+          {
+            "role": "user",
+            "text": "My right forearm has gone. Burning from the elbow down after about forty minutes of playing, and I have been doing thirty hour weeks at the keyboard."
+          },
+          {
+            "role": "assistant",
+            "text": "Have you had it assessed?"
+          },
+          {
+            "role": "user",
+            "text": "Flexor tendinitis, diagnosed by Rosalie Trapp, who does the hands for two orchestras and is blunt in a way I apparently needed. Six weeks on a reduced schedule, three hours a day maximum, split into blocks."
+          },
+          {
+            "role": "assistant",
+            "text": "Flexor tendinitis in the right forearm, six-week reduced schedule under Rosalie Trapp at three hours a day."
+          },
+          {
+            "role": "user",
+            "text": "The theatre has given me a second pianist for the staging rehearsals. I hated asking and it took exactly one conversation."
+          },
+          {
+            "role": "assistant",
+            "text": "Second pianist assigned for staging rehearsals."
+          }
+        ]
+      },
+      {
+        "session_id": "lucia_ferraro_s3",
+        "date": "2025-06-05",
+        "turns": [
+          {
+            "role": "user",
+            "text": "I am rebuilding my technique from the ground up. The Kellner method - forearm rotation instead of finger independence, the whole arm working as one unit."
+          },
+          {
+            "role": "assistant",
+            "text": "Who is teaching you?"
+          },
+          {
+            "role": "user",
+            "text": "Miriam Estes in Vienna. Monthly lessons over video with a camera mounted above the keyboard, and she has me practising octaves at a tempo that would embarrass a beginner. Two months in and the burning has already changed character."
+          },
+          {
+            "role": "assistant",
+            "text": "Kellner method retraining with Miriam Estes in Vienna over monthly video lessons."
+          }
+        ]
+      },
+      {
+        "session_id": "lucia_ferraro_s4",
+        "date": "2025-07-24",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Coaching Delphine Aubry through her first Bianca. She is a beautiful lyric soprano with a wall at E flat that appears the moment she is tired."
+          },
+          {
+            "role": "assistant",
+            "text": "Is that technical, or is it the writing?"
+          },
+          {
+            "role": "user",
+            "text": "The writing. Riccioli sits her at the passaggio for eleven bars with no way out of it. Nilsen has approved taking the aria down a semitone, which is historically defensible - Riccioli transposed it himself for the 1889 revival."
+          },
+          {
+            "role": "assistant",
+            "text": "Delphine Aubry's role debut, aria taken down a semitone with the conductor's approval."
+          }
+        ]
+      },
+      {
+        "session_id": "lucia_ferraro_s5",
+        "date": "2025-09-11",
+        "turns": [
+          {
+            "role": "user",
+            "text": "I bought a piano. A used Wernigk 190, eighteen and a half thousand, out of an estate sale in Aarhus."
+          },
+          {
+            "role": "assistant",
+            "text": "What condition is it in?"
+          },
+          {
+            "role": "user",
+            "text": "Structurally excellent, musically asleep. The hammers had never been voiced and the action was regulated for somebody with far stronger hands than mine are now."
+          },
+          {
+            "role": "assistant",
+            "text": "Wernigk 190 grand at 18,500, needing voicing and regulation."
+          },
+          {
+            "role": "user",
+            "text": "Petr Havlik spent three days on it. Regulated the action light, voiced the hammers down, and it is now an instrument I can practise on for three hours without pain, which was the entire point of buying it."
+          },
+          {
+            "role": "assistant",
+            "text": "Petr Havlik regulated the action light and voiced the hammers down for a lighter touch."
+          }
+        ]
+      },
+      {
+        "session_id": "lucia_ferraro_s6",
+        "date": "2025-10-30",
+        "turns": [
+          {
+            "role": "user",
+            "text": "The theatre has cut the season from six productions to four. Two of the cut ones were mine."
+          },
+          {
+            "role": "assistant",
+            "text": "What does that do to your income?"
+          },
+          {
+            "role": "user",
+            "text": "About a third of it, gone. So I have opened a private studio - nine students so far, mostly conservatory singers preparing auditions, at seventy an hour. Better paid per hour than the theatre and far less secure."
+          },
+          {
+            "role": "assistant",
+            "text": "Season cut from six productions to four; private studio opened with nine students at 70 an hour."
+          }
+        ]
+      },
+      {
+        "session_id": "lucia_ferraro_s7",
+        "date": "2026-01-08",
+        "turns": [
+          {
+            "role": "user",
+            "text": "I am learning Czech. Not to speak it - to coach it. The company is doing a Vasilek next season and not one of the singers has ever sung in Czech."
+          },
+          {
+            "role": "assistant",
+            "text": "How do you coach a language you do not speak?"
+          },
+          {
+            "role": "user",
+            "text": "IPA, ruthlessly, and a native coach called Hana Pokorna who checks everything I teach before I teach it. Stress is always on the first syllable and vowel length is independent of stress, which is the thing that breaks Italian-trained singers."
+          },
+          {
+            "role": "assistant",
+            "text": "Adding Czech diction coaching through IPA with native coach Hana Pokorna."
+          }
+        ]
+      },
+      {
+        "session_id": "lucia_ferraro_s8",
+        "date": "2026-03-19",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Recording next month. A recital album of Riccioli songs with the mezzo Birgitta Solheim - thirty-one songs, of which twenty-two have never been recorded by anyone."
+          },
+          {
+            "role": "assistant",
+            "text": "Where are you recording?"
+          },
+          {
+            "role": "user",
+            "text": "A church outside Vasteras with a two and a half second tail and no aeroplanes overhead, which turns out to be harder to find than a good piano. Three days, and we are recording whole songs in single takes, no patching bar by bar."
+          },
+          {
+            "role": "assistant",
+            "text": "Three-day Riccioli song album with Birgitta Solheim at a church near Vasteras."
+          },
+          {
+            "role": "user",
+            "text": "The engineer wanted the lid on the short stick. I wanted it full. We settled on full with the microphones moved back three metres, which was his idea and better than mine."
+          },
+          {
+            "role": "assistant",
+            "text": "Lid fully open with microphones set back three metres."
+          }
+        ]
+      },
+      {
+        "session_id": "lucia_ferraro_s9",
+        "date": "2026-06-04",
+        "turns": [
+          {
+            "role": "user",
+            "text": "They have made me head of music staff. I hire the repetiteurs now, and I have hired two."
+          },
+          {
+            "role": "assistant",
+            "text": "How is the arm holding up under that?"
+          },
+          {
+            "role": "user",
+            "text": "Better than it has in three years, because the job is less playing and more listening. I still cap myself at forty-five minutes a block with a break after, and I have not broken that rule once since the diagnosis. Both new hires got the same rule on their first day."
+          },
+          {
+            "role": "assistant",
+            "text": "Head of music staff with two repetiteurs hired, still working to a 45-minute playing block cap."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "persona_id": "bettina_hoss",
+    "sessions": [
+      {
+        "session_id": "bettina_hoss_s1",
+        "date": "2025-01-13",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Four exams down, three to go. I am a pricing analyst at Ostmark Life working on term assurance, and the next paper is reserving, which everybody says is the wall."
+          },
+          {
+            "role": "assistant",
+            "text": "How are you studying?"
+          },
+          {
+            "role": "user",
+            "text": "Half past five in the morning, two hours before work, six days a week. My employer gives study days but they always land in a month when nothing is due."
+          },
+          {
+            "role": "assistant",
+            "text": "Pricing analyst at Ostmark Life, four of seven exams passed, reserving next."
+          }
+        ]
+      },
+      {
+        "session_id": "bettina_hoss_s2",
+        "date": "2025-03-08",
+        "turns": [
+          {
+            "role": "user",
+            "text": "I entered a quilt at the regional show in Gemunden. Hand quilted, eleven stitches to the inch, called Nightjar - whole cloth in charcoal grey, the pattern only visible when light rakes across it."
+          },
+          {
+            "role": "assistant",
+            "text": "How did it place?"
+          },
+          {
+            "role": "user",
+            "text": "Second in category, and the judge's comment said the binding was the best on the table, which is a genuinely strange thing to be proud of."
+          },
+          {
+            "role": "assistant",
+            "text": "Nightjar took second in category at Gemunden and was praised for its binding."
+          },
+          {
+            "role": "user",
+            "text": "Four hundred hours in that quilt. Second is fine. First went to something with actual colour in it, which I do understand."
+          },
+          {
+            "role": "assistant",
+            "text": "400 hours of hand quilting in Nightjar."
+          }
+        ]
+      },
+      {
+        "session_id": "bettina_hoss_s3",
+        "date": "2025-04-26",
+        "turns": [
+          {
+            "role": "user",
+            "text": "I have been given the mortality assumption review, which is the biggest piece of work I have ever led."
+          },
+          {
+            "role": "assistant",
+            "text": "What did you find?"
+          },
+          {
+            "role": "user",
+            "text": "Our base table is fifteen years old and the lighter-underwriting business has run materially better than it. Moving to a regraduated table with a company-specific adjustment shifts reserves by twelve million, downward."
+          },
+          {
+            "role": "assistant",
+            "text": "Mortality assumption review moving reserves down by 12 million on a regraduated base table."
+          }
+        ]
+      },
+      {
+        "session_id": "bettina_hoss_s4",
+        "date": "2025-06-14",
+        "turns": [
+          {
+            "role": "user",
+            "text": "I bought a longarm. A Meridian 24 on a three point six metre frame, which meant converting the garage, insulating it, and running a new circuit out there."
+          },
+          {
+            "role": "assistant",
+            "text": "That is a serious commitment of space."
+          },
+          {
+            "role": "user",
+            "text": "It is the entire garage. The car lives outside now and my husband has not once complained, which I am putting on the record here so that it is documented somewhere."
+          },
+          {
+            "role": "assistant",
+            "text": "Meridian 24 longarm on a 3.6 m frame installed in the converted garage."
+          }
+        ]
+      },
+      {
+        "session_id": "bettina_hoss_s5",
+        "date": "2025-08-02",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Passed. The last one. I am a qualified actuary as of Thursday morning."
+          },
+          {
+            "role": "assistant",
+            "text": "Congratulations. Seven exams is a long road."
+          },
+          {
+            "role": "user",
+            "text": "Six years. Ruth Engelhardt, who signed off my work-based skills, sent flowers with a note saying the hard part starts now, which is exactly the sort of encouragement she specialises in."
+          },
+          {
+            "role": "assistant",
+            "text": "Qualified after six years, with Ruth Engelhardt as mentor and sign-off."
+          },
+          {
+            "role": "user",
+            "text": "The promotion came with it - senior pricing analyst, and a seat on the assumptions committee."
+          },
+          {
+            "role": "assistant",
+            "text": "Promoted to senior pricing analyst with a place on the assumptions committee."
+          }
+        ]
+      },
+      {
+        "session_id": "bettina_hoss_s6",
+        "date": "2025-09-20",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Started the big one. Two point four metres square, four thousand eight hundred pieces, called Tidal Drift - a gradient from indigo through to bone white, pieced in strips."
+          },
+          {
+            "role": "assistant",
+            "text": "What is the timeline?"
+          },
+          {
+            "role": "user",
+            "text": "Four hundred hours of piecing before it even reaches the frame, and I am aiming it at the national show in Bremen. All of it quilted on the Meridian, custom work, no pantograph."
+          },
+          {
+            "role": "assistant",
+            "text": "Tidal Drift: 2.4 m square, 4,800 pieces, custom quilted on the longarm for the Bremen national show."
+          }
+        ]
+      },
+      {
+        "session_id": "bettina_hoss_s7",
+        "date": "2025-11-15",
+        "turns": [
+          {
+            "role": "user",
+            "text": "I have gone to four days a week. The company said yes in a meeting that lasted four minutes and that I had rehearsed for a week."
+          },
+          {
+            "role": "assistant",
+            "text": "What is the fifth day for?"
+          },
+          {
+            "role": "user",
+            "text": "Teaching. Twelve students in a hall on Wednesdays, beginner to intermediate, and I have started drafting patterns and selling them as downloads. Forty-one sales in the first month, and I costed it like a product, obviously."
+          },
+          {
+            "role": "assistant",
+            "text": "Four-day week, a twelve-student Wednesday class, and pattern downloads selling from month one."
+          }
+        ]
+      },
+      {
+        "session_id": "bettina_hoss_s8",
+        "date": "2026-02-07",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Best Machine Quilting at Bremen. National level. I had not prepared a face for that."
+          },
+          {
+            "role": "assistant",
+            "text": "That is a substantial step up from second in category."
+          },
+          {
+            "role": "user",
+            "text": "Three years between the two. The magazine has asked for a feature - eight pages, my studio, the whole process - and a fabric company want me to design a collection of twelve prints."
+          },
+          {
+            "role": "assistant",
+            "text": "Best Machine Quilting nationally, plus a magazine feature and a twelve-print fabric collaboration offer."
+          },
+          {
+            "role": "user",
+            "text": "I have not said yes to the fabric collection. It is two years of work for a royalty I would price as worthless if a client brought it to me."
+          },
+          {
+            "role": "assistant",
+            "text": "Fabric collection offer on hold pending better terms."
+          }
+        ]
+      },
+      {
+        "session_id": "bettina_hoss_s9",
+        "date": "2026-05-02",
+        "turns": [
+          {
+            "role": "user",
+            "text": "I said no to the fabric deal and yes to being head of pricing, which is not the direction anybody expected, including me."
+          },
+          {
+            "role": "assistant",
+            "text": "What made the difference?"
+          },
+          {
+            "role": "user",
+            "text": "The quilting is better as the thing I do because I want to. Also I have started a guild - the Weser Piecers, twenty-four members, meeting monthly in the same hall I teach in, and running it is the most fun I have had in years."
+          },
+          {
+            "role": "assistant",
+            "text": "Head of pricing, fabric deal declined, and the 24-member Weser Piecers guild founded."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "persona_id": "rafael_montenegro",
+    "sessions": [
+      {
+        "session_id": "rafael_montenegro_s1",
+        "date": "2025-01-11",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Started grinding. A two hundred and fifty millimetre borosilicate blank, twenty-five millimetres thick, and I am aiming at f/5, which is ambitious for a first mirror."
+          },
+          {
+            "role": "assistant",
+            "text": "How does the process start?"
+          },
+          {
+            "role": "user",
+            "text": "Eighty grit carborundum and a tile tool, wet, thirty-five strokes then rotate the blank. Eleven hours to reach the sagitta I needed and my back has opinions about all of it."
+          },
+          {
+            "role": "assistant",
+            "text": "First mirror: 250 mm f/5 borosilicate, rough ground to depth with 80 grit in eleven hours."
+          }
+        ]
+      },
+      {
+        "session_id": "rafael_montenegro_s2",
+        "date": "2025-02-22",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Parabolising took fourteen sessions and I nearly gave up in the ninth, when I turned the edge and had to go back three grades."
+          },
+          {
+            "role": "assistant",
+            "text": "How are you testing it?"
+          },
+          {
+            "role": "user",
+            "text": "Foucault, with a tester I built from a razor blade and an LED, five zones, and a spreadsheet that has become the most valuable object in this house."
+          },
+          {
+            "role": "assistant",
+            "text": "Foucault testing on a home-built tester across five zones."
+          },
+          {
+            "role": "user",
+            "text": "Final figure is one tenth wave on the wavefront, smooth, no turned edge. The coater in Zaragoza has it now for aluminium with a quartz overcoat."
+          },
+          {
+            "role": "assistant",
+            "text": "Finished at one tenth wave wavefront, away for aluminising with a quartz overcoat."
+          }
+        ]
+      },
+      {
+        "session_id": "rafael_montenegro_s3",
+        "date": "2025-04-05",
+        "turns": [
+          {
+            "role": "user",
+            "text": "The mount is finished. Dobsonian, birch ply, teflon on laminate bearings, and the whole telescope is twenty-one kilos in two pieces I can carry separately."
+          },
+          {
+            "role": "assistant",
+            "text": "What did you point it at first?"
+          },
+          {
+            "role": "user",
+            "text": "Saturn, at two in the morning in a car park, and I have not been that undone by anything since my daughter was born. Four strangers came over to look and one of them cried."
+          },
+          {
+            "role": "assistant",
+            "text": "21 kg two-piece birch ply Dobsonian, first light on Saturn."
+          }
+        ]
+      },
+      {
+        "session_id": "rafael_montenegro_s4",
+        "date": "2025-05-24",
+        "turns": [
+          {
+            "role": "user",
+            "text": "I have started measuring sky brightness properly. Calibrated meter, same spot, every clear moonless night."
+          },
+          {
+            "role": "assistant",
+            "text": "What are the numbers?"
+          },
+          {
+            "role": "user",
+            "text": "Nineteen point four magnitudes per square arcsecond from my roof in town. Alto del Viento, forty minutes up the valley, reads twenty-one point four. That is a factor of six in sky background."
+          },
+          {
+            "role": "assistant",
+            "text": "Sky brightness of 19.4 mag per square arcsecond in town against 21.4 at Alto del Viento."
+          }
+        ]
+      },
+      {
+        "session_id": "rafael_montenegro_s5",
+        "date": "2025-07-12",
+        "turns": [
+          {
+            "role": "user",
+            "text": "The council voted. Nine to four in favour of the lighting retrofit."
+          },
+          {
+            "role": "assistant",
+            "text": "What did you actually ask for?"
+          },
+          {
+            "role": "user",
+            "text": "Twelve hundred street lights replaced with fully shielded fixtures at twenty-seven hundred kelvin, dimmed thirty percent after midnight. Not switched off. Dimmed. That distinction won the vote."
+          },
+          {
+            "role": "assistant",
+            "text": "Villalba de Ariza approved retrofitting 1,200 lights to shielded 2700 K fixtures, dimmed after midnight."
+          },
+          {
+            "role": "user",
+            "text": "The argument that worked was not astronomy at all. It was the energy bill and a study on insect populations. I stopped talking about stars in the second meeting and we won."
+          },
+          {
+            "role": "assistant",
+            "text": "Energy cost and insect impact carried the vote, not astronomy."
+          }
+        ]
+      },
+      {
+        "session_id": "rafael_montenegro_s6",
+        "date": "2025-09-06",
+        "turns": [
+          {
+            "role": "user",
+            "text": "First serious imaging run. A cooled monochrome camera, narrowband filters, four hours of integration in twenty-minute subframes."
+          },
+          {
+            "role": "assistant",
+            "text": "How was the tracking?"
+          },
+          {
+            "role": "user",
+            "text": "Guiding at nought point nine arcseconds RMS, which for a homemade equatorial platform under a Dobsonian is better than I deserve. The mirror is not the limiting factor, the atmosphere is, and that is the sentence every mirror maker wants to be able to say."
+          },
+          {
+            "role": "assistant",
+            "text": "Four-hour narrowband integration guided at 0.9 arcsec RMS."
+          }
+        ]
+      },
+      {
+        "session_id": "rafael_montenegro_s7",
+        "date": "2025-10-25",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Outreach is taking over my life and I do not mind. Sidewalk astronomy in the plaza twice a month, roughly three hundred people through the eyepiece since spring."
+          },
+          {
+            "role": "assistant",
+            "text": "Is it organised?"
+          },
+          {
+            "role": "user",
+            "text": "It is now. We registered as the Sociedad Astronomica del Ariza, forty members, and we run a school programme where each class builds a spectroscope out of a compact disc and a cereal box."
+          },
+          {
+            "role": "assistant",
+            "text": "40-member Sociedad Astronomica del Ariza running sidewalk nights and a school spectroscope programme."
+          }
+        ]
+      },
+      {
+        "session_id": "rafael_montenegro_s8",
+        "date": "2026-01-31",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Second mirror underway. Four hundred millimetres, and this time I am not doing it by hand - Emilio has a grinding machine in his workshop and has offered me the use of it."
+          },
+          {
+            "role": "assistant",
+            "text": "What did the blank cost?"
+          },
+          {
+            "role": "user",
+            "text": "Nine hundred euros, more than everything else I have spent on this hobby put together. It is sitting in my hallway wrapped in a blanket and I walk past it three times a day."
+          },
+          {
+            "role": "assistant",
+            "text": "400 mm blank at 900 euros, to be machine ground."
+          }
+        ]
+      },
+      {
+        "session_id": "rafael_montenegro_s9",
+        "date": "2026-04-18",
+        "turns": [
+          {
+            "role": "user",
+            "text": "We are applying for dark sky reserve status for the upper valley. The measurement campaign is the bulk of the work."
+          },
+          {
+            "role": "assistant",
+            "text": "How much data do you need?"
+          },
+          {
+            "role": "user",
+            "text": "Twenty-four nights minimum, spread across the year, at nine fixed stations, all on the same calibrated meter. We have nineteen done and the winter ones are hardest because the road ices over."
+          },
+          {
+            "role": "assistant",
+            "text": "Dark sky reserve application backed by 24 nights of measurement at nine stations, nineteen complete."
+          },
+          {
+            "role": "user",
+            "text": "Provisional designation came through last week on the strength of the retrofit and the data we already have. Full designation needs the campaign finished and two more municipalities signed up."
+          },
+          {
+            "role": "assistant",
+            "text": "Provisional designation granted, full status pending campaign completion and two more municipalities."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "persona_id": "yuki_tanabe",
+    "sessions": [
+      {
+        "session_id": "yuki_tanabe_s1",
+        "date": "2025-02-14",
+        "turns": [
+          {
+            "role": "user",
+            "text": "The kiln is built. An anagama, three point two metres of chamber, dug into the slope on Nabeshima ridge at about fifteen degrees."
+          },
+          {
+            "role": "assistant",
+            "text": "How much material went into it?"
+          },
+          {
+            "role": "user",
+            "text": "Four thousand two hundred bricks, most of them second hand out of a demolished bath house, and eleven weeks with three friends who now believe they are owed pots for life."
+          },
+          {
+            "role": "assistant",
+            "text": "3.2 m anagama on a 15 degree slope, 4,200 mostly reclaimed bricks, eleven weeks to build."
+          },
+          {
+            "role": "user",
+            "text": "The slope is the whole design. A hill kiln draws itself, and the chimney is very nearly decorative."
+          },
+          {
+            "role": "assistant",
+            "text": "Slope-driven draw with a largely decorative chimney."
+          }
+        ]
+      },
+      {
+        "session_id": "yuki_tanabe_s2",
+        "date": "2025-05-02",
+        "turns": [
+          {
+            "role": "user",
+            "text": "First firing done. Seventy-two hours, peak of one thousand two hundred and ninety degrees at the front, stoking every eight minutes by the end."
+          },
+          {
+            "role": "assistant",
+            "text": "What did you burn?"
+          },
+          {
+            "role": "user",
+            "text": "Two point four tonnes of red pine, split thin, all of it seasoned two years. I ran out at hour sixty-five and burned cedar I had been saving, which was a mistake I could taste in the ash."
+          },
+          {
+            "role": "assistant",
+            "text": "72-hour firing to 1,290 C on 2.4 tonnes of seasoned red pine."
+          },
+          {
+            "role": "user",
+            "text": "Losses were forty percent. There is a cold spot on the left of the middle stack and everything there came out underfired and chalky."
+          },
+          {
+            "role": "assistant",
+            "text": "40 percent loss traced to a cold spot in the middle stack."
+          }
+        ]
+      },
+      {
+        "session_id": "yuki_tanabe_s3",
+        "date": "2025-06-20",
+        "turns": [
+          {
+            "role": "user",
+            "text": "The clay body is settled after nine test batches. Sixty percent local red clay from the cut above the road, twenty-five percent ball clay, fifteen percent grog at thirty mesh."
+          },
+          {
+            "role": "assistant",
+            "text": "How does it behave?"
+          },
+          {
+            "role": "user",
+            "text": "Twelve percent total shrinkage, which is high, and it takes ash beautifully - the iron in the local clay is why the flashing goes orange instead of grey. It also cracks if I dry it fast, so everything sits under plastic for a week."
+          },
+          {
+            "role": "assistant",
+            "text": "Body of 60 percent local red clay, 25 percent ball clay, 15 percent grog, 12 percent shrinkage."
+          }
+        ]
+      },
+      {
+        "session_id": "yuki_tanabe_s4",
+        "date": "2025-08-08",
+        "turns": [
+          {
+            "role": "user",
+            "text": "I have taken an apprentice. Sung-min Ha, two years, agreed in writing, which my own teacher would have found insulting and which I find sensible."
+          },
+          {
+            "role": "assistant",
+            "text": "What do the two years consist of?"
+          },
+          {
+            "role": "user",
+            "text": "Six months of nothing but wedging clay and cutting wood, then the wheel. Two hundred cylinders a day, every one cut in half and looked at, none of them fired. He has not complained once, which worries me slightly."
+          },
+          {
+            "role": "assistant",
+            "text": "Two-year apprenticeship for Sung-min Ha, clay preparation and wood before the wheel."
+          }
+        ]
+      },
+      {
+        "session_id": "yuki_tanabe_s5",
+        "date": "2025-09-26",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Second firing and the losses are down to eighteen percent."
+          },
+          {
+            "role": "assistant",
+            "text": "What changed?"
+          },
+          {
+            "role": "user",
+            "text": "A bagwall. I built a low sacrificial wall of soft brick in front of the middle stack to push the flame path upward, and the cold spot has gone. One afternoon of work and two firings of thinking about it."
+          },
+          {
+            "role": "assistant",
+            "text": "Bagwall in front of the middle stack cured the cold spot, losses down from 40 to 18 percent."
+          },
+          {
+            "role": "user",
+            "text": "The other change is that shelf-side pieces now take a much thicker ash deposit than the wall side, so I stack whatever I want heavily ashed on the left and the quiet pieces on the right."
+          },
+          {
+            "role": "assistant",
+            "text": "Loading strategy rebuilt around the new ash gradient."
+          }
+        ]
+      },
+      {
+        "session_id": "yuki_tanabe_s6",
+        "date": "2025-11-14",
+        "turns": [
+          {
+            "role": "user",
+            "text": "The Sakaimachi gallery show opened. Sixty pieces, and I sold forty-one across the two weeks."
+          },
+          {
+            "role": "assistant",
+            "text": "How was it priced?"
+          },
+          {
+            "role": "user",
+            "text": "A tea bowl went at a hundred and eighty thousand yen, which is the most I have ever been paid for one object and I felt ill when they told me. The everyday pieces were between four and twelve thousand and they sold first, which is as it should be."
+          },
+          {
+            "role": "assistant",
+            "text": "Sakaimachi show: 60 pieces, 41 sold, top price 180,000 yen for a tea bowl."
+          }
+        ]
+      },
+      {
+        "session_id": "yuki_tanabe_s7",
+        "date": "2026-01-09",
+        "turns": [
+          {
+            "role": "user",
+            "text": "Ran a workshop firing. Eight students over five days, and they stoke the kiln themselves in shifts."
+          },
+          {
+            "role": "assistant",
+            "text": "How do you organise a five-day stoking schedule with amateurs?"
+          },
+          {
+            "role": "user",
+            "text": "Three hour shifts, two people to a shift, always one of them experienced. There is a log book at the door and every shift writes down temperature, damper position, and what the flame looked like at the spy hole."
+          },
+          {
+            "role": "assistant",
+            "text": "Five-day workshop firing, eight students on paired three-hour shifts with a mandatory kiln log."
+          },
+          {
+            "role": "user",
+            "text": "The log is the actual teaching. By day four they stop asking me what to do and start reading the previous shift's handwriting."
+          },
+          {
+            "role": "assistant",
+            "text": "The kiln log as the core teaching device."
+          }
+        ]
+      },
+      {
+        "session_id": "yuki_tanabe_s8",
+        "date": "2026-03-27",
+        "turns": [
+          {
+            "role": "user",
+            "text": "The temple at Jokan-ji has commissioned two hundred tea cups for their two hundredth anniversary, for delivery in September."
+          },
+          {
+            "role": "assistant",
+            "text": "Will you fire those in the anagama? Two hundred matching cups is a lot to ask of a wood kiln."
+          },
+          {
+            "role": "user",
+            "text": "Everyone has told me to use a gas kiln for consistency and I am not going to. Two anagama firings, four hundred cups made, and they choose the two hundred they want. The variation is the point - a set of two hundred identical cups is a set anybody could make."
+          },
+          {
+            "role": "assistant",
+            "text": "200-cup temple commission to be met with two anagama firings and 400 cups made."
+          }
+        ]
+      },
+      {
+        "session_id": "yuki_tanabe_s9",
+        "date": "2026-06-19",
+        "turns": [
+          {
+            "role": "user",
+            "text": "The arch has cracked. Three courses at the front where the thermal cycling is worst, and there is daylight through it in two places."
+          },
+          {
+            "role": "assistant",
+            "text": "How big a repair is that?"
+          },
+          {
+            "role": "user",
+            "text": "Three hundred new bricks and the front third relined with a castable. Ten days if the weather holds. This is normal - a front arch is a consumable - it simply does not feel that way when you are looking at daylight through your own kiln."
+          },
+          {
+            "role": "assistant",
+            "text": "Front arch relined with 300 new bricks and castable, about ten days of work."
+          },
+          {
+            "role": "user",
+            "text": "Two other things. A documentary crew want to film the next firing, and I have been offered a three-month residency in Denmark next spring, with a kiln I have never seen."
+          },
+          {
+            "role": "assistant",
+            "text": "Documentary filming planned for the next firing, plus a three-month Danish residency offer."
+          }
+        ]
+      }
+    ]
+  }
+]
