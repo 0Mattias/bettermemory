@@ -34,9 +34,9 @@ measurement of our own honesty cannot itself require trusting us.
 
 Usage:
 
-    venv/bin/python bench/claims.py                  # configured store
-    venv/bin/python bench/claims.py --store ~/other  # explicit path
-    venv/bin/python bench/claims.py --json           # machine-readable
+    .venv/bin/python bench/claims.py                  # configured store
+    .venv/bin/python bench/claims.py --store ~/other  # explicit path
+    .venv/bin/python bench/claims.py --json           # machine-readable
 
 Unlike `bench/storage.py` and `bench/swarm.py`, which build synthetic
 corpora in a tmp directory, this one reads the real store on purpose —
