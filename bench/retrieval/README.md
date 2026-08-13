@@ -979,6 +979,44 @@ question with token strings, is the design input the requery lane's
 own future declaration will cite; this census attaches no gate to
 it.
 
+### Requery census — feedback requery parks itself, 2026-08-13
+
+The register census's first declared consumer put the obvious
+mechanism under test:
+[`../REQUERY_CENSUS_DECLARATION.md`](../REQUERY_CENSUS_DECLARATION.md)
+(committed `65e5b2b`, before the script existed) fixed an 8-cell
+family of two-pass requeries — the shipped engine re-run over a
+query rebuilt from the first pass's own top documents, fired only
+when the first pass is weak by the engine's shipped coverage
+constant, no acceptance rule in any cell, dev-only with LongMemEval
+untouched. It differentiated itself structurally from the parked
+RM3-as-a-leg and named that kill's cluster mechanism as its own
+declared risk, with the far/absent recall@1 read built to catch it.
+Artifact: `results/requery-census-2026-08-13.json` (run `8268884`).
+
+**Park, on the bottom rung, with the ceiling measured.** The best
+cell is the primary itself at asked recall@1 0.35 — the pass-1
+baseline exactly — and no cell reaches the 0.45 twitch line. The
+named risk is the whole story: the far/absent pool is recovered at
+0.00 by every cell, because the vocabulary a weak first pass can
+donate is the neighbourhood's, not the document's — RM3's kill
+mechanism, reproduced in the requery shape it was supposed to
+escape. Heavier term budgets pay for it at the top: at ten added
+terms the mechanism keeps only 0.14 of the probes lexical already
+served at rank one. And the oracle-min diagnostic — every probe at
+the better of its two passes, the bound no real acceptance rule can
+beat — tops out at 0.45, under the license bar: this family is
+closed by its own artifact, not by a tuning failure.
+
+What survives is the register census's evidence, none of which this
+park touches: the as-asked gap on this instrument is real, mostly
+in-store, and bridged by human requeries whose added vocabulary
+lands in gold. What died tonight is the cheapest hypothesis for
+finding that vocabulary mechanically — the first pass's served
+documents. Any successor requery family must harvest from somewhere
+a weak first pass does not control, and it gets its own
+declared-first document before a single cell runs.
+
 ## Results — v1 corpus (superseded), 2026-07-26
 
 bettermemory 3.29.0, corpus of 188 (20 gold + 168 distractors), 12-core
