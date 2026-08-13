@@ -928,6 +928,57 @@ bar the moment the from-scratch constraint moves, and this census,
 like the last, neither opens nor closes that door: it is the owner's,
 not a measurement's.
 
+### Register/df census — the wall is dev-shaped and the gap lives in-store, 2026-08-12
+
+With dense parked family-wide, the campaign's live mechanism family
+is requery/vocabulary — and before authoring any mechanism, the
+question that mechanism would live on was put under a declared-first
+census of its own:
+[`../REGISTER_DF_CENSUS_DECLARATION.md`](../REGISTER_DF_CENSUS_DECLARATION.md)
+(committed `1b0e673`, before the script existed) fixed one shared
+ruler over three corpora — this instrument's committed probes, every
+answerable LongMemEval question against its own haystack store, and
+the MSC `A40` aggregate under the scale census's probe rules executed
+by its own committed code — splitting each probe's content vocabulary
+into `matched` (in gold), `gap-elsewhere` (in the store but not in
+gold) and `gap-absent` (nowhere in the store). No retrieval ran
+anywhere in the script. Artifact:
+`results/register-df-census-2026-08-12.json` (run `e710e1c`; the MSC
+probe counters reproduce the scale census's declared counts exactly,
+through the same alignment gate).
+
+**The wall this bench has been fighting is register-specific to its
+own instrument.** Median as-asked probe-gold overlap: 0.28 here,
+0.77 on LongMemEval, 0.86 on MSC. The technical dev set's as-asked
+probes miss most of their gold's vocabulary; the two conversational
+corpora's probes already share most of theirs, and their headroom
+problem is concentration and ranking rather than vocabulary reach.
+The three probe provenances differ by construction — the
+declaration's first confound — but the direction is unambiguous and
+the register margins travel with the artifact.
+
+**Wherever the gap exists, it is overwhelmingly in-store.** Pooled
+over tokens, gap-elsewhere versus gap-absent runs 0.60/0.10 here,
+0.24/0.03 on LongMemEval, 0.19/0.02 on MSC: the vocabulary an
+as-asked probe is missing sits inside the ranked collection several
+times over the share that is absent from it outright. Read as the
+declaration requires: a ceiling decomposition, not a forecast. The
+slice only external knowledge could ever bridge (door C's exclusive
+territory, at token level) is thin on every corpus measured; the
+bulk of the wall is store-internal linkage — mechanism territory in
+principle, with no claim here that any mechanism attains it.
+
+**The committed human requeries are near-rewrites, and their work is
+vocabulary substitution.** Across the twenty questions the requery
+kept 24 of the asked tokens, dropped 218 (162 of them gap tokens —
+but 56 matched tokens went with them), and introduced 142, of which
+94 land in gold and 41 more land elsewhere in the store. The
+successful second attempt does not decorate the first — it swaps the
+question's vocabulary for the document's. That decomposition, per
+question with token strings, is the design input the requery lane's
+own future declaration will cite; this census attaches no gate to
+it.
+
 ## Results — v1 corpus (superseded), 2026-07-26
 
 bettermemory 3.29.0, corpus of 188 (20 gold + 168 distractors), 12-core
