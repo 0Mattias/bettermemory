@@ -273,12 +273,14 @@ async def test_a_sole_low_hit_still_does_not_expand(
 
 
 # Both wire tests below drive a REAL server on its configured default
-# mode. Since the 4.0.0 strip every install is lexical-only, so the legs
-# that run are keyword+BM25 and the leg is exactly `lexical` — the exact
-# string is the point of these two: a `matched_leg in {...}` assertion
-# would pass against a field that reported the requested mode rather
-# than the legs that ran. (Pre-4.0 these were scoped to the no-extras CI
-# job because an installed extra flipped the same hit to `both`.)
+# mode. On a default install the legs that run are keyword+BM25 and the
+# leg is exactly `lexical` — the exact string is the point of these two:
+# a `matched_leg in {...}` assertion would pass against a field that
+# reported the requested mode rather than the legs that ran. Scoped to
+# the no-extras jobs exactly as their pre-4.0 ancestors were, because an
+# installed extra (legal again since the door C reentry) flips the same
+# hit to `both`.
+@pytest.mark.no_extras
 async def test_matched_leg_rides_the_search_response(
     server_with_events: tuple[Any, Path],
 ) -> None:
@@ -295,6 +297,7 @@ async def test_matched_leg_rides_the_search_response(
     assert hits[0]["matched_leg"] == "lexical"
 
 
+@pytest.mark.no_extras
 async def test_search_events_record_the_matched_leg(
     server_with_events: tuple[Any, Path],
 ) -> None:
