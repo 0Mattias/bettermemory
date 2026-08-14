@@ -46,6 +46,13 @@ The campaign's default-engine success bar remains unmet and unclaimed;
 R2 (held-out) and R3 (any default question) each require their own
 declared-first document before running.
 
+Release erratum (2026-08-14): the tagged release also carries two
+post-gate fixes the entry above did not name — `79e5af9` aligned both
+plugin manifests with the release version, and `2c674bf` finished the
+version sweep (the CHANGELOG date heading, the marketplace/plugin and
+server manifests, uv.lock) and scoped the lexical-tie pins' test
+markers to extras-free environments.
+
 ## 5.4.0 - 2026-08-12
 
 A minor by the [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract).
