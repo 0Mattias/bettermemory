@@ -389,25 +389,13 @@ enough to earn its own entry above.
   else. Three verdict branches and a published info key read the counter,
   so tightening it changes what `doctor` says on stores that are genuinely
   fine but MCP-driven.
-- **`bench/retrieval/README.md`'s "What this does not measure" is short
-  two structural caveats.** Both are properties of the corpus, so they
-  bound every published cell rather than any single one, and both were
-  derived while auditing something else — recorded here so they are not
-  re-derived. (i) **The recency knob is out of scope by construction.**
-  The corpus is written in a single pass, so `_recency_factor` in
-  `src/bettermemory/search.py` (the `_recency_factor` helper)
-  — the one ranking knob live by default, applied in three scorers and
-  configured by `recency_boost_half_life_days` in
-  `src/bettermemory/config.py` (`src/bettermemory/config.py:346`) —
-  sees ages that differ by microseconds across the whole store. Every
-  published number therefore describes ranking with that factor held
-  flat. (ii) **The corpus cannot exercise `auto_scope`.** `build_store`
-  (`bench/retrieval/run.py:266-281`) writes every memory with no
-  `Origin`, and `should_include_for_caller`
-  (`src/bettermemory/origin.py:449-472`) treats a null memory origin as
-  global, so every published recall figure describes a store where
-  scope filtering structurally cannot bite. Landing site is that
-  README's existing list.
+- ~~**`bench/retrieval/README.md`'s "What this does not measure" is short
+  two structural caveats.**~~ **SHIPPED 2026-08-14**, in the cleanup that
+  rewrote the bench READMEs as current-state documents: the recency-knob
+  caveat (`_recency_factor` sees single-pass ages, so ranking is measured
+  with the factor held flat) and the `auto_scope` caveat (`build_store`
+  writes no `Origin`, so scope filtering structurally cannot bite) both
+  landed in that README's list with their code citations.
 - **`episode_search(ids=…)` has no by-filename fast path, and the win is
   unmeasured.** The refusal is written into `handlers/episode_search.py`
   with its reasoning, and the validator to mirror already exists in
