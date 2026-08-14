@@ -130,6 +130,16 @@ care:
   arm. The 0.916 belongs to a different system's whole stack, not to
   our engine plus weights.
 
+Correction (2026-08-14, R2 design pass): the third bullet overstates.
+The dated record includes two LongMemEval runs that combined this
+engine with the embedding arm — the 3.30.0 record and its bit-for-bit
+reproduction at 3.42.0
+(`bench/longmemeval/results/baseline-both-arms-2026-08-08.json`, both
+arms). What the bullet is entitled to say, and what the decision
+actually leaned on: the MODERN engine has never run the arm on that
+instrument, and the 0.916 reference belongs to a different system's
+whole stack. The R2 declaration inherits the corrected sentence.
+
 ## The ceiling decomposition, cited as licensed
 
 The register/df census
