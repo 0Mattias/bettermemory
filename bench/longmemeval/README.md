@@ -65,7 +65,11 @@ stack scores 91.6%. We are 2.3 points behind, by our own measurement.**
 The sections below stay as the dated record that earned the numbers.
 Their "parity" framing compared an arm the product no longer ships and
 must not be quoted as current. Closing those 2.3 points with code — no
-borrowed weights — is the standing retrieval campaign.
+borrowed weights — is the standing retrieval campaign. (Resolved
+2026-08-14: that campaign ran to its end — every code mechanism
+priced, door C opened, the reentry ladder complete; see
+`bench/R3_DEFAULT_DECISION.md`. The default-vs-default sentence above
+stays current.)
 
 ## R2 — the arm returns opt-in and the dated record reproduces exactly, 2026-08-14
 
@@ -116,6 +120,14 @@ The declared reads, none of which gated:
   (`results/r2-both-arms-2026-08-14.json`) against the dated
   331.4 / 1,229.3 — today's provider runtime tightens the embedding
   arm's factor from ~4× toward ~3×.
+
+R3 followed the same day (`bench/R3_DEFAULT_DECISION.md`): the
+design-pass found no default left to flip — the extra install's
+default retrieval is already the three-leg hybrid (the restored
+3.29.0 reversal, `ba7e857`), and the default install is permanently
+lexical by door C's condition 1 — so the success criterion resolves
+unmeetable-as-written and the retrieval-recall campaign closes at the
+opt-in lane. The bar is not claimed.
 
 ## 5.1 rescue-expansion lane — the held-out check fired its kill, 2026-08-09
 
