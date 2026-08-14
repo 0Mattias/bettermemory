@@ -16,17 +16,22 @@ venv/bin/python bench/retrieval/run.py --pad-to 600 --prefilter both
 
 The 4.0.0 purist strip removed the embedding lane from bettermemory: no
 extras, no models, every ranker deterministic lexical code. The runner
-follows the product — asking it for the `semantic` arm drops the arm
-with a note instead of measuring a lane that no longer exists. The
-semantic figures below stay as a dated record of the pre-4.0 engine,
+followed the product — asking it for the `semantic` arm dropped the arm
+with a note instead of measuring a lane that no longer existed. The
+semantic figures below stayed as a dated record of the pre-4.0 engine,
 kept because the margin they measure is the honest size of the problem.
 
 What that record says the strip costs at this bench's scale: semantic /
 asked beat lexical / asked by 25 points at recall@1 (60% vs 35%
 unpadded; 60% vs 25% padded to 600), with the control arm tracking
-asked — the lift was vocabulary, not corpus size. That gap is the
+asked — the lift was vocabulary, not corpus size. That gap became the
 target of the deterministic-code retrieval campaign: closed in code, or
-reported as open. No figure in this file claims it closed.
+reported as open. The campaign measured every code mechanism to its own
+declared criterion and reported the gap open; the door C decision then
+reopened the arm itself, opt-in, and the R1 section below measures the
+restored lane reproducing this record exactly. The default engine's
+figures are unchanged, and no figure in this file claims the campaign's
+default-engine bar closed.
 
 ## Why this exists
 
@@ -90,12 +95,12 @@ artificial mode flags:
 | arm | configuration | corresponds to |
 | --- | --- | --- |
 | `lexical` | `mode="hybrid"`, deterministic lexical ranking | every install |
-| `semantic` | `mode="hybrid"`, embedding model | the pre-4.0 `embeddings` extra — **removed from the product; dated record only** |
+| `semantic` | `mode="hybrid"`, embedding model | the `embeddings` extra — removed in 4.0.0, **restored opt-in by the door C reentry, 2026-08-13** |
 
-Only `lexical` is runnable. The `semantic` row is kept because the
-pre-4.0 figures below are quoted against it and a table that omits the
-arm they name would make those rows unreadable; asking the runner for
-it today drops the arm with a note.
+Both arms are runnable again as of the R1 reentry (see that section
+below); with no extra installed the runner skips the semantic arm with
+a note, and a default install's ranking is unchanged. The pre-4.0
+figures below remain the dated record they were.
 
 Each is probed three ways:
 
@@ -301,13 +306,14 @@ Two more things worth stating precisely rather than rounding off:
 
 ### What this still does not measure
 
-- **The semantic arm.** Unmeasured, and it is the arm the threshold
-  caveat was always aimed at: an embedding model cannot rescue a
-  document bm25 never nominated. This once read as the one remaining
-  increment, closable by installing the `embeddings` extra and
-  re-running `--pad-to 600 --prefilter both`. 4.0.0 removed the extra,
-  so the increment is not available at any commit from 4.0.0 on and
-  the gap stays permanently open on this instrument.
+- **The semantic arm.** Unmeasured HERE, and it was the arm the
+  threshold caveat was always aimed at: an embedding model cannot
+  rescue a document bm25 never nominated. This once read as the one
+  remaining increment; 4.0.0 removed the extra and the gap stayed open
+  on this instrument until the door C reentry restored the arm — the
+  R1 section below carries the measurement this bullet spent a
+  doctrine cycle unable to make, and its answer is that nomination
+  does not bind the arm at this recall level.
 - **Realistic competition at 600 documents.** The padded corpus reaches
   the threshold with filler that cannot compete; the forced-180 run has
   genuine competition but only 180 documents against a 50-slot cap. A
@@ -1016,6 +1022,63 @@ finding that vocabulary mechanically — the first pass's served
 documents. Any successor requery family must harvest from somewhere
 a weak first pass does not control, and it gets its own
 declared-first document before a single cell runs.
+
+### R1 — the reentry reproduces its dated record exactly, 2026-08-13
+
+Door C opened conditionally
+([`../DOOR_C_DECISION_BRIEF.md`](../DOOR_C_DECISION_BRIEF.md)), and
+[`../R1_REENTRY_DECLARATION.md`](../R1_REENTRY_DECLARATION.md) fixed
+the pin, the four cells, the reproduction band, the integrity reads,
+and the parking criterion before the lane was rebuilt. The lane came
+back from its pre-strip ancestry, search path only, modernized to the
+current engine; the pin loaded offline from the local snapshot
+(all-MiniLM-L6-v2, revision `1110a243`, weights digest and license
+recorded in every artifact's `semantic_provenance` block).
+
+**Every unpadded cell reproduces the dated record byte for byte**
+(`results/r1-unpadded-2026-08-13.json` against
+`results/unpadded-2026-08-08.json`): semantic/asked measured 60%/75%
+at recall@1/@5 against lexical/asked 35%/60% — the +25-point margin,
+five engine releases and one full doctrine cycle later. The lexical
+cells' exactness is the declaration's port-integrity control doing its
+job: the default engine did not move, so the semantic comparison is
+clean. The primary invocation ran twice and the two artifacts'
+results blocks are identical
+(`results/r1-unpadded-repeat-2026-08-13.json`) — the determinism bar.
+Padded to 600, semantic/asked holds 60% while lexical reads 25%
+(`results/r1-padded600-2026-08-13.json`), the dilution finding
+unchanged.
+
+**The never-scored cells — the semantic arm through production's own
+prefilter — land, and the threshold caveat measures as empty at this
+recall level.** The original prediction 5 said bm25 nomination would
+become the semantic arm's binding constraint above the index
+threshold; its semantic half was unmeasurable for the whole pre-4.0
+era. Measured now
+(`results/r1-prefilter-above-threshold-2026-08-13.json`,
+`results/r1-prefilter-forced-180-2026-08-13.json`): the asked probe's
+semantic cells are IDENTICAL with the prefilter on and off — 60%/75%
+in both regimes, gold nomination 0.95 padded and 0.90 forced —
+because the arm reorders a pool whose nominator already reaches
+19 of 20 golds at the cap, and the arm's entire advantage lives in
+the top-five ordering. Control gives back one question at recall@1 in
+the padded regime (60% off, 55% on) and none at recall@5; requery
+moves within one to two questions in opposite directions across the
+two regimes. The named risk — the rescue lane's fifteen-point
+recall@5 nomination loss in this exact regime
+(`results/prefilter-above-threshold-2026-08-09.json`) — did not
+materialize for the semantic arm: expansion needed the nominator to
+find documents only synthesized vocabulary would reach; the semantic
+arm only needs it to keep serving the pool it already serves.
+
+**Verdict, by the criterion written before the lane existed: R1
+passes.** Primary in band at its center, margin two and a half times
+the bar, every integrity read exact, determinism holds. What this
+deliberately does not claim: the campaign's success criterion, which
+is a DEFAULT-engine bar — the arm is opt-in, R2 (the held-out
+LongMemEval read) has its own declaration ahead of it, and R3 owns
+any default question. The record keeps saying the criterion is unmet
+until the ladder earns it.
 
 ## Results — v1 corpus (superseded), 2026-07-26
 
