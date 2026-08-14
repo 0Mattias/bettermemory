@@ -134,7 +134,9 @@ def _load_memories(store: Path) -> list[dict[str, Any]]:
                 "meta": meta,
                 "body": post.content,
                 "id": str(meta.get("id") or path.stem),
-                "origin": meta.get("origin") if isinstance(meta.get("origin"), dict) else None,
+                "origin": meta.get("origin")
+                if isinstance(meta.get("origin"), dict)
+                else None,
                 "claims_raw": list(meta.get("claims") or []),
                 "verified_paths": list(meta.get("verified_paths") or []),
                 "absent_paths": list(meta.get("verified_absent_paths") or []),
@@ -227,7 +229,9 @@ def census_population(rows: list[dict[str, Any]], this_repo: str) -> dict[str, A
 # ─── Census B: claim truth against the delivered verdict, now ───
 
 
-def _verdict_from_own_worktree(row: dict[str, Any], stale_days: int, now: datetime) -> str:
+def _verdict_from_own_worktree(
+    row: dict[str, Any], stale_days: int, now: datetime
+) -> str:
     origin = row["origin"] or {}
     worktree = origin.get("worktree_root")
     caller = Origin(
@@ -305,7 +309,9 @@ def census_claim_truth(
         "memories_with_false_claims": memories_with_false_claims,
         "false_while_fresh": false_while_fresh,
         "false_while_fresh_rate": rate,
-        "false_while_fresh_by_family": dict(sorted(false_while_fresh_by_family.items())),
+        "false_while_fresh_by_family": dict(
+            sorted(false_while_fresh_by_family.items())
+        ),
     }
 
 
@@ -328,7 +334,11 @@ def _claim_transition_moments(
         elif kind == "update" and "claims" in (event.get("fields") or []):
             moments.setdefault(mid, ts)
     for row in rows:
-        if row["claims_raw"] and row["id"] not in moments and row["created"] is not None:
+        if (
+            row["claims_raw"]
+            and row["id"] not in moments
+            and row["created"] is not None
+        ):
             moments[row["id"]] = row["created"]
     return moments
 
@@ -339,9 +349,7 @@ def census_timeline(
     this_repo: str,
 ) -> dict[str, Any]:
     moments = _claim_transition_moments(events, rows)
-    family_by_id = {
-        row["id"]: _scope_family(row["origin"], this_repo) for row in rows
-    }
+    family_by_id = {row["id"]: _scope_family(row["origin"], this_repo) for row in rows}
     mutations: dict[str, list[tuple[datetime, str]]] = {}
     for event in events:
         kind = event.get("kind")
@@ -497,9 +505,7 @@ def census_notes(events: list[dict[str, Any]]) -> dict[str, Any]:
 def census_calibration(
     events: list[dict[str, Any]], tombstoned: set[str], now: datetime
 ) -> dict[str, Any]:
-    report = compute_eval(
-        [], events, now=now, since=None, tombstoned_ids=tombstoned
-    )
+    report = compute_eval([], events, now=now, since=None, tombstoned_ids=tombstoned)
     unlocked = (
         report.turns_audited >= CALIBRATION_TURN_FLOOR
         and report.silent_misses >= CALIBRATION_MISS_FLOOR
@@ -517,7 +523,11 @@ def census_calibration(
 
 
 def grade_predictions(
-    a: dict[str, Any], b: dict[str, Any], c: dict[str, Any], d: dict[str, Any], e: dict[str, Any]
+    a: dict[str, Any],
+    b: dict[str, Any],
+    c: dict[str, Any],
+    d: dict[str, Any],
+    e: dict[str, Any],
 ) -> dict[str, Any]:
     preds: dict[str, Any] = {}
     preds["T-P1"] = {
