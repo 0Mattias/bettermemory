@@ -7,7 +7,7 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
-## 5.5.0 - unreleased
+## 5.5.0 - 2026-08-13
 
 A minor by the [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract).
 **A default install is unchanged**: no new dependencies, and with no
@@ -31,6 +31,20 @@ of which disable themselves cleanly when a third leg joins the fusion.
 Deliberately NOT restored: the write-path semantic dedup gate, reindex
 tooling, and doctor's embeddings checks — the door C contract admits
 pretrained weights to the retrieval arm only.
+
+The restored lane shipped only after passing its pre-committed
+reproduction bars: R1 measured every unpadded cell byte-identical to
+the pre-strip record — semantic/asked 60%/75% at recall@1/@5 against
+lexical/asked 35%/60%
+(`bench/retrieval/results/r1-unpadded-2026-08-13.json`) — with the
+lexical cells exact (the port-integrity control), a repeat run
+identical (the determinism bar), and the arm's asked cells unchanged
+through production's prefilter in both threshold regimes
+(`bench/retrieval/results/r1-prefilter-above-threshold-2026-08-13.json`,
+`bench/retrieval/results/r1-prefilter-forced-180-2026-08-13.json`).
+The campaign's default-engine success bar remains unmet and unclaimed;
+R2 (held-out) and R3 (any default question) each require their own
+declared-first document before running.
 
 ## 5.4.0 - 2026-08-12
 
