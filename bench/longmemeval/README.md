@@ -54,9 +54,9 @@ are scored **MISSED** below, one of them against a shipped default.
 
 The 4.0.0 purist strip removed the embedding lane from the product, and
 with it the `semantic` arm this file's best-arm-vs-best-arm comparison
-leaned on (the runner now drops a requested `semantic` arm with a note
-instead of measuring a lane that no longer exists). The comparative
-claim is restated without the tie:
+leaned on (the 4.0.0-era runner dropped a requested `semantic` arm with
+a note; the arm returns, opt-in, under `bench/R2_REENTRY_DECLARATION.md`
+— 2026-08-14). The comparative claim is restated without the tie:
 
 **bettermemory retrieves with deterministic lexical code only and scores
 89.3% macro recall@5 on this harness; claude-mem's embedding-native
