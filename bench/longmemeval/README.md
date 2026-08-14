@@ -67,6 +67,56 @@ Their "parity" framing compared an arm the product no longer ships and
 must not be quoted as current. Closing those 2.3 points with code — no
 borrowed weights — is the standing retrieval campaign.
 
+## R2 — the arm returns opt-in and the dated record reproduces exactly, 2026-08-14
+
+The from-scratch campaign above ran to its structural end, and the
+door C decision (`bench/DOOR_C_DECISION_BRIEF.md`) opened the
+pretrained-weights question conditionally. Stage two of its reentry
+ladder ran here under `bench/R2_REENTRY_DECLARATION.md` — bars fixed
+before the runner regained the arm, sha ordering declaration →
+implementation → run.
+
+**Every figure of the dated both-arms record reproduces exactly
+through the modern engine.** At 5.5.0, the restored opt-in arm
+(`bettermemory[embeddings]`, the R1 pin: `all-MiniLM-L6-v2`,
+offline-enforced) and the default lexical engine both land identical
+to `results/baseline-both-arms-2026-08-08.json` in every macro,
+micro, by-type and depth-truncation figure — and the determinism
+repeat reproduced the whole artifact byte-identically modulo
+wall-clock (`results/r2-both-arms-2026-08-14.json`,
+`results/r2-both-arms-repeat-2026-08-14.json`; per-question sidecars
+under `results/per-question/`). Verdict by the declaration's own
+bars: **R2-PASS** — band dead-center, lift +2.5 points exact,
+lexical integrity four-for-four decimals. The lexical identity is
+also the restoration's held-out inertness proof: the 5.5.0 default
+engine is byte-identical to the pre-restoration engine on this
+corpus, not just on the dev instrument.
+
+The declared reads, none of which gated:
+
+- **The reference line.** 91.8% meets and exceeds the dated
+  claude-mem figure, 91.6% (`results/claude-mem-full500.json`,
+  2026-07-27, their whole stack). The 4.0.0 restatement above stays
+  true for the DEFAULT install — deterministic lexical only, 89.3%,
+  behind by 2.3 — and the parity headline is current again for an
+  install that names the extra. The campaign's success criterion
+  reads "on the DEFAULT engine": it stays UNMET, that question is
+  R3's on its own preregistration, and nothing here claims the bar.
+- **C1 polarity.** No class is harmed by the arm on this instrument
+  (`results/r2-both-arms-2026-08-14.json`):
+  single-session-preference +23.3 points carries the pooled lift,
+  multi-session +1.8, temporal-reasoning +2.4, and the other three
+  classes move 0.0. The knob-polarity lesson rode along and found
+  nothing to flag here.
+- **The multi-session slice.** 86.7% with the arm against the
+  reference stack's 89.3% — the deficit the campaign cares about is
+  still open, arm or no arm, and R3's design must eat that number
+  rather than argue with it.
+- **Cost.** 332.9s lexical, 1,079.9s semantic
+  (`results/r2-both-arms-2026-08-14.json`) against the dated
+  331.4 / 1,229.3 — today's provider runtime tightens the embedding
+  arm's factor from ~4× toward ~3×.
+
 ## 5.1 rescue-expansion lane — the held-out check fired its kill, 2026-08-09
 
 The campaign's first lane (filler df-floor + confidence-gated
