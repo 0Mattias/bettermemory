@@ -7,6 +7,31 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 5.5.0 - unreleased
+
+A minor by the [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract).
+**A default install is unchanged**: no new dependencies, and with no
+extra installed every restored code path below is inert — the hybrid
+fusion is the shipped two-leg lexical fusion, byte for byte.
+
+### Added — door C reentry: the embedding lane returns, opt-in only
+
+The pretrained-weights doctrine decision (`bench/DOOR_C_DECISION_BRIEF.md`)
+opened door C conditionally, and `bench/R1_REENTRY_DECLARATION.md` fixed
+the reproduction bars before this code existed. The `[embeddings]`
+(sentence-transformers) and `[embeddings-fast]` (fastembed/ONNX) extras
+return to packaging; the engine's semantic scoring leg, the pure
+`mode="semantic"` search, the hybrid fusion's third equal-weight leg
+when a model is present, and the Stop-hook's explicit
+`semantic_model_unavailable` no-signal all return, restored from the
+pre-4.0.0 ancestry (the lane was removed whole in `1bb73bc`) and
+modernized to the current engine — the semantic leg now coexists with
+the 5.1 rescue-expansion lane and the round-9 base-leg weighting, both
+of which disable themselves cleanly when a third leg joins the fusion.
+Deliberately NOT restored: the write-path semantic dedup gate, reindex
+tooling, and doctor's embeddings checks — the door C contract admits
+pretrained weights to the retrieval arm only.
+
 ## 5.4.0 - 2026-08-12
 
 A minor by the [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract).

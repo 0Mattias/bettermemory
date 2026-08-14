@@ -385,13 +385,14 @@ class MissReport:
 
     `no_signal_reason` (optional, additive) explains *why* a
     ``no_signal`` verdict carries no signal when the cause isn't
-    obvious from the other fields. Its one historical producer — the
+    obvious from the other fields. Currently the only producer is the
     semantic-mode-without-a-model branch
-    (``"semantic_model_unavailable"``) — was removed with the semantic
-    lane in 4.0.0; the field survives because recorded events carry it
-    and replay must keep reading them. ``None`` from every current
-    branch (empty store / empty query / no hits), so existing
-    consumers see an unchanged shape.
+    (``"semantic_model_unavailable"``): probing with a different
+    scorer would violate the probe-matches-the-ranker rule, so the
+    probe declines honestly instead of measuring the wrong thing.
+    ``None`` everywhere else, including the legacy no-signal branches
+    (empty store / empty query / no hits), so existing consumers see
+    an unchanged shape there.
     """
 
     verdict: Verdict
@@ -455,9 +456,9 @@ def turn_audited_fields(
     ``no_signal_reason`` rides along additively, omitted when None (the
     common non-no_signal case keeps its exact pre-existing shape).
     Without it the reason lived only in the tool-response/hook-stdout
-    dict (``MissReport.to_dict``), so a STRUCTURAL no_signal (its
-    historical producer: the pre-4.0 semantic-mode-without-a-model
-    branch, which fired on every turn of such a deployment) was
+    dict (``MissReport.to_dict``), so a STRUCTURAL no_signal — the
+    semantic-mode-without-a-model branch the Stop hook hits on every
+    single turn of a ``search_mode="semantic"`` deployment — was
     event-identical to a benign per-turn one (bare continuation, no
     hits), and no log consumer could split the permanently-unmeasured
     cohort from the healthy one.
@@ -683,6 +684,7 @@ def probe_for_miss(
     caller_origin: Origin | None = None,
     excluded_scopes: set[str] | None = None,
     mode: str = "hybrid",
+    semantic_model: Any | None = None,
     half_life_days: float = 30.0,
     applied_by_id: dict[str, int] | None = None,
     negative_by_id: dict[str, tuple[int, int]] | None = None,
@@ -717,13 +719,15 @@ def probe_for_miss(
     measures "would a different ranker have hit" rather than "did the
     model miss what its ranker would have shown." Default falls to
     `"hybrid"` (the package default since 2.6.8) when the caller
-    doesn't have a config to thread in. The
+    doesn't have a config to thread in. Hybrid gracefully degrades to
+    keyword+BM25 fusion when no embedding extra is installed. The
     probe deliberately does NOT request `expand_top` or `path_drift` —
     those signals matter for *consuming* a hit, not for deciding
     whether a search should have happened.
 
-    `half_life_days`, `applied_by_id`, `negative_by_id`,
-    `corroboration_boost`, and `rescue_expansion` are forwarded verbatim
+    `semantic_model`, `half_life_days`, `applied_by_id`,
+    `negative_by_id`, `corroboration_boost`, and `rescue_expansion` are
+    forwarded verbatim
     to `search` so the probe ranks with the same scorer configuration
     production retrieval uses — the same probe-matches-the-ranker rule
     the `mode` parameter exists for. They travel as a SET, matching the
@@ -779,6 +783,13 @@ def probe_for_miss(
       creation shield below then drops from `memories`. Only the df
       DENOMINATORS see them — no shielded memory can be ranked or
       returned — so the effect is a small IDF drift, not a leak.
+
+    `mode="semantic"` with no
+    `semantic_model` returns a `no_signal` report with
+    `no_signal_reason="semantic_model_unavailable"` instead of raising:
+    silently probing with a different scorer would measure the wrong
+    thing, and crashing would cost the audit cadence entirely (the Stop
+    hook cannot afford a per-turn model load, so it always passes None).
 
     `creation_shield_seconds` is the creation-shield window: memories
     whose `created` falls within it are dropped from the candidate set
@@ -915,9 +926,29 @@ def probe_for_miss(
     # allowed set lets `run_search` raise the same ValueError the
     # memory_search handler would, so a bad config doesn't silently
     # degrade the audit.
-    if mode not in ("keyword", "bm25", "hybrid"):
+    if mode not in ("keyword", "bm25", "semantic", "hybrid"):
         raise ValueError(
-            f"unknown audit probe mode {mode!r}; must be one of: keyword, bm25, hybrid"
+            f"unknown audit probe mode {mode!r}; "
+            "must be one of: keyword, bm25, semantic, hybrid"
+        )
+    # Semantic mode with no model is an honest no_signal, not a crash
+    # and not a silent degrade to a different scorer (the module
+    # docstring's probe-matches-the-ranker rule forbids wrong-scorer
+    # probes). Pre-fix this fell through to `run_search`, whose
+    # ValueError aborted the entire audit — the Stop hook swallowed it
+    # before `turn_audited` was recorded, so semantic-mode users got
+    # zero audit telemetry ever.
+    if mode == "semantic" and semantic_model is None:
+        return MissReport(
+            verdict="no_signal",
+            checked_at=now,
+            session_id=session_id,
+            lookback_seconds=lookback_seconds,
+            recent_retrieval_count=0,
+            threshold_rule=THRESHOLD_RULE_V1,
+            top_hits=(),
+            probe_query=user_message,
+            no_signal_reason="semantic_model_unavailable",
         )
     hits: list[MemoryHit] = run_search(
         memories,
@@ -929,6 +960,7 @@ def probe_for_miss(
         now=now,
         half_life_days=half_life_days,
         mode=cast(SearchMode, mode),
+        semantic_model=semantic_model,
         applied_by_id=applied_by_id,
         negative_by_id=negative_by_id,
         corroboration_boost=corroboration_boost,

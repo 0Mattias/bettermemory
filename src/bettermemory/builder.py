@@ -69,6 +69,10 @@ from ._handlers import (
 from ._response import ResponseBuilder
 from .config import Config, load_config
 from .events import Recorder
+from .semantic_setup import (
+    _configure_persistent_embeddings,
+    _semantic_model_or_none,
+)
 from .session import (
     SessionSource,
     SessionState,
@@ -139,6 +143,12 @@ def build_server(
             log_queries_verbatim=config.telemetry.log_queries_verbatim,
             worktree_root=_h.capture_origin().worktree_root,
         )
+
+    # Wire the persistent embedding cache to this store's directory. The
+    # configure call doesn't load anything from disk yet; hydration is
+    # lazy on the first cached_embed call so non-semantic-dedup sessions
+    # never touch the file.
+    _configure_persistent_embeddings(config, store)
 
     # Imported lazily, for the same reason `_handlers` is above: `__init__`
     # imports this module before it binds `__version__`, so a module-level
@@ -245,6 +255,7 @@ def _register_tools(
         sessions=sessions,
         recorder=recorder,
         responses=responses,
+        semantic_model_factory=_semantic_model_or_none,
     )
 
     # Order matches `server.py`'s module docstring's tool list so a reader

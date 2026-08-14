@@ -10,11 +10,18 @@ is now a three-value closed set and `search()` raises on anything else.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any
 
 import pytest
 
+from bettermemory.config import BehaviorConfig, Config, StorageConfig
 from bettermemory.models import Confidence, Memory, Source, generate_ulid
-from bettermemory.search import search
+from bettermemory.search import search, tokenize
+from bettermemory.server import build_server
+from bettermemory.session import SessionState
+from bettermemory.store import Store
+from ._mcp import call_tool as _mcp_call
 
 
 def _memory(
@@ -34,6 +41,30 @@ def _memory(
         source=Source.EXPLICIT,
         body=body,
     )
+
+
+class _StubSemanticModel:
+    """Deterministic stand-in for sentence-transformers.SentenceTransformer.
+
+    Embeds text into a normalized vector over a small synthetic vocabulary
+    (the union of tokens we feed it in tests). Cosine similarity on these
+    vectors mirrors Jaccard token overlap, so paraphrases that share no
+    surface tokens correctly score zero — which is the boundary the
+    stub needs to model for these tests.
+    """
+
+    def __init__(self, vocab: list[str]) -> None:
+        self._vocab = vocab
+        self._index = {term: i for i, term in enumerate(vocab)}
+
+    def encode(self, text: str, *, normalize_embeddings: bool = False) -> list[float]:
+        toks = set(tokenize(text))
+        vec = [1.0 if term in toks else 0.0 for term in self._vocab]
+        if normalize_embeddings:
+            norm = sum(x * x for x in vec) ** 0.5
+            if norm > 0:
+                vec = [x / norm for x in vec]
+        return vec
 
 
 def test_mode_default_is_hybrid() -> None:
@@ -59,17 +90,69 @@ def test_mode_bm25_returns_hits() -> None:
     assert all(h.score > 0 for h in hits)
 
 
-def test_mode_hybrid_fuses_the_two_lexical_legs() -> None:
-    """Hybrid is the fusion of keyword + BM25 and nothing else.
+def test_mode_semantic_requires_model() -> None:
+    """`mode="semantic"` without a model is a programming error — raise
+    ValueError loudly so the caller fixes it rather than silently
+    returning empty results."""
+    a = _memory("anything")
+    with pytest.raises(ValueError, match="semantic_model"):
+        search([a], "query", mode="semantic")
 
-    It was written as a degradation case — "the embeddings extra is not
-    installed, so fuse what is left" — but 4.0.0 made two legs the whole
-    definition, so the condition can no longer vary. What is still worth
-    pinning is that the fusion beats neither leg alone into silence."""
+
+def test_mode_semantic_returns_hits_with_stub_model() -> None:
+    """Semantic mode with a stub model: docs whose body shares tokens with
+    the query should score positive. The stub mirrors Jaccard so this is
+    really a smoke test for the dispatch path; the real ranking
+    quality is a property of the production model."""
+    a = _memory("python list comprehension")
+    b = _memory("kubernetes networking notes")
+    model = _StubSemanticModel(
+        ["python", "list", "comprehension", "kubernetes", "networking", "notes"]
+    )
+    hits = search([a, b], "python list", mode="semantic", semantic_model=model)
+    assert hits
+    assert hits[0].id == a.id
+
+
+def test_mode_hybrid_runs_without_semantic_model() -> None:
+    """Hybrid mode degrades gracefully when no semantic model is provided:
+    it fuses keyword + BM25 only — the default install, and the exact
+    two-leg fusion 4.0.0 shipped, byte for byte. The "I asked for the
+    best, but I don't have the embeddings extra installed" case — should
+    still beat single-ranker quality in practice without hard-erroring."""
     a = _memory("python list comprehension")
     b = _memory("rust borrow checker")
     hits = search([a, b], "python", mode="hybrid")
     assert hits
+    assert hits[0].id == a.id
+
+
+def test_mode_hybrid_uses_semantic_when_model_provided() -> None:
+    """When a model is provided, hybrid should fuse three rankers. Sanity
+    check: top result for a multi-token query about python is still
+    the python doc, not the rust doc, even though BM25 alone might
+    score them differently than keyword."""
+    a = _memory("python list comprehension")
+    b = _memory("rust borrow checker")
+    c = _memory("javascript promises")
+    model = _StubSemanticModel(
+        [
+            "python",
+            "list",
+            "comprehension",
+            "rust",
+            "borrow",
+            "checker",
+            "javascript",
+            "promises",
+        ]
+    )
+    hits = search(
+        [a, b, c],
+        "python list",
+        mode="hybrid",
+        semantic_model=model,
+    )
     assert hits[0].id == a.id
 
 
@@ -203,3 +286,43 @@ def test_mode_invalid_returns_typed_error() -> None:
     # genuinely a closed-set check, not a typo-specific reject.
     with pytest.raises(ValueError, match="unknown search mode"):
         search([a], "anything", mode="")  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# mode dispatch through the MCP tool surface
+#
+# Regression for the semantic-gating conflation: `_semantic_model_or_none`
+# used to gate the model on `semantic_dedup` alone, so a config with
+# `search_mode = "semantic"` and dedup off (the shipped default for the
+# dedup flag) hard-errored EVERY memory_search with "requires the
+# embeddings extra" — even with the extra installed. Exercised end-to-end
+# through the real factory chain; the stub model stands in for the
+# installed extra at the `get_model` boundary, so the test holds both
+# with and without a real extra in the environment.
+# ---------------------------------------------------------------------------
+
+
+async def test_config_semantic_mode_without_dedup_serves_search(
+    memory_dir: Path, store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model = _StubSemanticModel(
+        ["python", "list", "comprehension", "kubernetes", "networking", "notes"]
+    )
+    monkeypatch.setattr("bettermemory.semantic.get_model", lambda *a, **kw: model)
+    target = store.write(content="python list comprehension", scopes=["tools"])
+    store.write(content="kubernetes networking notes", scopes=["tools"])
+
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(search_mode="semantic", semantic_dedup=False),
+    )
+    # Typed as Any for the same reason test_search_prefilter.py's
+    # `_build_server` returns Any: `call_tool`'s content blocks are a
+    # broad union that the JSON round-trip below erases anyway.
+    server: Any = build_server(config=cfg, store=store, state=SessionState())
+
+    result = await _mcp_call(server, "memory_search", {"query": "python list"})
+    hits = result.get("result", result) if isinstance(result, dict) else result
+
+    assert hits, "semantic search mode without semantic_dedup must serve hits"
+    assert hits[0]["id"] == target.id

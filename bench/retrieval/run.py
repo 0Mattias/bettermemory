@@ -22,6 +22,7 @@ THE ARMS. Two of them mirror what a real user actually gets, rather than
 artificial mode flags:
 
   lexical   mode="hybrid", no embedding model  — a default install
+  semantic  mode="hybrid", embedding model     — `bettermemory[embeddings]`
 
 and each is probed three ways:
 
@@ -40,8 +41,8 @@ measurement becomes a talking point.
 THE THRESHOLD, AND THE TWO KNOBS THAT REACH IT. The default corpus sits
 below `_INDEX_THRESHOLD_DEFAULT` (500), so retrieval scores the whole
 corpus. Above that threshold production prefilters through SQLite bm25
-and every other ranker only REORDERS that top-50 — no ranker can
-surface a document bm25 never nominated. The 3.29.0 default flip
+and every other ranker only REORDERS that top-50 — so a semantic leg
+cannot surface a document bm25 never nominated. The 3.29.0 default flip
 was justified entirely by a below-threshold measurement, which is the
 sharpest fair criticism of it.
 
@@ -370,6 +371,7 @@ def run_arm(
     *,
     arm: str,
     probe: str,
+    semantic_model: Any | None = None,
 ) -> ArmResult:
     """Rank the full corpus in-process — the pre-3.30 arm, unchanged.
 
@@ -392,6 +394,7 @@ def run_arm(
             max_results=max(K_VALUES),
             mode="hybrid",
             rescue_expansion=RESCUE_EXPANSION,
+            semantic_model=semantic_model,
         )
         ranked = [h.id for h in hits]
         result.n += 1
@@ -415,6 +418,7 @@ def run_arm_prefiltered(
     *,
     arm: str,
     probe: str,
+    semantic_model: Any | None = None,
 ) -> ArmResult:
     """Rank what production would actually have ranked.
 
@@ -470,6 +474,7 @@ def run_arm_prefiltered(
             max_results=max(K_VALUES),
             mode="hybrid",
             rescue_expansion=RESCUE_EXPANSION,
+            semantic_model=semantic_model,
             # The part `run_arm` cannot pass. Without it a capped pool is
             # scored with pool-derived document frequencies, which prices
             # a term that is rare in the store as common in the slice —
@@ -653,8 +658,8 @@ def main() -> int:
     )
     parser.add_argument(
         "--arms",
-        default="lexical",
-        help="Arms to run. Only `lexical` exists since 4.0.0.",
+        default="lexical,semantic",
+        help="Comma-separated subset of `lexical,semantic`. Default both.",
     )
     parser.add_argument(
         "--pad-to",
@@ -786,12 +791,17 @@ def main() -> int:
             f"Production's threshold is {INDEX_THRESHOLD}."
         )
 
+    semantic_model = None
     if "semantic" in arms:
-        arms = [a for a in arms if a != "semantic"]
-        notes.append(
-            "semantic arm REMOVED in 4.0.0 — the product ships no "
-            "embedding models; pre-4.0 artifacts remain the dated record."
-        )
+        from bettermemory.semantic import get_model, resolve_provider
+
+        semantic_model = get_model(provider=resolve_provider())
+        if semantic_model is None:
+            arms = [a for a in arms if a != "semantic"]
+            notes.append(
+                "semantic arm SKIPPED — no embeddings extra importable. "
+                "Install `bettermemory[embeddings]` to run it."
+            )
 
     if RESCUE_EXPANSION:
         notes.append(
@@ -812,6 +822,7 @@ def main() -> int:
 
         rows: list[ArmResult] = []
         for arm in arms:
+            model = semantic_model if arm == "semantic" else None
             for probe in ("asked", "requery", "control"):
                 for prefilter in modes:
                     rows.append(
@@ -821,6 +832,7 @@ def main() -> int:
                             slug_to_id,
                             arm=arm,
                             probe=probe,
+                            semantic_model=model,
                         )
                         if prefilter
                         else run_arm(
@@ -829,6 +841,7 @@ def main() -> int:
                             slug_to_id,
                             arm=arm,
                             probe=probe,
+                            semantic_model=model,
                         )
                     )
         # Inside the `try`, because the diagnostic reads the index that
@@ -849,7 +862,7 @@ def main() -> int:
         notes.append(
             "corpus is above the index threshold, but this runner ranks the "
             "full corpus — production would prefilter through SQLite bm25 "
-            "first. Treat this as an upper bound."
+            "first. Treat this as an upper bound on the semantic arm."
         )
     if True in modes:
         notes.append(

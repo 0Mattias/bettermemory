@@ -2071,49 +2071,43 @@ def test_run_audit_endorsement_tally_uses_production_window(
     assert ATTRIBUTION_LOOKBACK_SECONDS in windows
 
 
-def test_run_audit_legacy_semantic_config_file_audits_as_hybrid(
+def test_run_audit_semantic_mode_records_no_signal_instead_of_aborting(
     tmp_path: Path,
 ) -> None:
-    """A config FILE still saying `search_mode = "semantic"` must audit.
-
-    Pre-4.0 that deployment was the permanently-unmeasured cohort: the
-    probe declined every turn with `no_signal_reason =
-    "semantic_model_unavailable"`. The 4.0.0 strip removed the mode
-    outright and `config._coerce_search_mode` normalises the stale file
-    value to `hybrid` (loudly) — so the hook, which always goes through
-    `load_config` in its fresh process, probes hybrid and produces REAL
-    telemetry. Pin the end-to-end path so the unmeasured cohort cannot
-    recur under a leftover config line."""
-    from bettermemory.config import load_config
+    """Regression: with `search_mode = "semantic"` configured, the probe
+    raised ValueError on every non-trivial turn and the Stop hook's
+    broad except swallowed it BEFORE `recorder.record` — semantic-mode
+    users got zero `turn_audited` events ever. The hook never loads an
+    embedding model (fresh process per Stop event must not block the
+    turn end), so the sanctioned path is an explicit no_signal with a
+    reason — and the audit cadence event still lands."""
+    from bettermemory.config import BehaviorConfig, Config, StorageConfig
 
     mem_dir = tmp_path / "mem"
     mem_dir.mkdir()
     _write_miss_memory(mem_dir)
 
-    config_path = tmp_path / "config.toml"
-    # as_posix(): a Windows tmp_path's backslashes would be (invalid)
-    # escape sequences inside a TOML basic string; forward slashes are
-    # valid TOML and a path Windows Python opens fine.
-    config_path.write_text(
-        f'[storage]\ndirectory = "{mem_dir.as_posix()}"\n\n'
-        '[behavior]\nsearch_mode = "semantic"\n',
-        encoding="utf-8",
+    cfg = Config(
+        storage=StorageConfig(directory=str(mem_dir)),
+        behavior=BehaviorConfig(search_mode="semantic"),
     )
-    cfg = load_config(config_path)
-    assert cfg.behavior.search_mode == "hybrid"
-
     result = run_audit(
         user_message=_MISS_QUERY,
         assistant_response=None,
-        session_id="claude-legacy-semantic",
+        session_id="claude-semantic",
         config=cfg,
     )
-    # Pre-4.0 this was a structural no_signal; now the probe really ran.
-    assert result["verdict"] != "no_signal"
-    assert result.get("no_signal_reason") is None
+    # Pre-fix this raised before any event was recorded.
+    assert result["verdict"] == "no_signal"
+    assert result["no_signal_reason"] == "semantic_model_unavailable"
     audited = [e for e in iter_events(mem_dir) if e["kind"] == "turn_audited"]
     assert len(audited) == 1
-    assert audited[0]["probe_mode"] == "hybrid"
+    assert audited[0]["verdict"] == "no_signal"
+    assert audited[0]["probe_mode"] == "semantic"
+    # Round-88: the reason reaches the WIRE too (turn_audited_fields
+    # forwards it additively), so log consumers can split the
+    # permanently-unmeasured semantic cohort from benign no_signals.
+    assert audited[0]["no_signal_reason"] == "semantic_model_unavailable"
 
 
 def test_run_audit_threads_ranker_config_into_probe(
@@ -2121,8 +2115,10 @@ def test_run_audit_threads_ranker_config_into_probe(
 ) -> None:
     """The Stop hook must hand the probe the configured ranker knobs —
     `recency_boost_half_life_days` and (when `endorsement_boost` is on)
-    the explicit-applied tally. Pre-fix the probe ranked with hardwired
-    defaults for every config."""
+    the explicit-applied tally — and must NEVER thread a semantic model
+    (a per-Stop-event model load would violate the never-block
+    contract). Pre-fix the probe ranked with hardwired defaults for
+    every config."""
     from bettermemory.audit import probe_for_miss as real_probe
     from bettermemory.config import BehaviorConfig, Config, StorageConfig
 
@@ -2156,6 +2152,7 @@ def test_run_audit_threads_ranker_config_into_probe(
     )
     assert captured["half_life_days"] == 7.0
     assert captured["applied_by_id"] == {memory_id: 1}
+    assert captured["semantic_model"] is None
 
 
 def test_run_audit_endorsement_tally_drops_out_of_window_applies(

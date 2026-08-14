@@ -32,7 +32,7 @@ patch propagates — see ``handlers/_shared.py`` for the contract.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Callable, TypeAlias
 
 from . import handlers as _handlers_pkg
 from ._response import ResponseBuilder
@@ -347,6 +347,7 @@ class ToolHandlers:
         sessions: SessionSource,
         recorder: Recorder,
         responses: ResponseBuilder,
+        semantic_model_factory: "SemanticModelFactory",
     ) -> None:
         from .episodes import EpisodeStore
 
@@ -360,6 +361,10 @@ class ToolHandlers:
         self.sessions = sessions
         self.recorder = recorder
         self.responses = responses
+        # Indirected so `_handlers.py` doesn't depend on the optional
+        # `semantic` extra at import time. The factory takes `config` and
+        # returns the model (or None for the Jaccard fallback).
+        self._semantic_model_factory = semantic_model_factory
 
     # ---- FTS candidate prefilter ----------------------------------------
     #
@@ -789,6 +794,19 @@ class ToolHandlers:
         )
 
 
+# A SemanticModelFactory is `(Config) -> Any | None` — the model object
+# when a configured consumer needs one, or None for the
+# Jaccard / keyword+bm25 fallback. `semantic_setup._semantic_model_configured`
+# enumerates the consumers (write-dedup, `search_mode = "semantic"`, and
+# `hybrid` once an embeddings extra imports); this comment points at it
+# rather than restating it because the list has changed and the copy
+# that lived here is what stayed behind. Kept as a callable rather than a
+# hard import so `_handlers.py` doesn't pull in `semantic` (and
+# through it `sentence-transformers`) at import time when no consumer
+# is configured.
+SemanticModelFactory: TypeAlias = Callable[[Config], Any]
+
+
 # Re-exports used by tests:
 # - `_already_recorded_pending_ids` is imported directly by
 #   tests/test_server.py.
@@ -826,6 +844,7 @@ __all__ = [
     "DESC_MEMORY_WRITE",
     "DESC_MEMORY_WRITE_CANCEL",
     "DESC_MEMORY_WRITE_CONFIRM",
+    "SemanticModelFactory",
     "ToolHandlers",
     "_advance_turn",
     "_already_recorded_pending_ids",
