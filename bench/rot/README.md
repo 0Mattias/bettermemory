@@ -652,3 +652,65 @@ that text appears anywhere in the claimed value.
 Each is now gradeable: change it, re-run, and read J and p. That is the
 first time this project has been able to say that about its headline
 feature, and it is worth more than the number itself.
+
+## The live-store read, 2026-08-14 — item 4's first instrument
+
+Declared first (`T1_LIVE_STORE_DECLARATION.md`, five predictions, sha
+ordering declaration → implementation → run), then run once:
+
+```sh
+.venv/bin/python bench/rot/live_census.py --out bench/rot/results/live-store-2026-08-14.json
+```
+
+The population item 4 asked for and the roadmap called unmeasured:
+author-declared, gate-checked claims on real memory bodies, joined
+with the outcome timeline the event log already records. Artifact:
+`results/live-store-2026-08-14.json`, aggregates only by declared
+rule. The five grades, computed by the census itself:
+
+| | prediction | result | |
+| --- | --- | --- | --- |
+| **T-P1** | zero stored-claim parse failures | 0 of 585 | hit |
+| **T-P2** | false-while-fresh ≤ 1% of classifiable claims | **0.0%** (0 of 501) | hit |
+| **T-P3** | repair-follow multiplier ≥ 2.0, floors 10+10 | claim-carrying cohort holds **3** resolved deliveries | **underpowered** |
+| **T-P4** | historical share ≥ 25% of classifiable absent attestations | **89.5%** (17 of 19) | hit |
+| **T-P5** | notes at length ≥ 450 are ≥ 10% of notes | **11.5%** (144 of 1,257) | hit |
+
+Read T-P2 with the flattery its declaration named: the store's
+repo-local freshness debt was driven to zero the day before the run,
+so a zero here says the gate-plus-curation regime holds, not that rot
+cannot accumulate; later censuses read a store that has drifted
+naturally. Read T-P3 as the floors doing their job — claims-at-write
+is ten days old, so escalation traffic is dominated by pre-claims
+history (449 resolved-or-not deliveries on the claim-less cohort
+against 3), and the contrast stays ungraded rather than
+under-evidenced. The Lane T criterion v1 therefore reads
+**open_floors_unmet**, with the claims floor met (501 against 200) and
+the deliveries floor at 3 against 20 — progress published, criterion
+unread, exactly the shape the declaration committed to.
+
+**T-P4 is the decision the census existed to make.** Seventeen of the
+nineteen classifiable absent-path attestations are HISTORICAL — the
+path existed in the origin repository's history and was deleted — with
+two locality and **two reappeared**
+(`results/live-store-2026-08-14.json`, `d_absent_cohort`). The store
+has been reaching for the machine-locality lever to say "deleted on
+purpose" almost every time it says anything absent, and the lever's
+polarity is inverted for exactly that use: `expected_absent` treats
+reappearance as healthy, while for a historical claim reappearance is
+the drift. Per the declaration's decision rule 1, **the negative claim
+shape is scoped as the next Lane T product unit.**
+
+**T-P5 carries an unpredicted finding worth more than the grade.** The
+length histogram shows **20 notes above the 500 cap** (eight in
+500–599 up through one in 1100–1199 and one in 1400–1499;
+`results/live-store-2026-08-14.json`, `e_notes`). The handler refuses
+over-cap notes today, so either part of the log predates the cap or a
+note-writing path bypasses it — locating which is now part of the
+scoped note-cap unit (decision rule 2), and the answer changes the
+remedy: a leaky gate wants sealing before any ceiling debate.
+
+Calibration (decision rule 3): 182 post-cutoff audited turns and 5
+un-acked misses against floors of 300 and 10 — the successor-rule
+labeling unit stays **parked**, on the pre-registered floors rather
+than on appetite.

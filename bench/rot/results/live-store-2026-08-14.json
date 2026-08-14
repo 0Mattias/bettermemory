@@ -1,0 +1,235 @@
+{
+  "instrument": "T1 live-store census",
+  "declaration": "bench/rot/T1_LIVE_STORE_DECLARATION.md",
+  "provenance": {
+    "run_ts": "2026-08-14T20:44:37.819410+00:00",
+    "script_sha256": "6e08366c606468614e3f339b4a86577ba13b265cea37c1758c731d751b0ed4e5",
+    "repo_head": "b9d51d844db215c54159d56064dd4c4f4bb11dd4",
+    "verification_stale_days": 30,
+    "store_manifest_sha256": "8a50fad8bbf5aa12a31c1467ea02103b8425ec20fa2fcf1080687c521050e8aa",
+    "event_shards": [
+      {
+        "shard": ".events.00.jsonl",
+        "bytes": 187783,
+        "lines": 302,
+        "sha256": "c1aaf83b0caa2a3313ba48acd19be936da0eed34c0ebf87e55dfbe22f888eddd"
+      },
+      {
+        "shard": ".events.01.jsonl",
+        "bytes": 103354,
+        "lines": 174,
+        "sha256": "012b6b5645b2f6054dc6abe3d8464a2ca002e189ea0d00a1a5e31ea0b4cc0111"
+      },
+      {
+        "shard": ".events.02.jsonl",
+        "bytes": 109193,
+        "lines": 142,
+        "sha256": "73149327d7421385b53d59ca7ebf679a3af047133b83d729f72b9351e7fe06fc"
+      },
+      {
+        "shard": ".events.03.jsonl",
+        "bytes": 173596,
+        "lines": 319,
+        "sha256": "e5d62feb0d3c5beb4386977045891eca421f472df25310e083e520e8cf143da3"
+      },
+      {
+        "shard": ".events.04.jsonl",
+        "bytes": 89682,
+        "lines": 122,
+        "sha256": "898ecf52b307dfa74ab1d1bf5f8d50b3d9ecc62af273beb462e504c2b5d32955"
+      },
+      {
+        "shard": ".events.05.jsonl",
+        "bytes": 37766,
+        "lines": 68,
+        "sha256": "6db8c731dc6868d6a4a68cfcda58ccd9f8dbd1b610980694daa7c028a358eaaa"
+      },
+      {
+        "shard": ".events.06.jsonl",
+        "bytes": 5452,
+        "lines": 11,
+        "sha256": "2e16c120fa6ea9c87ecefffa344a05f9a636cfe86b31b576313715b394876151"
+      },
+      {
+        "shard": ".events.07.jsonl",
+        "bytes": 72029,
+        "lines": 114,
+        "sha256": "9509a118a3f8a30c20ba268f87943ab9192320838c13c37c6873fba6853e02ff"
+      },
+      {
+        "shard": ".events.08.jsonl",
+        "bytes": 84819,
+        "lines": 130,
+        "sha256": "e897e49971a8f445bd513959ee4be3a0ad55b66a44981ab5587753da90bfbf68"
+      },
+      {
+        "shard": ".events.09.jsonl",
+        "bytes": 56441,
+        "lines": 83,
+        "sha256": "aa2cef4157e20c6a2a955ffe647121f6e39506dff98e06a9575877fcc07682bc"
+      },
+      {
+        "shard": ".events.10.jsonl",
+        "bytes": 63811,
+        "lines": 91,
+        "sha256": "ae264f15b8417de72be7a7d53dc30acf796437898b70c1de6f39774bb587c4ce"
+      },
+      {
+        "shard": ".events.11.jsonl",
+        "bytes": 284925,
+        "lines": 467,
+        "sha256": "7fc6ac0c9b4fe64081aaf7d36cee7c0f9781a19a495ceec93c91ec6580e1ce39"
+      },
+      {
+        "shard": ".events.12.jsonl",
+        "bytes": 66125,
+        "lines": 104,
+        "sha256": "b27a55c8febf02f7e732b8e043b42062a381b5224606e0cddd78b2d46a74c8e8"
+      },
+      {
+        "shard": ".events.13.jsonl",
+        "bytes": 46005,
+        "lines": 86,
+        "sha256": "8e7f070af6ce073a943caa63753ecaad45db4243071c1f2efd95c8e5e598518a"
+      },
+      {
+        "shard": ".events.14.jsonl",
+        "bytes": 255857,
+        "lines": 430,
+        "sha256": "b0629af8441d9a7647b80b49aa182636780bb31fe4d9f01f8988dafdfc375d37"
+      },
+      {
+        "shard": ".events.15.jsonl",
+        "bytes": 62514,
+        "lines": 113,
+        "sha256": "7a4ab5f6ba476c57480a247a5059a03ba53246c0a420d5fa3965f9579992c4f7"
+      }
+    ],
+    "tombstone_count": 21
+  },
+  "a_population": {
+    "active_memories": 268,
+    "claim_carrying_memories": 118,
+    "claims_total": 585,
+    "claims_by_kind": {
+      "literal": 29,
+      "path": 310,
+      "symbol": 246
+    },
+    "claim_parse_failures": 0,
+    "checkable_but_undeclared_memories": 84,
+    "memories_by_family": {
+      "no-repo": 71,
+      "other-repo": 49,
+      "this-repo": 148
+    }
+  },
+  "b_claim_truth": {
+    "claims_classifiable": 501,
+    "claims_unclassifiable_dead_worktree": 84,
+    "claims_false": 0,
+    "claims_false_by_kind": {},
+    "memories_with_false_claims": 0,
+    "false_while_fresh": 0,
+    "false_while_fresh_rate": 0.0,
+    "false_while_fresh_by_family": {}
+  },
+  "c_timeline": {
+    "join_horizon_days": 7,
+    "claim_carrying": {
+      "escalated_deliveries": 3,
+      "repairs": 2,
+      "holds": 1,
+      "unresolved": 0,
+      "resolved": 3,
+      "repair_follow_rate": 0.6666666666666666,
+      "by_family": {
+        "this-repo": 3
+      }
+    },
+    "claim_less": {
+      "escalated_deliveries": 449,
+      "repairs": 268,
+      "holds": 149,
+      "unresolved": 32,
+      "resolved": 417,
+      "repair_follow_rate": 0.6426858513189448,
+      "by_family": {
+        "no-repo": 191,
+        "other-repo": 73,
+        "this-repo": 185
+      }
+    }
+  },
+  "d_absent_cohort": {
+    "memories_with_absent_attestations": 46,
+    "attestations_total": 79,
+    "classifiable": 19,
+    "historical": 17,
+    "locality": 2,
+    "reappeared": 2,
+    "unclassifiable": 58,
+    "historical_share": 0.8947368421052632
+  },
+  "e_notes": {
+    "notes_total": 1257,
+    "cap": 500,
+    "length_histogram_by_100": {
+      "000-099": 175,
+      "100-199": 233,
+      "1100-1199": 1,
+      "1400-1499": 1,
+      "200-299": 349,
+      "300-399": 268,
+      "400-499": 211,
+      "500-599": 8,
+      "600-699": 6,
+      "700-799": 4,
+      "800-899": 1
+    },
+    "squeezed_ge_450": 144,
+    "squeezed_share": 0.11455847255369929
+  },
+  "f_calibration": {
+    "post_cutoff_turns_audited": 182,
+    "post_cutoff_unacked_misses": 5,
+    "turn_floor": 300,
+    "miss_floor": 10,
+    "successor_rule_unlocked": false
+  },
+  "predictions": {
+    "T-P1": {
+      "statement": "zero stored-claim parse failures",
+      "observed": 0,
+      "grade": "hit"
+    },
+    "T-P2": {
+      "statement": "false-while-fresh <= 0.01 of classifiable claims",
+      "observed": 0.0,
+      "grade": "hit"
+    },
+    "T-P3": {
+      "statement": "claim-carrying repair-follow rate >= 2.0x claim-less, floors 10 resolved per cohort",
+      "observed_multiplier": null,
+      "floors_met": false,
+      "grade": "underpowered"
+    },
+    "T-P4": {
+      "statement": "historical share >= 0.25 of classifiable absent attestations, floor 8",
+      "observed": 0.8947368421052632,
+      "grade": "hit"
+    },
+    "T-P5": {
+      "statement": "notes with length >= 450 are >= 0.1 of notes",
+      "observed": 0.11455847255369929,
+      "grade": "hit"
+    }
+  },
+  "lane_t_criterion_v1": {
+    "claims_floor": 200,
+    "claims_classifiable": 501,
+    "deliveries_floor": 20,
+    "resolved_claim_carrying_deliveries": 3,
+    "status": "open_floors_unmet"
+  }
+}
