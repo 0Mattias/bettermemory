@@ -53,6 +53,11 @@ messages now track the re-target rule in
 - No stored data changes shape: `SCHEMA_VERSION` is untouched, and no
   memory or event written under 5.x reads differently.
 
+Post-gate fixes inside this tag's window, named per the erratum
+convention: `26069c6` (the strip orphaned the LongMemEval runner's
+`os` import; CI's ruff-check leg is the guard the local format check
+cannot substitute for).
+
 ## 5.7.0 - 2026-08-15
 
 A minor by the [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract):
