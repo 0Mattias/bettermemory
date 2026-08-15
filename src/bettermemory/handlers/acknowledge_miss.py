@@ -49,11 +49,11 @@ _MIN_REASON_LENGTH = 8
 # Maximum length on the free-form `reason` field. The min floor keeps
 # drive-by `ack("ok")` spam out of the audit trail; this ceiling keeps a
 # runaway model (or a hostile client) from inflating the JSONL event log
-# with a multi-megabyte reason. 500 chars mirrors `_NOTE_MAX_LEN` — the
-# matching cap on the other free-text event-log fields (`memory_verify`
-# / `memory_record_use` notes) — and covers any reasonable one-liner
-# rationale; pasting a whole transcript belongs in a memory body, not an
-# ack reason.
+# with a multi-megabyte reason. 500 chars covers any reasonable one-liner
+# rationale, and deliberately does NOT follow `_NOTE_MAX_LEN`'s raise to
+# 800 — an ack reason is a triage one-liner over a tiny population, not
+# an evidence-carrying note (bench/rot/T3_NOTE_CAP_DECISION.md); pasting
+# a whole transcript belongs in a memory body, not an ack reason.
 _MAX_REASON_LENGTH = 500
 
 

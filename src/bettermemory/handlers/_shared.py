@@ -92,11 +92,13 @@ _AMBIENT_LONG_BODY_WORDS = 500
 
 # Cap on free-text `note` strings recorded on `memory_verify` and
 # `memory_record_use` events, so a hostile client (or a runaway model)
-# can't inflate the JSONL event log with multi-megabyte notes.
-# 500 chars covers any reasonable
-# rationale ("verified against commit abc123" sort of thing); pasting
+# can't inflate the JSONL event log with multi-megabyte notes. Raised
+# 500 -> 800 on the T1 live-store census: 11.5% of recorded notes sat
+# within 50 chars of the old cap, and the unconstrained pre-cap tail
+# has its knee at 800 (bench/rot/T3_NOTE_CAP_DECISION.md). Over-cap
+# notes are refused with a teaching error, never truncated; pasting
 # whole transcripts belongs in a memory body, not in an event note.
-_NOTE_MAX_LEN = 500
+_NOTE_MAX_LEN = 800
 
 
 # ---------------------------------------------------------------------------

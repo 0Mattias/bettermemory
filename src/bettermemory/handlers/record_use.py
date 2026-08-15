@@ -50,7 +50,7 @@ DESC_MEMORY_RECORD_USE = (
     "Parameters:\n"
     "- `memory_ids`: list (1+).\n"
     "- `outcome`: see table above.\n"
-    "- `note` (optional, ≤500 chars): free-form context.\n"
+    "- `note` (optional, ≤800 chars): free-form context.\n"
     "- `claim_excerpts` (optional): list parallel to `memory_ids` "
     "(same length, `None` slots OK) carrying the load-bearing "
     "phrase that shaped the response. ≤500 chars per excerpt. Pass "

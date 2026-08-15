@@ -79,7 +79,7 @@ DESC_MEMORY_VERIFY = (
     "the timestamp forward.\n\n"
     "Parameters:\n"
     "- `id`: memory id.\n"
-    "- `note` (optional, ≤500 chars): what was checked, for the "
+    "- `note` (optional, ≤800 chars): what was checked, for the "
     "event log.\n"
     "- `verified_paths` (optional list of strings): the ONLY "
     "attestation the drift legs read — checked against the memory's "

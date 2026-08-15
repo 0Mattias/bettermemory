@@ -1567,7 +1567,7 @@ def test_contract_constants_in_descriptions_are_not_measurements() -> None:
     for text in (
         "Capped by `max_takeaway_bytes` (default 4 KB) — the takeaway lives "
         "in YAML frontmatter (64 KB ceiling).",
-        "- `note` (optional, ≤500 chars): free-form context",
+        "- `note` (optional, ≤800 chars): free-form context",
         "demotes 2x under the same flag",
         "Sentences with <30% token overlap to the transcript return "
         "{status:'ungrounded'}",

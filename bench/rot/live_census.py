@@ -76,6 +76,11 @@ from bench.claims import classify_body  # noqa: E402
 JOIN_HORIZON = timedelta(days=7)
 NOTE_CAP = 500
 NOTE_SQUEEZE_FLOOR = 450  # within 50 chars of the cap
+# NOTE_CAP stays 500 by design after the shipped cap moved to 800 in
+# 5.7.0 (bench/rot/T3_NOTE_CAP_DECISION.md): it is T1's declared
+# constant, and grading T-P5 against it is what keeps re-runs
+# comparable. A future note-pressure census under the 800 contract
+# declares fresh constants in its own declaration.
 P3_COHORT_FLOOR = 10  # resolved escalated deliveries per cohort
 P4_CLASSIFIABLE_FLOOR = 8
 CALIBRATION_TURN_FLOOR = 300

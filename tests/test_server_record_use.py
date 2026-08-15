@@ -266,28 +266,29 @@ async def test_record_use_with_telemetry_disabled_is_noop(
 async def test_record_use_rejects_oversized_note(
     server_with_events: tuple[Any, Path],
 ) -> None:
-    """`note` caps at 500 chars so a hostile client (or a runaway
+    """`note` caps at 800 chars so a hostile client (or a runaway
     model) can't inflate the JSONL event log with multi-megabyte
-    notes. (The cap predates 5.0: it matched the since-removed web
-    UI's /verify form so both entry points refused alike.)"""
+    notes. (The cap predates 5.0 at 500 chars, matching the
+    since-removed web UI's /verify form; raised to 800 in 5.7.0 on
+    the T1 live-store census — bench/rot/T3_NOTE_CAP_DECISION.md.)"""
     server, _ = server_with_events
     written = await _call(
         server, "memory_write", content="durable fact", scopes=["tools"]
     )
-    with pytest.raises(Exception, match="cap is 500"):
+    with pytest.raises(Exception, match="cap is 800"):
         await _call(
             server,
             "memory_record_use",
             memory_ids=[written["id"]],
             outcome="ignored",
-            note="x" * 501,
+            note="x" * 801,
         )
 
 
 async def test_record_use_accepts_max_length_note(
     server_with_events: tuple[Any, Path],
 ) -> None:
-    """Sanity check: exactly 500 chars is accepted (the cap is
+    """Sanity check: exactly 800 chars is accepted (the cap is
     inclusive)."""
     server, _ = server_with_events
     written = await _call(
@@ -298,6 +299,6 @@ async def test_record_use_accepts_max_length_note(
         "memory_record_use",
         memory_ids=[written["id"]],
         outcome="ignored",
-        note="x" * 500,
+        note="x" * 800,
     )
     assert res["outcome"] == "ignored"
