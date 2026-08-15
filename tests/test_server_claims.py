@@ -424,3 +424,95 @@ async def test_search_hit_carries_claim_drift(server_in_repo) -> None:
     assert hit["commit_drift_count"] == 1
     assert hit["claim_drift"]["drifted"] == ["pkg/mod.py::handler"]
     assert hit["staleness_verdict"] == "spot_check_recommended"
+
+
+# ---------------------------------------------------------------------------
+# The absence shape end to end (T2)
+# ---------------------------------------------------------------------------
+
+
+async def _write_absence_claimed(server: Any) -> str:
+    """A body telling the deletion story its claim asserts: pkg/legacy.py
+    is gone on purpose. The body CITES the deleted path — the dominant
+    real pattern per T1's cohort D — so the citation anchor and the
+    governed claim path coincide, as they will in live records."""
+    written = await _call(
+        server,
+        "memory_write",
+        content=(
+            "pkg/legacy.py was deleted on purpose; its retry logic moved "
+            "into pkg/mod.py and must not come back."
+        ),
+        scopes=["tools"],
+        claims=["!pkg/legacy.py"],
+    )
+    assert written["status"] == "committed"
+    return written["id"]
+
+
+async def test_write_refuses_absence_claim_while_path_exists(
+    server_in_repo,
+) -> None:
+    server, _repo = server_in_repo
+    with pytest.raises(Exception, match="absence claim"):
+        await _call(
+            server,
+            "memory_write",
+            content="Claims pkg/mod.py stays deleted while it plainly exists.",
+            scopes=["tools"],
+            claims=["!pkg/mod.py"],
+        )
+
+
+async def test_write_stores_absence_claim_when_path_is_gone(
+    server_in_repo,
+) -> None:
+    server, _repo = server_in_repo
+    memory_id = await _write_absence_claimed(server)
+    shown = await _call(server, "memory_show", id=memory_id)
+    assert shown["claims"] == ["!pkg/legacy.py"]
+
+
+async def test_verify_refuses_stamp_when_absent_path_reappears(
+    server_in_repo,
+) -> None:
+    """Escalation-on-reappearance at the strongest surface, with no
+    verify-side code: the stored re-check inherits the inverted oracle,
+    so `last_verified_at` cannot be stamped over a path that came back."""
+    server, repo = server_in_repo
+    memory_id = await _write_absence_claimed(server)
+    verified = await _call(server, "memory_verify", id=memory_id)
+    assert verified["claims"] == ["!pkg/legacy.py"]
+
+    (repo / "pkg" / "legacy.py").write_text("BACK_FROM_THE_DEAD = True\n")
+    _git(repo, "add", "pkg/legacy.py")
+    _git(repo, "commit", "-m", "resurrect legacy module", when=_FUTURE)
+
+    with pytest.raises(Exception, match="exists in the worktree"):
+        await _call(server, "memory_verify", id=memory_id)
+
+
+async def test_reappearance_escalates_commit_drift_naming_the_claim(
+    server_in_repo,
+) -> None:
+    """The read-side mirror of the headline: a commit re-creating the
+    claimed-absent path implicates the claim, escalates the verdict,
+    and names `!pkg/legacy.py` so the model sees which polarity fired."""
+    server, repo = server_in_repo
+    memory_id = await _write_absence_claimed(server)
+    await _call(server, "memory_verify", id=memory_id)
+
+    (repo / "pkg" / "legacy.py").write_text(
+        "RESURRECTED_CONSTANT_VALUE = 'back from the dead'\n"
+    )
+    _git(repo, "add", "pkg/legacy.py")
+    _git(repo, "commit", "-m", "resurrect legacy module", when=_FUTURE)
+
+    shown = await _call(server, "memory_show", id=memory_id)
+    drift = shown["commit_drift"]
+    assert drift is not None
+    assert drift["status"] == "drift"
+    assert drift["commits_since_verify"] == 1
+    assert drift["claim_drift"]["checked"] == 1
+    assert drift["claim_drift"]["drifted"] == ["!pkg/legacy.py"]
+    assert shown["staleness_verdict"] == "spot_check_recommended"

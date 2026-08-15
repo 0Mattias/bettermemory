@@ -26,8 +26,10 @@ supplied.
 
 The wire syntax
 ---------------
-One string per claim, three shapes — the same three kinds
-`bench/rot`'s corpus measured:
+One string per claim, four shapes. The first three are the kinds
+`bench/rot`'s corpus measured; the fourth is their polarity mirror,
+scoped by T1's live-store census
+(`bench/rot/T2_ABSENCE_CLAIM_DECLARATION.md`):
 
 - ``src/pkg/mod.py`` — a PATH claim: the file exists.
 - ``src/pkg/mod.py::name`` — a SYMBOL claim: `name` is a top-level
@@ -37,11 +39,23 @@ One string per claim, three shapes — the same three kinds
   `repr` space after `ast.literal_eval`: `30` and `30.0` stay
   distinct, while `{8, 16}` and `{16, 8}` are one claim — see
   `_canonical_repr`).
+- ``!src/pkg/mod.py`` — an ABSENCE claim: nothing exists at that
+  path. Declaration refuses while anything — file or directory —
+  occupies it, and the drift polarity inverts: reappearance is the
+  drift. Path-only; ``!path::x`` is refused, because symbol- and
+  literal-absence have no measured evidence base (T-P4's cohort is
+  paths) and loosening an oracle without re-running the bench ships
+  an unmeasured detector wearing measured numbers.
 
 Paths are stored repo-relative with forward slashes. `::` was chosen
 because coding agents already read it as file-scoped addressing
 (pytest node ids); `=` binds looser than `::` so a value may contain
-`::` but a symbol name may not — names are identifiers.
+`::` but a symbol name may not — names are identifiers. `!` was chosen
+for absence because it cannot begin a Python identifier (no collision
+with the symbol/literal shapes) and the old grammar would only ever
+have admitted a `!`-prefixed path if a file literally so named passed
+the existence gate — the live store held 0 such claims in 595 when the
+marker was declared.
 
 Checked at declaration, not trusted
 -----------------------------------
@@ -159,6 +173,8 @@ class Claim:
 
     def render(self) -> str:
         """The canonical wire string — what gets stored and displayed."""
+        if self.kind == "absent":
+            return f"!{self.rel_path}"
         if self.kind == "path":
             return self.rel_path
         if self.kind == "symbol":
@@ -215,12 +231,28 @@ def parse_claim(raw: str) -> Claim:
             f"claim is {len(text)} chars — cap is {MAX_CLAIM_LEN}. Claims "
             "are short path/symbol addresses, not prose."
         )
+    absent = text.startswith("!")
+    if absent:
+        text = text[1:].lstrip()
+        if not text:
+            raise ValueError(
+                "an absence claim needs a path after '!' (`!src/gone.py` "
+                "asserts nothing exists at that path)"
+            )
     path_part, sep, rest = text.partition("::")
     path_part = path_part.strip()
     if not path_part:
         raise ValueError(f"claim {text!r} has no path before '::'")
     if "\\" in path_part:
         raise ValueError(f"claim path {path_part!r} must use forward slashes")
+    if absent:
+        if sep:
+            raise ValueError(
+                f"claim {raw.strip()!r}: absence claims are path-only — "
+                "`!path` asserts nothing exists at that path; symbol and "
+                "literal absence are not claimable kinds"
+            )
+        return Claim("absent", path_part, path_part, "")
     if not sep:
         return Claim("path", path_part, path_part, "")
     rest = rest.strip()
@@ -336,6 +368,15 @@ def check_claim(claim: Claim, root: Path) -> str | None:
     AST lookup, a literal comparison, and never an inference. The one
     addition is the reason string: the bench needed a label, a refused
     caller needs to know what the tree actually says.
+
+    The `absent` kind is the same oracle with the existence check
+    inverted: it holds when NOTHING occupies the resolved path — a
+    directory defeats an absence claim exactly as it fails a path
+    claim's `is_file()`. Resolution and containment are unchanged, so
+    escapes refuse identically for both polarities. Deliberately no
+    git-history requirement at the gate: a never-existed path is a
+    weaker but not a false absence claim, and history enters on the
+    read side, where it already lives.
     """
     target = _resolve_claim_path(root, claim.rel_path)
     if target is None:
@@ -344,6 +385,14 @@ def check_claim(claim: Claim, root: Path) -> str | None:
             "worktree — claims are anchored to the memory's origin "
             "worktree; use verified_paths for out-of-tree attestations"
         )
+    if claim.kind == "absent":
+        if target.exists():
+            return (
+                f"path {claim.rel_path!r} exists in the worktree — an "
+                "absence claim (`!path`) asserts it stays deleted; "
+                "remove it, or drop the claim if it is meant to be back"
+            )
+        return None
     if not target.is_file():
         return f"path {claim.rel_path!r} does not exist in the worktree"
     if claim.kind == "path":
@@ -640,6 +689,12 @@ def claim_level_drift(cite: Claim, index: dict[str, Any]) -> dict[str, Any]:
     binding is exactly the spot-check-this signal, while STRICT alone
     would go quiet on in-place edits that changed what the line says.
 
+    The ABSENT kind inverts both tiers' polarity: weak = the claimed
+    path was touched at all in the window, strict = touched and NOT
+    net-deleted — the window re-created a path the claim asserts stays
+    gone. Additive branch on a kind the measured corpus never contains;
+    the three measured kinds' code paths are untouched.
+
     A BODY-ONLY EDIT IS DELIBERATELY NOT DRIFT. The oracle matches a
     definition by `.name` and never inspects its contents, so a body
     edit leaves the label `still_true` BY CONSTRUCTION — pinned by
@@ -663,6 +718,19 @@ def claim_level_drift(cite: Claim, index: dict[str, Any]) -> dict[str, Any]:
         entry = empty
         strict = path_gone
         weak = path_gone
+    elif cite.kind == "absent":
+        # Polarity mirror of the path kind. The window STARTS absent
+        # (the declare-time oracle gated on absence), so a window
+        # showing both a touch and a deletion can only be
+        # add-then-delete — it ends absent, and weak-only is correct.
+        # The set-based index cannot order events, but the invariant
+        # closes the gap; the one degradation (add-delete-add in a
+        # single window reads weak-only) is caught by the verify gate
+        # on the next stamp attempt.
+        entry = empty
+        touched = cite.rel_path in index["files"]
+        strict = touched and not path_gone
+        weak = touched
     elif cite.kind == "symbol":
         entry = index["bindings"].get((cite.rel_path, "def", cite.name), empty)
         strict = path_gone or (entry["removes"] - entry["adds"]) > 0

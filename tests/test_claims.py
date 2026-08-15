@@ -2,11 +2,14 @@
 declare-time oracle, and the lenient stored-claim loader.
 
 The detector half (`build_binding_index` / `claim_level_drift`) is NOT
-re-tested here: `tests/test_bench_rot.py` exercises it through
-`bench/rot/run.py`, which imports the shipped functions — one suite,
-one copy, no chance of the two drifting. What this module owns is the
-part the bench never had: parsing caller-supplied claim strings, and
-checking a claim against a live worktree at declaration.
+re-tested here for the three measured kinds: `tests/test_bench_rot.py`
+exercises those through `bench/rot/run.py`, which imports the shipped
+functions — one suite, one copy, no chance of the two drifting. What
+this module owns is the part the bench never had: parsing
+caller-supplied claim strings, checking a claim against a live worktree
+at declaration — and the ABSENT kind's tier semantics, the one detector
+branch the bench corpus never contains
+(`bench/rot/T2_ABSENCE_CLAIM_DECLARATION.md`).
 """
 
 from __future__ import annotations
@@ -18,7 +21,9 @@ import pytest
 from bettermemory.claims import (
     MAX_CLAIMS,
     Claim,
+    build_binding_index,
     check_claim,
+    claim_level_drift,
     claim_paths,
     load_claims,
     parse_claim,
@@ -149,6 +154,43 @@ def test_claim_paths_deduplicates_preserving_order() -> None:
 
 
 # ---------------------------------------------------------------------------
+# The absence shape — `!path`, the polarity mirror (T2)
+# ---------------------------------------------------------------------------
+
+
+def test_parse_absence_claim() -> None:
+    claim = parse_claim("!src/pkg/gone.py")
+    assert claim == Claim("absent", "src/pkg/gone.py", "src/pkg/gone.py", "")
+    assert claim.render() == "!src/pkg/gone.py"
+    assert parse_claim(claim.render()) == claim
+
+
+def test_parse_absence_claim_normalizes_spacing() -> None:
+    assert parse_claim("  ! src/gone.py ").render() == "!src/gone.py"
+
+
+def test_parse_absence_claim_is_path_only() -> None:
+    """Symbol- and literal-absence have no measured evidence base; the
+    refusal teaches the boundary, as the grammar's refusals always do."""
+    with pytest.raises(ValueError, match="path-only"):
+        parse_claim("!src/mod.py::handler")
+    with pytest.raises(ValueError, match="path-only"):
+        parse_claim("!src/mod.py::NAME=1")
+    with pytest.raises(ValueError, match="needs a path"):
+        parse_claim("!")
+    with pytest.raises(ValueError, match="forward slashes"):
+        parse_claim("!src\\gone.py")
+
+
+def test_parse_absence_and_presence_are_distinct_claims() -> None:
+    """An absence claim and a presence claim on the same path are
+    distinct; two spellings of the same absence collapse to one
+    canonical form."""
+    claims = parse_claims(["!a.py", "a.py", "! a.py"])
+    assert [c.render() for c in claims] == ["!a.py", "a.py"]
+
+
+# ---------------------------------------------------------------------------
 # check_claim — the declare-time oracle
 # ---------------------------------------------------------------------------
 
@@ -268,3 +310,113 @@ def test_oracle_symbol_claim_on_non_python_file(tree: Path) -> None:
     # Comment-only markdown parses as an empty module — still refused,
     # via the not-top-level branch.
     assert _reason(tree, "README.md::heading") is not None
+
+
+# ---------------------------------------------------------------------------
+# check_claim — the absent kind's inverted oracle
+# ---------------------------------------------------------------------------
+
+
+def test_oracle_absence_holds_when_nothing_occupies_the_path(tree: Path) -> None:
+    assert _reason(tree, "!pkg/gone.py") is None
+
+
+def test_oracle_absence_refuses_existing_file(tree: Path) -> None:
+    reason = _reason(tree, "!pkg/mod.py")
+    assert reason is not None and "exists in the worktree" in reason
+
+
+def test_oracle_absence_refuses_directory(tree: Path) -> None:
+    """A directory occupying the path defeats absence exactly as it
+    fails a path claim's `is_file()` — the two polarities refuse the
+    same in-between state rather than each calling it their own way."""
+    reason = _reason(tree, "!pkg")
+    assert reason is not None and "exists in the worktree" in reason
+
+
+def test_oracle_absence_refuses_escapes_like_presence(tree: Path) -> None:
+    """Same containment walk for both polarities: an absence claim on an
+    out-of-tree path is refused, not vacuously true."""
+    for escape in ("../outside.py", "/etc/passwd", "~/x.py", "a/../../b.py"):
+        reason = check_claim(Claim("absent", escape, escape, ""), tree)
+        assert reason is not None and "worktree" in reason
+
+
+# ---------------------------------------------------------------------------
+# claim_level_drift — the absent branch only
+#
+# The three measured kinds stay tested through `tests/test_bench_rot.py`
+# (one suite, one copy — see the module docstring). The absent kind is
+# the one detector branch the bench corpus never contains, so its tier
+# semantics are owned here, on handcrafted -U0 streams.
+# ---------------------------------------------------------------------------
+
+_MARK = "\x01"
+
+
+def _readd_stream(sha: str = "sha1") -> str:
+    return (
+        f"{_MARK}{sha}\n"
+        "diff --git a/pkg/gone.py b/pkg/gone.py\n"
+        "--- /dev/null\n"
+        "+++ b/pkg/gone.py\n"
+        "@@ -0,0 +1,2 @@\n"
+        "+GONE_TIMEOUT_SECONDS = 30\n"
+        "+GONE_RETRY_LIMIT = 3\n"
+    )
+
+
+def _delete_stream(sha: str = "sha2") -> str:
+    return (
+        f"{_MARK}{sha}\n"
+        "diff --git a/pkg/gone.py b/pkg/gone.py\n"
+        "--- a/pkg/gone.py\n"
+        "+++ /dev/null\n"
+        "@@ -1,2 +0,0 @@\n"
+        "-GONE_TIMEOUT_SECONDS = 30\n"
+        "-GONE_RETRY_LIMIT = 3\n"
+    )
+
+
+def test_absent_claim_fires_both_tiers_on_net_reappearance() -> None:
+    index = build_binding_index(_readd_stream())
+    result = claim_level_drift(parse_claim("!pkg/gone.py"), index)
+    assert result["weak"] is True
+    assert result["strict"] is True
+
+
+def test_absent_claim_reads_weak_only_when_window_ends_absent() -> None:
+    """Add-then-delete inside one window: the set-based index shows both
+    a touch and a deletion; under the declare-time invariant (the window
+    STARTS absent) that sequence can only end absent — weak says
+    spot-check, strict stays quiet."""
+    index = build_binding_index(_readd_stream("sha1") + _delete_stream("sha2"))
+    result = claim_level_drift(parse_claim("!pkg/gone.py"), index)
+    assert result["weak"] is True
+    assert result["strict"] is False
+
+
+def test_absent_claim_stays_quiet_on_unrelated_churn() -> None:
+    stream = (
+        f"{_MARK}sha9\n"
+        "diff --git a/pkg/other.py b/pkg/other.py\n"
+        "--- a/pkg/other.py\n"
+        "+++ b/pkg/other.py\n"
+        "@@ -1,1 +1,1 @@\n"
+        "-OTHER_CONSTANT_VALUE = 1\n"
+        "+OTHER_CONSTANT_VALUE = 2\n"
+    )
+    index = build_binding_index(stream)
+    result = claim_level_drift(parse_claim("!pkg/gone.py"), index)
+    assert result["weak"] is False
+    assert result["strict"] is False
+
+
+def test_presence_path_claim_unmoved_by_the_absent_branch() -> None:
+    """Guard on A-P5's additive-only promise: the same re-add stream
+    that fires the absent kind leaves the presence path kind exactly
+    where the bench measured it — quiet (nothing was deleted)."""
+    index = build_binding_index(_readd_stream())
+    result = claim_level_drift(parse_claim("pkg/gone.py"), index)
+    assert result["weak"] is False
+    assert result["strict"] is False

@@ -2218,13 +2218,15 @@ def _weak_tier_evaluation(
 
     Implication is per-claim: a weak-fired symbol/literal claim
     implicates the commits that touched its binding (plus content-anchor
-    hits for literals); a weak-fired path claim implicates every
-    post-`since` commit whose diff carried lines for that path (the
-    deletion's own sha never entered the index, so per-line attribution
-    is the closest exact stand-in). A fired claim that implicates
-    nothing at all — a deleted binary, an all-blank-line file —
-    attributes the whole window rather than silently contributing zero
-    to a count whose `weak` verdict just said "drifted".
+    hits for literals); a weak-fired path or absent claim implicates
+    every post-`since` commit whose diff carried lines for that path
+    (the deletion's own sha never entered the index, so per-line
+    attribution is the closest exact stand-in — and for an absent claim
+    the re-creating commit's added lines ARE in the index). A fired
+    claim that implicates nothing at all — a deleted binary, an
+    all-blank-line file — attributes the whole window rather than
+    silently contributing zero to a count whose `weak` verdict just
+    said "drifted".
     """
     if len(shas) > MAX_PATCH_STREAM_COMMITS:
         return [], None
@@ -2242,7 +2244,7 @@ def _weak_tier_evaluation(
         drifted.append(claim.render())
         claim_shas: set[str] = set(result["binding_shas"])
         claim_shas |= set(result["anchor_shas"])
-        if claim.kind == "path":
+        if claim.kind in ("path", "absent"):
             for sha_set in index["changed_text"].get(claim.rel_path, {}).values():
                 claim_shas |= sha_set
         implicated |= claim_shas
