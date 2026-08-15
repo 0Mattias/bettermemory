@@ -1,4 +1,1029 @@
 {
-  "_": "Lane W corpus register — bench/W_PROGRAM_DECLARATION.md governs. A corpus is admitted only as a pinned snapshot with source URL, retrieval date, sha256 over the exact bytes used, and a verified license, recorded here BEFORE any training run reads it. Candidates that fail license verification are recorded with admitted=false and the reason.",
-  "corpora": []
+ "_": "Lane W corpus register — bench/W_PROGRAM_DECLARATION.md governs. A corpus is admitted only as a pinned snapshot with source URL, retrieval date, sha256 over the exact bytes used, and a verified license, recorded here BEFORE any training run reads it. Candidates that fail license verification are recorded with admitted=false and the reason.",
+ "corpora": [
+  {
+   "name": "enwiki-20260801-pages-articles-part1",
+   "admitted": true,
+   "source_url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream1.xml-p1p41242.bz2",
+   "retrieved": "2026-08-15",
+   "bytes": 299138062,
+   "sha256": "856411e9a99bdc38f809ee36960ae05249a41815d56e08f015b138feaad8fe9f",
+   "license": "CC BY-SA 4.0 (Wikipedia article text, per Wikimedia's published licensing; dual-licensed GFDL)",
+   "local_path": "bench/w/corpus/enwiki-20260801-pages-articles-multistream1.xml-p1p41242.bz2",
+   "verification": {
+    "byte_count_matches_dumpstatus": true,
+    "publisher_sha1": "c70c36ca1b892ed97b0dbce2bc889468f7abe858",
+    "publisher_sha1_matches": true,
+    "note": "First pages-articles multistream part-file (page ids 1-41242) of the dated dump, the bounded slice W1_DECLARATION.md par.3 names; fetch cap 300 MB held (299,138,062 bytes). Size and sha1 cross-checked against the dump's dumpstatus.json; the sha256 above is over the exact fetched bytes and is the register's authoritative pin."
+   }
+  },
+  {
+   "name": "gutenberg-curated-2026-08-15",
+   "admitted": true,
+   "source_url": "https://www.gutenberg.org/cache/epub/<id>/pg<id>.txt",
+   "retrieved": "2026-08-15",
+   "bytes": 49995485,
+   "items_admitted": 74,
+   "license": "Public domain in the United States; the standard Project Gutenberg public-domain header sentence verified mechanically per item (bench/w/fetch_gutenberg.py; PG boilerplate is stripped before training and no PG trademark is carried)",
+   "local_path": "bench/w/corpus/gutenberg/",
+   "verification": {
+    "license_check": "anyone anywhere in the United States",
+    "note": "Hand-curated canonical English works, fetched in id order with per-item license/language/title checks; the declared 50 MB set cap held (49,995,485 bytes) and is what rejected most of the overflow candidates below."
+   },
+   "items": [
+    {
+     "id": 11,
+     "title": "Alice's Adventures in Wonderland",
+     "expected_title": "Alice's Adventures in Wonderland",
+     "url": "https://www.gutenberg.org/cache/epub/11/pg11.txt",
+     "bytes": 174311,
+     "sha256": "01b38ea4c710a84bc18d0bd41271a5a1a92b94e97b2812f4dece97d4a694725e",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 12,
+     "title": "Through the Looking-Glass",
+     "expected_title": "Through the Looking-Glass",
+     "url": "https://www.gutenberg.org/cache/epub/12/pg12.txt",
+     "bytes": 196534,
+     "sha256": "e40a38f5da841f9fb6acc557355c447b7c2ccb56a208caf5fcf2b05081f14d42",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 16,
+     "title": "Peter Pan",
+     "expected_title": "Peter Pan",
+     "url": "https://www.gutenberg.org/cache/epub/16/pg16.txt",
+     "bytes": 288769,
+     "sha256": "6b08714281fe38266a756741e4c62915cda7536c2f78cca501f7fd53f3f445ae",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 23,
+     "title": "Narrative of the Life of Frederick Douglass, an American Slave",
+     "expected_title": "Frederick Douglass",
+     "url": "https://www.gutenberg.org/cache/epub/23/pg23.txt",
+     "bytes": 249061,
+     "sha256": "234c15348a66919bad1d534cdd48ee8ddf91f50115a706cbefaa8edd049672fd",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 26,
+     "title": "Paradise Lost",
+     "expected_title": "Paradise Lost",
+     "url": "https://www.gutenberg.org/cache/epub/26/pg26.txt",
+     "bytes": 491360,
+     "sha256": "27948a16679d93889a221e650e41d702bd50b6eba956427bdc37ccfa20192e0d",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 33,
+     "title": "The Scarlet Letter",
+     "expected_title": "The Scarlet Letter",
+     "url": "https://www.gutenberg.org/cache/epub/33/pg33.txt",
+     "bytes": 513732,
+     "sha256": "ae8d5a2d55a7b5d2b4b37497338892dab5ff6cc535bf523698da4ba6abe15ee7",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 35,
+     "title": "The Time Machine",
+     "expected_title": "The Time Machine",
+     "url": "https://www.gutenberg.org/cache/epub/35/pg35.txt",
+     "bytes": 204384,
+     "sha256": "2892e919000e17c83e1dac51b30f4675db50536b644d7579fe8a89bb399a9bdc",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 36,
+     "title": "The war of the worlds",
+     "expected_title": "The War of the Worlds",
+     "url": "https://www.gutenberg.org/cache/epub/36/pg36.txt",
+     "bytes": 366624,
+     "sha256": "8417469e3ab664749f7b36ebb85799075818207b0380b54c27d07d592a44117d",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 41,
+     "title": "The Legend of Sleepy Hollow",
+     "expected_title": "The Legend of Sleepy Hollow",
+     "url": "https://www.gutenberg.org/cache/epub/41/pg41.txt",
+     "bytes": 90896,
+     "sha256": "6847c02f49c9ff8a5e2a0e8f49842bf3bffc7f5a87216c895a6b64f26ecf9353",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 43,
+     "title": "The strange case of Dr. Jekyll and Mr. Hyde",
+     "expected_title": "Jekyll",
+     "url": "https://www.gutenberg.org/cache/epub/43/pg43.txt",
+     "bytes": 163495,
+     "sha256": "b43448a88391591f9cf82b25553df00faf47a2752a873185fcdd1156eebdb990",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 45,
+     "title": "Anne of Green Gables",
+     "expected_title": "Anne of Green Gables",
+     "url": "https://www.gutenberg.org/cache/epub/45/pg45.txt",
+     "bytes": 606693,
+     "sha256": "89a5e9fb2e0bb44562a969785385366f94e1da736aebee7d9cdf459eb0b5f9f6",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 46,
+     "title": "A Christmas Carol in Prose; Being a Ghost Story of Christmas",
+     "expected_title": "A Christmas Carol",
+     "url": "https://www.gutenberg.org/cache/epub/46/pg46.txt",
+     "bytes": 182250,
+     "sha256": "8c36b93723d454982df045ec0efdf2664e5a48e6b5e2f670e883575f75ad0cc8",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 55,
+     "title": "The Wonderful Wizard of Oz",
+     "expected_title": "The Wonderful Wizard of Oz",
+     "url": "https://www.gutenberg.org/cache/epub/55/pg55.txt",
+     "bytes": 237232,
+     "sha256": "969bffab7740d4d8a0bac332d78bd0152ad4a40a2efc52f06c74a9bb6120be75",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 61,
+     "title": "The Communist Manifesto",
+     "expected_title": "The Communist Manifesto",
+     "url": "https://www.gutenberg.org/cache/epub/61/pg61.txt",
+     "bytes": 94315,
+     "sha256": "ba4623f09e411351ad4f34488289c70eceda8fb9d7977c1db64f0f01ed80cb59",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 62,
+     "title": "A princess of Mars",
+     "expected_title": "A Princess of Mars",
+     "url": "https://www.gutenberg.org/cache/epub/62/pg62.txt",
+     "bytes": 399822,
+     "sha256": "d35d09d2b9b7691822909636085c6a01903bae375e51ee10b45377021b122b66",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 74,
+     "title": "The Adventures of Tom Sawyer, Complete",
+     "expected_title": "The Adventures of Tom Sawyer",
+     "url": "https://www.gutenberg.org/cache/epub/74/pg74.txt",
+     "bytes": 434357,
+     "sha256": "74d77384b123a6360db9ab58463cff8b38df8525fbdc6000c81ee388e1f3cf10",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 76,
+     "title": "Adventures of Huckleberry Finn",
+     "expected_title": "Huckleberry Finn",
+     "url": "https://www.gutenberg.org/cache/epub/76/pg76.txt",
+     "bytes": 622460,
+     "sha256": "d617a37aa7ae1e1a93dcde2634db2bccb86824e31e29a55230bdbf77d6872d59",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 77,
+     "title": "The House of the Seven Gables",
+     "expected_title": "The House of the Seven Gables",
+     "url": "https://www.gutenberg.org/cache/epub/77/pg77.txt",
+     "bytes": 649593,
+     "sha256": "0d09eef49bec474dc4253b3035f298425280ec82d3e70b43befa443dd5e9819a",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 78,
+     "title": "Tarzan of the Apes",
+     "expected_title": "Tarzan of the Apes",
+     "url": "https://www.gutenberg.org/cache/epub/78/pg78.txt",
+     "bytes": 517223,
+     "sha256": "9fac1bdb66c2a3e955baaf1ce4601ba18145921679041779c2403e49b6bf4260",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 84,
+     "title": "Frankenstein; or, the modern prometheus",
+     "expected_title": "Frankenstein",
+     "url": "https://www.gutenberg.org/cache/epub/84/pg84.txt",
+     "bytes": 448885,
+     "sha256": "7810cd483cffcf2cc8a1d8f0d5807931e69d4f48cd14149b8c76f88af82fead3",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 86,
+     "title": "A Connecticut Yankee in King Arthur's Court",
+     "expected_title": "A Connecticut Yankee in King Arthur's Court",
+     "url": "https://www.gutenberg.org/cache/epub/86/pg86.txt",
+     "bytes": 681337,
+     "sha256": "6ce0781165b70257a4530f46856057ec689b0ec0980946fede2cd25ec5dca917",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 98,
+     "title": "A Tale of Two Cities",
+     "expected_title": "A Tale of Two Cities",
+     "url": "https://www.gutenberg.org/cache/epub/98/pg98.txt",
+     "bytes": 807197,
+     "sha256": "d54c2b80d40a40b982cd88852c6180bb944d95acdb028af3d0e01a1750681784",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 100,
+     "title": "The Complete Works of William Shakespeare",
+     "expected_title": "Shakespeare",
+     "url": "https://www.gutenberg.org/cache/epub/100/pg100.txt",
+     "bytes": 5638480,
+     "sha256": "3cf4b3d44ee14cff4e14e78e2ad3318eff76f3f7f2afc3cee6bb925879110a37",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 103,
+     "title": "Around the World in Eighty Days",
+     "expected_title": "Around the World in Eighty Days",
+     "url": "https://www.gutenberg.org/cache/epub/103/pg103.txt",
+     "bytes": 403712,
+     "sha256": "6f608ea2da50caf73245ad2996e4ee3c02ef1aa2152f7fcfe209df9aa39e7512",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 105,
+     "title": "Persuasion",
+     "expected_title": "Persuasion",
+     "url": "https://www.gutenberg.org/cache/epub/105/pg105.txt",
+     "bytes": 497555,
+     "sha256": "64ffb821b9e9eb1040c103a44c28893c94ebe33ffbb911288b5022efaecbfefc",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 108,
+     "title": "The Return of Sherlock Holmes",
+     "expected_title": "The Return of Sherlock Holmes",
+     "url": "https://www.gutenberg.org/cache/epub/108/pg108.txt",
+     "bytes": 719650,
+     "sha256": "8c4de14b3a1952417eca4673fcb1b8aa8f946f8a4164f10ec761368af34d5e5a",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 113,
+     "title": "The Secret Garden",
+     "expected_title": "The Secret Garden",
+     "url": "https://www.gutenberg.org/cache/epub/113/pg113.txt",
+     "bytes": 475315,
+     "sha256": "6b0bb5fbd0c4e873d2d22028da9d753cf3977d5f70ac58221556b28060badbf5",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 120,
+     "title": "Treasure Island",
+     "expected_title": "Treasure Island",
+     "url": "https://www.gutenberg.org/cache/epub/120/pg120.txt",
+     "bytes": 399861,
+     "sha256": "20cfdba153743bca26a15028ebb470121cbb7173ddafd435de5c19a79e4bbf30",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 121,
+     "title": "Northanger Abbey",
+     "expected_title": "Northanger Abbey",
+     "url": "https://www.gutenberg.org/cache/epub/121/pg121.txt",
+     "bytes": 468035,
+     "sha256": "627d572b1d1b7c2d6e2fef0a886bd70720f9267d609f94338cee18a97c4a87b3",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 132,
+     "title": "The Art of War",
+     "expected_title": "The Art of War",
+     "url": "https://www.gutenberg.org/cache/epub/132/pg132.txt",
+     "bytes": 342105,
+     "sha256": "c478f7e05a07bf190585fcea0bc4658ce22e47949ac18444eca53fb274878ffe",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 135,
+     "title": "Les Misérables",
+     "expected_title": "Les Mis",
+     "url": "https://www.gutenberg.org/cache/epub/135/pg135.txt",
+     "bytes": 3369207,
+     "sha256": "6cf3b9d6fc5e6f733737425267d3af296d7f99f9b9fd1d255a3ab7689a6346ab",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 140,
+     "title": "The Jungle",
+     "expected_title": "The Jungle",
+     "url": "https://www.gutenberg.org/cache/epub/140/pg140.txt",
+     "bytes": 854298,
+     "sha256": "1a28274fdea8c1438ebad3d7d07946b3d8a0779754427ba4a4da3b64882b7514",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 141,
+     "title": "Mansfield Park",
+     "expected_title": "Mansfield Park",
+     "url": "https://www.gutenberg.org/cache/epub/141/pg141.txt",
+     "bytes": 929142,
+     "sha256": "b34723544dbe8185e786d0fdd47e42e7e1ac4265b84141e31ca260c1e36b68d8",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 145,
+     "title": "Middlemarch",
+     "expected_title": "Middlemarch",
+     "url": "https://www.gutenberg.org/cache/epub/145/pg145.txt",
+     "bytes": 1865684,
+     "sha256": "dc2e0107e6ae07e8e33da934b2ec4e8e600826a2e0cd48df265119cd02e5fb50",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 155,
+     "title": "The Moonstone",
+     "expected_title": "The Moonstone",
+     "url": "https://www.gutenberg.org/cache/epub/155/pg155.txt",
+     "bytes": 1135528,
+     "sha256": "e2f9023a41c388fa2b0d2a21d71a363e603b33860d8d964e314b5f4da7e6f837",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 158,
+     "title": "Emma",
+     "expected_title": "Emma",
+     "url": "https://www.gutenberg.org/cache/epub/158/pg158.txt",
+     "bytes": 933709,
+     "sha256": "532b122b4e6a76cc556d6fdcd729b5892f5c4ce4a1b7060b9f832adfad8680dc",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 159,
+     "title": "The island of Doctor Moreau",
+     "expected_title": "The Island of Doctor Moreau",
+     "url": "https://www.gutenberg.org/cache/epub/159/pg159.txt",
+     "bytes": 269543,
+     "sha256": "6085aef7b293dc0935974736f71e84c86952d5cb4cbad977fde942ffeba98a31",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 161,
+     "title": "Sense and Sensibility",
+     "expected_title": "Sense and Sensibility",
+     "url": "https://www.gutenberg.org/cache/epub/161/pg161.txt",
+     "bytes": 712842,
+     "sha256": "22272ec4d4da2f50cda51edf34ab8486b325c4a99580120db565fb8917228a22",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 164,
+     "title": "Twenty Thousand Leagues under the Sea",
+     "expected_title": "Twenty Thousand Leagues",
+     "url": "https://www.gutenberg.org/cache/epub/164/pg164.txt",
+     "bytes": 638511,
+     "sha256": "3562e063ad9027725d1feb2f945e86a0a90804a8ab19f8cb272884c436ebc34f",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 174,
+     "title": "The Picture of Dorian Gray",
+     "expected_title": "The Picture of Dorian Gray",
+     "url": "https://www.gutenberg.org/cache/epub/174/pg174.txt",
+     "bytes": 465814,
+     "sha256": "38f36b510417177aa87a6a24c968e3ec63a447b7df36a9c1a7c5a3f2d9e51547",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 203,
+     "title": "Uncle Tom's Cabin",
+     "expected_title": "Uncle Tom's Cabin",
+     "url": "https://www.gutenberg.org/cache/epub/203/pg203.txt",
+     "bytes": 1079453,
+     "sha256": "95e4ce1153f8506d9903df84541cfa99c8ac6ad3ad69bcf5ea37d042d01a0a98",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 205,
+     "title": "Walden, and On The Duty Of Civil Disobedience",
+     "expected_title": "Walden",
+     "url": "https://www.gutenberg.org/cache/epub/205/pg205.txt",
+     "bytes": 667957,
+     "sha256": "2d9a76a2e3e8195c69430516ebd33c4d0757a53ad432ff6186b7b794e6fe99f9",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 209,
+     "title": "The Turn of the Screw",
+     "expected_title": "The Turn of the Screw",
+     "url": "https://www.gutenberg.org/cache/epub/209/pg209.txt",
+     "bytes": 259197,
+     "sha256": "171afa184a54b6004194e02047f5d01cf216d8bc519ddfb671a1e41d80bbdf65",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 215,
+     "title": "The call of the wild",
+     "expected_title": "The Call of the Wild",
+     "url": "https://www.gutenberg.org/cache/epub/215/pg215.txt",
+     "bytes": 199757,
+     "sha256": "30f569c5671bba7bbc4a92ab6d8ee01a0d3be00f994819c77da62c28041eb8a2",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 219,
+     "title": "Heart of Darkness",
+     "expected_title": "Heart of Darkness",
+     "url": "https://www.gutenberg.org/cache/epub/219/pg219.txt",
+     "bytes": 237072,
+     "sha256": "c0b0bc91c7695f9d01aacb240e82a9b559f57558f98ad0b1f167eba21f6be6f7",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 236,
+     "title": "The Jungle Book",
+     "expected_title": "The Jungle Book",
+     "url": "https://www.gutenberg.org/cache/epub/236/pg236.txt",
+     "bytes": 303640,
+     "sha256": "571353c4c69d127020fb16cd6a566f1d80101bc0fc3cf2b0c2ea5678bf4c769f",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 244,
+     "title": "A Study in Scarlet",
+     "expected_title": "A Study in Scarlet",
+     "url": "https://www.gutenberg.org/cache/epub/244/pg244.txt",
+     "bytes": 268776,
+     "sha256": "b1ce37ab30c24d470681c3c2bc746be7555d2a9b63d64eb7f477fe73e09d1a8f",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 245,
+     "title": "Life on the Mississippi",
+     "expected_title": "Life on the Mississippi",
+     "url": "https://www.gutenberg.org/cache/epub/245/pg245.txt",
+     "bytes": 843430,
+     "sha256": "91388a58a49f9c321fc5b1611560b0302d043a7e955c2f3f6c619d91befc8f01",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 271,
+     "title": "Black Beauty",
+     "expected_title": "Black Beauty",
+     "url": "https://www.gutenberg.org/cache/epub/271/pg271.txt",
+     "bytes": 333280,
+     "sha256": "493a70f2cd5580db12ba0bfee8d8fe74daa578f927c3db81afe285b31391d5a5",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 284,
+     "title": "The House of Mirth",
+     "expected_title": "The House of Mirth",
+     "url": "https://www.gutenberg.org/cache/epub/284/pg284.txt",
+     "bytes": 777957,
+     "sha256": "52728930e0b308772f8781b1e8b20a981b38cdebf161c20fb84ffc6764c1b6df",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 289,
+     "title": "The Wind in the Willows",
+     "expected_title": "The Wind in the Willows",
+     "url": "https://www.gutenberg.org/cache/epub/289/pg289.txt",
+     "bytes": 358358,
+     "sha256": "98f6b6cda20087857cefe9121b71d6166c1b92423bb7645fdba3c45ff0c141e8",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 345,
+     "title": "Dracula",
+     "expected_title": "Dracula",
+     "url": "https://www.gutenberg.org/cache/epub/345/pg345.txt",
+     "bytes": 890348,
+     "sha256": "96cd16eacdbfebae8fdda5591f66e0cc8ee76be18e0cd1aca02bc00615782d28",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 408,
+     "title": "The Souls of Black Folk",
+     "expected_title": "The Souls of Black Folk",
+     "url": "https://www.gutenberg.org/cache/epub/408/pg408.txt",
+     "bytes": 428743,
+     "sha256": "f5a231cbe6a8eb942369203e0c69c65090d689ce05feeb416cf05e24c5fa4da1",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 514,
+     "title": "Little Women",
+     "expected_title": "Little Women",
+     "url": "https://www.gutenberg.org/cache/epub/514/pg514.txt",
+     "bytes": 1071405,
+     "sha256": "677d034b4a3d1cea92d075939878f852a7a3ec757dc9ed05ef0c40cab5c1e6de",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 521,
+     "title": "The Life and Adventures of Robinson Crusoe",
+     "expected_title": "Robinson Crusoe",
+     "url": "https://www.gutenberg.org/cache/epub/521/pg521.txt",
+     "bytes": 653990,
+     "sha256": "6c5c1dc78db2ecd92905b6dd75779eba2361d7ee38e55300002e5cbedda63778",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 541,
+     "title": "The Age of Innocence",
+     "expected_title": "The Age of Innocence",
+     "url": "https://www.gutenberg.org/cache/epub/541/pg541.txt",
+     "bytes": 609882,
+     "sha256": "aae279f1a60ac64be53f63357e708a2fdaabdb334a1c92f81fc1c3b5c848a092",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 550,
+     "title": "Silas Marner",
+     "expected_title": "Silas Marner",
+     "url": "https://www.gutenberg.org/cache/epub/550/pg550.txt",
+     "bytes": 429296,
+     "sha256": "b4e54f078d8ff14846ef6196f3ae5134194818841a43c135a5346beded735eb9",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 580,
+     "title": "The Pickwick Papers",
+     "expected_title": "The Pickwick Papers",
+     "url": "https://www.gutenberg.org/cache/epub/580/pg580.txt",
+     "bytes": 1855171,
+     "sha256": "b44980181ef76e3879d5864a5f6cc4073c12eb940bc6db7a32632e9bb2f4bbd9",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 583,
+     "title": "The Woman in White",
+     "expected_title": "The Woman in White",
+     "url": "https://www.gutenberg.org/cache/epub/583/pg583.txt",
+     "bytes": 1419450,
+     "sha256": "c8cb8872f6c0a2a5b6489873c6c7b8c39f006c3fa44219738186a96f2c1d1254",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 600,
+     "title": "Notes from the Underground",
+     "expected_title": "Notes from the Underground",
+     "url": "https://www.gutenberg.org/cache/epub/600/pg600.txt",
+     "bytes": 266972,
+     "sha256": "6ce7d6ff7288263f1fd07d7ecfc07e419735cbbb4dff5107964af1afd8b2079e",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 696,
+     "title": "The Castle of Otranto",
+     "expected_title": "The Castle of Otranto",
+     "url": "https://www.gutenberg.org/cache/epub/696/pg696.txt",
+     "bytes": 240184,
+     "sha256": "04e29611252563c635d4d46e7253689093060b15510ae4d6f654be888685e001",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 730,
+     "title": "Oliver Twist",
+     "expected_title": "Oliver Twist",
+     "url": "https://www.gutenberg.org/cache/epub/730/pg730.txt",
+     "bytes": 955855,
+     "sha256": "c64d62808c163536c815cefdb4837d767670cf5c256c84191e736e4d480c7e49",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 766,
+     "title": "David Copperfield",
+     "expected_title": "David Copperfield",
+     "url": "https://www.gutenberg.org/cache/epub/766/pg766.txt",
+     "bytes": 2033321,
+     "sha256": "51650d348820a64ca4d4233da035f804819d2231801b59373db4e1279a1985e0",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 768,
+     "title": "Wuthering Heights",
+     "expected_title": "Wuthering Heights",
+     "url": "https://www.gutenberg.org/cache/epub/768/pg768.txt",
+     "bytes": 693819,
+     "sha256": "e533fe750589f0421d5d744576315f5c2b9b0d69e981179ea0551bbf134c5e02",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 786,
+     "title": "Hard Times",
+     "expected_title": "Hard Times",
+     "url": "https://www.gutenberg.org/cache/epub/786/pg786.txt",
+     "bytes": 626278,
+     "sha256": "dd239b4a0c9c1b72be40f9f7e1aabce511c022b238a8feb2a9e63f169a7436d9",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 829,
+     "title": "Gulliver's Travels into Several Remote Nations of the World",
+     "expected_title": "Gulliver's Travels",
+     "url": "https://www.gutenberg.org/cache/epub/829/pg829.txt",
+     "bytes": 613946,
+     "sha256": "fca36de3de0d8b831b7588cf1df84639ccf4c503172d6444ee61d1c1b2036edd",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 834,
+     "title": "The Memoirs of Sherlock Holmes",
+     "expected_title": "Memoirs of Sherlock Holmes",
+     "url": "https://www.gutenberg.org/cache/epub/834/pg834.txt",
+     "bytes": 612887,
+     "sha256": "509da3f8bbdc6c3857073e74911f628eef8fea557fcb5bca9e1713c846e43ec3",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 844,
+     "title": "The Importance of Being Earnest: A Trivial Comedy for Serious People",
+     "expected_title": "The Importance of Being Earnest",
+     "url": "https://www.gutenberg.org/cache/epub/844/pg844.txt",
+     "bytes": 141840,
+     "sha256": "1b8a58099bb1cdef6a845277a4bacf2f4a268702c165bde30124d4b5105d1851",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 863,
+     "title": "The Mysterious Affair at Styles",
+     "expected_title": "The Mysterious Affair at Styles",
+     "url": "https://www.gutenberg.org/cache/epub/863/pg863.txt",
+     "bytes": 361540,
+     "sha256": "1faa63bb31d418523417dda0227d29f78e71aec474db5a18021e41fab1dc2d57",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 910,
+     "title": "White Fang",
+     "expected_title": "White Fang",
+     "url": "https://www.gutenberg.org/cache/epub/910/pg910.txt",
+     "bytes": 428909,
+     "sha256": "3c7226d00fd9b169f0016635d0e461501620f343220ee18db7ca9f083f4ad3f4",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 944,
+     "title": "The Voyage of the Beagle",
+     "expected_title": "The Voyage of the Beagle",
+     "url": "https://www.gutenberg.org/cache/epub/944/pg944.txt",
+     "bytes": 1227345,
+     "sha256": "e13d57170a6dd9f7d97ddbc14cbde961dffbd95e8861ed199e5f00a525e7e52a",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 1080,
+     "title": "A Modest Proposal",
+     "expected_title": "A Modest Proposal",
+     "url": "https://www.gutenberg.org/cache/epub/1080/pg1080.txt",
+     "bytes": 39645,
+     "sha256": "331340f2ada84a7f79d756a344f6ce7d78026cd1d2359d33f79ca4a13d9f1519",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 1155,
+     "title": "The Secret Adversary",
+     "expected_title": "The Secret Adversary",
+     "url": "https://www.gutenberg.org/cache/epub/1155/pg1155.txt",
+     "bytes": 473693,
+     "sha256": "407cb2f13a6ea106cabab86de15a34a520e02065ec5e23fe3fec1380a6eba2f5",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    },
+    {
+     "id": 1952,
+     "title": "The Yellow Wallpaper",
+     "expected_title": "The Yellow Wallpaper",
+     "url": "https://www.gutenberg.org/cache/epub/1952/pg1952.txt",
+     "bytes": 52568,
+     "sha256": "822360229858662fe9dbbf0ca0ae8ca0221bad139881fef7a6a556bc438a5a9c",
+     "license_line": "This eBook is for the use of anyone anywhere in the United States and",
+     "language": "English"
+    }
+   ],
+   "rejected": [
+    {
+     "id": 969,
+     "expected_title": "The Tenant of Wildfell Hall",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 974,
+     "expected_title": "Lord Jim",
+     "reason": "title mismatch: header says 'The Secret Agent: A Simple Tale'"
+    },
+    {
+     "id": 996,
+     "expected_title": "Don Quixote",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 1023,
+     "expected_title": "Bleak House",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 1184,
+     "expected_title": "The Count of Monte Cristo",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 1228,
+     "expected_title": "On the Origin of Species",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 1232,
+     "expected_title": "The Prince",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 1257,
+     "expected_title": "The Three Musketeers",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 1260,
+     "expected_title": "Jane Eyre",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 1322,
+     "expected_title": "Leaves of Grass",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 1342,
+     "expected_title": "Pride and Prejudice",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 1399,
+     "expected_title": "Anna Karenina",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 1400,
+     "expected_title": "Great Expectations",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 1404,
+     "expected_title": "The Federalist Papers",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 1497,
+     "expected_title": "The Republic",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 1661,
+     "expected_title": "The Adventures of Sherlock Holmes",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 1727,
+     "expected_title": "The Odyssey",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 1998,
+     "expected_title": "Thus Spake Zarathustra",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 2097,
+     "expected_title": "The Sign of the Four",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 2147,
+     "expected_title": "Edgar Allan Poe",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 2148,
+     "expected_title": "Edgar Allan Poe",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 2226,
+     "expected_title": "Kim",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 2383,
+     "expected_title": "Canterbury Tales",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 2554,
+     "expected_title": "Crime and Punishment",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 2591,
+     "expected_title": "Grimms' Fairy Tales",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 2600,
+     "expected_title": "War and Peace",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 2610,
+     "expected_title": "Notre-Dame",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 2680,
+     "expected_title": "Meditations",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 2701,
+     "expected_title": "Moby Dick",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 2814,
+     "expected_title": "Dubliners",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 2852,
+     "expected_title": "The Hound of the Baskervilles",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 3176,
+     "expected_title": "The Innocents Abroad",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 3207,
+     "expected_title": "Leviathan",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 3289,
+     "expected_title": "The Valley of Fear",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 3300,
+     "expected_title": "An Inquiry into the Nature and Causes of the Wealth of Nations",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 3600,
+     "expected_title": "Essays of Michel de Montaigne",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 4217,
+     "expected_title": "A Portrait of the Artist as a Young Man",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 4300,
+     "expected_title": "Ulysses",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 4363,
+     "expected_title": "Beyond Good and Evil",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 5000,
+     "expected_title": "Leonardo da Vinci",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 5230,
+     "expected_title": "The Invisible Man",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 5827,
+     "expected_title": "The Problems of Philosophy",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 6130,
+     "expected_title": "The Iliad",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 8492,
+     "expected_title": "The King in Yellow",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 8800,
+     "expected_title": "Divine Comedy",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 16328,
+     "expected_title": "Beowulf",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 18857,
+     "expected_title": "Journey to the Interior of the Earth",
+     "reason": "title mismatch: header says 'A Journey to the Centre of the Earth'"
+    },
+    {
+     "id": 28054,
+     "expected_title": "The Brothers Karamazov",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 34901,
+     "expected_title": "On Liberty",
+     "reason": "set cap would be exceeded"
+    },
+    {
+     "id": 64317,
+     "expected_title": "The Great Gatsby",
+     "reason": "set cap would be exceeded"
+    }
+   ]
+  }
+ ]
 }

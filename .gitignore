@@ -62,3 +62,7 @@ bench/longmemeval/data/
 bench/longmemeval/results/*.log
 bench/longmemeval/vendor/
 bench/msc/data/
+
+# W1 training-corpus bytes: pinned by sha256 in bench/w/corpora.json,
+# fetched under the declared plain-sentence gate, never committed.
+bench/w/corpus/
