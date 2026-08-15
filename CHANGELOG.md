@@ -7,6 +7,42 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 5.6.0 - 2026-08-14
+
+A minor by the [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract):
+one additive claim kind, no schema change, no new dependencies. Every
+stored claim written under any prior release parses and means the same
+thing — the live store measured 0 of 595 claims carrying the new
+marker before it meant anything.
+
+### Added — the absence claim shape (`!path`)
+
+The claims grammar's fourth kind, scoped mechanically by the T1
+live-store census (`bench/rot/T1_LIVE_STORE_DECLARATION.md`, decision
+rule 1: 89.5% of classifiable attested-absent paths were HISTORICAL —
+deleted on purpose — a pattern `verified_absent_paths`' presence-never-
+flags contract carries with inverted polarity) and declared before
+implementation (`bench/rot/T2_ABSENCE_CLAIM_DECLARATION.md`).
+
+`memory_write(claims=["!src/old.py"])` asserts nothing exists at that
+path. The declare-time oracle refuses while anything — file or
+directory — occupies it; both gates inherit the inversion with no new
+gate code, so a `memory_verify` on a memory whose claimed-absent path
+has REAPPEARED refuses to stamp `last_verified_at`, naming the claim.
+The commit-drift leg's claim tier fires on reappearance: weak = the
+path was touched in the post-verify window, strict = the window net-
+re-created it — sound under the declare-time invariant (the window
+starts absent, so touch-plus-delete can only be add-then-delete).
+Path-only: `!path::x` refuses with a teaching error; symbol- and
+literal-absence have no measured evidence base.
+
+Acceptance read (`bench/rot/results/t2-validation-2026-08-14.json`):
+all five declared predictions hit — including T1's two live reappeared
+cases, which refuse at declaration and fire strict in their re-add
+windows (2/2, 2/2), and detector identity for the three measured kinds
+(additive branch on a kind the corpus never contains; no pinned table
+moved).
+
 ## 5.5.0 - 2026-08-13
 
 A minor by the [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract).

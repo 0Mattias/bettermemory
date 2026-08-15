@@ -5,11 +5,13 @@ project README leads with. Ground truth comes from git, not from a
 model; every verdict-shaped quantity is computed by the SHIPPED
 functions, never a reimplementation.
 
-Three reads are published and all three stand: a single-repository
+Four reads are published and all four stand: a single-repository
 pilot on bettermemory's own history, a **pre-registered 30-repository
 corpus** (37,635 claims, 8,627 positives) that supersedes the pilot's
-aggregates, and the **live-store read** (T1) that grades the shipped
-chain on real, author-declared claims.
+aggregates, the **live-store read** (T1) that grades the shipped
+chain on real, author-declared claims, and the **T2 acceptance read**
+that confirmed the absence shape's inverted polarity on T1's live
+reappearance cases.
 
 ```sh
 .venv/bin/python bench/rot/run.py --days 60
@@ -17,6 +19,7 @@ chain on real, author-declared claims.
 .venv/bin/python bench/rot/corpus.py                  # clone, run, pool the 30 repos
 .venv/bin/python bench/rot/scorecard.py               # grade P1-P7 mechanically
 .venv/bin/python bench/rot/live_census.py --out bench/rot/results/live-store-YYYY-MM-DD.json
+.venv/bin/python bench/rot/t2_validation.py --out bench/rot/results/t2-validation-YYYY-MM-DD.json
 ```
 
 **Pin `--t0` for anything you intend to compare.** Without it t0 is
@@ -191,6 +194,31 @@ younger than the log or a path bypasses it. The proposed Lane T
 criterion v1 reads **open_floors_unmet** (claims floor met, 501
 against 200; resolved claim-carrying deliveries 3 against 20).
 
+## The absence shape, 2026-08-14 (T2)
+
+T-P4's decision rule executed as the grammar's fourth kind: `!path` —
+refused at declaration while anything occupies the path, drifting when
+it reappears (weak = touched in the window, strict = net-reappeared),
+and the verify stamp refused over a reappeared path with no new gate
+code, since both gates already route through `check_claim`. Declared
+first (`T2_ABSENCE_CLAIM_DECLARATION.md`, five acceptance
+predictions, sha ordering declaration → implementation → sealed read →
+run), then read once against the live store
+(`results/t2-validation-2026-08-14.json`). All five predictions hit:
+
+| | prediction | result | |
+| --- | --- | --- | --- |
+| **A-P1** | full gate green, no assertion weakened | 4,760 passed; no pinned table moved | hit |
+| **A-P2** | every stored claim still parses; zero `!`-reinterpretations | 595 of 595; 0 | hit |
+| **A-P3** | descriptions ≤ 26,000 chars; schema remainder unmoved | 25,993; 7,438 | hit |
+| **A-P4** | T1's reappeared cases refuse at declaration and fire strict | 2 of 2; 2 of 2 | hit |
+| **A-P5** | corpus detector pins pass unmodified | additive branch only | hit |
+
+The three measured kinds' code paths are untouched — the corpus
+numbers keep describing the code they measured — and the absent kind's
+tier semantics are owned by `tests/test_claims.py` on handcrafted
+`-U0` streams, since no git corpus contains the kind.
+
 ## What stands, in one place
 
 1. **The claim tier is the replacement, measured first.** 1.1 alerts
@@ -198,7 +226,10 @@ against 200; resolved claim-carrying deliveries 3 against 20).
    (`results/multirepo-anchored-2026-07-30.json`). It shipped as
    claims-at-write in 3.40.0 — declared claims, gate-checked at write
    and verify, watched by drift (`src/bettermemory/claims.py`); the
-   bench imports the shipped copies.
+   bench imports the shipped copies. The grammar's absence kind
+   (`!path`, 5.6.0) inverts the polarity for deleted-on-purpose
+   paths — T1's cohort D measured that pattern at 89.5% of classifiable
+   absent attestations, carried off-label until T2 gave it a shape.
 2. **The strict tier cannot be certified by any git corpus** (P5,
    honoured). Evidence of a different kind is the only route, and T1
    is its first instrument.
@@ -279,3 +310,7 @@ that is what the memory system is for. The dated record:
   (`T1_LIVE_STORE_DECLARATION.md`;
   `results/live-store-2026-08-14.json`); next units scoped: the
   negative claim shape (T2), the note-cap unit (T3).
+- **2026-08-14** — T2, the absence claim shape, shipped in 5.6.0
+  (`T2_ABSENCE_CLAIM_DECLARATION.md`;
+  `results/t2-validation-2026-08-14.json`). Remaining scoped unit:
+  the note-cap (T3).
