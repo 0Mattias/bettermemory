@@ -1,0 +1,22 @@
+{
+  "instrument": "bench/rot/t2_validation.py",
+  "declaration": "bench/rot/T2_ABSENCE_CLAIM_DECLARATION.md",
+  "generated": "2026-08-15T03:08:45.566194+00:00",
+  "repo_head": "280abbfca22fb1f3365c2f869f01a138173ee4c0",
+  "a_p2": {
+    "stored_claims_total": 595,
+    "parse_failures": 0,
+    "bang_prefixed": 0
+  },
+  "a_p4": {
+    "reappeared": 2,
+    "expressible": 2,
+    "declaration_refused": 2,
+    "readd_window_found": 2,
+    "strict_fired": 2
+  },
+  "grades": {
+    "A-P2": "hit",
+    "A-P4": "hit"
+  }
+}
