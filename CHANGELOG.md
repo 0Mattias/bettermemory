@@ -7,6 +7,52 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 6.0.0 - 2026-08-15
+
+A major by the [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract):
+a shipped surface is removed whole. The removal is the release —
+nothing else changes.
+
+### Removed — the embedding lane, whole, again
+
+The 5.5.0 door C reentry is revoked by owner doctrine (2026-08-15):
+the project's objective is a frontier improvement built by this
+project — an own-built model or a genuinely better mechanism — and
+the standing 2026-08-11 condition ("you can add neural weights as
+long as we built the model from scratch") barred borrowed pretrained
+weights when door C admitted them behind an opt-in extra. Rigor
+around a barred choice does not admit the choice; a bar reached with
+someone else's weights measures someone else's achievement.
+
+Gone, mirroring the 4.0.0 strip: the `semantic` and `semantic_setup`
+modules, the engine's cosine leg and `"semantic"` search mode, the
+`[embeddings]` and `[embeddings-fast]` extras, the handler/audit/hook
+threading, and both bench runners' semantic arms. The dated R1/R2/R3
+artifacts and their declarations remain in `bench/` as the record of
+a lane doctrine has closed — the numbers stay where they were
+recorded, beside their dates and caveats. The paraphrase gap the
+borrowed geometry papered over is OPEN again, honestly: own-built
+machinery or a new mechanism, or published as unreachable.
+
+A default install is byte-identical before and after: the extras were
+opt-in and the default engine has been deterministic lexical
+throughout. `origin.py`'s deprecated trio re-targets its removal
+notice to 7.0 — the 4.0-era notice outlived two majors, and the
+messages now track the re-target rule in
+[CONTRIBUTING.md](CONTRIBUTING.md).
+
+### Migration
+
+- `bettermemory[embeddings]` / `bettermemory[embeddings-fast]`
+  install specs: drop the bracket. `sentence-transformers` /
+  `fastembed` and their dependency trees disappear from the lock on
+  the next sync.
+- A config file still saying `search_mode = "semantic"` normalises to
+  `hybrid` with one loud warning, exactly as since 4.0.0; a per-call
+  `mode="semantic"` raises `unknown search mode`.
+- No stored data changes shape: `SCHEMA_VERSION` is untouched, and no
+  memory or event written under 5.x reads differently.
+
 ## 5.7.0 - 2026-08-15
 
 A minor by the [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract):
