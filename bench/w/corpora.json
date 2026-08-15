@@ -1,0 +1,4 @@
+{
+  "_": "Lane W corpus register — bench/W_PROGRAM_DECLARATION.md governs. A corpus is admitted only as a pinned snapshot with source URL, retrieval date, sha256 over the exact bytes used, and a verified license, recorded here BEFORE any training run reads it. Candidates that fail license verification are recorded with admitted=false and the reason.",
+  "corpora": []
+}
