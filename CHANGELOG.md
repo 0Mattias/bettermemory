@@ -7,6 +7,48 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 5.7.0 - 2026-08-15
+
+A minor by the [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract):
+a validation cap loosened — inputs previously refused are now
+accepted, nothing previously accepted changes meaning — no schema
+change, no new dependencies.
+
+### Changed — the note cap: 500 → 800
+
+`memory_verify` and `memory_record_use` refuse free-text `note`
+strings over the cap rather than truncating them; the cap moves from
+500 to 800 characters (`_NOTE_MAX_LEN`). Scoped mechanically by the
+T1 live-store census (T-P5: 11.5% of 1,257 recorded notes within 50
+characters of the old ceiling —
+`bench/rot/results/live-store-2026-08-14.json`) and decided in
+`bench/rot/T3_NOTE_CAP_DECISION.md` against the only unconstrained
+sample a refusing cap can ever produce: the ten pre-cap days in the
+event log, whose overrun tail decays through the 500/600/700 buckets
+and collapses to scatter past 800 — so the cap moves to the bucket
+boundary the histogram can see and keeps refusing the paste-shaped
+remainder.
+
+Truncate-with-acknowledge was the declared alternative and is
+refused: post-cap wire overruns are zero (writers trim to fit — that
+is what the squeeze is), so it would fire approximately never and cut
+blindly when it did, mutating an audit log whose entire value is
+being exact.
+
+The T1 artifact's unpredicted finding — histogram entries above the
+cap — closed as CAP-POSTDATES-LOG: all 18 strict overruns are
+`verify` events from 2026-05-08→17, the cap shipped 2026-05-20
+(`d656a6d`, v2.3.1), and the log carries zero post-cap overruns. No
+leak, nothing to seal.
+
+Deliberately untouched, each with its reason recorded in place: the
+`claim_excerpts` cap (a quote, not a rationale), the
+`memory_acknowledge_miss` reason ceiling (a triage one-liner, its
+comment no longer claims to mirror the note cap), and the census's
+declaration constants (T1's sealed terms). The resident footprint is
+unmoved — the cap's two description lines changed at identical
+character count.
+
 ## 5.6.0 - 2026-08-14
 
 A minor by the [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract):

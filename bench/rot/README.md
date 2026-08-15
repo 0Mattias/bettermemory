@@ -189,8 +189,9 @@ decision rules executed on these grades: T-P4 scopes **the negative
 claim shape** (17 of 19 absent attestations mean "deleted on purpose",
 for which `expected_absent`'s presence-never-flags polarity is
 inverted), and T-P5 scopes **the note-cap unit**, carrying an
-unpredicted finding — 20 notes exceed the 500 cap, so the gate is
-younger than the log or a path bypasses it. The proposed Lane T
+unpredicted finding — histogram entries above the cap — resolved by
+T3 as CAP-POSTDATES-LOG (`T3_NOTE_CAP_DECISION.md`): the gate is
+younger than the log, and no path bypasses it. The proposed Lane T
 criterion v1 reads **open_floors_unmet** (claims floor met, 501
 against 200; resolved claim-carrying deliveries 3 against 20).
 
@@ -218,6 +219,28 @@ The three measured kinds' code paths are untouched — the corpus
 numbers keep describing the code they measured — and the absent kind's
 tier semantics are owned by `tests/test_claims.py` on handcrafted
 `-U0` streams, since no git corpus contains the kind.
+
+## The note cap, 2026-08-15 (T3)
+
+T-P5's decision rule executed as a decision document in R3's mold
+(`T3_NOTE_CAP_DECISION.md`) — no new census; every quantity read from
+the committed T1 artifact or from git. The unpredicted finding closed
+first: the artifact's above-cap histogram entries are all pre-cap —
+18 strict overruns, every one a `verify` event from 2026-05-08→17,
+against a cap that shipped 2026-05-20 (`d656a6d`, v2.3.1), with zero
+post-cap overruns — **CAP-POSTDATES-LOG**, no leak, and the ten
+pre-cap days become the only unconstrained sample a refusing cap can
+ever produce. Against that sample the cap moved 500 → 800, shipped in
+5.7.0 (`_NOTE_MAX_LEN`): the overrun tail decays 8/6/4 through the
+500/600/700 buckets and collapses to scatter past 800, so the cap
+moves to the bucket boundary the histogram can see and keeps refusing
+the paste-shaped remainder. Truncate-with-acknowledge — the declared
+alternative — is refused on the same evidence: post-cap wire overruns
+are zero, so it would fire approximately never and cut blindly when
+it did, mutating an audit log whose value is being exact. Refusal
+semantics, the excerpt cap, the ack-reason ceiling, and the census's
+declaration constants are unchanged, each for a reason recorded in
+the decision.
 
 ## What stands, in one place
 
@@ -314,3 +337,8 @@ that is what the memory system is for. The dated record:
   (`T2_ABSENCE_CLAIM_DECLARATION.md`;
   `results/t2-validation-2026-08-14.json`). Remaining scoped unit:
   the note-cap (T3).
+- **2026-08-15** — T3, the note-cap decision
+  (`T3_NOTE_CAP_DECISION.md`): the leak question closed as
+  CAP-POSTDATES-LOG, the cap raised 500 → 800, shipped in 5.7.0.
+  The T1-scoped ladder is drained; the Lane T criterion's floors
+  (T-P3) stay open, and ratification stays with the owner.

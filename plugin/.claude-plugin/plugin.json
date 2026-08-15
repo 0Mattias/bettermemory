@@ -1,6 +1,6 @@
 {
   "name": "bettermemory",
-  "version": "5.6.0",
+  "version": "5.7.0",
   "description": "A trust layer between Claude Code and its own past: memory with per-hit staleness verdicts, claim-level use attribution, measured effectiveness, and episodic run-state. Retrieval is opt-in at the tool surface, plus a score-gated recall hook that injects a single stored pointer on the ~2% of prompts the silent-miss probe flags.",
   "author": {
     "name": "Mattias Rask",
