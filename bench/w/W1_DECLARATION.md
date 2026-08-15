@@ -86,12 +86,13 @@ reckoning's rule. Candidates this unit intends to put forward:
 
 1. **English Wikipedia, bounded slice**: the first pages-articles
    part-file of a dated dump from dumps.wikimedia.org (the lowest
-   page-id range — encyclopedia-core articles), roughly 250–300 MB
-   compressed, roughly 1 GB of wikitext; license CC BY-SA, recorded
-   at pin time.
+   page-id range — encyclopedia-core articles), the fetch
+   capped at 300 MB compressed; license CC BY-SA, recorded at pin
+   time. The size the wire actually carries goes in the fetch
+   sentence; the register records the exact byte count at pin time.
 2. **Project Gutenberg, curated English subset**: on the order of a
    hundred public-domain English books as plain text from
-   gutenberg.org, roughly 40 MB total, each file pinned and
+   gutenberg.org, the set capped at 50 MB, each file pinned and
    license-verified individually (public domain in the US; PG
    boilerplate stripped before training, no PG trademark carried).
 
@@ -119,9 +120,9 @@ vectors, kept only above cosine floor 0.60 AND within mutual rank 8,
 at most 4 neighbors per term; emitted terms pass the same floors the
 leg already enforces (minimum length 3, filler stems excluded — the
 learned table rides `expansion_terms`' existing filters, it does not
-bypass them). Caps, hard: at most 5,000 head terms; table source at
-most 300 KB. The cap is the wheel-size answer clause 5 demands,
-declared now even though this unit ships nothing.
+bypass them). Caps, hard: at most 5,000 head terms; the table source
+capped at 300 KB. The cap is the wheel-size answer clause 5
+demands, declared now even though this unit ships nothing.
 
 Nothing under `src/` changes in this unit. The measurement harness
 (bench-side) swaps ONLY the table contents into the leg: the same
@@ -187,15 +188,17 @@ feed the ship sentence and any W2 declaration.
 - **G2, the polarity bar** (gate read, LongMemEval lexical, W1
   tables on): macro recall@5 ≥ 0.8835 AND macro recall@1 ≥ 0.5046 —
   epsilons of 1.0 and 2.0 points against the expansion-off baseline,
-  strictly inside the static tables' measured −1.65 and −4.74. The
+  strictly inside the static tables' committed −1.65 and −4.74 point
+  costs (§1). The
   learned table must not merely tie the hand tables' damage; it must
   shrink it, at both depths.
 - **G3, the determinism bar**: two consecutive full retrains from
   the pinned register, same seed, on this machine — sha256 of the
   vectors blob AND of the emitted table source identical across
   both, all four hashes in the artifact; and a CI check retraining
-  a committed reduced register (Gutenberg-derived bytes only, ≤ 2 MB,
-  itself pinned in the register) asserting the same equality on
+  a committed reduced register (Gutenberg-derived bytes only,
+  capped at 2 MB, itself pinned in the register) asserting the same
+  equality on
   every push. G3 is unconditional: it must hold whatever G1 and G2
   say.
 - **Integrity reads** (any miss demotes the verdict to PARTIAL
