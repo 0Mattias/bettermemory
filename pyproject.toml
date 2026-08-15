@@ -69,21 +69,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Restored by the door C reentry (bench/DOOR_C_DECISION_BRIEF.md,
-# bench/R1_REENTRY_DECLARATION.md): the pretrained retrieval arm, opt-in
-# only — a default install carries neither extra and runs the lexical
-# engine unchanged.
-embeddings = ["sentence-transformers>=2.2", "numpy>=1.24"]
-# Lightweight alternative to `embeddings`: fastembed wraps ONNX Runtime
-# instead of PyTorch. Same retrieval surface, same cache shape —
-# different provider. When both extras are installed sentence-transformers
-# wins for cache byte-stability; pick fastembed via
-# `[behavior] semantic_provider = "fastembed"` when torch's footprint is
-# the wrong tradeoff (CI runners, small VMs, air-gapped installs).
-# fastembed wheels lag the latest Python by a release or two, so users on
-# the newest interpreter should prefer the standard `embeddings` extra
-# until upstream catches up.
-embeddings-fast = ["fastembed>=0.4", "numpy>=1.24"]
 dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.21",
@@ -172,18 +157,11 @@ warn_return_any = false
 disable_error_code = ["type-arg", "no-untyped-def", "no-untyped-call"]
 
 [[tool.mypy.overrides]]
-# Optional extras. Without `embeddings` / `embeddings-fast` installed the
-# imports are missing at type-check time; the runtime path already handles
-# ImportError, returning None so the caller falls back to keyword ranking.
-# `httpx` ships in the [dev] extra but
+# Optional runtime SDKs. `httpx` ships in the [dev] extra but
 # `bettermemory.llm` reaches for it inside `OllamaProvider.propose()` so we
 # don't crash imports on a clean install missing dev. `anthropic` / `openai`
 # are runtime-optional SDKs guarded by the same lazy-import pattern.
 module = [
-    "sentence_transformers",
-    "sentence_transformers.*",
-    "fastembed",
-    "fastembed.*",
     "httpx",
     "anthropic",
     "openai",
@@ -204,33 +182,6 @@ ignore_missing_imports = true
 # package to type three call sites of `validate()` would cost a dependency
 # for no safety.
 module = ["jsonschema"]
-ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-# numpy gets its OWN block (not the shared list above) because
-# `ignore_missing_imports` alone does not help once numpy is actually
-# installed — with the `embeddings` extra present, mypy *follows* the
-# import and parses numpy 2.x's `__init__.pyi`, which uses the 3.12-only
-# `type` statement. Under `python_version = "3.11"` (which MUST stay at
-# the project minimum so 3.11-incompatible syntax in our own code keeps
-# getting flagged) that is a hard parse error, mypy prints "errors
-# prevented further checking", and it silently type-checks NOTHING.
-# `follow_imports = "skip"` makes mypy treat numpy as `Any` without ever
-# opening its stubs, so the run completes and actually checks the
-# bettermemory package in a numpy-present env. CI's mypy job installs
-# only dev+ui (no numpy) so it never hit this — but a local
-# `uv sync --extra embeddings` did.
-module = [
-    "numpy",
-    "numpy.*",
-]
-follow_imports = "skip"
-# `follow_imports` is IGNORED for stub (`.pyi`) files by default, and numpy
-# ships its types as bundled `.pyi` — so without this, mypy still opens
-# numpy's `__init__.pyi` and aborts on its 3.12-only `type` statement.
-# Setting this makes `follow_imports = "skip"` apply to the stubs too, so
-# mypy treats numpy as `Any` without ever parsing them.
-follow_imports_for_stubs = true
 ignore_missing_imports = true
 
 [tool.pyright]
@@ -255,8 +206,8 @@ venv = ".venv"
 pythonVersion = "3.11"
 typeCheckingMode = "standard"
 reportMissingImports = "error"
-# Optional runtime deps (sentence-transformers/torch, fastembed, numpy,
-# anthropic, openai) are lazy-imported inside try/except ImportError and
+# Optional runtime deps (anthropic, openai) are lazy-imported inside
+# try/except ImportError and
 # aren't installed in the lint env. Their import sites carry targeted
 # `# pyright: ignore[reportMissingImports]`, mirroring the mypy
 # `ignore_missing_imports` override above for the same modules.
@@ -296,21 +247,6 @@ testpaths = ["tests"]
 filterwarnings = [
     "error::DeprecationWarning:bettermemory",
     "error:.*deprecated and will be removed in bettermemory:DeprecationWarning",
-]
-markers = [
-    # Tests that assert behavior when the `embeddings` extra is *not*
-    # installed (e.g. get_model() returning None on ImportError). The
-    # test-embeddings CI job runs `pytest -m \"not no_extras\"` so these
-    # are skipped when sentence-transformers is present.
-    "no_extras: requires the embeddings extra to be absent",
-    # Symmetric markers for the fastembed provider. The default test job
-    # has neither extra installed; `test-embeddings` runs with only the
-    # torch extra; `test-embeddings-fast` runs with only the fastembed
-    # extra; a future `test-embeddings-both` job would run with both and
-    # exercise the precedence rule (torch wins). Mark tests that require
-    # the absence of each extra so the relevant job can deselect them.
-    "no_torch_embeddings: requires the sentence-transformers extra to be absent",
-    "no_fastembed: requires the fastembed extra to be absent",
 ]
 
 [tool.ruff.lint.per-file-ignores]

@@ -1,17 +1,14 @@
 """Ranking memories against a query.
 
-Four selectable rankers, dispatched by `search(mode=...)`:
+Three selectable rankers, dispatched by `search(mode=...)` — all of
+them deterministic code; nothing here loads a model, and by project
+direction nothing may (the code is the model):
 
 - ``hybrid`` (default since 2.6.8): reciprocal rank fusion (Cormack
-  et al., SIGIR 2009) over keyword + BM25, plus semantic when a model
-  is provided. Gracefully degrades to keyword+BM25 fusion when no
-  model is available, so the flipped default doesn't add a dep
-  requirement. The fused score lives in a different (much smaller)
-  scale than the single-ranker scores, so raw `score` is not
-  comparable across modes — read `relevance` together with
-  `matched_leg` instead. `relevance` measures LEXICAL COVERAGE only,
-  which is 0 for every pure-paraphrase hit; `matched_leg` says which
-  ranker surfaced the hit and is what makes that 0 readable.
+  et al., SIGIR 2009) over keyword + BM25. The fused score lives in a
+  different (much smaller) scale than the single-ranker scores, so raw
+  `score` is not comparable across modes — read `relevance` together
+  with `matched_leg` instead.
 - ``keyword`` (legacy default in 1.6.0): the original TF +
   scope-weighted + coverage + recency scorer. Cheap, deterministic,
   good on identifier-heavy queries but lacks IDF — underperforms on
@@ -19,16 +16,12 @@ Four selectable rankers, dispatched by `search(mode=...)`:
 - ``bm25``: Okapi BM25 with IDF weighting, TF saturation, length
   normalisation, plus the same scope-bonus and recency multiplier as
   the keyword scorer.
-- ``semantic``: sentence-transformers cosine over per-memory cached
-  embeddings (extras-gated; raises a clear error when the embeddings
-  extra isn't installed).
 
 `compute_idf` and `reciprocal_rank_fusion` are exported alongside
 their per-mode scorers so callers can wire the rankers directly
 without going through `search()`. The dedup path (`find_similar`)
 uses Jaccard over `_raw_content_token_set` token sets with
-pairwise-aware kebab expansion (`_pairwise_content_jaccard`), or
-cosine when a model is supplied.
+pairwise-aware kebab expansion (`_pairwise_content_jaccard`).
 """
 
 from __future__ import annotations
@@ -66,7 +59,7 @@ log = logging.getLogger("bettermemory.search")
 # rare-term queries, and hybrid degrades gracefully to keyword+BM25
 # fusion when no embedding extra is installed (so flipping the default
 # doesn't add a dep requirement).
-SearchMode = Literal["keyword", "bm25", "semantic", "hybrid"]
+SearchMode = Literal["keyword", "bm25", "hybrid"]
 
 
 # Strip punctuation, keep word characters (incl. unicode letters) and dashes
@@ -1283,45 +1276,31 @@ def _merge_corpus_stats(
 # how the hit was found — evidence about the retrieval, not a second
 # verdict about the memory.
 #
-# The base label's live values: `lexical` (keyword, BM25, their fusion),
-# `expansion` (the rescue leg — deterministic lexical code matching
-# SYNTHESIZED vocabulary; a hit surfaced ONLY by it reports the label so
-# a legitimately "low" coverage reads as found-through-a-synonym rather
-# than broken), and — restored with the door C reentry — `semantic` and
-# `both`. The semantic pairing is load-bearing for a paraphrase hit:
-# `_score_semantic` deliberately reports only the query tokens that
-# LITERALLY appear in the body or scopes, so a pure-semantic hit carries
-# `match_terms=[]`, hence coverage 0.0, hence `relevance="low"`. That
-# label is honest about lexical coverage and actively misleading about
-# the hit; `matched_leg="semantic"` is the missing half — low coverage
-# on a semantic-only leg is the EXPECTED reading of a match by meaning,
-# not evidence against it.
+# Since 4.0.0 every ranker is lexical (keyword, BM25, their fusion), so
+# the base label's live value is `lexical`; the field survives so
+# callers keyed on it keep parsing, and so the vocabulary has somewhere
+# to grow if a future CODE ranker earns a leg of its own. The rescue-
+# expansion leg (still deterministic lexical code, but matching
+# SYNTHESIZED vocabulary rather than the caller's words) is that
+# growth: a hit surfaced ONLY by it reports `expansion`, which is what
+# keeps `relevance` readable — coverage of the caller's own tokens is
+# legitimately "low" for a hit found through a synonym, and the leg
+# says so instead of leaving the label looking broken.
 LEG_LEXICAL = "lexical"
-LEG_SEMANTIC = "semantic"
-LEG_BOTH = "both"
 LEG_EXPANSION = "expansion"
 
 
-def _matched_leg(
-    *, lexical: bool, semantic: bool = False, expansion: bool = False
-) -> str:
+def _matched_leg(*, lexical: bool, expansion: bool = False) -> str:
     """Leg label for one hit; `""` when no ranker ran at all.
 
-    `lexical` wins over `expansion` when both are set — the base legs
-    matched the caller's own words, which is the stronger statement;
-    `expansion` is reported only for hits NO base or semantic leg
-    scored. The empty case is browse mode (`allow_empty_query` with no
-    query tokens): candidates are filtered and date-sorted, never
-    ranked, so there is no leg to report and the field is omitted
-    rather than guessed. The leg reports what RAN, not what was
-    requested — a `mode="semantic"` search whose encode fails and
-    degrades to the keyword scorer reports `lexical`, because that is
-    what produced the ordering the caller is looking at.
+    `lexical` wins when both are set — the base legs matched the
+    caller's own words, which is the stronger statement; `expansion`
+    is reported only for hits NO base leg scored. The empty case is
+    browse mode (`allow_empty_query` with no query tokens): candidates
+    are filtered and date-sorted, never ranked, so there is no leg to
+    report and the field is omitted rather than guessed. The leg
+    reports what RAN, not what was requested.
     """
-    if lexical and semantic:
-        return LEG_BOTH
-    if semantic:
-        return LEG_SEMANTIC
     if lexical:
         return LEG_LEXICAL
     if expansion:
@@ -1337,7 +1316,7 @@ def _relevance_label(matched_unique: int, query_unique: int) -> str:
     because a 1-word query with a strong match shouldn't be downgraded.
 
     NEGATIVE RESULT, 2026-07-30 — the recut that was NOT shipped. The
-    plan for this label was to stop scoring pure-semantic hits by lexical
+    plan for this label was to stop scoring pure-paraphrase hits by lexical
     coverage and label them from calibrated cosine bands instead, gated
     on the telemetry_v2 shadow replay: no user-message-length bucket at a
     0% high-rate, and a max/min bucket spread under 3x. Replaying the
@@ -1351,7 +1330,7 @@ def _relevance_label(matched_unique: int, query_unique: int) -> str:
 
     and — the finding that closed the item — **0 of those 274 top hits
     carried `matched_unique == 0`**. The store runs the default install,
-    so no semantic leg ever ran, so the population a cosine-band rule
+    so no semantic leg ever ran (that leg was removed outright in 4.0.0), so the population a cosine-band rule
     changes has ZERO representation in the instrument the bar is measured
     on. A semantic-only rule is provably byte-identical on that corpus:
     it cannot clear the 3x bar, and it cannot fail it either. Shipping
@@ -1482,7 +1461,7 @@ class _MemoryTokens(NamedTuple):
 
     body: list[str]
     """`_expand_kebab(tokenize(memory.body))` — stopwords kept (the
-    keyword scorer's stream; `set()` of it is the semantic literal-match
+    keyword scorer's stream; `set()` of it was the literal-match
     stream)."""
 
     content: list[str]
@@ -2073,7 +2052,7 @@ _RRF_K_DEFAULT = 60
 # case, i.e. most hybrid results genuinely are near-ties and the
 # derivation is sitting right on top of the mass of the distribution.
 #
-# Raw-score modes (keyword / bm25 / semantic) separate far more widely
+# Raw-score modes (keyword / bm25) separate far more widely
 # than fused ones, so the same constant is loose there by construction.
 # That is the correct direction: it is calibrated on the tightest scale
 # in use, and a mode whose scores actually spread has already made the
@@ -2085,9 +2064,9 @@ def top_hit_leads_runner_up(top_score: float, next_score: float) -> bool:
     """Does the top hit lead the runner-up by more than a rank slot?
 
     The leg-agnostic half of the `expand_top` gate. The lexical half —
-    a "high" coverage label — cannot fire for a pure-semantic hit
+    a "high" coverage label — could not fire for a pure-paraphrase hit
     (`match_terms` is empty by construction), which is how the 4x-cost
-    semantic capability ended up unable to trigger the one affordance
+    semantic capability (removed in 4.0.0) ended up unable to trigger the one affordance
     that shows the caller a full body.
 
     Zero or negative runner-up scores mean nothing to compare against on
@@ -2268,7 +2247,7 @@ def _query_biased_snippet(body: str, matched: list[str], max_chars: int = 200) -
     #
     # The `not matched` half covers the two populations that legitimately
     # carry no literal terms: browse mode (`_build_hit(..., matched=[])`)
-    # and paraphrase-only semantic hits, whose `literal_matched` is empty
+    # and (historically) paraphrase-only semantic hits, whose `literal_matched` is empty
     # by design.
     if len(text) <= max_chars or not matched:
         return snippet_for(text, max_chars)
@@ -2503,106 +2482,6 @@ def _score_bm25(
     return out
 
 
-def _score_semantic(
-    candidates: list[Memory],
-    query: str,
-    semantic_model: Any,
-    *,
-    now: datetime,
-    half_life_days: float,
-    matched_terms_fallback: list[str],
-    applied_by_id: dict[str, int] | None = None,
-    negative_by_id: dict[str, tuple[int, int]] | None = None,
-    corroboration_boost: bool = False,
-    candidate_tokens: list[_MemoryTokens] | None = None,
-) -> list[tuple[Memory, float, list[str]]]:
-    """Cosine-similarity scoring over sentence-transformers embeddings.
-
-    Reuses the per-memory cache from `bettermemory.semantic` so a search
-    that runs alongside dedup shares vectors.
-
-    `matched_terms_fallback` is the stopword-stripped query token list. We
-    do NOT blindly stamp it onto a semantic hit: that would report query
-    words that appear nowhere in the memory as "matched" and drive the
-    coverage-based relevance label to a fabricated "high" for a pure
-    paraphrase hit, violating the MemoryHit contract (match_terms = the
-    query tokens that actually hit the body or scopes; relevance = the
-    fraction that matched). Instead we intersect the fallback with the
-    memory's literal body/scope tokens — the exact overlap `score_memory`
-    computes — and report that, possibly empty. A paraphrase-only hit then
-    honestly carries `match_terms=[]` / low relevance while still surfacing
-    by score.
-
-    Threshold: hits with cosine < 0.3 are dropped. Below that, the
-    similarity is noise — the model is matching style/structure rather
-    than meaning. The threshold is conservative on purpose; we'd
-    rather show fewer paraphrase hits than poison the result list
-    with off-topic ones.
-    """
-    from .semantic import (
-        _note_model_dimension,
-        cached_embed,
-        cosine_similarity_normalized,
-        flush_persistent_cache,
-    )
-
-    query_clean = query.strip()
-    if not query_clean:
-        return []
-    query_vec = semantic_model.encode(query_clean, normalize_embeddings=True)
-    # The query encode is the first fresh embedding this run does —
-    # feed its dimension to the cache reconcile so any stale-dimension
-    # hydrated entries are purged before the `cached_embed` hits below.
-    _note_model_dimension(len(query_vec))
-
-    threshold = 0.3
-    out: list[tuple[Memory, float, list[str]]] = []
-    for i, memory in enumerate(candidates):
-        body_clean = memory.body.strip()
-        if not body_clean:
-            continue
-        body_vec = cached_embed(
-            semantic_model,
-            memory.id,
-            memory.updated.isoformat(),
-            body_clean,
-        )
-        sim = cosine_similarity_normalized(query_vec, body_vec)
-        if sim < threshold:
-            continue
-        # Apply the same recency multiplier the other rankers use so a
-        # stale paraphrase doesn't beat a fresh near-paraphrase.
-        freshness = max(memory.created, memory.updated)
-        score = sim * _recency_factor(freshness, now, half_life_days)
-        if applied_by_id:
-            score *= _endorsement_factor(applied_by_id.get(memory.id, 0))
-        if negative_by_id:
-            ig, ct = negative_by_id.get(memory.id, (0, 0))
-            score *= _demotion_factor(ig, ct)
-        if corroboration_boost and memory.corroborations:
-            score *= _corroboration_factor(memory.corroborations)
-        # Report only the query tokens that LITERALLY hit this memory's
-        # body or scopes (same overlap `score_memory` computes), not the
-        # whole query — so a paraphrase-only hit carries honest match_terms
-        # and an honest (low) relevance label rather than a fabricated one.
-        if candidate_tokens is not None:
-            body_token_set = set(candidate_tokens[i].body)
-            scope_token_set = candidate_tokens[i].scope_set
-        else:
-            body_token_set = set(_expand_kebab(tokenize(memory.body)))
-            scope_token_set = set()
-            for scope in memory.scopes:
-                scope_token_set.update(_scope_tokens(scope))
-        literal_matched = [
-            tok
-            for tok in matched_terms_fallback
-            if tok in body_token_set or tok in scope_token_set
-        ]
-        out.append((memory, score, literal_matched))
-    flush_persistent_cache()
-    return out
-
-
 def _id_order(
     scored: list[tuple[Memory, float, list[str]]],
 ) -> list[str]:
@@ -2747,7 +2626,6 @@ def search(
     now: datetime | None = None,
     half_life_days: float = 30.0,
     mode: SearchMode = "hybrid",
-    semantic_model: Any | None = None,
     rrf_k: int = _RRF_K_DEFAULT,
     applied_by_id: dict[str, int] | None = None,
     negative_by_id: dict[str, tuple[int, int]] | None = None,
@@ -2775,17 +2653,9 @@ def search(
       without a repo identifier doesn't carry enough context to
       filter on.
     - `mode`: ranker selection. `"hybrid"` (default since 2.6.8: RRF
-      fusion of keyword + BM25, plus semantic when a model is
-      provided); `"keyword"` (legacy TF + coverage + recency scorer
-      with no IDF weighting); `"bm25"` (Okapi BM25 with the same
-      scope-bonus + recency boost); `"semantic"` (sentence-
-      transformers cosine — requires `semantic_model`). The hybrid
-      mode gracefully degrades when no `semantic_model` is given: it
-      fuses keyword + BM25 only, so flipping the default doesn't
-      require any embedding extra.
-    - `semantic_model`: optional sentence-transformers model. Required
-      for `mode="semantic"`; optional for `mode="hybrid"` (semantic is
-      added to the fusion when present).
+      fusion of keyword + BM25); `"keyword"` (legacy TF + coverage +
+      recency scorer with no IDF weighting); `"bm25"` (Okapi BM25 with
+      the same scope-bonus + recency boost).
     - `rrf_k`: smoothing constant for hybrid fusion. Larger spreads
       weight further down the list; smaller makes top ranks dominate.
       60 is the canonical default and almost always correct.
@@ -2820,7 +2690,7 @@ def search(
       (see the fallback note in the body), so stopword curation can
       never make a non-empty query unanswerable.
     - `matched_leg_out`: optional dict the function fills with
-      `{memory_id: "lexical" | "semantic" | "both" | "expansion"}` for the hits it
+      `{memory_id: "lexical" | "expansion"}` for the hits it
       returns — WHICH RANKER surfaced each one. An out-parameter rather
       than a `MemoryHit` field because the leg is a property of THIS
       CALL's ranker configuration, not of the memory, and every other
@@ -2866,7 +2736,7 @@ def search(
       re-ranks the nominated pool rather than widening it — a
       documented limit, not a silent one.
 
-    Score semantics vary by mode: keyword/BM25/semantic scores live on
+    Score semantics vary by mode: keyword/BM25 scores live on
     different scales and are not comparable across modes. Hybrid scores
     are RRF outputs (~0.01-0.05 range, summed `1/(k+rank)` over rankers).
     Comparing hits across modes on the raw score is meaningless; compare
@@ -2883,13 +2753,10 @@ def search(
     # Raising here makes the failure mode loud at the dispatch boundary
     # regardless of where the bad string came from (handler, CLI, future
     # programmatic client).
-    if mode not in ("keyword", "bm25", "semantic", "hybrid"):
+    if mode not in ("keyword", "bm25", "hybrid"):
         raise ValueError(
-            f"unknown search mode {mode!r}; "
-            "must be one of: keyword, bm25, semantic, hybrid"
+            f"unknown search mode {mode!r}; must be one of: keyword, bm25, hybrid"
         )
-    if mode == "semantic" and semantic_model is None:
-        raise ValueError("mode='semantic' requires semantic_model to be provided")
 
     now = now or datetime.now(timezone.utc)
     raw_tokens = tokenize(query)
@@ -2952,12 +2819,11 @@ def search(
     # list), because re-deriving it at the trim would mean re-running
     # the leg.
     lexical_ids: set[str] = set()
-    semantic_ids: set[str] = set()
     expansion_ids: set[str] = set()
 
     # Tokenize each candidate exactly once per call and thread the streams
     # through every consumer below — the keyword scorer, compute_idf, BM25,
-    # and the semantic literal-match block otherwise re-tokenize the same
+    # blocks otherwise re-tokenize the same
     # bodies and scopes (6 tokenize calls per memory per hybrid search,
     # ~88% of cumulative search time). Pure perf: see `_MemoryTokens`.
     candidate_tokens = [_memory_tokens(m) for m in candidates]
@@ -2973,7 +2839,7 @@ def search(
     # the caller knowing which terms to fetch would mean re-deriving this
     # tokenisation outside `search()`, and a hand-mirrored token pipeline is
     # exactly the drift schema v4 removed. Only the BM25 branches consume
-    # it, so a keyword/semantic-only search never pays the lookup.
+    # it, so a keyword-only search never pays the lookup.
     corpus_stats: CorpusStats | None = None
     if corpus_stats_provider is not None and mode in ("bm25", "hybrid"):
         fetch_terms = list(query_tokens)
@@ -3017,58 +2883,6 @@ def search(
         scored.sort(key=lambda x: (x[1], x[0].created, x[0].id), reverse=True)
         if matched_leg_out is not None:
             lexical_ids = {memory.id for memory, _, _ in scored}
-    elif mode == "semantic":
-        # mypy: semantic_model is not None here (guarded above), but the
-        # narrowing doesn't survive the assert-via-raise idiom across the
-        # block boundary. Re-assert for the type checker.
-        assert semantic_model is not None
-        semantic_leg_ran = True
-        try:
-            scored = _score_semantic(
-                candidates,
-                query,
-                semantic_model,
-                now=now,
-                half_life_days=half_life_days,
-                matched_terms_fallback=list(dict.fromkeys(query_tokens)),
-                applied_by_id=applied_by_id,
-                negative_by_id=negative_by_id,
-                corroboration_boost=corroboration_boost,
-                candidate_tokens=candidate_tokens,
-            )
-        except Exception as exc:  # noqa: BLE001 — degrade to keyword on encode failure.
-            # A LOADED model can still raise at encode() time (device fault,
-            # OOM on a large body, a tokenizer edge case). Explicit semantic
-            # mode must not crash the search on that — fall back to the
-            # keyword ranking so the caller still gets results.
-            log.warning(
-                "semantic search failed at encode time (%s); "
-                "falling back to keyword ranking",
-                exc,
-            )
-            semantic_leg_ran = False
-            scored = _score_keyword(
-                candidates,
-                query_tokens,
-                now=now,
-                half_life_days=half_life_days,
-                applied_by_id=applied_by_id,
-                negative_by_id=negative_by_id,
-                corroboration_boost=corroboration_boost,
-                candidate_tokens=candidate_tokens,
-            )
-        scored.sort(key=lambda x: (x[1], x[0].created, x[0].id), reverse=True)
-        if matched_leg_out is not None:
-            # `mode="semantic"` is a REQUEST, not a report: on the
-            # encode-failure degrade above the ordering the caller is
-            # looking at came from the keyword scorer, and saying
-            # "semantic" here would attribute a lexical ranking to a leg
-            # that never ran.
-            scored_ids = {memory.id for memory, _, _ in scored}
-            if semantic_leg_ran:
-                semantic_ids = scored_ids
-            else:
-                lexical_ids = scored_ids
     else:  # mode == "hybrid"
         # The filler df-floor applies to the BM25 legs of the default
         # hybrid path only — `bm25` and `keyword` modes are explicit
@@ -3104,52 +2918,14 @@ def search(
                 corpus_stats=hybrid_stats,
             ),
         ]
-        # Snapshot the LEXICAL legs from the working list by name, not
-        # position, and BEFORE the semantic ranking is appended below —
-        # indexing after the fact ("everything but the last entry")
-        # silently changes meaning the day another ranker joins. The
-        # semantic and rescue legs join the FUSION but deliberately
-        # never this snapshot.
+        # Snapshot the leg membership from the working list by name,
+        # not position, so a future ranker joining `rankings` can't
+        # silently change what "lexical" means here — the rescue leg
+        # below joins the FUSION but deliberately never this snapshot.
         if matched_leg_out is not None:
             lexical_ids = {
                 memory.id for ranking in rankings for memory, _, _ in ranking
             }
-        # The semantic leg (door C reentry) joins the fusion as an equal
-        # peer — the pre-4.0 shape, unchanged. It appends BEFORE the
-        # round-9 weight derivation below on purpose: `_base_leg_weights`
-        # guards on exactly two rankings, so a three-leg fusion gets
-        # `None` (equal weights) and the base-withhold mechanism
-        # disables itself, which is byte-identical to the engine the
-        # dated record measured. With no model — the default install —
-        # nothing here runs and the two-leg path is untouched.
-        if semantic_model is not None:
-            try:
-                semantic_ranking = _score_semantic(
-                    candidates,
-                    query,
-                    semantic_model,
-                    now=now,
-                    half_life_days=half_life_days,
-                    matched_terms_fallback=list(dict.fromkeys(query_tokens)),
-                    applied_by_id=applied_by_id,
-                    negative_by_id=negative_by_id,
-                    corroboration_boost=corroboration_boost,
-                    candidate_tokens=candidate_tokens,
-                )
-            except Exception as exc:  # noqa: BLE001 — degrade to lexical fusion.
-                # The "hybrid gracefully degrades" guarantee must cover a
-                # runtime encode() failure of a loaded model, not just the
-                # model-is-None case: fuse the keyword+bm25 rankings already
-                # computed instead of crashing the search.
-                log.warning(
-                    "semantic ranking failed at encode time (%s); "
-                    "fusing keyword+bm25 only",
-                    exc,
-                )
-            else:
-                rankings.append(semantic_ranking)
-                if matched_leg_out is not None:
-                    semantic_ids = {memory.id for memory, _, _ in semantic_ranking}
         # Round 9: a base leg whose rank-1 evidence trails its peer's is
         # withheld. Skipped on the stopword fallback exactly as the
         # rescue leg is — the fallback's TF stream has different matched
@@ -3240,10 +3016,7 @@ def search(
                         scored = _hybrid_fuse(
                             rankings + [exp_leg],
                             rrf_k=rrf_k,
-                            weights=[
-                                *(base_weights or (1.0,) * len(rankings)),
-                                leg_weight,
-                            ],
+                            weights=[*(base_weights or (1.0, 1.0)), leg_weight],
                         )
                         # `match_terms` stays a subset of the CALLER's
                         # tokens — synthesized terms explain the leg,
@@ -3265,7 +3038,6 @@ def search(
         for memory, _, _ in trimmed:
             leg = _matched_leg(
                 lexical=memory.id in lexical_ids,
-                semantic=memory.id in semantic_ids,
                 expansion=memory.id in expansion_ids,
             )
             if leg:
@@ -3409,7 +3181,7 @@ def _pairwise_content_jaccard(raw_a: set[str], raw_b: set[str]) -> float:
     # Jaccard, which `max` leaves untouched. (Contested C3: this guarantee
     # is technically false only if a caller passes high_threshold <=
     # _CONTAINMENT_CEILING; no production caller does — the Jaccard-natural
-    # high is HIGH_SIMILARITY and the semantic path uses a different scorer.)
+    # high is HIGH_SIMILARITY.)
     smaller = a if len(a) <= len(b) else b
     if len(smaller) >= _CONTAINMENT_MIN_TOKENS:
         containment = len(intersection) / len(smaller)
@@ -3422,7 +3194,6 @@ def find_similar(
     new_body: str,
     existing: list[Memory],
     *,
-    semantic_model: Any | None = None,
     high_threshold: float | None = None,
     medium_threshold: float | None = None,
 ) -> list[SimilarHit]:
@@ -3433,56 +3204,14 @@ def find_similar(
     and recency-free, unlike `score_memory`. Fast, deterministic, no extra
     deps.
 
-    Semantic mode (when `semantic_model` is non-None): cosine similarity
-    on sentence-transformers embeddings. Catches paraphrases that share
-    no tokens — "the database" vs "Postgres", "shipped" vs "released".
-    Pass a model object with an `encode(text, normalize_embeddings=True)`
-    method (e.g. `sentence_transformers.SentenceTransformer`) — see
-    `bettermemory.semantic.get_model()` for the loader.
-
-    Thresholds default to the mode's natural range when None: 0.75/0.40
-    for Jaccard, 0.85/0.65 for cosine. Pass explicit thresholds to tune.
+    Thresholds default to HIGH_SIMILARITY / MEDIUM_SIMILARITY (0.75 /
+    0.40) when None. Pass explicit thresholds to tune.
 
     Returns hits with similarity >= medium_threshold, sorted descending
     by similarity. Hits below high_threshold are labeled `"medium"`; at
     or above, `"high"`. Empty when `new_body` has no content (or no
     tokens, in Jaccard mode).
     """
-    if semantic_model is not None:
-        try:
-            return _find_similar_semantic(
-                new_body,
-                existing,
-                semantic_model,
-                high_threshold=(high_threshold if high_threshold is not None else 0.85),
-                medium_threshold=(
-                    medium_threshold if medium_threshold is not None else 0.65
-                ),
-            )
-        except Exception as exc:  # noqa: BLE001 — degrade to Jaccard dedup.
-            # A loaded model raising at encode() time must not crash the
-            # write-dedup gate (memory_write calls find_similar BEFORE it
-            # commits). Degrade to lexical Jaccard dedup so the write still
-            # completes — but with the Jaccard-NATURAL thresholds, NOT the
-            # ones the caller passed. Thresholds supplied alongside a
-            # semantic_model are COSINE-calibrated (the write-dedup gate
-            # passes semantic_high/medium_threshold = 0.85/0.65); forwarding
-            # those to the Jaccard scorer — whose natural high/medium are
-            # HIGH_SIMILARITY/MEDIUM_SIMILARITY (0.75/0.40) — would silently
-            # neuter the gate, since Jaccard rarely reaches 0.85, letting a
-            # near-duplicate the gate should BLOCK commit as a parallel
-            # duplicate. Dedup at the lexical scorer's own calibration.
-            log.warning(
-                "semantic dedup failed at encode time (%s); falling back to Jaccard",
-                exc,
-            )
-            return _find_similar_jaccard(
-                new_body,
-                existing,
-                high_threshold=HIGH_SIMILARITY,
-                medium_threshold=MEDIUM_SIMILARITY,
-            )
-
     return _find_similar_jaccard(
         new_body,
         existing,
@@ -3499,15 +3228,13 @@ def find_similar(
 # Generic dedup engine
 # ---------------------------------------------------------------------------
 #
-# Pre-Round-2 the active and tombstone passes were four separate functions
-# (`_find_similar_jaccard`, `_find_similar_semantic`,
-# `_find_similar_tombstones_jaccard`, `_find_similar_tombstones_semantic`)
+# Pre-Round-2 the active and tombstone passes were separate functions
 # whose loop bodies were near-clones — same threshold dispatch, same
 # tokenisation, same hit-construction shape with only the relevance label
 # and the optional `removed_at` / `removed_reason` fields differing
 # between active and tombstone passes. The four-way duplication meant
-# bug fixes had to land four times. Consolidated below: one Jaccard
-# scorer and one semantic scorer, each parameterised by a `build_hit`
+# bug fixes had to land repeatedly. Consolidated below: one Jaccard
+# scorer parameterised by a `build_hit`
 # callable that knows how to construct a SimilarHit for the
 # active-vs-tombstone variant. The two public entry points
 # (`find_similar`, `find_similar_tombstones`) keep their existing
@@ -3566,77 +3293,6 @@ def _score_similar_jaccard(
             hits.append(hit)
 
     hits.sort(key=sort_key, reverse=True)
-    return hits
-
-
-def _score_similar_semantic(
-    new_body: str,
-    existing: list[Any],
-    model: Any,
-    *,
-    high_threshold: float,
-    medium_threshold: float,
-    high_label: str,
-    medium_label: str,
-    build_hit: Callable[[Any, float, str], SimilarHit | None],
-    sort_key: Callable[[SimilarHit], Any],
-    cache_key_for: Callable[[Any], tuple[str, str]],
-) -> list[SimilarHit]:
-    """Cosine-similarity dedup over `existing`, building hits via
-    `build_hit`.
-
-    `cache_key_for(memory)` returns the `(id, freshness_key)` tuple
-    used to address the embedding cache — the active pass uses
-    `(memory.id, memory.updated.isoformat())`; the tombstone pass uses
-    `(f"tomb:{memory.id}", memory.removed.isoformat())`. Keeping the
-    key derivation outside this function is what lets active and
-    tombstone caches coexist for the same memory id without colliding.
-
-    Imports `semantic` lazily so this module loads cleanly even when
-    the embeddings extra isn't installed.
-    """
-    from .semantic import (
-        _note_model_dimension,
-        cached_embed,
-        cosine_similarity_normalized,
-        flush_persistent_cache,
-    )
-
-    new_body_clean = new_body.strip()
-    if not new_body_clean:
-        return []
-
-    new_vec = model.encode(new_body_clean, normalize_embeddings=True)
-    # First fresh embedding of the run — prime the cache reconcile so a
-    # stale-dimension hydrated entry can't reach `cosine` below. See
-    # `semantic._note_model_dimension`.
-    _note_model_dimension(len(new_vec))
-
-    hits: list[SimilarHit] = []
-    for memory in existing:
-        body_clean = memory.body.strip()
-        if not body_clean:
-            continue
-        cache_id, cache_freshness = cache_key_for(memory)
-        existing_vec = cached_embed(model, cache_id, cache_freshness, body_clean)
-        similarity = cosine_similarity_normalized(new_vec, existing_vec)
-
-        if similarity >= high_threshold:
-            relevance = high_label
-        elif similarity >= medium_threshold:
-            relevance = medium_label
-        else:
-            continue
-
-        hit = build_hit(memory, round(similarity, 4), relevance)
-        if hit is not None:
-            hits.append(hit)
-
-    hits.sort(key=sort_key, reverse=True)
-    # End-of-batch hook: persist any newly-computed embeddings as a
-    # single atomic write. No-op when persistence isn't configured or
-    # nothing changed since the last flush.
-    flush_persistent_cache()
     return hits
 
 
@@ -3705,34 +3361,6 @@ def _find_similar_jaccard(
     )
 
 
-def _find_similar_semantic(
-    new_body: str,
-    existing: list[Memory],
-    model: Any,
-    *,
-    high_threshold: float,
-    medium_threshold: float,
-) -> list[SimilarHit]:
-    """Cosine similarity over sentence-transformers embeddings.
-
-    Imports `semantic` lazily so this module loads cleanly even when the
-    embeddings extra isn't installed — a caller who never passes a
-    `semantic_model` won't trigger the import path.
-    """
-    return _score_similar_semantic(
-        new_body,
-        existing,
-        model,
-        high_threshold=high_threshold,
-        medium_threshold=medium_threshold,
-        high_label="high",
-        medium_label="medium",
-        build_hit=_build_active_hit,
-        sort_key=_active_sort_key,
-        cache_key_for=lambda m: (m.id, m.updated.isoformat()),
-    )
-
-
 # ---------------------------------------------------------------------------
 # Tombstone-aware dedup
 # ---------------------------------------------------------------------------
@@ -3757,48 +3385,18 @@ def find_similar_tombstones(
     new_body: str,
     tombstoned: list[TombstonedMemory],
     *,
-    semantic_model: Any | None = None,
     high_threshold: float | None = None,
     medium_threshold: float | None = None,
 ) -> list[SimilarHit]:
     """Like `find_similar`, but scored against tombstoned memories and
     returning hits labeled with the `-removed` relevance suffix.
 
-    Threshold defaults match the active path: 0.75/0.40 for Jaccard,
-    0.85/0.65 for cosine. Empty input or empty body returns []. Hits
+    Threshold defaults match the active path: 0.75/0.40. Empty input
+    or empty body returns []. Hits
     are sorted descending by similarity, like `find_similar`.
     """
     if not tombstoned:
         return []
-
-    if semantic_model is not None:
-        try:
-            return _find_similar_tombstones_semantic(
-                new_body,
-                tombstoned,
-                semantic_model,
-                high_threshold=(high_threshold if high_threshold is not None else 0.85),
-                medium_threshold=(
-                    medium_threshold if medium_threshold is not None else 0.65
-                ),
-            )
-        except Exception as exc:  # noqa: BLE001 — degrade to Jaccard dedup.
-            # Same fail-soft as find_similar, with the same threshold care:
-            # the caller's cosine thresholds (0.85/0.65) must NOT be applied
-            # to the Jaccard scorer (natural 0.75/0.40), or a near-duplicate
-            # tombstone would stop surfacing the previously_removed warning.
-            # Use the Jaccard-natural defaults.
-            log.warning(
-                "semantic tombstone dedup failed at encode time (%s); "
-                "falling back to Jaccard",
-                exc,
-            )
-            return _find_similar_tombstones_jaccard(
-                new_body,
-                tombstoned,
-                high_threshold=HIGH_SIMILARITY,
-                medium_threshold=MEDIUM_SIMILARITY,
-            )
 
     return _find_similar_tombstones_jaccard(
         new_body,
@@ -3828,38 +3426,4 @@ def _find_similar_tombstones_jaccard(
         medium_label="medium-removed",
         build_hit=_build_tombstone_hit,
         sort_key=_tombstone_sort_key,
-    )
-
-
-def _find_similar_tombstones_semantic(
-    new_body: str,
-    tombstoned: list[TombstonedMemory],
-    model: Any,
-    *,
-    high_threshold: float,
-    medium_threshold: float,
-) -> list[SimilarHit]:
-    """Cosine similarity over sentence-transformers embeddings, against
-    tombstoned bodies. Mirrors `_find_similar_semantic` for the active path.
-
-    Cache key uses `removed` rather than `updated` for tombstones: a
-    tombstone's body is frozen post-removal (we don't bump `updated`
-    on removal), so `removed` is the natural freshness handle and
-    distinguishes the cache entry from any active-side cache that
-    might exist for the same memory_id (e.g. immediately after a
-    restore-then-tombstone cycle). The `tomb:` prefix on the cache id
-    is what keeps the active and tombstone caches from colliding for
-    the same memory across a restore-then-tombstone cycle.
-    """
-    return _score_similar_semantic(
-        new_body,
-        tombstoned,
-        model,
-        high_threshold=high_threshold,
-        medium_threshold=medium_threshold,
-        high_label="high-removed",
-        medium_label="medium-removed",
-        build_hit=_build_tombstone_hit,
-        sort_key=_tombstone_sort_key,
-        cache_key_for=lambda m: (f"tomb:{m.id}", m.removed.isoformat()),
     )

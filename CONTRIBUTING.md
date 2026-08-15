@@ -136,7 +136,7 @@ When a tool, Python API, config key, parameter, or field is destined for removal
 
 1. The deprecation lands in a minor of the current major with a `Deprecated` entry in the changelog. The entry names the deprecated surface, the replacement (if any), and the planned-removal target version.
 2. The implementation emits a runtime warning when the deprecated surface is used, with the same replacement pointer. Which channel carries the warning depends on who consumes the surface — two lanes, described below.
-3. The deprecated surface continues to function, since semver says so, until the next major bump (6.0).
+3. The deprecated surface continues to function, since semver says so, until the next major bump (7.0).
 4. At 6.0, the surface is removed. The 6.0 release notes reiterate every removed item.
 
 Write step 1's planned-removal target as the *next* major at the time of writing, and re-target it if the surface outlives that major. The `origin.py` trio below is the worked example of the failure mode: it was deprecated against 4.0, 4.0 and 5.0 both shipped as removal releases without taking it, and the messages went on naming a version that was already history. Nothing forces the removal — only the release that decides to take it.

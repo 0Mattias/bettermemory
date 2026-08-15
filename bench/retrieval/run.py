@@ -22,7 +22,6 @@ THE ARMS. Two of them mirror what a real user actually gets, rather than
 artificial mode flags:
 
   lexical   mode="hybrid", no embedding model  — a default install
-  semantic  mode="hybrid", embedding model     — `bettermemory[embeddings]`
 
 and each is probed three ways:
 
@@ -41,8 +40,8 @@ measurement becomes a talking point.
 THE THRESHOLD, AND THE TWO KNOBS THAT REACH IT. The default corpus sits
 below `_INDEX_THRESHOLD_DEFAULT` (500), so retrieval scores the whole
 corpus. Above that threshold production prefilters through SQLite bm25
-and every other ranker only REORDERS that top-50 — so a semantic leg
-cannot surface a document bm25 never nominated. The 3.29.0 default flip
+and every other ranker only REORDERS that top-50 — no ranker can
+surface a document bm25 never nominated. The 3.29.0 default flip
 was justified entirely by a below-threshold measurement, which is the
 sharpest fair criticism of it.
 
@@ -371,7 +370,6 @@ def run_arm(
     *,
     arm: str,
     probe: str,
-    semantic_model: Any | None = None,
 ) -> ArmResult:
     """Rank the full corpus in-process — the pre-3.30 arm, unchanged.
 
@@ -394,7 +392,6 @@ def run_arm(
             max_results=max(K_VALUES),
             mode="hybrid",
             rescue_expansion=RESCUE_EXPANSION,
-            semantic_model=semantic_model,
         )
         ranked = [h.id for h in hits]
         result.n += 1
@@ -418,7 +415,6 @@ def run_arm_prefiltered(
     *,
     arm: str,
     probe: str,
-    semantic_model: Any | None = None,
 ) -> ArmResult:
     """Rank what production would actually have ranked.
 
@@ -474,7 +470,6 @@ def run_arm_prefiltered(
             max_results=max(K_VALUES),
             mode="hybrid",
             rescue_expansion=RESCUE_EXPANSION,
-            semantic_model=semantic_model,
             # The part `run_arm` cannot pass. Without it a capped pool is
             # scored with pool-derived document frequencies, which prices
             # a term that is rare in the store as common in the slice —
@@ -649,77 +644,6 @@ def _format_text(
     return "\n".join(out) + "\n"
 
 
-def _semantic_provenance(provider: str | None) -> dict[str, object]:
-    """The R1 declaration's §2 pin, read back from the artifacts on disk.
-
-    Records what actually loaded — model name, the Hugging Face revision
-    the local cache's `refs/main` names, the sha256 of the weights file
-    in that snapshot, the license the snapshot's model card declares,
-    resolved provider package versions, and the offline flags — so the
-    run artifact carries the whole provenance contract rather than
-    trusting the declaration to have described the future correctly.
-    Best-effort on every leg: a missing piece records as None rather
-    than failing a run whose ranking half already worked.
-    """
-    import hashlib
-    from importlib import metadata
-
-    from bettermemory.semantic import (
-        DEFAULT_FASTEMBED_MODEL_NAME,
-        DEFAULT_MODEL_NAME,
-    )
-
-    model_name = (
-        DEFAULT_FASTEMBED_MODEL_NAME if provider == "fastembed" else DEFAULT_MODEL_NAME
-    )
-    revision: str | None = None
-    weights_sha256: str | None = None
-    license_id: str | None = None
-    cache_root = Path.home() / ".cache" / "huggingface" / "hub"
-    repo_dir = cache_root / f"models--sentence-transformers--{model_name}"
-    try:
-        revision = (repo_dir / "refs" / "main").read_text().strip() or None
-    except OSError:
-        revision = None
-    if revision is not None:
-        snapshot = repo_dir / "snapshots" / revision
-        weights = snapshot / "model.safetensors"
-        try:
-            digest = hashlib.sha256()
-            with open(weights, "rb") as fh:
-                for chunk in iter(lambda: fh.read(1 << 20), b""):
-                    digest.update(chunk)
-            weights_sha256 = digest.hexdigest()
-        except OSError:
-            weights_sha256 = None
-        try:
-            card = (snapshot / "README.md").read_text(encoding="utf-8")
-            for line in card.splitlines()[:40]:
-                if line.strip().startswith("license:"):
-                    license_id = line.split(":", 1)[1].strip() or None
-                    break
-        except OSError:
-            license_id = None
-    packages: dict[str, str | None] = {}
-    for pkg in ("sentence-transformers", "torch", "transformers", "numpy", "fastembed"):
-        try:
-            packages[pkg] = metadata.version(pkg)
-        except metadata.PackageNotFoundError:
-            packages[pkg] = None
-    return {
-        "provider": provider,
-        "model": model_name,
-        "hf_revision": revision,
-        "weights_sha256": weights_sha256,
-        "license": license_id,
-        "offline": {
-            "HF_HUB_OFFLINE": os.environ.get("HF_HUB_OFFLINE"),
-            "TRANSFORMERS_OFFLINE": os.environ.get("TRANSFORMERS_OFFLINE"),
-        },
-        "packages": packages,
-    }
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
@@ -729,8 +653,8 @@ def main() -> int:
     )
     parser.add_argument(
         "--arms",
-        default="lexical,semantic",
-        help="Comma-separated subset of `lexical,semantic`. Default both.",
+        default="lexical",
+        help="Arms to run. Only `lexical` exists.",
     )
     parser.add_argument(
         "--pad-to",
@@ -862,27 +786,14 @@ def main() -> int:
             f"Production's threshold is {INDEX_THRESHOLD}."
         )
 
-    semantic_model = None
-    semantic_provenance: dict[str, object] | None = None
     if "semantic" in arms:
-        # R1 declaration §2: offline mode is ENFORCED before the model
-        # import so the pinned local snapshot is the only possible
-        # source — a run that could quietly fetch different bytes would
-        # not be measuring the pin. Set here, recorded below.
-        os.environ["HF_HUB_OFFLINE"] = "1"
-        os.environ["TRANSFORMERS_OFFLINE"] = "1"
-        from bettermemory.semantic import get_model, resolve_provider
-
-        provider = resolve_provider()
-        semantic_model = get_model(provider=provider)
-        if semantic_model is not None:
-            semantic_provenance = _semantic_provenance(provider)
-        if semantic_model is None:
-            arms = [a for a in arms if a != "semantic"]
-            notes.append(
-                "semantic arm SKIPPED — no embeddings extra importable. "
-                "Install `bettermemory[embeddings]` to run it."
-            )
+        arms = [a for a in arms if a != "semantic"]
+        notes.append(
+            "semantic arm REMOVED — the product ships no embedding "
+            "models (stripped in 4.0.0, door C reentry 5.5.0 revoked "
+            "by owner doctrine in 6.0.0); the dated R1/R2 artifacts "
+            "remain the record."
+        )
 
     if RESCUE_EXPANSION:
         notes.append(
@@ -903,7 +814,6 @@ def main() -> int:
 
         rows: list[ArmResult] = []
         for arm in arms:
-            model = semantic_model if arm == "semantic" else None
             for probe in ("asked", "requery", "control"):
                 for prefilter in modes:
                     rows.append(
@@ -913,7 +823,6 @@ def main() -> int:
                             slug_to_id,
                             arm=arm,
                             probe=probe,
-                            semantic_model=model,
                         )
                         if prefilter
                         else run_arm(
@@ -922,7 +831,6 @@ def main() -> int:
                             slug_to_id,
                             arm=arm,
                             probe=probe,
-                            semantic_model=model,
                         )
                     )
         # Inside the `try`, because the diagnostic reads the index that
@@ -943,7 +851,7 @@ def main() -> int:
         notes.append(
             "corpus is above the index threshold, but this runner ranks the "
             "full corpus — production would prefilter through SQLite bm25 "
-            "first. Treat this as an upper bound on the semantic arm."
+            "first. Treat this as an upper bound."
         )
     if True in modes:
         notes.append(
@@ -999,7 +907,6 @@ def main() -> int:
             json.dumps(
                 {
                     "provenance": _provenance(),
-                    "semantic_provenance": semantic_provenance,
                     "corpus": corpus_path.name,
                     "corpus_sha256": corpus_fingerprint(corpus_path),
                     "corpus_size": corpus_n,

@@ -592,7 +592,7 @@ def test_origin_excludes_none_fields_when_serialized() -> None:
 # commits_since is DEPRECATED (slated for removal at the next major;
 # superseded by commit_author_timestamps + bisect_right, the author-date
 # source all three commit-drift surfaces share). 4.0 and 5.0 both shipped
-# without taking it, so the message now names 6.0. The behavior tests below
+# without taking it, so the message now names 7.0 (6.0 shipped as the embedding-lane re-strip and passed on it too). The behavior tests below
 # still pin the legacy
 # contract verbatim; every commits_since call is wrapped in pytest.warns so
 # the suite stays green under `-W error` / filterwarnings=error
@@ -642,7 +642,7 @@ def test_commits_since_is_deprecated() -> None:
     back into the drift path that deliberately abandoned them."""
     with pytest.warns(
         DeprecationWarning,
-        match=r"commits_since is deprecated.*removed in.*6\.0",
+        match=r"commits_since is deprecated.*removed in.*7\.0",
     ):
         commits_since(None, datetime(2026, 1, 1, tzinfo=timezone.utc))
 
@@ -818,7 +818,7 @@ def test_resolve_repo_pathspecs_keeps_files_alongside_dropped_root(
 # commits_since_touching_paths / commits_touching_pathspecs — DEPRECATED
 # committer-date family (slated for removal at the next major; superseded by
 # resolve_repo_pathspecs + commit_author_timestamps_touching_pathspecs via
-# verify.resolve_commit_drift_count — 6.0 after 4.0 and 5.0 both passed on
+# verify.resolve_commit_drift_count — 7.0 after 4.0, 5.0, and 6.0 all passed on
 # it). The behavior tests below still pin the
 # legacy contract verbatim; every call is wrapped in pytest.warns so the suite
 # stays green under `-W error` / filterwarnings=error DeprecationWarning
@@ -869,7 +869,7 @@ def test_commits_since_touching_paths_is_deprecated() -> None:
     contract back into the drift path that deliberately abandoned them."""
     with pytest.warns(
         DeprecationWarning,
-        match=r"commits_since_touching_paths is deprecated.*removed in.*6\.0",
+        match=r"commits_since_touching_paths is deprecated.*removed in.*7\.0",
     ):
         commits_since_touching_paths(
             None,
@@ -1042,7 +1042,7 @@ def test_commits_touching_pathspecs_is_deprecated() -> None:
     author-date drift path deliberately abandoned."""
     with pytest.warns(
         DeprecationWarning,
-        match=r"commits_touching_pathspecs is deprecated.*removed in.*6\.0",
+        match=r"commits_touching_pathspecs is deprecated.*removed in.*7\.0",
     ):
         commits_touching_pathspecs(
             None,

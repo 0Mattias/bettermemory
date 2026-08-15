@@ -670,7 +670,7 @@ def _git_worktree_root(cwd: Path) -> str | None:
 
 
 def commits_since(cwd: Path | None, since: datetime) -> int | None:
-    """DEPRECATED — slated for removal in 4.0; every call emits a
+    """DEPRECATED — slated for removal in 7.0; every call emits a
     ``DeprecationWarning``. Count commits in `cwd`'s repo at-or-after
     `since` (COMMITTER-date space, git's inclusive ``--since``).
 
@@ -709,7 +709,7 @@ def commits_since(cwd: Path | None, since: datetime) -> int | None:
     """
     warnings.warn(
         "commits_since is deprecated and will be removed in bettermemory "
-        "6.0; use commit_author_timestamps + bisect_right (the author-date "
+        "7.0; use commit_author_timestamps + bisect_right (the author-date "
         "source behind verify.compute_commit_drift) instead of this "
         "committer-date --since count",
         DeprecationWarning,
@@ -841,7 +841,7 @@ def commits_touching_pathspecs(
     *,
     toplevel: Path | None = None,
 ) -> int | None:
-    """DEPRECATED — slated for removal in 4.0; every call emits a
+    """DEPRECATED — slated for removal in 7.0; every call emits a
     ``DeprecationWarning``. Count commits after `since` (COMMITTER-date
     space, git's inclusive ``--since``) touching any of `pathspecs`.
 
@@ -869,7 +869,7 @@ def commits_touching_pathspecs(
     """
     warnings.warn(
         "commits_touching_pathspecs is deprecated and will be removed in "
-        "bettermemory 6.0; use commit_author_timestamps_touching_pathspecs "
+        "bettermemory 7.0; use commit_author_timestamps_touching_pathspecs "
         "(the author-date source behind verify.resolve_commit_drift_count) "
         "instead of this committer-date --since count",
         DeprecationWarning,
@@ -929,7 +929,7 @@ def commits_since_touching_paths(
     since: datetime,
     paths: list[str],
 ) -> int | None:
-    """DEPRECATED — slated for removal in 4.0; every call emits a
+    """DEPRECATED — slated for removal in 7.0; every call emits a
     ``DeprecationWarning``. Count commits in `cwd`'s repo after `since`
     (COMMITTER-date space, git's inclusive ``--since``) that touched any
     of `paths`.
@@ -962,7 +962,7 @@ def commits_since_touching_paths(
     """
     warnings.warn(
         "commits_since_touching_paths is deprecated and will be removed in "
-        "bettermemory 6.0; use resolve_repo_pathspecs + "
+        "bettermemory 7.0; use resolve_repo_pathspecs + "
         "commit_author_timestamps_touching_pathspecs (the author-date source "
         "behind verify.resolve_commit_drift_count) instead of this "
         "committer-date composition",

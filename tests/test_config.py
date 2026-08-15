@@ -28,7 +28,6 @@ from pathlib import Path
 import pytest
 import tomllib
 
-from bettermemory import semantic
 from bettermemory.config import (
     DEFAULT_CONFIG,
     ENV_DIR_OVERRIDE,
@@ -197,101 +196,6 @@ async def test_default_config_scopes_prose_matches_the_update_surface(
     assert "ADDS" in block, block
 
 
-def _pin_extra_state(
-    monkeypatch: pytest.MonkeyPatch,
-    *,
-    torch: str | None,
-    fastembed: str | None,
-) -> None:
-    """Pin both embedding extras to a chosen state, hermetically.
-
-    `None` = absent, `"ok"` = installed and importable, any other string =
-    installed and BROKEN with that string as the recorded reason.
-
-    Seeds PRODUCTION state — `semantic`'s probe cache, its broken-reason
-    map and the two presence probes — rather than stubbing `resolve_provider`
-    itself, so the assertions measure the real resolution rule. Pinning is
-    mandatory rather than tidy: the three CI legs install different extras
-    (`[embeddings]`, `[embeddings-fast]`, neither), so a "torch broken,
-    fastembed healthy" row that read the real environment would measure a
-    different scenario on each leg and none of them on a developer machine
-    carrying both. The dicts are REPLACED rather than item-patched so
-    nothing another test recorded can leak in.
-    """
-    probe: dict[str, bool] = {}
-    reason: dict[str, str] = {}
-    for module, state in (("sentence_transformers", torch), ("fastembed", fastembed)):
-        # Absent seeds False too — an unseeded module makes
-        # `extra_importable` attempt a real import, which succeeds on
-        # whichever leg happens to have it installed.
-        probe[module] = state == "ok"
-        if state is not None and state != "ok":
-            reason[module] = state
-    monkeypatch.setattr(semantic, "_EXTRA_PROBE", probe)
-    monkeypatch.setattr(semantic, "_EXTRA_BROKEN_REASON", reason)
-    monkeypatch.setattr(semantic, "_torch_extra_installed", lambda: torch is not None)
-    monkeypatch.setattr(
-        semantic, "_fastembed_extra_installed", lambda: fastembed is not None
-    )
-
-
-@pytest.mark.parametrize(
-    ("torch", "fastembed", "expected"),
-    [
-        # Both healthy: torch wins, which is the byte-stable-cache claim.
-        ("ok", "ok", "torch"),
-        # The row the presence-only prose got wrong: a broken torch does
-        # not take the semantic leg down with it.
-        ("KeyError: frozenset()", "ok", "fastembed"),
-        ("ok", "ImportError: onnxruntime", "torch"),
-        (None, "ok", "fastembed"),
-        # Everything installed is broken: the broken one is returned
-        # anyway so its loader's WARNING names the import failure.
-        ("KeyError: frozenset()", None, "torch"),
-        ("KeyError: frozenset()", "ImportError: onnxruntime", "torch"),
-        # Nothing installed at all — the Jaccard fallback.
-        (None, None, None),
-    ],
-)
-def test_default_config_semantic_provider_prose_matches_the_resolver(
-    monkeypatch: pytest.MonkeyPatch,
-    torch: str | None,
-    fastembed: str | None,
-    expected: str | None,
-) -> None:
-    """The shipped `auto` bullet must describe HEALTH-based resolution.
-
-    This text is written verbatim into every user's `config.toml` on first
-    run and `docs/internals.md` points at the file's own comments as the
-    knob reference, so a drift here is a published false claim. It drifted
-    once already: `resolve_provider` moved from presence to health —
-    presence alone picked a broken torch over a working fastembed and then
-    returned no model, losing the semantic leg on a machine with a
-    perfectly good provider installed — and the comment kept describing
-    the rule that defect replaced.
-
-    Both halves are asserted. The behavioural half fails if the resolver
-    goes back to reading presence alone; the prose half fails if the
-    comment does. Pinning either alone lets the pair drift apart again.
-    """
-    _pin_extra_state(monkeypatch, torch=torch, fastembed=fastembed)
-
-    shipped = tomllib.loads(DEFAULT_CONFIG)["behavior"]["semantic_provider"]
-    assert shipped == "auto"
-    assert semantic.resolve_provider(shipped) == expected
-
-    block = DEFAULT_CONFIG.split("# Which embedding provider")[1].split(
-        "semantic_model_name"
-    )[0]
-    # Comment markers and line wrapping carry none of the claim, and a
-    # re-wrap is a routine edit — assert against the flowed text so only a
-    # change of meaning can fail this half.
-    prose = " ".join(block.replace("#", " ").split())
-    assert "installed AND imports" in prose, prose
-    assert "Health, not just presence" in prose, prose
-    assert "prefers torch when both extras import cleanly" in prose, prose
-
-
 def test_default_config_round_trips_through_load_config(tmp_path: Path) -> None:
     """Writing DEFAULT_CONFIG and loading it yields the same defaults as
     constructing `Config()` from scratch. Closes the loop on the
@@ -313,18 +217,8 @@ def test_default_config_round_trips_through_load_config(tmp_path: Path) -> None:
         loaded.behavior.recency_boost_half_life_days
         == fresh.behavior.recency_boost_half_life_days
     )
-    assert loaded.behavior.semantic_dedup == fresh.behavior.semantic_dedup
     assert loaded.behavior.prompt_recall == fresh.behavior.prompt_recall
     assert loaded.behavior.standing_tier == fresh.behavior.standing_tier
-    assert loaded.behavior.semantic_model_name == fresh.behavior.semantic_model_name
-    assert (
-        loaded.behavior.semantic_high_threshold
-        == fresh.behavior.semantic_high_threshold
-    )
-    assert (
-        loaded.behavior.semantic_medium_threshold
-        == fresh.behavior.semantic_medium_threshold
-    )
     assert (
         loaded.behavior.heavily_used_min_applied
         == fresh.behavior.heavily_used_min_applied
@@ -342,18 +236,13 @@ def test_default_config_round_trips_through_load_config(tmp_path: Path) -> None:
         == fresh.behavior.verification_stale_days
     )
     # Fields added after the original round-trip pin. Each one has its
-    # own coercion call in `load_config` (search_mode/semantic_provider/
-    # semantic_model_fastembed go through `str(...)`, max_content_bytes
+    # own coercion call in `load_config` (search_mode goes through its
+    # normaliser, max_content_bytes
     # through `int(...)`, log_queries_verbatim through `bool(...)`); a
     # silent drop or reordering that changed the coercion would survive
     # the field-level coercion tests above but break the round-trip
     # equality with `Config()` defaults that this test pins.
     assert loaded.behavior.search_mode == fresh.behavior.search_mode
-    assert loaded.behavior.semantic_provider == fresh.behavior.semantic_provider
-    assert (
-        loaded.behavior.semantic_model_fastembed
-        == fresh.behavior.semantic_model_fastembed
-    )
     assert loaded.behavior.max_content_bytes == fresh.behavior.max_content_bytes
     assert loaded.behavior.max_takeaway_bytes == fresh.behavior.max_takeaway_bytes
     # Document the takeaway cap default — the absolute number matters
@@ -448,21 +337,16 @@ def test_load_config_coerces_behavior_int_fields(tmp_path: Path) -> None:
 
 
 def test_load_config_coerces_behavior_float_fields(tmp_path: Path) -> None:
-    """Half-life and the two semantic thresholds are floats. A TOML
-    integer (`30`) is still accepted and coerced via `float(...)`."""
+    """Half-life is a float. A TOML integer (`14`) is still accepted
+    and coerced via `float(...)`."""
     config_path = tmp_path / "config.toml"
     config_path.write_text(
-        "[behavior]\n"
-        "recency_boost_half_life_days = 14\n"  # integer — must coerce to float
-        "semantic_high_threshold = 0.9\n"
-        "semantic_medium_threshold = 0.5\n",
+        "[behavior]\nrecency_boost_half_life_days = 14\n",  # integer — must coerce
         encoding="utf-8",
     )
     cfg = load_config(config_path)
     assert cfg.behavior.recency_boost_half_life_days == 14.0
     assert isinstance(cfg.behavior.recency_boost_half_life_days, float)
-    assert cfg.behavior.semantic_high_threshold == 0.9
-    assert cfg.behavior.semantic_medium_threshold == 0.5
 
 
 def test_load_config_consolidate_defaults(tmp_path: Path) -> None:
@@ -524,27 +408,16 @@ def test_load_config_coerces_behavior_bool_fields(tmp_path: Path) -> None:
     would pass every default-shaped test in this file)."""
     config_path = tmp_path / "config.toml"
     config_path.write_text(
-        "[behavior]\nrequire_write_confirmation = true\nsemantic_dedup = true\n"
+        "[behavior]\nrequire_write_confirmation = true\n"
         "prompt_recall = false\nstanding_tier = true\n",
         encoding="utf-8",
     )
     cfg = load_config(config_path)
     assert cfg.behavior.require_write_confirmation is True
-    assert cfg.behavior.semantic_dedup is True
     assert cfg.behavior.prompt_recall is False
     # `standing_tier` is default-FALSE, so explicit-true is the direction
     # that proves ITS override reaches the loader.
     assert cfg.behavior.standing_tier is True
-
-
-def test_load_config_coerces_behavior_str_field(tmp_path: Path) -> None:
-    config_path = tmp_path / "config.toml"
-    config_path.write_text(
-        '[behavior]\nsemantic_model_name = "all-mpnet-base-v2"\n',
-        encoding="utf-8",
-    )
-    cfg = load_config(config_path)
-    assert cfg.behavior.semantic_model_name == "all-mpnet-base-v2"
 
 
 def test_load_config_reads_scopes_allowed(tmp_path: Path) -> None:
@@ -587,7 +460,6 @@ def test_load_config_quoted_false_bool_keeps_privacy_opt_out(tmp_path: Path) -> 
     config_path.write_text(
         "[behavior]\n"
         'require_write_confirmation = "false"\n'
-        'semantic_dedup = "no"\n'
         'curation_hint_enabled = "off"\n'
         'full_tool_surface = "0"\n'
         "[consolidate]\n"
@@ -600,7 +472,6 @@ def test_load_config_quoted_false_bool_keeps_privacy_opt_out(tmp_path: Path) -> 
     )
     cfg = load_config(config_path)
     assert cfg.behavior.require_write_confirmation is False
-    assert cfg.behavior.semantic_dedup is False
     assert cfg.behavior.curation_hint_enabled is False
     assert cfg.behavior.full_tool_surface is False
     assert cfg.consolidate.auto_apply is False
@@ -664,14 +535,14 @@ def test_load_config_telemetry_non_positive_max_bytes_clamps_to_default(
 def test_load_config_missing_sections_use_defaults(tmp_path: Path) -> None:
     """A config file with only one section still loads — the rest fall back
     to dataclass defaults. Important for partial overrides ("I only care
-    about flipping semantic_dedup")."""
+    about flipping require_write_confirmation")."""
     config_path = tmp_path / "config.toml"
     config_path.write_text(
-        "[behavior]\nsemantic_dedup = true\n",
+        "[behavior]\nprompt_recall = false\n",
         encoding="utf-8",
     )
     cfg = load_config(config_path)
-    assert cfg.behavior.semantic_dedup is True
+    assert cfg.behavior.prompt_recall is False
     # Untouched fields keep their dataclass defaults.
     assert cfg.behavior.default_max_results == 5
     assert cfg.behavior.require_write_confirmation is False
@@ -816,7 +687,7 @@ def test_load_config_neither_key_uses_default(
     # `test_load_config_falsy_old_key_emits_warning` below, which pins
     # the "presence triggers, value doesn't matter" contract.
     config_path.write_text(
-        "[behavior]\nsemantic_dedup = false\n",
+        "[behavior]\nprompt_recall = true\n",
         encoding="utf-8",
     )
     with caplog.at_level("WARNING", logger="bettermemory.config"):
@@ -1317,17 +1188,18 @@ def test_search_modes_match_the_ranker_literal() -> None:
 
 
 def test_search_mode_normalises_case_and_whitespace(tmp_path: Path) -> None:
-    """The three consumers of this knob disagreed about normalisation:
-    `_search_mode_needs_model` (the embedding-model LOAD gate) compared
-    `.strip().lower()`, `handlers.search` passed the raw string to a
-    dispatcher that raises on anything outside the four literals, and the
-    web UI silently rewrote an unknown value to `hybrid`. So
-    `search_mode = "Semantic"` loaded a model, broke every `memory_search`
-    call, and rendered a working lexical page. Normalise once, at the
-    source, so all three see the same value."""
+    """The consumers of this knob disagreed about normalisation:
+    `handlers.search` passed the raw string to a dispatcher that raises
+    on anything outside the literals, while the web UI silently rewrote
+    an unknown value to `hybrid` — so a capitalised value broke every
+    `memory_search` call while rendering a working lexical page.
+    Normalise once, at the source, so every consumer sees one value.
+    The legacy pre-4.0 value `"semantic"` normalises to the `hybrid`
+    fallback — the migration path for configs that predate the
+    embedding lane's removal."""
     import json
 
-    for raw in ("Semantic", " semantic ", "SEMANTIC", "\tSemantic  "):
+    for raw in ("Hybrid", " hybrid ", "BM25", "\tKeyword  "):
         # `json.dumps` for the TOML string literal: both grammars escape
         # basic strings the same way, so a tab survives the round trip
         # instead of being written raw and breaking the parse.
@@ -1335,8 +1207,18 @@ def test_search_mode_normalises_case_and_whitespace(tmp_path: Path) -> None:
             f"[behavior]\nsearch_mode = {json.dumps(raw)}\n", encoding="utf-8"
         )
         cfg = load_config(tmp_path / "config.toml")
-        assert cfg.behavior.search_mode == "semantic", (
-            f"{raw!r} did not normalise to 'semantic'"
+        expected = raw.strip().lower()
+        assert cfg.behavior.search_mode == expected, (
+            f"{raw!r} did not normalise to {expected!r}"
+        )
+
+    for legacy in ("semantic", "Semantic", " SEMANTIC "):
+        (tmp_path / "config.toml").write_text(
+            f"[behavior]\nsearch_mode = {json.dumps(legacy)}\n", encoding="utf-8"
+        )
+        cfg = load_config(tmp_path / "config.toml")
+        assert cfg.behavior.search_mode == "hybrid", (
+            f"legacy {legacy!r} must fall back to 'hybrid'"
         )
 
 

@@ -33,10 +33,10 @@ Description-edit history:
   The 10%→65% pair this block used to cite had no committed artifact
   behind it and that bench retired it.
 
-  Same pass retracted "`hybrid` for paraphrase recall" from `mode`: with
-  no semantic leg configured — the package default — hybrid is RRF over
-  keyword and BM25, both lexical, so that line promised the caller the
-  exact capability whose absence this measurement is about.
+  Same pass retracted "`hybrid` for paraphrase recall" from `mode`:
+  hybrid is RRF over keyword and BM25, both lexical, so that line
+  promised the caller a capability the ranker does not have (and, since
+  4.0.0, deliberately does not carry).
 
   Paid for in the same string rather than by raising the ratchet in
   `test_default_on_descriptions_fit_budget`: `since_prior_session` gave
@@ -57,7 +57,6 @@ from typing import TYPE_CHECKING, Any, Callable, NamedTuple, cast
 
 from ..events import _event_id_list
 from ..models import utcnow, validate_scope
-from .._install_hints import extras_spec, pip_force_reinstall, tool_reinstall
 from .._response import NEGATIVE_OUTCOME_WINDOW_DAYS
 from ..time_utils import parse_event_ts
 from ..search import (
@@ -80,7 +79,7 @@ from ._shared import Context, _advance_turn, _attach_use_tokens
 
 if TYPE_CHECKING:
     from .._handlers import ToolHandlers
-    from ..config import BehaviorConfig, Config
+    from ..config import BehaviorConfig
 
 
 DESC_MEMORY_SEARCH = (
@@ -92,10 +91,9 @@ DESC_MEMORY_SEARCH = (
     "non-negotiable. (Full policy: the server `instructions` block.)\n\n"
     "Returns ranked hits with snippets. Per-hit fields the model "
     "should branch on:\n"
-    "- `relevance` (high/medium/low) + `matched_leg` (lexical/"
-    "semantic/both) — `relevance` is how much of your query wording "
-    "the hit literally contains, not how good it is; on a `semantic` "
-    "leg it is low by construction, so read them together.\n"
+    "- `relevance` (high/medium/low) — how much of your query wording "
+    "the hit literally contains, not how good it is. Weak hits: "
+    "re-query with different nouns.\n"
     "- `staleness_verdict` (fresh / spot_check_recommended / "
     "spot_check_required) — rolled-up signal; != fresh, act on "
     "`path_drift` below.\n"
@@ -143,10 +141,10 @@ DESC_MEMORY_SEARCH = (
     "session in the log; distinguish 'nothing new' (results=[]) "
     "from 'no baseline' by also calling memory_scope_overview and "
     "checking `curation_pending_new_since_last_session is None`.\n"
-    "- `mode` (optional, default from config; package default `hybrid`): `keyword`, `bm25`, "
-    "`semantic` (needs an embeddings extra), or `hybrid` (RRF of all "
-    "three; picks the extra up automatically). With no extra installed "
-    "every mode is lexical, so see `query`.\n\n"
+    "- `mode` (optional, default from config; package default "
+    "`hybrid`): `keyword`, `bm25`, or `hybrid` (RRF fusion of both). "
+    "Every mode is deterministic lexical ranking, so vocabulary is "
+    "the lever — see `query`.\n\n"
     "Outcome is recorded automatically via the use_token within ~2 "
     "turns; only call memory_record_use to override "
     "(ignored / contradicted / corrected)."
@@ -675,83 +673,6 @@ def resolve_search_pool(
     )
 
 
-# The provider names `semantic.resolve_provider` returns, mapped to the
-# module a probe imports and the pyproject extra that ships it. Kept
-# beside the message builder because that is the only consumer here.
-_PROVIDER_MODULE = {"torch": "sentence_transformers", "fastembed": "fastembed"}
-_MODULE_EXTRA = {"sentence_transformers": "embeddings", "fastembed": "embeddings-fast"}
-
-
-def _semantic_mode_unavailable(config: "Config") -> str:
-    """The ``mode='semantic'`` hard error, told apart by WHICH of the
-    optional extra's three states the caller is actually in.
-
-    An optional extra is absent, working, or installed-but-broken (see
-    ``semantic.extra_importable``), and the three want different
-    instructions. This message used to know two states and offer one
-    instruction — an unquoted ``pip`` install of the ``embeddings``
-    extra — so the user
-    whose ``sentence_transformers`` was on disk and unimportable was told
-    to install what they already had. That is the exact advice
-    ``semantic.extra_import_failure`` was added to stop ``doctor`` from
-    giving during the 2026-08-01 outage; this surface is the one a caller
-    hits per request, and it kept giving it.
-
-    Asks about the RESOLVED provider rather than "either extra", because
-    ``resolve_provider`` commits to one, so a healthy fastembed says
-    nothing about a run that was going to load torch.
-
-    Command spellings come from ``_install_hints``, the one module that
-    owns them — and the quoted-spec / tool-form-leads rationale — for
-    every surface. Hand-restating them here is exactly the drift that
-    produced this message's unquoted pre-fix wording.
-    """
-    from ..semantic import extra_import_failure, extra_importable
-    from ..semantic_setup import _resolve_semantic_provider_and_model
-
-    provider, _model_name = _resolve_semantic_provider_and_model(config)
-    module = _PROVIDER_MODULE.get(provider or "")
-    if module is not None:
-        reason = extra_import_failure(module)
-        if reason is not None:
-            # (c) installed-but-broken. The one state the old two-state
-            # message could not say, and the one where "install it" is
-            # actively misleading.
-            return (
-                "mode='semantic' needs a working embeddings extra: "
-                f"`{module}` IS installed but fails to import ({reason}). "
-                f"Reinstall it — `{tool_reinstall(_MODULE_EXTRA[module])}`, "
-                "or inside the virtualenv that runs bettermemory: "
-                f"`{pip_force_reinstall(module)}` — "
-                "rather than install it; a damaged or partially-synced "
-                "install (a virtualenv inside iCloud Drive or Dropbox is "
-                "the common cause) is what this looks like. Or use "
-                "mode='hybrid' for graceful keyword+bm25 fallback."
-            )
-        if extra_importable(module):
-            # (b) working, so the extra is not what is missing. Named as
-            # two candidates rather than one because the factory returns
-            # None for both and this function cannot tell them apart.
-            return (
-                "mode='semantic' has an importable embeddings extra but "
-                "got no model back. Either this config resolves one for "
-                "nobody (`[behavior] search_mode` = 'keyword' / 'bm25' "
-                "with semantic_dedup off — set search_mode = 'hybrid' or "
-                "'semantic'), or the model itself failed to load, which "
-                "the server log's WARNING names. Or use mode='hybrid' "
-                "for graceful keyword+bm25 fallback."
-            )
-    # (a) absent — including the no-provider-resolved case, which is
-    # `resolve_provider` reporting that neither extra is on disk.
-    return (
-        "mode='semantic' requires the embeddings extra, and none is "
-        f"installed. Install with `{tool_reinstall('embeddings')}` "
-        f"(or `{extras_spec('embeddings-fast')}` "
-        "for the smaller ONNX provider), or use "
-        "mode='hybrid' for graceful keyword+bm25 fallback."
-    )
-
-
 async def memory_search(
     deps: "ToolHandlers",
     query: str,
@@ -786,23 +707,11 @@ async def memory_search(
     # other value will raise ValueError at the dispatch boundary,
     # which the handler propagates to the caller as a tool error.
     resolved_mode = mode or deps.config.behavior.search_mode or "hybrid"
-    if resolved_mode not in ("keyword", "bm25", "semantic", "hybrid"):
+    if resolved_mode not in ("keyword", "bm25", "hybrid"):
         raise ValueError(
             f"unknown search mode {resolved_mode!r}; "
-            "must be one of: keyword, bm25, semantic, hybrid"
+            "must be one of: keyword, bm25, hybrid"
         )
-    # Semantic model is resolved only when the mode needs it. The
-    # factory returns None when no embedding extra is installed (or
-    # when no configured consumer needs the model — see
-    # `semantic_setup._semantic_model_or_none`); for `semantic` mode
-    # that's a hard error (the caller asked for it specifically), for
-    # `hybrid` it's a graceful degrade to keyword+bm25 fusion.
-    semantic_model: Any | None = None
-    if resolved_mode in ("semantic", "hybrid"):
-        semantic_model = deps._semantic_model_factory(deps.config)
-        if resolved_mode == "semantic" and semantic_model is None:
-            raise ValueError(_semantic_mode_unavailable(deps.config))
-
     if scopes:
         scopes = [validate_scope(s) for s in scopes]
 
@@ -940,7 +849,6 @@ async def memory_search(
         max_results=max_results,
         half_life_days=ranking.half_life_days,
         mode=cast(SearchMode, resolved_mode),
-        semantic_model=semantic_model,
         # Browse mode for the natural "what's new since last session"
         # usage: when the caller narrowed to the post-boundary slice
         # and didn't supply a meaningful query, treat all surviving

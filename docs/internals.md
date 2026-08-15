@@ -64,7 +64,8 @@ declared claims on `memory_write` / `memory_verify` (3.40.0).
   CJK-capable tokenization. Every ranker is deterministic lexical code —
   the project ships no embedding models. (Pre-4.0 an optional semantic
   leg fused in from an `embeddings` extra; the 4.0.0 purist strip
-  removed that lane whole.) 5.1 adds rescue expansion, OFF by default:
+  removed that lane whole; a 5.5.0 opt-in reentry was revoked in
+  6.0.0 by owner doctrine — own-built machinery or none.) 5.1 adds rescue expansion, OFF by default:
   discourse-filler words price at a df floor, and when the base
   ranking is not confident a down-weighted third leg over committed
   vocabulary tables (inflection variants, clippings, dev-domain

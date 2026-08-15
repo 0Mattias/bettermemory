@@ -1,8 +1,8 @@
 """End-to-end MCP tests for the `mode` parameter on memory_search.
 
 Companion to the unit tests in test_search_modes.py — these run the full
-handler path so we exercise the validation, semantic_model factory
-resolution, and result-shape contract over the wire.
+handler path so we exercise the validation and result-shape contract
+over the wire.
 """
 
 from __future__ import annotations
@@ -84,12 +84,11 @@ async def test_mode_bm25_returns_hits(server: Any) -> None:
     assert all({"id", "score", "relevance", "scopes"} <= set(h) for h in hits)
 
 
-async def test_mode_hybrid_without_embeddings_falls_back_gracefully(
+async def test_mode_hybrid_fuses_keyword_and_bm25(
     server: Any,
 ) -> None:
-    """Hybrid mode without the embeddings extra installed: fuses
-    keyword + BM25 only. The "I asked for the best, but I don't have
-    sentence-transformers" path. Should produce hits, not error."""
+    """Hybrid mode fuses the keyword and BM25 legs via RRF — the whole
+    mode, not a fallback tier. Should produce hits with fused scores."""
     await _seed(server, "python list comprehension")
     await _seed(server, "rust borrow checker")
 
@@ -99,26 +98,17 @@ async def test_mode_hybrid_without_embeddings_falls_back_gracefully(
     assert all(0 < h["score"] < 0.1 for h in hits)
 
 
-async def test_mode_semantic_without_embeddings_raises(
-    server: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """`mode="semantic"` is an explicit ask — failing softly would hide
-    the deps issue from the caller. The error should mention the extra
-    so the user can act on the message.
-
-    The no-extra condition is now simulated rather than inherited from
-    the environment. It used to hold for free because the default config
-    resolved no model whatever was installed; now an importable extra
-    routes one into `hybrid`, so on a machine (or CI leg) with the extra
-    present this test was asserting against its own environment instead
-    of its contract, and would pass or fail by accident."""
-    monkeypatch.setattr(
-        "bettermemory.semantic_setup._embeddings_extra_importable", lambda: False
-    )
-    monkeypatch.setattr("bettermemory.builder._semantic_model_or_none", lambda _c: None)
+async def test_mode_semantic_is_removed(server: Any) -> None:
+    """`mode="semantic"` was removed with the embedding lane in 4.0.0.
+    An explicit ask for it is an unknown mode like any other — the error
+    names the modes that exist rather than hinting at an extra that no
+    longer does. (Config FILES saying `search_mode = "semantic"` get a
+    loud normalise-to-hybrid instead, in `config._coerce_search_mode` —
+    a page or server must not go down over a stale line; an explicit
+    per-call ask must not silently rank with a different algorithm.)"""
     await _seed(server, "anything")
 
-    with pytest.raises(Exception, match="embeddings extra"):
+    with pytest.raises(Exception, match="unknown search mode"):
         await _call(server, "memory_search", query="x", mode="semantic")
 
 

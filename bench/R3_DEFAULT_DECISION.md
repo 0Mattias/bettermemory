@@ -32,8 +32,10 @@ retrieval behavior:
   untouched): the three-leg hybrid. The package default is
   `search_mode = "hybrid"`, and the search handler resolves the model
   for hybrid whenever an embeddings extra imports
-  (`src/bettermemory/handlers/search.py`,
-  `src/bettermemory/semantic_setup.py`) — the pre-strip shape
+  (`src/bettermemory/handlers/search.py`, and
+  `src/bettermemory/semantic_setup.py` — a citation that does not
+  resolve since 6.0.0 removed the module with the lane) — the
+  pre-strip shape
   restored by R1's implementation, whose lineage is the 3.29.0
   reversal itself (`ba7e857`, "installing an embeddings extra now
   enables semantic search": the extra used to be inert without an

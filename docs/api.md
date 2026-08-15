@@ -413,4 +413,4 @@ These hold across the surface:
 - Required arguments are always named in the description; defaults are conservative (`force=False`, `acknowledge_transient=False`, `with_bodies=False`, `category="fact"`).
 - `memory_update` requires at least one of `content`, `scopes`, `confidence`, `category`, `links` at runtime — not expressible in JSON Schema, but the handler returns a clear error.
 
-The 5.x surface is the contract. Additions follow the rules in [`CONTRIBUTING.md`](../CONTRIBUTING.md). Removals and renames wait for a major: 4.0 took the `"semantic"` search mode with the embedding lane and 5.0 took the `bettermemory ui` surface whole; the next removal window is 6.0.
+The 6.x surface is the contract. Additions follow the rules in [`CONTRIBUTING.md`](../CONTRIBUTING.md). Removals and renames wait for a major: 4.0 took the `"semantic"` search mode with the embedding lane, 5.0 took the `bettermemory ui` surface whole, and 6.0 re-took the embedding lane after its 5.5.0 opt-in reentry was revoked by owner doctrine (the project builds its own machinery or none — `CHANGELOG.md`, 6.0.0); the next removal window is 7.0.
