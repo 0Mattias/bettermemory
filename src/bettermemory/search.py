@@ -32,7 +32,7 @@ import math
 import re
 import unicodedata
 from bisect import bisect_left
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
 from typing import Any, Callable, Literal, NamedTuple
 
@@ -1269,6 +1269,319 @@ def _merge_corpus_stats(
     return CorpusStats(
         size=b.size if b.size > 0 else a.size, body_df=body_df, scope_df=scope_df
     )
+
+
+# ---------------------------------------------------------------------------
+# The conversational lane (Lane L unit 1, bench/l/L1_DECLARATION.md)
+# ---------------------------------------------------------------------------
+#
+# Two deterministic repairs for conversation-shaped stores, behind
+# `search(conversational=...)`, default OFF, hybrid-mode only — the same
+# opt-in shape as `rescue_expansion` and byte-stable for every caller
+# that does not pass the flag:
+#
+# - L1-S: when the query has a temporal reading, its temporal-SCAFFOLD
+#   tokens (day/week/ago/last/many and kin — the question's syntax, not
+#   its content) get a document-frequency floor in the BM25 legs so they
+#   cannot outprice content terms. The L1 miss anatomy found this the
+#   dominant LongMemEval failure: for "how many days ago did I buy a
+#   smoker?" the sessions outranking the gold matched `ago`/`day`/`many`
+#   while the gold matched `smoker`. Exactly the filler df-floor's
+#   pathology in temporal dress, repaired through the same stats seam.
+# - L1-T: within the near-tie band of the fused ranking, date anchors
+#   break lookalike ties — an explicit query window (a named month, a
+#   date, "last month") boosts in-window anchors and demotes out-of-
+#   window ones; an elapsed/order-shaped ask ("how many weeks ago did
+#   I…", "which happened first…") boosts the FIRST narration (earliest
+#   anchor), or the latest when the ask says "the last time I".
+#
+# Constants below are the declaration's declared defaults; the caps and
+# the tuning protocol live in the declaration, and the finals a gate
+# read used are recorded in its artifact.
+
+# Closed class of temporal-scaffold SURFACE forms, stemmed through the
+# live stemmer at import so membership tests run in ranker token space.
+# Generic English temporal syntax plus small numerals — no topical
+# vocabulary is admitted (declaration §3 caps the class at 40 stems).
+_CONV_SCAFFOLD_SURFACE = (
+    "day", "days", "week", "weeks", "weekend", "month", "months",
+    "year", "years", "ago", "yesterday", "today", "last", "latest",
+    "first", "earliest", "past", "recent", "recently", "current",
+    "currently", "many", "much", "long", "total", "time", "times",
+    "since", "between", "order", "once", "twice", "one", "two",
+    "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+    "eleven", "twelve",
+)
+_CONV_SCAFFOLD_STEMS = frozenset(_stem_token(w) for w in _CONV_SCAFFOLD_SURFACE)
+
+# df floor for scaffold terms, as a fraction of the ranked collection —
+# the filler floor's own ratio. A floored term still matches and still
+# scores; it just prices as a common word.
+_CONV_SCAFFOLD_FLOOR_RATIO = 0.5
+
+# Near-tie band for L1-T: items whose fused score is at least this
+# fraction of the top hit's participate in anchor selection. RRF scores
+# decay slowly (1/(k+rank)), so 0.5 reaches roughly the top fifty of a
+# two-leg ranking — the L1 anatomy put 81% of missed evidence at
+# distinct-session ranks 5-19.
+_CONV_BAND_TAU = 0.50
+
+# L1-T adjustment magnitudes, multiplicative on the fused score.
+_CONV_WINDOW_BOOST = 0.30
+_CONV_WINDOW_DEMOTE = 0.15
+_CONV_SELECTOR_BOOST = 0.25
+_CONV_SELECTOR_DECAY = 0.7
+
+_MONTH_NAMES = (
+    "january", "february", "march", "april", "may", "june", "july",
+    "august", "september", "october", "november", "december",
+)
+_MONTH_NO = {name: i + 1 for i, name in enumerate(_MONTH_NAMES)}
+
+# Query-side temporal shapes. Matched against the RAW lowercased query,
+# not the token stream — these are phrase shapes, and stemming would
+# destroy them.
+_CONV_DATE_RE = re.compile(r"\b(\d{4})[/-](\d{2})[/-](\d{2})\b")
+_CONV_MONTH_RE = re.compile(
+    r"\b(" + "|".join(_MONTH_NAMES) + r")\b(?:\s+(\d{4}))?"
+)
+_CONV_LAST_PERIOD_RE = re.compile(r"\blast\s+(week|month|year)\b")
+_CONV_THIS_PERIOD_RE = re.compile(r"\bthis\s+(week|month|year)\b")
+_CONV_YESTERDAY_RE = re.compile(r"\byesterday\b")
+_CONV_ELAPSED_RE = re.compile(
+    r"\bhow\s+(?:many|much)\s+(?:days?|weeks?|months?|years?|time)\b"
+    r"|\bhow\s+long\b"
+)
+_CONV_ORDER_RE = re.compile(
+    r"\b(?:the\s+)?order\s+(?:of|from)\b|\bearliest\s+to\s+latest\b"
+    r"|\bfirst\s+to\s+last\b|\bchronolog"
+    r"|\bwhich\s+.{0,80}?(?:first|last)\b"
+)
+_CONV_WHEN_RE = re.compile(
+    r"^when\b|\bwhen\s+did\b|\bwhat\s+(?:day|date|month)\b"
+)
+# 'last' used adverbially about the user's own action selects the LATEST
+# narration ("since I last visited", "the last time I…"); 'last' as a
+# period word ("last month") is a window, and 'last' inside an order ask
+# ("first to last") is neither — the window and order regexes above
+# consume those readings first.
+_CONV_LATEST_RE = re.compile(
+    r"\b(?:i|we)\s+last\b|\blast\s+time\b|\bmost\s+recent(?:ly)?\b"
+)
+
+# Memory-side anchors: the leading bracketed date line conversational
+# ingest writes, else the first ISO-ish date early in the body.
+_CONV_ANCHOR_HEAD_RE = re.compile(r"^\[(\d{4})[/-](\d{2})[/-](\d{2})")
+_CONV_ANCHOR_SCAN_CHARS = 200
+
+
+class _TemporalReading(NamedTuple):
+    """A query's parsed temporal shape — `None`-free sentinel via fields.
+
+    `window` is a closed [start, end] day range when the query names one
+    (a month, a date, "last month"); `selector` is `"earliest"` /
+    `"latest"` when the query's shape picks a narration by date order.
+    Both empty means the query is not temporal and the lane must not
+    touch anything.
+    """
+
+    window: tuple[date, date] | None
+    selector: str | None
+
+    @property
+    def is_temporal(self) -> bool:
+        return self.window is not None or self.selector is not None
+
+
+def _month_window(month: int, year: int) -> tuple[date, date]:
+    start = date(year, month, 1)
+    end = (
+        date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
+    ) - timedelta(days=1)
+    return start, end
+
+
+def _temporal_reading(query: str, now: datetime) -> _TemporalReading:
+    """Parse the query's temporal shape against the caller's clock.
+
+    Windows collected from every explicit form are merged to their
+    envelope (min start, max end), which is what makes "between March
+    and May" one range instead of two competing ones. Relative periods
+    resolve calendar-correct against `now` — "last month" is the
+    previous calendar month, not a 30-day rollback. Selector precedence
+    per the declaration: an explicit window wins over a selector; the
+    latest-selector's adverbial-'last' reading wins over the earliest
+    default when both shapes appear.
+    """
+    lower = query.lower()
+    today = now.date()
+    windows: list[tuple[date, date]] = []
+
+    for m in _CONV_DATE_RE.finditer(lower):
+        y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if 1 <= mo <= 12 and 1 <= d <= 31:
+            try:
+                windows.append((date(y, mo, d), date(y, mo, d)))
+            except ValueError:
+                pass
+    for m in _CONV_MONTH_RE.finditer(lower):
+        month = _MONTH_NO[m.group(1)]
+        if m.group(2):
+            year = int(m.group(2))
+        else:
+            # The most recent occurrence of that month not after now.
+            year = today.year if month <= today.month else today.year - 1
+        windows.append(_month_window(month, year))
+    for m in _CONV_LAST_PERIOD_RE.finditer(lower):
+        unit = m.group(1)
+        if unit == "week":
+            start_this = today - timedelta(days=today.weekday())
+            windows.append((start_this - timedelta(days=7), start_this - timedelta(days=1)))
+        elif unit == "month":
+            prev_last = date(today.year, today.month, 1) - timedelta(days=1)
+            windows.append(_month_window(prev_last.month, prev_last.year))
+        else:
+            windows.append((date(today.year - 1, 1, 1), date(today.year - 1, 12, 31)))
+    for m in _CONV_THIS_PERIOD_RE.finditer(lower):
+        unit = m.group(1)
+        if unit == "week":
+            start_this = today - timedelta(days=today.weekday())
+            windows.append((start_this, start_this + timedelta(days=6)))
+        elif unit == "month":
+            windows.append(_month_window(today.month, today.year))
+        else:
+            windows.append((date(today.year, 1, 1), date(today.year, 12, 31)))
+    if _CONV_YESTERDAY_RE.search(lower):
+        y = today - timedelta(days=1)
+        windows.append((y, y))
+
+    window: tuple[date, date] | None = None
+    if windows:
+        window = (min(w[0] for w in windows), max(w[1] for w in windows))
+
+    selector: str | None = None
+    if _CONV_ORDER_RE.search(lower):
+        selector = "earliest"
+    elif _CONV_ELAPSED_RE.search(lower) or _CONV_WHEN_RE.search(lower):
+        selector = "latest" if _CONV_LATEST_RE.search(lower) else "earliest"
+    elif _CONV_LATEST_RE.search(lower):
+        selector = "latest"
+
+    return _TemporalReading(window=window, selector=selector)
+
+
+def _conv_scaffold_terms(tokens: list[str]) -> list[str]:
+    """The query tokens the scaffold floor reprices: the closed class
+    plus bare small numerals (one- and two-digit tokens — '3' in "3
+    months ago"; four-digit years are a window constraint, never
+    scaffold, and dotted version literals never match `isdigit`)."""
+    return [
+        t
+        for t in tokens
+        if t in _CONV_SCAFFOLD_STEMS or (t.isdigit() and len(t) <= 2)
+    ]
+
+
+def _scaffold_floor_stats(
+    base: CorpusStats | None, terms: list[str], pool_n: int
+) -> CorpusStats | None:
+    """CorpusStats with the scaffold df-floor applied for `terms`.
+
+    The filler floor's exact mechanics (`_filler_floor_stats`, which
+    see) pointed at the temporal-scaffold class instead: floor entries
+    override per term through `compute_idf`, `max(real df, floor)`
+    keeps the honest direction, and a query with no scaffold terms
+    returns `base` untouched, allocation-free.
+    """
+    present = _conv_scaffold_terms(terms)
+    if not present:
+        return base
+    size = base.size if base is not None else pool_n
+    if size <= 0:
+        return base
+    floor = max(1, int(size * _CONV_SCAFFOLD_FLOOR_RATIO))
+    body_df = dict(base.body_df) if base is not None else {}
+    scope_df = dict(base.scope_df) if base is not None else {}
+    for t in present:
+        body_df[t] = max(body_df.get(t, 0), floor)
+        scope_df[t] = max(scope_df.get(t, 0), floor)
+    return CorpusStats(size=size, body_df=body_df, scope_df=scope_df)
+
+
+def _memory_anchor_day(memory: Memory) -> date:
+    """The day a memory's content is anchored to.
+
+    In order: the leading bracketed date line conversational ingest
+    writes, else the first ISO-ish date within the body's first
+    `_CONV_ANCHOR_SCAN_CHARS` characters, else the day the memory was
+    created — the product fallback, where `created` IS the best-known
+    event time.
+    """
+    m = _CONV_ANCHOR_HEAD_RE.match(memory.body)
+    if m is None:
+        m = _CONV_DATE_RE.search(memory.body[:_CONV_ANCHOR_SCAN_CHARS])
+    if m is not None:
+        y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if 1 <= mo <= 12 and 1 <= d <= 31:
+            try:
+                return date(y, mo, d)
+            except ValueError:
+                pass
+    created = memory.created
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    return created.date()
+
+
+def _conversational_rerank(
+    scored: list[tuple[Memory, float, list[str]]],
+    *,
+    reading: _TemporalReading,
+) -> list[tuple[Memory, float, list[str]]]:
+    """L1-T: date-anchor selection inside the near-tie band.
+
+    Multiplicative, bounded adjustments on the fused RRF score, then a
+    re-sort under the standard `(score, created, id)` key — determinism
+    is structural. Items below the band, and every item when the query
+    has no temporal reading, keep their score bit-for-bit.
+    """
+    if not scored:
+        return scored
+    top_score = scored[0][1]
+    if top_score <= 0.0:
+        return scored
+    threshold = _CONV_BAND_TAU * top_score
+    banded = [i for i, (_, s, _m) in enumerate(scored) if s >= threshold]
+    if len(banded) <= 1:
+        return scored
+    anchors = {i: _memory_anchor_day(scored[i][0]) for i in banded}
+
+    factors: dict[int, float] = {}
+    if reading.window is not None:
+        lo, hi = reading.window
+        for i in banded:
+            in_window = lo <= anchors[i] <= hi
+            factors[i] = (
+                1.0 + _CONV_WINDOW_BOOST if in_window else 1.0 - _CONV_WINDOW_DEMOTE
+            )
+    elif reading.selector is not None:
+        distinct = sorted(
+            set(anchors.values()), reverse=(reading.selector == "latest")
+        )
+        ordinal = {a: k for k, a in enumerate(distinct)}
+        for i in banded:
+            factors[i] = 1.0 + _CONV_SELECTOR_BOOST * (
+                _CONV_SELECTOR_DECAY ** ordinal[anchors[i]]
+            )
+    else:
+        return scored
+
+    adjusted = [
+        (memory, score * factors.get(i, 1.0), matched)
+        for i, (memory, score, matched) in enumerate(scored)
+    ]
+    adjusted.sort(key=lambda x: (x[1], x[0].created, x[0].id), reverse=True)
+    return adjusted
 
 
 # `matched_leg` vocabulary: WHICH RANKER surfaced a hit. Reported per hit
@@ -2634,6 +2947,7 @@ def search(
     corpus_stats_provider: Callable[[list[str]], CorpusStats | None] | None = None,
     matched_leg_out: dict[str, str] | None = None,
     rescue_expansion: bool = False,
+    conversational: bool = False,
 ) -> list[MemoryHit]:
     """Rank `memories` against `query` and return up to `max_results` hits.
 
@@ -2735,6 +3049,22 @@ def search(
       nominates the pool from the CALLER's tokens, so there the rescue
       re-ranks the nominated pool rather than widening it — a
       documented limit, not a silent one.
+    - `conversational`: hybrid-mode only, DEFAULT OFF. The Lane L
+      repairs for conversation-shaped stores
+      (`bench/l/L1_DECLARATION.md`): when the query has a temporal
+      reading, (a) temporal-SCAFFOLD tokens (day/week/ago/last/many
+      and kin — the question's syntax, not its content) get a
+      document-frequency floor in the BM25 legs through the same
+      stats seam as the filler floor, so they cannot outprice content
+      terms; and (b) date anchors break lookalike ties inside the
+      fused ranking's near-tie band — an explicit window (a named
+      month, a date, "last month" resolved against `now`) boosts
+      in-window anchors and demotes out-of-window ones, and an
+      elapsed/order-shaped ask boosts the earliest (or, under "the
+      last time I…", the latest) narration. A query with no temporal
+      reading is untouched byte for byte, as is every call with the
+      flag off. The module constants carry the declared defaults;
+      the unit's gate artifacts record the finals they ranked with.
 
     Score semantics vary by mode: keyword/BM25 scores live on
     different scales and are not comparable across modes. Hybrid scores
@@ -2840,6 +3170,17 @@ def search(
     # tokenisation outside `search()`, and a hand-mirrored token pipeline is
     # exactly the drift schema v4 removed. Only the BM25 branches consume
     # it, so a keyword-only search never pays the lookup.
+    # Lane L: parse the query's temporal shape once. Hybrid-only, like
+    # the rescue lane, and skipped on the stopword fallback for the same
+    # reason (the fallback's TF stream has different matched semantics).
+    # A non-temporal query leaves `conv_reading` None and every path
+    # below byte-identical to the flag being off.
+    conv_reading: _TemporalReading | None = None
+    if conversational and mode == "hybrid" and not stopword_fallback:
+        reading = _temporal_reading(query, now)
+        if reading.is_temporal:
+            conv_reading = reading
+
     corpus_stats: CorpusStats | None = None
     if corpus_stats_provider is not None and mode in ("bm25", "hybrid"):
         fetch_terms = list(query_tokens)
@@ -2894,6 +3235,13 @@ def search(
             if rescue_expansion
             else corpus_stats
         )
+        # Lane L's scaffold floor composes AFTER the filler floor: both
+        # only ever raise a term's df, they touch disjoint classes, and
+        # a temporal reading is required — no reading, no repricing.
+        if conv_reading is not None:
+            hybrid_stats = _scaffold_floor_stats(
+                hybrid_stats, query_tokens, len(candidates)
+            )
         rankings: list[list[tuple[Memory, float, list[str]]]] = [
             _score_keyword(
                 candidates,
@@ -3032,6 +3380,12 @@ def search(
                             (m, s, [t for t in matched if t in qset])
                             for m, s, matched in scored
                         ]
+
+    # Lane L's anchor selection runs last — after the rescue leg has
+    # joined or declined the fusion — so a lane-on query reorders the
+    # ranking the caller would otherwise have received, before the trim.
+    if conv_reading is not None:
+        scored = _conversational_rerank(scored, reading=conv_reading)
 
     trimmed = scored[:max_results]
     if matched_leg_out is not None:

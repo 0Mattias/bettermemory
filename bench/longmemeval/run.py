@@ -71,12 +71,14 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import shutil
 import sys
 import tempfile
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -170,6 +172,44 @@ LEG_MARGIN_CAP = True
 # what it isolates.
 ABLATION = "none"
 ABLATIONS = ("none", "floor-only", "leg-only", "floor-off")
+
+# Whether the arms rank with the Lane L conversational repairs
+# (`search.search(conversational=...)`, bench/l/L1_DECLARATION.md).
+# Module-level and defaulting to the PRODUCT default (off), the same
+# shape as RESCUE_EXPANSION above.
+CONVERSATIONAL = False
+
+# The question's own date, parsed per instance and passed as the
+# engine's `now` — the clock a live assistant has at query time.
+# Applied in EVERY arm identically (declaration §4): with the lane off
+# it is rank-neutral by construction, because ingest-time `created`
+# postdates the corpus clock and `_recency_factor` clamps the negative
+# age to zero — a uniform 1.1 factor either way. The gate's off arm
+# re-proves that prediction against the committed macros.
+_QUESTION_DATE_RE = re.compile(
+    r"^(\d{4})/(\d{2})/(\d{2})\D*?(\d{2}):(\d{2})\s*$"
+)
+
+
+def question_now(inst: dict[str, Any]) -> datetime | None:
+    """The instance's `question_date` as a tz-aware datetime, else None.
+
+    None falls back to the engine's wall clock, which is the pre-L1
+    behaviour for any instance the regex cannot read — no instance in
+    the pinned corpus takes that branch, and the guard exists so an
+    upstream revision degrades to the old behaviour instead of crashing.
+    """
+    raw = inst.get("question_date")
+    if not isinstance(raw, str):
+        return None
+    m = _QUESTION_DATE_RE.match(raw.strip())
+    if m is None:
+        return None
+    y, mo, d, hh, mm = (int(g) for g in m.groups())
+    try:
+        return datetime(y, mo, d, hh, mm, tzinfo=timezone.utc)
+    except ValueError:
+        return None
 
 
 def apply_ablation(mode: str) -> list[str]:
@@ -458,6 +498,8 @@ def run_arm(
                 max_results=RETRIEVAL_DEPTH,
                 mode="hybrid",
                 rescue_expansion=RESCUE_EXPANSION,
+                conversational=CONVERSATIONAL,
+                now=question_now(inst),
             )
             ranked = distinct_sessions([h.id for h in hits], id_to_session)
         finally:
@@ -608,6 +650,28 @@ def main() -> int:
         ),
     )
     p.add_argument(
+        "--conversational",
+        choices=("on", "off"),
+        default="off",
+        help=(
+            "Rank with the Lane L conversational repairs (temporal-scaffold "
+            "df-floor + date-anchor selection, bench/l/L1_DECLARATION.md). "
+            "Default off — the product default. The question's own date is "
+            "passed as the engine clock in every arm either way."
+        ),
+    )
+    p.add_argument(
+        "--half",
+        choices=("even", "odd", "all"),
+        default="all",
+        help=(
+            "Restrict to one half of the corpus by 0-based instance index. "
+            "'even' is Lane L's declared tuning surface; 'odd' is its "
+            "holdout, untouched before a gate read. Halves are not "
+            "publishable as full-corpus figures and say so in their notes."
+        ),
+    )
+    p.add_argument(
         "--ablate",
         choices=ABLATIONS,
         default="none",
@@ -633,10 +697,11 @@ def main() -> int:
 
     # Module-level so the arm runner reads one flag without a signature
     # change — same reason `bench/retrieval/run.py` does it.
-    global RESCUE_EXPANSION, ABLATION, LEG_MARGIN_CAP
+    global RESCUE_EXPANSION, ABLATION, LEG_MARGIN_CAP, CONVERSATIONAL
     RESCUE_EXPANSION = args.rescue_expansion == "on"
     ABLATION = args.ablate
     LEG_MARGIN_CAP = args.leg_margin_cap == "on"
+    CONVERSATIONAL = args.conversational == "on"
     if args.evidence_scaling == "on":
         _engine._RESCUE_LEG_EVIDENCE_SCALING = True
     if args.base_withhold == "on":
@@ -688,6 +753,13 @@ def main() -> int:
             f"SUBSET — first {len(corpus)} of {instances} instances, not a "
             "stratified sample. Question-type mix is skewed; not publishable."
         )
+    if args.half != "all":
+        corpus = corpus[::2] if args.half == "even" else corpus[1::2]
+        notes.append(
+            f"HALF — {args.half}-index {len(corpus)} of {instances} "
+            "instances (Lane L split, bench/l/L1_DECLARATION.md §5). Not "
+            "publishable as a full-corpus figure."
+        )
 
     arms = [a.strip() for a in args.arms.split(",") if a.strip()]
     if "semantic" in arms:
@@ -734,6 +806,8 @@ def main() -> int:
         "retrieval_depth": RETRIEVAL_DEPTH,
         "k_values": list(K_VALUES),
         "rescue_expansion": RESCUE_EXPANSION,
+        "conversational": CONVERSATIONAL,
+        "half": args.half,
         "ablation": ABLATION,
         "leg_margin_cap": LEG_MARGIN_CAP,
         "evidence_scaling": args.evidence_scaling == "on",

@@ -1,0 +1,313 @@
+"""Tests for the Lane L conversational repairs (`search(conversational=...)`).
+
+The mechanism pair, declared in bench/l/L1_DECLARATION.md §3: a
+temporal-SCAFFOLD df-floor through the filler-floor stats seam (L1-S),
+and date-anchor selection inside the fused ranking's near-tie band
+(L1-T), both engaged only when the flag is on AND the query parses as
+temporal. These tests pin the properties the declaration leans on: the
+shipped default is off and byte-stable, a non-temporal query is inert
+under the flag, the parser reads the declared shapes against the
+caller's clock, anchors resolve header-then-body-then-created, and the
+two repairs move an adversarial ranking the way the L1 miss anatomy
+says the real corpus needs — without touching keyword/bm25 modes or
+the stopword fallback.
+"""
+
+from __future__ import annotations
+
+from datetime import date, datetime, timedelta, timezone
+
+from bettermemory.models import Confidence, Memory, Source, generate_ulid
+from bettermemory.search import (
+    CorpusStats,
+    _CONV_SCAFFOLD_STEMS,
+    _conv_scaffold_terms,
+    _memory_anchor_day,
+    _scaffold_floor_stats,
+    _temporal_reading,
+    search,
+)
+
+_NOW = datetime(2023, 3, 25, 2, 46, tzinfo=timezone.utc)
+
+
+def _memory(body: str, *, offset_seconds: int = 0) -> Memory:
+    # Distinct, monotone `created` stamps keep every tiebreak
+    # deterministic without mocking the clock. Created deliberately
+    # POSTDATES the 2023 anchors, the harness's ingest shape.
+    created = datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(
+        seconds=offset_seconds
+    )
+    return Memory(
+        id=generate_ulid(),
+        created=created,
+        updated=created,
+        scopes=["longmemeval"],
+        confidence=Confidence.MEDIUM,
+        source=Source.EXPLICIT,
+        body=body,
+    )
+
+
+def _ids(hits) -> list[str]:
+    return [h.id for h in hits]
+
+
+def _pairs(hits) -> list[tuple[str, float]]:
+    return [(h.id, h.score) for h in hits]
+
+
+# ---------------------------------------------------------------------------
+# The temporal parser
+# ---------------------------------------------------------------------------
+
+
+def test_elapsed_ask_selects_earliest() -> None:
+    r = _temporal_reading("How many days ago did I buy a smoker?", _NOW)
+    assert r.window is None
+    assert r.selector == "earliest"
+    assert r.is_temporal
+
+
+def test_adverbial_last_selects_latest() -> None:
+    r = _temporal_reading(
+        "How many months have passed since I last visited a museum?", _NOW
+    )
+    assert r.selector == "latest"
+
+
+def test_order_ask_selects_earliest_despite_latest_wording() -> None:
+    r = _temporal_reading(
+        "What is the order of the three trips I took, from earliest to latest?",
+        _NOW,
+    )
+    assert r.selector == "earliest"
+
+
+def test_month_name_builds_window_with_year_rollback() -> None:
+    # Query month after `now`'s month resolves to the PREVIOUS year.
+    r = _temporal_reading("What did I plan in May?", _NOW)
+    assert r.window == (date(2022, 5, 1), date(2022, 5, 31))
+    # Query month at or before `now`'s month stays in `now`'s year.
+    r2 = _temporal_reading("What did I do in March?", _NOW)
+    assert r2.window == (date(2023, 3, 1), date(2023, 3, 31))
+
+
+def test_last_month_is_a_calendar_window_not_a_selector() -> None:
+    r = _temporal_reading("How many plants did I acquire in the last month?", _NOW)
+    assert r.window == (date(2023, 2, 1), date(2023, 2, 28))
+    # 'last month' must not read as the adverbial latest-selector.
+    assert r.selector != "latest"
+
+
+def test_month_range_merges_to_envelope() -> None:
+    r = _temporal_reading("What happened between January and March?", _NOW)
+    assert r.window == (date(2023, 1, 1), date(2023, 3, 31))
+
+
+def test_plain_question_is_not_temporal() -> None:
+    r = _temporal_reading("What degree did I graduate with?", _NOW)
+    assert not r.is_temporal
+
+
+# ---------------------------------------------------------------------------
+# Anchors
+# ---------------------------------------------------------------------------
+
+
+def test_anchor_prefers_leading_bracket_header() -> None:
+    m = _memory("[2023/03/15 (Wed) 06:05]\nuser: bought a smoker on 2023-03-16.")
+    assert _memory_anchor_day(m) == date(2023, 3, 15)
+
+
+def test_anchor_falls_back_to_early_body_date() -> None:
+    m = _memory("The deploy on 2024-02-01 rolled back cleanly.")
+    assert _memory_anchor_day(m) == date(2024, 2, 1)
+
+
+def test_anchor_falls_back_to_created_day() -> None:
+    m = _memory("No dates anywhere in this body.")
+    assert _memory_anchor_day(m) == m.created.date()
+
+
+def test_anchor_ignores_invalid_calendar_dates() -> None:
+    m = _memory("[2023/13/45 (Xxx) 99:99]\nuser: malformed header.")
+    assert _memory_anchor_day(m) == m.created.date()
+
+
+# ---------------------------------------------------------------------------
+# The scaffold class and floor
+# ---------------------------------------------------------------------------
+
+
+def test_scaffold_class_is_bounded_and_stemmed() -> None:
+    # Declaration §3 caps the class at 40 stems.
+    assert len(_CONV_SCAFFOLD_STEMS) <= 40
+    assert "day" in _CONV_SCAFFOLD_STEMS
+    assert "mani" in _CONV_SCAFFOLD_STEMS  # 'many', through the live stemmer
+    assert "smoker" not in _CONV_SCAFFOLD_STEMS
+
+
+def test_scaffold_terms_take_small_numerals_not_years() -> None:
+    terms = _conv_scaffold_terms(["day", "ago", "3", "2023", "smoker", "16.3"])
+    assert terms == ["day", "ago", "3"]
+
+
+def test_scaffold_floor_reprices_only_scaffold_terms() -> None:
+    stats = _scaffold_floor_stats(None, ["day", "smoker"], 200)
+    assert stats is not None
+    assert stats.size == 200
+    assert stats.body_df["day"] == 100
+    assert "smoker" not in stats.body_df
+
+
+def test_scaffold_floor_keeps_honest_direction() -> None:
+    base = CorpusStats(size=200, body_df={"day": 150}, scope_df={"day": 150})
+    floored = _scaffold_floor_stats(base, ["day"], 200)
+    assert floored is not None
+    # A genuinely common word stays at its real df — max(real, floor).
+    assert floored.body_df["day"] == 150
+
+
+def test_scaffold_floor_without_scaffold_terms_returns_base_object() -> None:
+    base = CorpusStats(size=10, body_df={}, scope_df={})
+    assert _scaffold_floor_stats(base, ["smoker", "brisket"], 10) is base
+
+
+# ---------------------------------------------------------------------------
+# Search-level behaviour
+# ---------------------------------------------------------------------------
+
+
+def _adversarial_store() -> list[Memory]:
+    """The L1 anatomy's shape in miniature: the gold narration matches
+    the query's CONTENT once; the distractors match its temporal
+    scaffold repeatedly. Distinct anchor days, gold earliest."""
+    return [
+        _memory(
+            "[2023/03/15 (Wed) 06:05]\nuser: I bought a smoker today and "
+            "seasoned it before the first cook.",
+            offset_seconds=0,
+        ),
+        _memory(
+            "[2023/03/20 (Mon) 10:00]\nuser: How many days should I marinate "
+            "brisket? A day or two ago I read many opinions about how long.",
+            offset_seconds=1,
+        ),
+        _memory(
+            "[2023/03/22 (Wed) 09:00]\nuser: So many days of rain lately; "
+            "weeks ago we had plans, how long until it clears?",
+            offset_seconds=2,
+        ),
+    ]
+
+
+def test_flag_off_is_the_default_and_byte_stable() -> None:
+    mems = _adversarial_store()
+    q = "How many days ago did I buy a smoker?"
+    default = search(mems, q, mode="hybrid", max_results=3, now=_NOW)
+    explicit = search(
+        mems, q, mode="hybrid", max_results=3, now=_NOW, conversational=False
+    )
+    assert _pairs(default) == _pairs(explicit)
+
+
+def test_non_temporal_query_is_inert_under_the_flag() -> None:
+    mems = _adversarial_store()
+    q = "wood pellets for the smoker"
+    off = search(mems, q, mode="hybrid", max_results=3, now=_NOW)
+    on = search(mems, q, mode="hybrid", max_results=3, now=_NOW, conversational=True)
+    assert _pairs(off) == _pairs(on)
+
+
+def test_lane_lifts_content_match_over_scaffold_matchers() -> None:
+    mems = _adversarial_store()
+    q = "How many days ago did I buy a smoker?"
+    off = search(mems, q, mode="hybrid", max_results=3, now=_NOW)
+    on = search(mems, q, mode="hybrid", max_results=3, now=_NOW, conversational=True)
+    # Off: scaffold matchers outrank the narration (the anatomy's shape).
+    assert _ids(off)[0] != mems[0].id
+    # On: the gold narration ranks first — floored scaffold plus the
+    # earliest-anchor bonus.
+    assert _ids(on)[0] == mems[0].id
+
+
+def test_selector_orders_by_anchor_and_flips_with_adverbial_last() -> None:
+    twin_a = _memory(
+        "[2023/03/01 (Wed) 08:00]\nuser: visited the museum exhibit downtown.",
+        offset_seconds=0,
+    )
+    twin_b = _memory(
+        "[2023/03/18 (Sat) 08:00]\nuser: visited the museum exhibit downtown.",
+        offset_seconds=1,
+    )
+    mems = [twin_a, twin_b]
+    earliest = search(
+        mems,
+        "How many weeks ago did I visit the museum?",
+        mode="hybrid",
+        max_results=2,
+        now=_NOW,
+        conversational=True,
+    )
+    assert _ids(earliest)[0] == twin_a.id
+    latest = search(
+        mems,
+        "How many weeks have passed since I last visited the museum?",
+        mode="hybrid",
+        max_results=2,
+        now=_NOW,
+        conversational=True,
+    )
+    assert _ids(latest)[0] == twin_b.id
+
+
+def test_window_boosts_in_window_anchor() -> None:
+    feb = _memory(
+        "[2023/02/10 (Fri) 08:00]\nuser: repotted the snake plant carefully.",
+        offset_seconds=0,
+    )
+    mar = _memory(
+        "[2023/03/12 (Sun) 08:00]\nuser: repotted the snake plant carefully.",
+        offset_seconds=1,
+    )
+    mems = [feb, mar]
+    hits = search(
+        mems,
+        "Which snake plant did I repot in the last month?",
+        mode="hybrid",
+        max_results=2,
+        now=_NOW,
+        conversational=True,
+    )
+    # `now` is 2023-03-25, so "last month" is February.
+    assert _ids(hits)[0] == feb.id
+
+
+def test_keyword_and_bm25_modes_are_untouched() -> None:
+    mems = _adversarial_store()
+    q = "How many days ago did I buy a smoker?"
+    for mode in ("keyword", "bm25"):
+        off = search(mems, q, mode=mode, max_results=3, now=_NOW)
+        on = search(
+            mems, q, mode=mode, max_results=3, now=_NOW, conversational=True
+        )
+        assert _pairs(off) == _pairs(on)
+
+
+def test_stopword_fallback_skips_the_lane() -> None:
+    # A query whose every token is a stopword rides the fallback TF
+    # stream; the lane must not engage there (declaration §3 scope).
+    mems = [_memory("what is the where is the", offset_seconds=0)]
+    q = "what is the"
+    off = search(mems, q, mode="hybrid", max_results=1, now=_NOW)
+    on = search(mems, q, mode="hybrid", max_results=1, now=_NOW, conversational=True)
+    assert _pairs(off) == _pairs(on)
+
+
+def test_lane_on_is_deterministic() -> None:
+    mems = _adversarial_store()
+    q = "How many days ago did I buy a smoker?"
+    a = search(mems, q, mode="hybrid", max_results=3, now=_NOW, conversational=True)
+    b = search(mems, q, mode="hybrid", max_results=3, now=_NOW, conversational=True)
+    assert _pairs(a) == _pairs(b)

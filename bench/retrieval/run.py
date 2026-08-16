@@ -141,6 +141,14 @@ RESCUE_EXPANSION = False
 # the cap lives inside the opt-in lane either way.
 LEG_MARGIN_CAP = True
 
+# Whether the arms rank with the Lane L conversational repairs
+# (`search.search(conversational=...)`, bench/l/L1_DECLARATION.md).
+# Module-level, defaulting to the PRODUCT default (off), same shape as
+# RESCUE_EXPANSION. The declaration's expectation on THIS instrument is
+# inertness — its queries carry no temporal reading — and the lane-on
+# read exists to measure that expectation rather than assume it.
+CONVERSATIONAL = False
+
 # Digest of the corpus the four committed artifacts ran against. The
 # `off` half of a `--prefilter both` run re-measures exactly what
 # `v2-padded600-2026-07-26.json` already recorded, which is what turns it
@@ -392,6 +400,7 @@ def run_arm(
             max_results=max(K_VALUES),
             mode="hybrid",
             rescue_expansion=RESCUE_EXPANSION,
+            conversational=CONVERSATIONAL,
         )
         ranked = [h.id for h in hits]
         result.n += 1
@@ -470,6 +479,7 @@ def run_arm_prefiltered(
             max_results=max(K_VALUES),
             mode="hybrid",
             rescue_expansion=RESCUE_EXPANSION,
+            conversational=CONVERSATIONAL,
             # The part `run_arm` cannot pass. Without it a capped pool is
             # scored with pool-derived document frequencies, which prices
             # a term that is rare in the store as common in the slice —
@@ -739,15 +749,27 @@ def main() -> int:
             "mechanism arm."
         ),
     )
+    parser.add_argument(
+        "--conversational",
+        choices=("on", "off"),
+        default="off",
+        help=(
+            "Rank with the Lane L conversational repairs "
+            "(bench/l/L1_DECLARATION.md). Default off — the product "
+            "default. Declared expectation here: inert (no dev query "
+            "carries a temporal reading)."
+        ),
+    )
     parser.add_argument("--json", action="store_true", help="Emit JSON.")
     args = parser.parse_args()
 
     # Module-level so the two arm runners read one flag without a
     # signature change (`run_arm`'s signature is pinned by the committed
     # artifacts' reproducibility note above it).
-    global RESCUE_EXPANSION, LEG_MARGIN_CAP
+    global RESCUE_EXPANSION, LEG_MARGIN_CAP, CONVERSATIONAL
     RESCUE_EXPANSION = args.rescue_expansion == "on"
     LEG_MARGIN_CAP = args.leg_margin_cap == "on"
+    CONVERSATIONAL = args.conversational == "on"
 
     import bettermemory.search as _engine
 
@@ -917,6 +939,7 @@ def main() -> int:
                     "prefilter_mode": args.prefilter,
                     "prefilter_cap": PREFILTER_CAP,
                     "rescue_expansion": RESCUE_EXPANSION,
+                    "conversational": CONVERSATIONAL,
                     "leg_margin_cap": LEG_MARGIN_CAP,
                     "evidence_scaling": args.evidence_scaling == "on",
                     "base_withhold": args.base_withhold == "on",
