@@ -1330,13 +1330,18 @@ _CONV_SCAFFOLD_FLOOR_RATIO = 1.0
 _CONV_BAND_TAU = 0.50
 
 # L1-T adjustment magnitudes, multiplicative on the fused score.
-# Tuning read 2 (bench/l/results/tune-02-*): zeroed to isolate the
-# scaffold floor — read 1 measured the declared defaults net-negative
-# at @1 (0.5301 -> 0.5038 on the tuning half) with the damage
-# concentrated in earliest-selector displacement of already-correct
-# rank-1 golds; the frontier re-prices L1-T from the floor-only
-# baseline up.
-_CONV_WINDOW_BOOST = 0.0
+#
+# The tuning frontier's path (artifacts in bench/l/results/): read 1
+# measured the declared defaults net-negative at @1 (0.5301 -> 0.5038
+# on the tuning half), the damage concentrated in earliest-selector
+# displacement of already-correct rank-1 golds — the anatomy's
+# gold-is-earliest evidence holds among MISSES and inverts among
+# tops, so the SELECTOR IS DROPPED (declaration §5's drop rule;
+# 0.0 is the drop, not a tuned value). Read 2 isolated the floor
+# (clean +0.54 @5, @1 exactly preserved). Read 4 re-enters the
+# window arm boost-only: read 1's window losses came through the
+# demote side, its gains through the boost, so the demote stays 0.
+_CONV_WINDOW_BOOST = 0.30
 _CONV_WINDOW_DEMOTE = 0.0
 _CONV_SELECTOR_BOOST = 0.0
 _CONV_SELECTOR_DECAY = 0.7
@@ -1357,6 +1362,20 @@ _CONV_MONTH_RE = re.compile(
 _CONV_LAST_PERIOD_RE = re.compile(r"\blast\s+(week|month|year)\b")
 _CONV_THIS_PERIOD_RE = re.compile(r"\bthis\s+(week|month|year)\b")
 _CONV_YESTERDAY_RE = re.compile(r"\byesterday\b")
+# "N days/weeks/months/years ago" as a STATEMENT of when — a window one
+# unit wide centred on the rollback. The elapsed-ASK shape ("how many
+# days ago did I…") is deliberately excluded: there the count is the
+# question, not a constraint, and `_CONV_ELAPSED_RE` owns that reading.
+_CONV_AGO_RE = re.compile(
+    r"\b(?<!how many )(?<!how much )"
+    r"(a|an|one|two|three|four|five|six|seven|eight|nine|ten|\d{1,2})\s+"
+    r"(day|week|month|year)s?\s+ago\b"
+)
+_CONV_AGO_NUMBERS = {
+    "a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4,
+    "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+}
+_CONV_AGO_UNIT_DAYS = {"day": 1, "week": 7, "month": 30, "year": 365}
 _CONV_ELAPSED_RE = re.compile(
     r"\bhow\s+(?:many|much)\s+(?:days?|weeks?|months?|years?|time)\b"
     r"|\bhow\s+long\b"
@@ -1463,6 +1482,12 @@ def _temporal_reading(query: str, now: datetime) -> _TemporalReading:
     if _CONV_YESTERDAY_RE.search(lower):
         y = today - timedelta(days=1)
         windows.append((y, y))
+    for m in _CONV_AGO_RE.finditer(lower):
+        count = _CONV_AGO_NUMBERS.get(m.group(1)) or int(m.group(1))
+        unit_days = _CONV_AGO_UNIT_DAYS[m.group(2)]
+        target = today - timedelta(days=count * unit_days)
+        half = max(1, unit_days // 2)
+        windows.append((target - timedelta(days=half), target + timedelta(days=half)))
 
     window: tuple[date, date] | None = None
     if windows:
