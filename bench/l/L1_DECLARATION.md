@@ -253,7 +253,9 @@ Two committed runner changes, no committed-corpus or question edits:
   publishes and a ship sentence is put to the owner in plain
   language (default-on is the owner's door, never this unit's).
   L1-PARTIAL: every guard holds (G1h, G2, G2b, G3) and macro@5
-  gains ≥ +0.010 over the paired off arm but misses 0.916 — the
+  gains at least a full point over the paired off arm but misses
+  the reference line G1 quotes from
+  `bench/longmemeval/results/claude-mem-full500.json` — the
   improvement publishes as measured; a ship sentence may still be
   put, stating plainly that the reference line is not met.
   L1-PARK: anything else — a guard broken, the gain under a full
