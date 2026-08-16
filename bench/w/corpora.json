@@ -1024,6 +1024,20 @@
      "reason": "set cap would be exceeded"
     }
    ]
+  },
+  {
+   "name": "w1-ci-reduced-register",
+   "admitted": true,
+   "derived_from": "gutenberg-curated-2026-08-15",
+   "derivation": "PG-stripped prose of the admitted books in ascending id order, blank-line separated, truncated at exactly 1,500,000 bytes; bench/w/w1_ci_register.py is the committed derivation and replays it from the pinned set",
+   "retrieved": "2026-08-16",
+   "bytes": 1500000,
+   "sha256": "3ed680d9a692e0388fccb7be3c6da1c885a5b0dab5057d5e46ce1b6973eab071",
+   "license": "Public domain in the United States (derived from the per-item-verified curated set; PG boilerplate stripped, no PG trademark carried)",
+   "local_path": "bench/w/ci_register/reduced.txt",
+   "verification": {
+    "note": "The one register entry whose bytes are committed to git: G3's CI determinism check (tests/test_w1_determinism.py) retrains it twice on every push and requires byte-identical artifacts."
+   }
   }
  ]
 }
