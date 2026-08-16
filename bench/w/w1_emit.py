@@ -55,7 +55,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from w1_train import build_bags  # noqa: E402
 
-from bettermemory.expansion import build_tables  # noqa: E402
+from bettermemory.expansion import build_tables, morph_variants  # noqa: E402
 from bettermemory.search import _stem_token  # noqa: E402
 
 _MIN_EMIT_LEN = 3  # mirrors expansion._MIN_EXPANSION_LEN at the leg
@@ -134,9 +134,14 @@ def emit(args: argparse.Namespace) -> dict[str, object]:
     idx, cos = topk_neighbors(vectors, args.mutual_rank)
 
     neighbors: dict[str, list[str]] = {}
-    for head in range(len(words)):
+    for head in range(args.head_min_rank, len(words)):
         if not eligible[head]:
             continue
+        rule_covered = (
+            morph_variants(stems[head], _stem_token)
+            if args.drop_rule_covered
+            else frozenset()
+        )
         kept: list[str] = []
         for pos in range(args.mutual_rank):
             other = int(idx[head, pos])
@@ -145,6 +150,8 @@ def emit(args: argparse.Namespace) -> dict[str, object]:
             if not eligible[other]:
                 continue
             if stems[other] == stems[head]:
+                continue
+            if stems[other] in rule_covered:
                 continue
             if head not in idx[other, : args.mutual_rank]:
                 continue
@@ -181,6 +188,8 @@ def emit(args: argparse.Namespace) -> dict[str, object]:
         "emission": {
             "floor": args.floor,
             "remove_components": args.remove_components,
+            "drop_rule_covered": args.drop_rule_covered,
+            "head_min_rank": args.head_min_rank,
             "mutual_rank": args.mutual_rank,
             "per_term": args.per_term,
             "max_entries": args.max_entries,
@@ -202,6 +211,17 @@ def main() -> int:
     parser.add_argument("--out", required=True, help="generated table module path")
     parser.add_argument("--floor", type=float, default=0.60)
     parser.add_argument("--remove-components", type=int, default=0)
+    parser.add_argument(
+        "--drop-rule-covered",
+        action="store_true",
+        help="drop neighbors morph_variants already generates at query time",
+    )
+    parser.add_argument(
+        "--head-min-rank",
+        type=int,
+        default=0,
+        help="skip heads above this vocabulary frequency rank (hub words)",
+    )
     parser.add_argument("--mutual-rank", type=int, default=8)
     parser.add_argument("--per-term", type=int, default=4)
     parser.add_argument("--max-entries", type=int, default=5_000)

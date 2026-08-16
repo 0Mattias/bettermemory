@@ -1,0 +1,44 @@
+{
+ "emission": {
+  "drop_rule_covered": true,
+  "entries": 1500,
+  "floor": 0.65,
+  "head_min_rank": 500,
+  "max_entries": 1500,
+  "mutual_rank": 8,
+  "per_term": 3,
+  "remove_components": 0,
+  "table_path": "bench/w/artifacts/w1_table_2026-08-16.py",
+  "table_sha256": "957084b4fc46583c6f450d6106a03ceb0f85714da4c73a2739ad1ce6210f0b60"
+ },
+ "run_meta": {
+  "batch": 1024,
+  "buckets": 524288,
+  "ci_register": null,
+  "dim": 100,
+  "epoch_pairs": [
+   185290530,
+   185314469,
+   185308654
+  ],
+  "epochs": 3,
+  "lr": 0.025,
+  "min_count": 10,
+  "negatives": 5,
+  "numpy_version": "2.5.2",
+  "pairs_done": 555913653,
+  "seed": 20260816,
+  "sha256": {
+   "ctx.npy": "620090ddbbf71387a4fddc7564c88568fd9dd2ba141547fee08638149c5d2aa8",
+   "inp.npy": "23dc25b8c50f323fc6f8f48f4937eb828165e2fe33a36d122b41786d68142454",
+   "vocab.txt": "a23673ceea0f679a8b62f1f869ab74f1baff1505bbe0c2816d61659bb2668ee6"
+  },
+  "subsample": 0.0001,
+  "token_cap": 50000000,
+  "tokens_read": 50000000,
+  "vocab_cap": 75000,
+  "vocab_size": 75000,
+  "wall_seconds": 6661.8,
+  "window": 5
+ }
+}

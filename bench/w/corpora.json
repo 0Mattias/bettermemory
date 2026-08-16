@@ -1038,6 +1038,525 @@
    "verification": {
     "note": "The one register entry whose bytes are committed to git: G3's CI determinism check (tests/test_w1_determinism.py) retrains it twice on every push and requires byte-identical artifacts."
    }
+  },
+  {
+   "name": "enwiki-20260801-pages-articles-parts2-71",
+   "admitted": true,
+   "source_url": "https://dumps.wikimedia.org/enwiki/20260801/",
+   "retrieved": "2026-08-16",
+   "bytes": 26369390403,
+   "items_count": 70,
+   "license": "CC BY-SA 4.0 (Wikipedia article text, per Wikimedia's published licensing; dual-licensed GFDL)",
+   "local_path": "bench/w/corpus/enwiki-20260801/",
+   "verification": {
+    "note": "Every part verified against the dump's published sha1 at fetch time (fetch script beside the bytes on the external store); the sha256 per item below is over the exact fetched bytes and is the register's authoritative pin. Fetched under the owner's plain-sentence yes of 2026-08-16 for the W1 successor unit; no unit reads these bytes until its declaration admits them."
+   },
+   "items": [
+    {
+     "file": "enwiki-20260801-pages-articles-multistream10.xml-p4045403p5399366.bz2",
+     "bytes": 618494115,
+     "publisher_sha1": "e8e62105310e71809dcc602710a82cc4dad0f802",
+     "sha256": "acf0d898ce1030edea3b5f14a094c1148e8f383b82681ecf30353e01e7bd7960",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream10.xml-p4045403p5399366.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream11.xml-p5399367p6899366.bz2",
+     "bytes": 594957973,
+     "publisher_sha1": "2397c33bffe4d75129223c5e0ed68ae859549595",
+     "sha256": "cde3cf831b9b3e7f239771fc6de27248ea9f01171e7a7fbe0fd48a6d376e18a1",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream11.xml-p5399367p6899366.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream11.xml-p6899367p7054859.bz2",
+     "bytes": 56543307,
+     "publisher_sha1": "2f4c119cdaf06d2c4bbb9984d3ebf5b1181a7d75",
+     "sha256": "9bd9cba9557a834133ac7ebbb9414d6b9922ac4f6d685c1841d06b986e9ceb28",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream11.xml-p6899367p7054859.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream12.xml-p7054860p8554859.bz2",
+     "bytes": 493144689,
+     "publisher_sha1": "0dfa5ab14bbffe7517a828567551f2930033d197",
+     "sha256": "1724ab349e726bf6a60459ef2df254598ca9502cccb2694697195fe9667edcdb",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream12.xml-p7054860p8554859.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream12.xml-p8554860p9172788.bz2",
+     "bytes": 197778889,
+     "publisher_sha1": "ea0e93b96ff8db96d8b7c68f623afa7172cfd9e5",
+     "sha256": "79487904bfdf0d400023fed69e44527fdb6a8c0473e05fef9abd0ca9e3aa4d05",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream12.xml-p8554860p9172788.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream13.xml-p10672789p11659682.bz2",
+     "bytes": 277781937,
+     "publisher_sha1": "83fbeb9fe35daa05b02bfaa4b0e90ebb1f4797d2",
+     "sha256": "91dd76b26c485c06f073991f8d82b271ce65a9ad6bd957c8adeee18c867b24d2",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream13.xml-p10672789p11659682.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream13.xml-p9172789p10672788.bz2",
+     "bytes": 401426568,
+     "publisher_sha1": "5d6436ff6798e33efbc833e2288254605be3ea2a",
+     "sha256": "b6ba23fa5a20936edb5310f6635c005f4fe396bb15b93c7ed6f16baa9fd321f1",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream13.xml-p9172789p10672788.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream14.xml-p11659683p13159682.bz2",
+     "bytes": 484341912,
+     "publisher_sha1": "5a201181d4e876d1d49d216f3a9403de12e0c91b",
+     "sha256": "dfbeea4da39889f47fc9fe754e5b72ebe2766eb5f186f8d42d347c027b73e877",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream14.xml-p11659683p13159682.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream14.xml-p13159683p14324602.bz2",
+     "bytes": 328354730,
+     "publisher_sha1": "9d39bcfbe2980773cc511bdeef3c748e4263d703",
+     "sha256": "bf69881f1c7dd7c789f8a5451e27b58b756b37673d53162dfacc43fd96cb3f6e",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream14.xml-p13159683p14324602.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream15.xml-p14324603p15824602.bz2",
+     "bytes": 428340696,
+     "publisher_sha1": "45c20092a4d34cf9ba30fc0e468b7a0393026cf4",
+     "sha256": "f18710c98067b98c177457bd131eaa4d46c7ec1fcacf18df878bba7b1fd0902b",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream15.xml-p14324603p15824602.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream15.xml-p15824603p17324602.bz2",
+     "bytes": 372859273,
+     "publisher_sha1": "50265bbf78d90186c5dea7c8aaf5125379b63035",
+     "sha256": "7053336aaa4d4638d2750c7ab99eb782fb79dd3582418fda347cecd631074b3c",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream15.xml-p15824603p17324602.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream15.xml-p17324603p17460152.bz2",
+     "bytes": 33733098,
+     "publisher_sha1": "7ee52a253b3fb02c6b2eeef628336e08cfcc53f2",
+     "sha256": "7d1fd4f728b6e4161df789144283cf8a0abc8eda762fc5c5d558710159b6918e",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream15.xml-p17324603p17460152.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream16.xml-p17460153p18960152.bz2",
+     "bytes": 405679315,
+     "publisher_sha1": "a665790f1d3e98c3c0239cc415e3d2e34ae11580",
+     "sha256": "e483a0d5421648abc5c0108300a8d2be8869e4631952b2745457d560b7c6c51d",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream16.xml-p17460153p18960152.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream16.xml-p18960153p20460152.bz2",
+     "bytes": 375983065,
+     "publisher_sha1": "45b3b8c2490dd10ab877d1d893991439701673f1",
+     "sha256": "5ad59d4c10a1d8aeedccfb373b25ad81e33d33a06c09cfd8f01876d6f1524daa",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream16.xml-p18960153p20460152.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream16.xml-p20460153p20570392.bz2",
+     "bytes": 27408117,
+     "publisher_sha1": "97921e167822c2963e5191e58ef86898c0f9e471",
+     "sha256": "acb8c344b5cdf39f32c756f881fc7ffd8c779d496d1f9c40f669c8b3b02d87bb",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream16.xml-p20460153p20570392.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream17.xml-p20570393p22070392.bz2",
+     "bytes": 417724061,
+     "publisher_sha1": "b568397794dd71a3e6e84cb3530e97c7c9b18003",
+     "sha256": "7106b2e8ca19bf7a680134863178a8cb04e0f072b45495dcdd49e58ebdb46550",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream17.xml-p20570393p22070392.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream17.xml-p22070393p23570392.bz2",
+     "bytes": 429702854,
+     "publisher_sha1": "48f7bb1f9202118f44e2f8c44f1d1008e1bf6811",
+     "sha256": "34c6d5ce1e1cbbfdab49d9b6008e77445657f7239373ad1370f82f182855df76",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream17.xml-p22070393p23570392.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream17.xml-p23570393p23716197.bz2",
+     "bytes": 47720206,
+     "publisher_sha1": "ab805d78ed5eea2c9f9bccd9c62c5814ccdd741d",
+     "sha256": "be68bd7253658156fe064925f7ddab9db80524ae1da2fca3fd9e3ef531541bc8",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream17.xml-p23570393p23716197.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream18.xml-p23716198p25216197.bz2",
+     "bytes": 444233147,
+     "publisher_sha1": "39677d03a7392eca7578f4e911cfb6ddc9a66b95",
+     "sha256": "e2fdedb7ccc77f6a01f030c1d24328440efbb8d8db9ddb882989206fcf52af00",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream18.xml-p23716198p25216197.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream18.xml-p25216198p26716197.bz2",
+     "bytes": 406768113,
+     "publisher_sha1": "645eec72a0226a2237719cd060bf6cc34dec301c",
+     "sha256": "882c235664762378e649133784707a6e15e438f3af58400782e761f8c8a1b662",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream18.xml-p25216198p26716197.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream18.xml-p26716198p27121850.bz2",
+     "bytes": 104565006,
+     "publisher_sha1": "d032c7f94462777f51e6cabc46f1f79845f379e2",
+     "sha256": "9d9c94be9eff0ca2eab8b189089542d3824888f61de3e6ba1129747e6057c7d9",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream18.xml-p26716198p27121850.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream19.xml-p27121851p28621850.bz2",
+     "bytes": 399672488,
+     "publisher_sha1": "deb3b4cf137be89bf6a63f3fd51a6e697e5997b1",
+     "sha256": "956d44673b5a6da471abef695e2bea5c18c04711ca87479296a4f355c155e5b1",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream19.xml-p27121851p28621850.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream19.xml-p28621851p30121850.bz2",
+     "bytes": 351288423,
+     "publisher_sha1": "dcad563accf17d813aa4baeeee25e9126ca72c7a",
+     "sha256": "64290ccfb39ee3a147764d95498c227043917297fd20686ab0326a6aabb3da01",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream19.xml-p28621851p30121850.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream19.xml-p30121851p31308442.bz2",
+     "bytes": 332242788,
+     "publisher_sha1": "274fd3886e68cda4c6dc43b76bf6a96a5075a3a8",
+     "sha256": "9400393a012f92b1602084163985320c273b51d5702dbda49d007d354101dafa",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream19.xml-p30121851p31308442.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream2.xml-p41243p151573.bz2",
+     "bytes": 405398234,
+     "publisher_sha1": "87f50ed8b6c360d78300a0951689ea27ad601ba8",
+     "sha256": "1e1d006d6ff67a425cf9b005488bcf1353a77e0d5b0b76c4e97172d0a17838a3",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream2.xml-p41243p151573.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream20.xml-p31308443p32808442.bz2",
+     "bytes": 448239492,
+     "publisher_sha1": "7261736fa9ce97cbd7719adc59590ec6ee4539b2",
+     "sha256": "d8c202295b1db5e83465f457edd26fe756275e59e34723503c7aa837f36a37f4",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream20.xml-p31308443p32808442.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream20.xml-p32808443p34308442.bz2",
+     "bytes": 413376899,
+     "publisher_sha1": "6ed2fb3f763669d19399cda72e7f09b474d34987",
+     "sha256": "2b2c786033261a7b2af85e657af95343411cfaa64737f6469048eb32ccd0e748",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream20.xml-p32808443p34308442.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream20.xml-p34308443p35522432.bz2",
+     "bytes": 315249262,
+     "publisher_sha1": "3cef4a5b2cc2fc77d0eda7fdcd212ac8d6475588",
+     "sha256": "7444627b1bce74be4defd95866c10b77aa63b83455a135fae8c4a3d2c48b5555",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream20.xml-p34308443p35522432.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream21.xml-p35522433p37022432.bz2",
+     "bytes": 422359064,
+     "publisher_sha1": "f2c5975be6444dd28fbfebbe48240bb9812c6866",
+     "sha256": "8ac5de36e7eb813823a8c4b85ac27f5af0c0976a77142132156a2b6ebfdff751",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream21.xml-p35522433p37022432.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream21.xml-p37022433p38522432.bz2",
+     "bytes": 403514147,
+     "publisher_sha1": "1528858eb35ea2f16f24db1d69301e6cbb75adc9",
+     "sha256": "0c685fe740b0fa18283d94f9e620cc1308f4c9107d7a774874134b743d735fde",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream21.xml-p37022433p38522432.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream21.xml-p38522433p39996245.bz2",
+     "bytes": 412646588,
+     "publisher_sha1": "89b0c2e31f4b62eb5ebbe0293e4619d2c59e8448",
+     "sha256": "a19e3d2d20ea645d9967b29f91475feb54ad37565af9ad314a17f87c9e600970",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream21.xml-p38522433p39996245.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream22.xml-p39996246p41496245.bz2",
+     "bytes": 407820872,
+     "publisher_sha1": "7681ed42243915c94e52254d9bf40cb2c9aaa1b9",
+     "sha256": "eebd80fb050e965034e9a736f0fcc30ff545427b427808b6feadec7b8b453a76",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream22.xml-p39996246p41496245.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream22.xml-p41496246p42996245.bz2",
+     "bytes": 436146147,
+     "publisher_sha1": "ca4526e8520bc308374ff7eab6293d6a45a8d45e",
+     "sha256": "612dfba3880ad3b584187d28d875bc4b7e7bb00c5d80882a82e6c3b561cdb7e3",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream22.xml-p41496246p42996245.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream22.xml-p42996246p44496245.bz2",
+     "bytes": 422208207,
+     "publisher_sha1": "ead2d0dadaa3d7d9c4bacacf09d4e61bfbce154f",
+     "sha256": "deafb4432baa3d89dbac2f26f8908e6242745f836bcf4e3972bfee2e808de7d4",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream22.xml-p42996246p44496245.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream22.xml-p44496246p44788941.bz2",
+     "bytes": 66906683,
+     "publisher_sha1": "dc2a6b2b97c112bad215ceb03579a311e6117e4e",
+     "sha256": "dd5ef8577aac0d613ca204338fc7d1a34eedf4fdb9c668690708526b5a868c24",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream22.xml-p44496246p44788941.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream23.xml-p44788942p46288941.bz2",
+     "bytes": 274871504,
+     "publisher_sha1": "b585a2e430f15cb7c887e3d7badc532d540868a2",
+     "sha256": "486462d7c84668a83ccc9d49af42fe40e15a7064ccd557ce848091ca52a42b25",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream23.xml-p44788942p46288941.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream23.xml-p46288942p47788941.bz2",
+     "bytes": 438544136,
+     "publisher_sha1": "ae084c8ab2f483cee5e544f90a83a6b885656a02",
+     "sha256": "d0ef1de4ac7004712797f2600fd5f6a9b9a89a5e006f264926ffb506237dd8fc",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream23.xml-p46288942p47788941.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream23.xml-p47788942p49288941.bz2",
+     "bytes": 364502957,
+     "publisher_sha1": "49b84d3c9fe441b0a743ef446893c2b972828a9f",
+     "sha256": "5363cf25f2f02f5bb048f6d5e992ba3f762e4708dd8896a8700f56f3b7c76f3c",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream23.xml-p47788942p49288941.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream23.xml-p49288942p50564553.bz2",
+     "bytes": 287728262,
+     "publisher_sha1": "529f208d9b012adb4603c1580abe0a0b586e3b45",
+     "sha256": "62bcd5d62cfc768b054025fc1a8fbd7feafa4a59ace82324a42d1f0a5a23c5eb",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream23.xml-p49288942p50564553.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream24.xml-p50564554p52064553.bz2",
+     "bytes": 392590040,
+     "publisher_sha1": "ac9c5adeaa24671c5d508941c1b1ed8833ec6d96",
+     "sha256": "afe2428badf8bdb743e0711a79e1c2f220f227edd827598fbb1a6b3aead7987f",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream24.xml-p50564554p52064553.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream24.xml-p52064554p53564553.bz2",
+     "bytes": 394509617,
+     "publisher_sha1": "d9f0898f7f844d843cbb7ba8ba9a52e9776304b2",
+     "sha256": "e4260e0b5b30478a0c41ef68511faf222954c1fe338b4535efed5d344c5d6354",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream24.xml-p52064554p53564553.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream24.xml-p53564554p55064553.bz2",
+     "bytes": 378545147,
+     "publisher_sha1": "fa5d945742f80c5159c984d04905b98fab7854db",
+     "sha256": "a65a51cff8036a698fa5e6d88517ce40408a13dc626a5dcc7acd51cc3360dce8",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream24.xml-p53564554p55064553.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream24.xml-p55064554p56564553.bz2",
+     "bytes": 396234524,
+     "publisher_sha1": "e3943e2e6517d4d7e6a27136b628dc0fa6edec09",
+     "sha256": "2ae7445a2084756e856d480ef1213d784423806d2abf726ef76bea75594ea024",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream24.xml-p55064554p56564553.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream24.xml-p56564554p57025655.bz2",
+     "bytes": 124485774,
+     "publisher_sha1": "0eaf3b3d43d343509cb9c5594b9b27b58605ed2b",
+     "sha256": "7a72b2e7306fe01cb213e9fe517a85f38350bdc31dc99dac2a6eff703ceb67f4",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream24.xml-p56564554p57025655.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream25.xml-p57025656p58525655.bz2",
+     "bytes": 409623049,
+     "publisher_sha1": "a8c0efe31fbd54f6c01ea0ff86134321d204adf3",
+     "sha256": "6e033fdd74f101ad2b4fe71ed06567531a4de011798311632dd98bab657b98cb",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream25.xml-p57025656p58525655.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream25.xml-p58525656p60025655.bz2",
+     "bytes": 368414829,
+     "publisher_sha1": "23beacd84070b7acecb393ed7f4c9a6046475d60",
+     "sha256": "7e3e96b30bdddca9c0a3512ebcbde8de1d09b0a05db436978990a1275fb8e782",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream25.xml-p58525656p60025655.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream25.xml-p60025656p61525655.bz2",
+     "bytes": 411832088,
+     "publisher_sha1": "e4083daf34e3c83d09cf3dcc2d84cfa403d7a5ec",
+     "sha256": "eca484f36ddff133fd26fd7784318298638784740ad610c4eb6ce3be34899bd7",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream25.xml-p60025656p61525655.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream25.xml-p61525656p62585850.bz2",
+     "bytes": 283236743,
+     "publisher_sha1": "166f0304d522e2b4cd0a6fc618b32e4f4d87c74e",
+     "sha256": "00944e5f5c11be85484e1f9ceba62f68f595b1d8d7359624120f6b10082e2601",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream25.xml-p61525656p62585850.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream26.xml-p62585851p63975909.bz2",
+     "bytes": 406368395,
+     "publisher_sha1": "ba42d3cb61863c66273611531526677de67e4025",
+     "sha256": "58d21f6810d04c66e17352f6f8f272da4dae4d49dad710cc27525a6dc2585c2c",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream26.xml-p62585851p63975909.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream27.xml-p63975910p65475909.bz2",
+     "bytes": 371046194,
+     "publisher_sha1": "1b9beed450db97ff56a331432d1c366dacd8fd60",
+     "sha256": "7f6aa87552126f3cc00ac2ef51db8e660ce9bb3ca449973cf4229c4464406ba8",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream27.xml-p63975910p65475909.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream27.xml-p65475910p66975909.bz2",
+     "bytes": 404621377,
+     "publisher_sha1": "a8759ffa50e70a9a7801849ec0de4d3c8484d4a4",
+     "sha256": "88f4bb00d2b34f8d5fba8eaf1da417c280ca3a9773182ea0b42075ef803f601d",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream27.xml-p65475910p66975909.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream27.xml-p66975910p68475909.bz2",
+     "bytes": 430492890,
+     "publisher_sha1": "df03188dedc6b849e5d07068e7b545534c441a77",
+     "sha256": "fbeee393ac67c233e8ea8242aa9ccb32364a347fc30310e3195b9a6b415ab56a",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream27.xml-p66975910p68475909.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream27.xml-p68475910p69975909.bz2",
+     "bytes": 425581607,
+     "publisher_sha1": "531a332020fadc13068b808d31d945fe4431ac04",
+     "sha256": "de4f7a43e64680bb121fecb7be56aed86547dd06017a3dc30873c6971e3b54e1",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream27.xml-p68475910p69975909.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream27.xml-p69975910p71475909.bz2",
+     "bytes": 418917887,
+     "publisher_sha1": "0c56665f6e24d9343fc11a39cfcdd6f5b4610f62",
+     "sha256": "eaed4399d5ec5175e4fd14e4843666a9aae2a4540b7c552be6f65f7a0d474375",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream27.xml-p69975910p71475909.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream27.xml-p71475910p72975909.bz2",
+     "bytes": 400316820,
+     "publisher_sha1": "65affb551da1f4e97780b6d22a0a53a7bd878323",
+     "sha256": "bf12e8b6babab47af087d40d61e464b73ed7cafaa421188af0602868acc689ef",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream27.xml-p71475910p72975909.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream27.xml-p72975910p74475909.bz2",
+     "bytes": 382279633,
+     "publisher_sha1": "90c3180e4f9f0685ea94991b634376f3e245ac7d",
+     "sha256": "2cb085822dbee1b837da1538e624e2061d089830f151f80bf8a36dcd876f9472",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream27.xml-p72975910p74475909.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream27.xml-p74475910p75975909.bz2",
+     "bytes": 422882747,
+     "publisher_sha1": "fe5e1a995edd79ad76cc8b3817021df81255d090",
+     "sha256": "e7426cc02f64aeb050d1027c14ac8c5d5c738faa5874b91508590e4becb5d150",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream27.xml-p74475910p75975909.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream27.xml-p75975910p77475909.bz2",
+     "bytes": 427335669,
+     "publisher_sha1": "b334e4599db7c477e72a135876ff0aec27a54137",
+     "sha256": "643d9394f08cf511d6ad9f484b95c0905d6a5e417ba982a18f0a044b2be35f30",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream27.xml-p75975910p77475909.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream27.xml-p77475910p78975909.bz2",
+     "bytes": 423226818,
+     "publisher_sha1": "51136fb1397df2d214e3a69232decd3a1acc0b93",
+     "sha256": "8b95a663627b5a9d4b6bccf9e93bafeee63f5a5237879908991570c7839d7393",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream27.xml-p77475910p78975909.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream27.xml-p78975910p80475909.bz2",
+     "bytes": 427325326,
+     "publisher_sha1": "a58ef559767fe3719096420a1249b3e14d4c1529",
+     "sha256": "d8e01111fb9dda925516459d02e080df696b7b68cce42fb5d435b95a25e87913",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream27.xml-p78975910p80475909.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream27.xml-p80475910p81975909.bz2",
+     "bytes": 389251238,
+     "publisher_sha1": "4a57cbc755985016864c9e8dc928069cffeef33e",
+     "sha256": "781e93aaee34df3766723a57518de1c09d2403b1d9923c03f777209c1251da54",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream27.xml-p80475910p81975909.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream27.xml-p81975910p83475909.bz2",
+     "bytes": 432762174,
+     "publisher_sha1": "323a72b7bcde3c162eb134129a0457cea348ee40",
+     "sha256": "51fac03aa54003c619a7ef288956923affb4e99cce3037532e2956251464b595",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream27.xml-p81975910p83475909.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream27.xml-p83475910p83869629.bz2",
+     "bytes": 119560846,
+     "publisher_sha1": "bf8fe13f5a3923f83680f4da9c2803fedbe95731",
+     "sha256": "dceba797ed79f05478ec9e7bd3c27c9d4b73c5470c86394cf23992ef319925a0",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream27.xml-p83475910p83869629.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream3.xml-p151574p311329.bz2",
+     "bytes": 434143438,
+     "publisher_sha1": "f08dc6666445516c0efc0c9fa1afad6b5983f84e",
+     "sha256": "be8daa5f1d4a9c1e5aa653d74f2cc92d19c75b3806e180296bba4065f651bed8",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream3.xml-p151574p311329.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream4.xml-p311330p558391.bz2",
+     "bytes": 486684849,
+     "publisher_sha1": "db501c4272b858471d1138f0564c70b227b1cf3f",
+     "sha256": "3afa1656bd20065206ed5b62a5d6db49d15418c433465682ac8cae7bfb3321eb",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream4.xml-p311330p558391.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream5.xml-p558392p958045.bz2",
+     "bytes": 521303893,
+     "publisher_sha1": "e4e5591ae119042ab61f429f3b3222da84d2d280",
+     "sha256": "cf409dc37ab80a4918450b6c46ae22c01413d00747920aad4a523d9b3b039cd1",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream5.xml-p558392p958045.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream6.xml-p958046p1483661.bz2",
+     "bytes": 558422757,
+     "publisher_sha1": "ba67d1ecc1a3e36b034adb9271c25f687ad1d3b3",
+     "sha256": "3ffb1de5547f40dfd1432fbc4cd08aedd4f777041712a5201025018efdc5cc2a",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream6.xml-p958046p1483661.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream7.xml-p1483662p2134111.bz2",
+     "bytes": 570076154,
+     "publisher_sha1": "b9c9a22ca62ea2397dd98449f09019d11fcaeddb",
+     "sha256": "81169b5274d312d9927753fcf4af9315eccae6782d774ede24d28f521ceb8c3f",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream7.xml-p1483662p2134111.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream8.xml-p2134112p2936260.bz2",
+     "bytes": 580937830,
+     "publisher_sha1": "4728d4cfefc65dc9982474d25e697a9ecc3caa68",
+     "sha256": "8110c4f81bdc8017580bd87c5b2976392d1248361b770119c2f54b57a02657e3",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream8.xml-p2134112p2936260.bz2"
+    },
+    {
+     "file": "enwiki-20260801-pages-articles-multistream9.xml-p2936261p4045402.bz2",
+     "bytes": 626122826,
+     "publisher_sha1": "f7f1382b73c483360d35516d0ad074e1e6012795",
+     "sha256": "7230ff7a7318cfa7d22669df2749e8d808a759146d06b3df5fea64d490d637a1",
+     "url": "https://dumps.wikimedia.org/enwiki/20260801/enwiki-20260801-pages-articles-multistream9.xml-p2936261p4045402.bz2"
+    }
+   ]
+  },
+  {
+   "name": "stackoverflow-posts-archive",
+   "admitted": true,
+   "source_url": "https://archive.org/download/stackexchange/stackoverflow.com-Posts.7z",
+   "retrieved": "2026-08-16",
+   "bytes": 23026928274,
+   "sha256": "1fcde86b9a0d701261a96698e78f65b7436d896eece5361ec7922d7c725c41cd",
+   "publisher_md5": "7fad535401201f725067170ee3b7bb87",
+   "license": "CC BY-SA (Stack Exchange network content, per the archive.org stackexchange item's published terms; per-post attribution obligations noted for any redistribution — training-input use records the source here)",
+   "local_path": "bench/w/corpus/stackexchange/stackoverflow.com-Posts.7z",
+   "verification": {
+    "note": "md5 verified against the archive.org item metadata (match); sha256 over the exact fetched bytes is the authoritative pin. Fetched under the owner's plain-sentence yes of 2026-08-16 for the W1 successor unit; no unit reads these bytes until its declaration admits them."
+   }
   }
  ]
 }
