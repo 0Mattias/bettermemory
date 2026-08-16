@@ -172,7 +172,9 @@ def test_scaffold_floor_keeps_honest_direction() -> None:
     assert floored is not None
     # max(real df, floor): the floor can only make a scaffold term look
     # MORE common, never rarer than the collection says it is.
-    assert floored.body_df["day"] == max(150, max(1, int(200 * _CONV_SCAFFOLD_FLOOR_RATIO)))
+    assert floored.body_df["day"] == max(
+        150, max(1, int(200 * _CONV_SCAFFOLD_FLOOR_RATIO))
+    )
 
 
 def test_scaffold_floor_without_scaffold_terms_returns_base_object() -> None:
@@ -318,9 +320,7 @@ def test_keyword_and_bm25_modes_are_untouched() -> None:
     q = "How many days ago did I buy a smoker?"
     for mode in ("keyword", "bm25"):
         off = search(mems, q, mode=mode, max_results=3, now=_NOW)
-        on = search(
-            mems, q, mode=mode, max_results=3, now=_NOW, conversational=True
-        )
+        on = search(mems, q, mode=mode, max_results=3, now=_NOW, conversational=True)
         assert _pairs(off) == _pairs(on)
 
 

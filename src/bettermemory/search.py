@@ -1304,13 +1304,51 @@ def _merge_corpus_stats(
 # Generic English temporal syntax plus small numerals — no topical
 # vocabulary is admitted (declaration §3 caps the class at 40 stems).
 _CONV_SCAFFOLD_SURFACE = (
-    "day", "days", "week", "weeks", "weekend", "month", "months",
-    "year", "years", "ago", "yesterday", "today", "last", "latest",
-    "first", "earliest", "past", "recent", "recently", "current",
-    "currently", "many", "much", "long", "total", "time", "times",
-    "since", "between", "order", "passed", "once", "twice", "one", "two",
-    "three", "four", "five", "six", "seven", "eight", "nine", "ten",
-    "eleven", "twelve",
+    "day",
+    "days",
+    "week",
+    "weeks",
+    "weekend",
+    "month",
+    "months",
+    "year",
+    "years",
+    "ago",
+    "yesterday",
+    "today",
+    "last",
+    "latest",
+    "first",
+    "earliest",
+    "past",
+    "recent",
+    "recently",
+    "current",
+    "currently",
+    "many",
+    "much",
+    "long",
+    "total",
+    "time",
+    "times",
+    "since",
+    "between",
+    "order",
+    "passed",
+    "once",
+    "twice",
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "ten",
+    "eleven",
+    "twelve",
 )
 _CONV_SCAFFOLD_STEMS = frozenset(_stem_token(w) for w in _CONV_SCAFFOLD_SURFACE)
 
@@ -1347,8 +1385,18 @@ _CONV_SELECTOR_BOOST = 0.0
 _CONV_SELECTOR_DECAY = 0.7
 
 _MONTH_NAMES = (
-    "january", "february", "march", "april", "may", "june", "july",
-    "august", "september", "october", "november", "december",
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
 )
 _MONTH_NO = {name: i + 1 for i, name in enumerate(_MONTH_NAMES)}
 
@@ -1356,9 +1404,7 @@ _MONTH_NO = {name: i + 1 for i, name in enumerate(_MONTH_NAMES)}
 # not the token stream — these are phrase shapes, and stemming would
 # destroy them.
 _CONV_DATE_RE = re.compile(r"\b(\d{4})[/-](\d{2})[/-](\d{2})\b")
-_CONV_MONTH_RE = re.compile(
-    r"\b(" + "|".join(_MONTH_NAMES) + r")\b(?:\s+(\d{4}))?"
-)
+_CONV_MONTH_RE = re.compile(r"\b(" + "|".join(_MONTH_NAMES) + r")\b(?:\s+(\d{4}))?")
 _CONV_LAST_PERIOD_RE = re.compile(r"\blast\s+(week|month|year)\b")
 _CONV_THIS_PERIOD_RE = re.compile(r"\bthis\s+(week|month|year)\b")
 _CONV_YESTERDAY_RE = re.compile(r"\byesterday\b")
@@ -1372,8 +1418,18 @@ _CONV_AGO_RE = re.compile(
     r"(day|week|month|year)s?\s+ago\b"
 )
 _CONV_AGO_NUMBERS = {
-    "a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4,
-    "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+    "a": 1,
+    "an": 1,
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
 }
 _CONV_AGO_UNIT_DAYS = {"day": 1, "week": 7, "month": 30, "year": 365}
 _CONV_ELAPSED_RE = re.compile(
@@ -1385,9 +1441,7 @@ _CONV_ORDER_RE = re.compile(
     r"|\bfirst\s+to\s+last\b|\bchronolog"
     r"|\bwhich\s+.{0,80}?(?:first|last)\b"
 )
-_CONV_WHEN_RE = re.compile(
-    r"^when\b|\bwhen\s+did\b|\bwhat\s+(?:day|date|month)\b"
-)
+_CONV_WHEN_RE = re.compile(r"^when\b|\bwhen\s+did\b|\bwhat\s+(?:day|date|month)\b")
 # 'last' used adverbially about the user's own action selects the LATEST
 # narration ("since I last visited", "the last time I…"); 'last' as a
 # period word ("last month") is a window, and 'last' inside an order ask
@@ -1464,7 +1518,9 @@ def _temporal_reading(query: str, now: datetime) -> _TemporalReading:
         unit = m.group(1)
         if unit == "week":
             start_this = today - timedelta(days=today.weekday())
-            windows.append((start_this - timedelta(days=7), start_this - timedelta(days=1)))
+            windows.append(
+                (start_this - timedelta(days=7), start_this - timedelta(days=1))
+            )
         elif unit == "month":
             prev_last = date(today.year, today.month, 1) - timedelta(days=1)
             windows.append(_month_window(prev_last.month, prev_last.year))
@@ -1510,9 +1566,7 @@ def _conv_scaffold_terms(tokens: list[str]) -> list[str]:
     months ago"; four-digit years are a window constraint, never
     scaffold, and dotted version literals never match `isdigit`)."""
     return [
-        t
-        for t in tokens
-        if t in _CONV_SCAFFOLD_STEMS or (t.isdigit() and len(t) <= 2)
+        t for t in tokens if t in _CONV_SCAFFOLD_STEMS or (t.isdigit() and len(t) <= 2)
     ]
 
 
@@ -1599,9 +1653,7 @@ def _conversational_rerank(
                 1.0 + _CONV_WINDOW_BOOST if in_window else 1.0 - _CONV_WINDOW_DEMOTE
             )
     elif reading.selector is not None:
-        distinct = sorted(
-            set(anchors.values()), reverse=(reading.selector == "latest")
-        )
+        distinct = sorted(set(anchors.values()), reverse=(reading.selector == "latest"))
         ordinal = {a: k for k, a in enumerate(distinct)}
         for i in banded:
             factors[i] = 1.0 + _CONV_SELECTOR_BOOST * (

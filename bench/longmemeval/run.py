@@ -186,9 +186,7 @@ CONVERSATIONAL = False
 # postdates the corpus clock and `_recency_factor` clamps the negative
 # age to zero — a uniform 1.1 factor either way. The gate's off arm
 # re-proves that prediction against the committed macros.
-_QUESTION_DATE_RE = re.compile(
-    r"^(\d{4})/(\d{2})/(\d{2})\D*?(\d{2}):(\d{2})\s*$"
-)
+_QUESTION_DATE_RE = re.compile(r"^(\d{4})/(\d{2})/(\d{2})\D*?(\d{2}):(\d{2})\s*$")
 
 
 def question_now(inst: dict[str, Any]) -> datetime | None:
