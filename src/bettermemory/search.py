@@ -1327,9 +1327,15 @@ _CONV_SCAFFOLD_FLOOR_RATIO = 0.5
 _CONV_BAND_TAU = 0.50
 
 # L1-T adjustment magnitudes, multiplicative on the fused score.
-_CONV_WINDOW_BOOST = 0.30
-_CONV_WINDOW_DEMOTE = 0.15
-_CONV_SELECTOR_BOOST = 0.25
+# Tuning read 2 (bench/l/results/tune-02-*): zeroed to isolate the
+# scaffold floor — read 1 measured the declared defaults net-negative
+# at @1 (0.5301 -> 0.5038 on the tuning half) with the damage
+# concentrated in earliest-selector displacement of already-correct
+# rank-1 golds; the frontier re-prices L1-T from the floor-only
+# baseline up.
+_CONV_WINDOW_BOOST = 0.0
+_CONV_WINDOW_DEMOTE = 0.0
+_CONV_SELECTOR_BOOST = 0.0
 _CONV_SELECTOR_DECAY = 0.7
 
 _MONTH_NAMES = (
