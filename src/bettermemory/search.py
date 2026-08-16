@@ -1327,7 +1327,7 @@ _CONV_SCAFFOLD_FLOOR_RATIO = 1.0
 # decay slowly (1/(k+rank)), so 0.5 reaches roughly the top fifty of a
 # two-leg ranking — the L1 anatomy put 81% of missed evidence at
 # distinct-session ranks 5-19.
-_CONV_BAND_TAU = 0.30
+_CONV_BAND_TAU = 0.50
 
 # L1-T adjustment magnitudes, multiplicative on the fused score.
 #
@@ -1341,7 +1341,7 @@ _CONV_BAND_TAU = 0.30
 # (clean +0.54 @5, @1 exactly preserved). Read 4 re-enters the
 # window arm boost-only: read 1's window losses came through the
 # demote side, its gains through the boost, so the demote stays 0.
-_CONV_WINDOW_BOOST = 0.50
+_CONV_WINDOW_BOOST = 0.30
 _CONV_WINDOW_DEMOTE = 0.0
 _CONV_SELECTOR_BOOST = 0.0
 _CONV_SELECTOR_DECAY = 0.7
