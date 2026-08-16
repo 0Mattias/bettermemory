@@ -1308,16 +1308,19 @@ _CONV_SCAFFOLD_SURFACE = (
     "year", "years", "ago", "yesterday", "today", "last", "latest",
     "first", "earliest", "past", "recent", "recently", "current",
     "currently", "many", "much", "long", "total", "time", "times",
-    "since", "between", "order", "once", "twice", "one", "two",
+    "since", "between", "order", "passed", "once", "twice", "one", "two",
     "three", "four", "five", "six", "seven", "eight", "nine", "ten",
     "eleven", "twelve",
 )
 _CONV_SCAFFOLD_STEMS = frozenset(_stem_token(w) for w in _CONV_SCAFFOLD_SURFACE)
 
-# df floor for scaffold terms, as a fraction of the ranked collection —
-# the filler floor's own ratio. A floored term still matches and still
-# scores; it just prices as a common word.
-_CONV_SCAFFOLD_FLOOR_RATIO = 0.5
+# df floor for scaffold terms, as a fraction of the ranked collection.
+# A floored term still matches and still scores. Tuning read 3 raised
+# this from the filler floor's 0.5 to the declared cap: at 1.0 a
+# scaffold term prices as a word every document carries — near-zero
+# Okapi IDF — so the BM25 legs rank temporal-shaped queries on their
+# content terms alone while the keyword leg still counts everything.
+_CONV_SCAFFOLD_FLOOR_RATIO = 1.0
 
 # Near-tie band for L1-T: items whose fused score is at least this
 # fraction of the top hit's participate in anchor selection. RRF scores

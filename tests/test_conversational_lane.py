@@ -154,19 +154,25 @@ def test_scaffold_terms_take_small_numerals_not_years() -> None:
 
 
 def test_scaffold_floor_reprices_only_scaffold_terms() -> None:
+    from bettermemory.search import _CONV_SCAFFOLD_FLOOR_RATIO
+
     stats = _scaffold_floor_stats(None, ["day", "smoker"], 200)
     assert stats is not None
     assert stats.size == 200
-    assert stats.body_df["day"] == 100
+    # The floor tracks the tuned ratio, whatever the frontier set it to.
+    assert stats.body_df["day"] == max(1, int(200 * _CONV_SCAFFOLD_FLOOR_RATIO))
     assert "smoker" not in stats.body_df
 
 
 def test_scaffold_floor_keeps_honest_direction() -> None:
+    from bettermemory.search import _CONV_SCAFFOLD_FLOOR_RATIO
+
     base = CorpusStats(size=200, body_df={"day": 150}, scope_df={"day": 150})
     floored = _scaffold_floor_stats(base, ["day"], 200)
     assert floored is not None
-    # A genuinely common word stays at its real df — max(real, floor).
-    assert floored.body_df["day"] == 150
+    # max(real df, floor): the floor can only make a scaffold term look
+    # MORE common, never rarer than the collection says it is.
+    assert floored.body_df["day"] == max(150, max(1, int(200 * _CONV_SCAFFOLD_FLOOR_RATIO)))
 
 
 def test_scaffold_floor_without_scaffold_terms_returns_base_object() -> None:
