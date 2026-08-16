@@ -1536,8 +1536,8 @@ def _temporal_reading(query: str, now: datetime) -> _TemporalReading:
         else:
             windows.append((date(today.year, 1, 1), date(today.year, 12, 31)))
     if _CONV_YESTERDAY_RE.search(lower):
-        y = today - timedelta(days=1)
-        windows.append((y, y))
+        yday = today - timedelta(days=1)
+        windows.append((yday, yday))
     for m in _CONV_AGO_RE.finditer(lower):
         count = _CONV_AGO_NUMBERS.get(m.group(1)) or int(m.group(1))
         unit_days = _CONV_AGO_UNIT_DAYS[m.group(2)]
