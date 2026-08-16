@@ -163,10 +163,22 @@ def emit(args: argparse.Namespace) -> dict[str, object]:
         if len(neighbors) == args.max_entries:
             break
 
+    # Renders in the repo formatter's own canonical shape so the
+    # committed artifact's bytes are exactly what this emitter wrote
+    # and the recorded sha256 stays true through the format gate: a
+    # one-element tuple collapses to a single line (its trailing comma
+    # is syntax, not a magic comma), multi-element tuples explode one
+    # neighbor per line.
     table_lines = ["SURFACE_NEIGHBORS: dict[str, tuple[str, ...]] = {"]
     for head in sorted(neighbors):
-        row = ", ".join(f'"{w}"' for w in neighbors[head])
-        table_lines.append(f'    "{head}": ({row},),')
+        row = neighbors[head]
+        if len(row) == 1:
+            table_lines.append(f'    "{head}": ("{row[0]}",),')
+        else:
+            table_lines.append(f'    "{head}": (')
+            for word in row:
+                table_lines.append(f'        "{word}",')
+            table_lines.append("    ),")
     table_lines.append("}")
 
     out = Path(args.out)

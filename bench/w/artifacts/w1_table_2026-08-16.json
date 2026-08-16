@@ -9,7 +9,7 @@
   "per_term": 3,
   "remove_components": 0,
   "table_path": "bench/w/artifacts/w1_table_2026-08-16.py",
-  "table_sha256": "957084b4fc46583c6f450d6106a03ceb0f85714da4c73a2739ad1ce6210f0b60"
+  "table_sha256": "f7925d4a5685dc39dd35fd1271f287a31a6350c697144e918b5f5ce6229a29cf"
  },
  "run_meta": {
   "batch": 1024,
