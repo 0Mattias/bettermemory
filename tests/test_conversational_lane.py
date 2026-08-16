@@ -226,19 +226,38 @@ def test_non_temporal_query_is_inert_under_the_flag() -> None:
     assert _pairs(off) == _pairs(on)
 
 
-def test_lane_lifts_content_match_over_scaffold_matchers() -> None:
+def test_lane_lifts_content_match_over_scaffold_matchers(monkeypatch) -> None:
     mems = _adversarial_store()
     q = "How many days ago did I buy a smoker?"
     off = search(mems, q, mode="hybrid", max_results=3, now=_NOW)
     on = search(mems, q, mode="hybrid", max_results=3, now=_NOW, conversational=True)
-    # Off: scaffold matchers outrank the narration (the anatomy's shape).
+    # Off: scaffold matchers outrank the narration (the anatomy's shape,
+    # gold last in this deliberately pessimistic one-content-token store).
     assert _ids(off)[0] != mems[0].id
-    # On: the gold narration ranks first — floored scaffold plus the
-    # earliest-anchor bonus.
-    assert _ids(on)[0] == mems[0].id
+    # The floor alone strictly improves the narration's rank even here —
+    # the keyword leg still credits scaffold, so #1 needs richer content
+    # overlap (the real corpus) or the anchor bonus (below).
+    assert _ids(on).index(mems[0].id) < _ids(off).index(mems[0].id)
+    # With L1-T's earliest bonus pinned at its mechanism magnitude, the
+    # composed lane puts the narration first.
+    import bettermemory.search as engine
+
+    monkeypatch.setattr(engine, "_CONV_SELECTOR_BOOST", 0.25)
+    composed = search(
+        mems, q, mode="hybrid", max_results=3, now=_NOW, conversational=True
+    )
+    assert _ids(composed)[0] == mems[0].id
 
 
-def test_selector_orders_by_anchor_and_flips_with_adverbial_last() -> None:
+def test_selector_orders_by_anchor_and_flips_with_adverbial_last(
+    monkeypatch,
+) -> None:
+    # L1-T's MECHANISM is pinned under explicit nonzero magnitudes so
+    # these tests keep guarding it while the tuning frontier moves the
+    # shipped defaults (read-2 zeroed them to isolate the floor).
+    import bettermemory.search as engine
+
+    monkeypatch.setattr(engine, "_CONV_SELECTOR_BOOST", 0.25)
     twin_a = _memory(
         "[2023/03/01 (Wed) 08:00]\nuser: visited the museum exhibit downtown.",
         offset_seconds=0,
@@ -268,7 +287,11 @@ def test_selector_orders_by_anchor_and_flips_with_adverbial_last() -> None:
     assert _ids(latest)[0] == twin_b.id
 
 
-def test_window_boosts_in_window_anchor() -> None:
+def test_window_boosts_in_window_anchor(monkeypatch) -> None:
+    import bettermemory.search as engine
+
+    monkeypatch.setattr(engine, "_CONV_WINDOW_BOOST", 0.30)
+    monkeypatch.setattr(engine, "_CONV_WINDOW_DEMOTE", 0.15)
     feb = _memory(
         "[2023/02/10 (Fri) 08:00]\nuser: repotted the snake plant carefully.",
         offset_seconds=0,
