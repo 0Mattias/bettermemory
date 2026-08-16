@@ -64,5 +64,8 @@ bench/longmemeval/vendor/
 bench/msc/data/
 
 # W1 training-corpus bytes: pinned by sha256 in bench/w/corpora.json,
-# fetched under the declared plain-sentence gate, never committed.
-bench/w/corpus/
+# fetched under the declared plain-sentence gate, never committed. As of
+# 2026-08-16 the path is a symlink into the external training-data store
+# (/Volumes/data/bettermemory) — no trailing slash so the link itself is
+# covered too.
+bench/w/corpus
