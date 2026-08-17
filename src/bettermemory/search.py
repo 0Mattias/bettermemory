@@ -1421,8 +1421,12 @@ _CONV_SCAFFOLD_MIN_STEMS: int | None = None
 # L1 repriced only the BM25 half of the fusion's vote, and this
 # constant is the other half. Read 2: the interior weight — scaffold
 # priced down fourfold but not erased, keeping the separation the
-# zero arm collapsed into recency-tiebreak losses.
-_CONV_KEYWORD_SCAFFOLD_WEIGHT: float | None = 0.25
+# zero arm collapsed into recency-tiebreak losses. Read 4: the cap —
+# the curve read -0.89, +0.25 type points at weights 0 and 0.25 on
+# the temporal half's own type; the half weight prices the top of
+# the declared range, where the two remaining partial losses stand
+# to recover and the full rescue stands to survive.
+_CONV_KEYWORD_SCAFFOLD_WEIGHT: float | None = 0.5
 
 _MONTH_NAMES = (
     "january",
