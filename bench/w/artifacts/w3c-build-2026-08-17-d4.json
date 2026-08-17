@@ -1,0 +1,115 @@
+{
+ "provenance": {
+  "commit": "066622f",
+  "date": "2026-08-17",
+  "machine": {
+   "os": "Darwin 25.5.0",
+   "machine": "arm64",
+   "python": "3.13.13"
+  }
+ },
+ "declaration": "bench/w/W3C_DECLARATION.md",
+ "inputs": {
+  "pair_file": {
+   "path": "bench/w/corpus/derived/w3p2-pairs-2026-08-17.tsv",
+   "sha256": "bc1d7d49a1793c6d5d297c09f92f58cf2adfd1afde23c1814a1cb6aa3b0dee8e"
+  },
+  "edge_file": {
+   "path": "bench/w/corpus/derived/w3d-edges-2026-08-17.tsv",
+   "sha256": "3ca4ca80e4e74e3d5196d7dd340814ae1cfbe757ac34b282227cc84b5eecd80a"
+  }
+ },
+ "floors": {
+  "p_count_floor": 10,
+  "p_ppmi_floor": 2.0,
+  "p_mutual_rank": 8,
+  "p_terms_per_head": 4,
+  "p_head_cap": 5000,
+  "d_score_floor": 4,
+  "d_terms_per_head": 4,
+  "d_head_cap": 5000,
+  "compose_d_slots": 2,
+  "compose_p_slots": 2,
+  "compose_terms_per_head": 4,
+  "compose_head_cap": 5000
+ },
+ "table_p": {
+  "substitution_pair_types": 567505,
+  "types_at_count_floor": 13443,
+  "heads_kept": 1112
+ },
+ "table_d": {
+  "attestations_read": 4880463,
+  "directed_pairs_scored": 7263436,
+  "heads_kept": 5000
+ },
+ "composed": {
+  "heads": 5000,
+  "source_bytes": 298949,
+  "table_path": "bench/w/artifacts/w3c_table_2026-08-17-d4.py",
+  "table_sha256": "89871504843ec3c9aa616a33be83c5279c55be985f9de64dc5fb4d2133c84682"
+ },
+ "b0": {
+  "needs": {
+   "06f04340": {
+    "bridges": [],
+    "survived": false,
+    "register": "food",
+    "gloss": "what to serve for dinner <-> the herb-recipe session"
+   },
+   "09d032c9": {
+    "bridges": [
+     [
+      "battery",
+      "charging"
+     ],
+     [
+      "charging",
+      "battery"
+     ]
+    ],
+    "survived": true,
+    "register": "consumer-tech",
+    "gloss": "phone battery life <-> the power-bank/charging-pad session"
+   },
+   "195a1a1b": {
+    "bridges": [],
+    "survived": false,
+    "register": "everyday-planning",
+    "gloss": "evening activities <-> the time-management/schedule session"
+   },
+   "1a1907b4": {
+    "bridges": [],
+    "survived": false,
+    "register": "food/drink",
+    "gloss": "cocktail suggestions <-> the Pimm's Cup / Collins-glass session"
+   },
+   "505af2f5": {
+    "bridges": [],
+    "survived": false,
+    "register": "food",
+    "gloss": "creamer recipe <-> the making-my-own-creamer session"
+   },
+   "75832dbd": {
+    "bridges": [],
+    "survived": false,
+    "register": "academic/technical",
+    "gloss": "recent publications/conferences <-> the research-interest session (deep learning, medical image analysis)"
+   },
+   "95228167": {
+    "bridges": [],
+    "survived": false,
+    "register": "music-gear",
+    "gloss": "what to look for in a guitar <-> the Les Paul session"
+   },
+   "d6233ab6": {
+    "bridges": [],
+    "survived": false,
+    "register": "everyday-emotional",
+    "gloss": "nostalgic / reunion <-> the remembered-high-school session"
+   }
+  },
+  "survived": 1
+ },
+ "build_seconds": 4.7
+}
