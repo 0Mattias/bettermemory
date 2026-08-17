@@ -1,0 +1,265 @@
+{
+ "provenance": {
+  "commit": "961a72f",
+  "date": "2026-08-17",
+  "machine": {
+   "os": "Darwin 25.5.0",
+   "machine": "arm64",
+   "python": "3.13.13"
+  }
+ },
+ "declaration": "bench/w/W3D_DECLARATION.md",
+ "files": [
+  {
+   "file": "enwiktionary-20260801-pages-articles1.xml-p1p1500000.bz2",
+   "source": "wiktionary",
+   "sha256_pinned": "ec97093558ef5a0c0a1d17786fc8347206cf9472938de5c8dd84f96e5467d045",
+   "sha256_reverified": "ec97093558ef5a0c0a1d17786fc8347206cf9472938de5c8dd84f96e5467d045",
+   "sha_seconds": 0.4
+  },
+  {
+   "file": "enwiktionary-20260801-pages-articles1.xml-p1500001p3000000.bz2",
+   "source": "wiktionary",
+   "sha256_pinned": "944ffd4a60cee713ebdbad3c935fc24154dbd98f30fa4d5b2925765f99b72dfb",
+   "sha256_reverified": "944ffd4a60cee713ebdbad3c935fc24154dbd98f30fa4d5b2925765f99b72dfb",
+   "sha_seconds": 0.2
+  },
+  {
+   "file": "enwiktionary-20260801-pages-articles1.xml-p3000001p4500000.bz2",
+   "source": "wiktionary",
+   "sha256_pinned": "f59a3335c4f2163650e4d8f6931dae50aeccbb7dfee911488a8edbf625239e82",
+   "sha256_reverified": "f59a3335c4f2163650e4d8f6931dae50aeccbb7dfee911488a8edbf625239e82",
+   "sha_seconds": 0.2
+  },
+  {
+   "file": "enwiktionary-20260801-pages-articles1.xml-p4500001p6000000.bz2",
+   "source": "wiktionary",
+   "sha256_pinned": "ca544d2d8b62eb56d2f6f0dcfd8d032d3cc18a6850100d4ad989bee434873b56",
+   "sha256_reverified": "ca544d2d8b62eb56d2f6f0dcfd8d032d3cc18a6850100d4ad989bee434873b56",
+   "sha_seconds": 0.2
+  },
+  {
+   "file": "enwiktionary-20260801-pages-articles1.xml-p6000001p7500000.bz2",
+   "source": "wiktionary",
+   "sha256_pinned": "2b16d106685205a2e9a4c1673c639054828b8de972ebe72804438bcb6343897a",
+   "sha256_reverified": "2b16d106685205a2e9a4c1673c639054828b8de972ebe72804438bcb6343897a",
+   "sha_seconds": 0.3
+  },
+  {
+   "file": "enwiktionary-20260801-pages-articles1.xml-p7500001p9000000.bz2",
+   "source": "wiktionary",
+   "sha256_pinned": "445e36f330e014be7de9d59d7dab169b1f8c206b328d2d1b09a82e57717a2012",
+   "sha256_reverified": "445e36f330e014be7de9d59d7dab169b1f8c206b328d2d1b09a82e57717a2012",
+   "sha_seconds": 0.3
+  },
+  {
+   "file": "enwiktionary-20260801-pages-articles1.xml-p9000001p10500000.bz2",
+   "source": "wiktionary",
+   "sha256_pinned": "24dfc8331379315e10663b653e145b656ce3e31fb75c3e9e358c328efc8a9128",
+   "sha256_reverified": "24dfc8331379315e10663b653e145b656ce3e31fb75c3e9e358c328efc8a9128",
+   "sha_seconds": 0.4
+  },
+  {
+   "file": "enwiktionary-20260801-pages-articles1.xml-p10500001p11899399.bz2",
+   "source": "wiktionary",
+   "sha256_pinned": "11bd68a117b6b336ff6fd27ae4ad49149e6f82daa5a8a6b15a09190588ff0f81",
+   "sha256_reverified": "11bd68a117b6b336ff6fd27ae4ad49149e6f82daa5a8a6b15a09190588ff0f81",
+   "sha_seconds": 0.3
+  },
+  {
+   "file": "simplewiki-20260801-pages-articles-multistream.xml.bz2",
+   "source": "simplewiki",
+   "sha256_pinned": "ac11b551195dafd5fc4842dae9ef6ec3e70f4409fc3f65c9ad5d058acf3c2dcc",
+   "sha256_reverified": "ac11b551195dafd5fc4842dae9ef6ec3e70f4409fc3f65c9ad5d058acf3c2dcc",
+   "sha_seconds": 0.5
+  }
+ ],
+ "edge_file": {
+  "path": "bench/w/corpus/derived/w3d-edges-2026-08-17.tsv",
+  "sha256": "3ca4ca80e4e74e3d5196d7dd340814ae1cfbe757ac34b282227cc84b5eecd80a",
+  "bytes": 186985719
+ },
+ "census": {
+  "pages_with_edges": {
+   "simplewiki": 69299,
+   "wiktionary": 457535
+  },
+  "edge_volume": {
+   "distinct_total": 3670112,
+   "distinct_by_source": {
+    "simplewiki": 513351,
+    "wiktionary": 3218736
+   },
+   "distinct_by_label": {
+    "gloss": 2825370,
+    "gloss-link": 1233105,
+    "hypernyms": 4172,
+    "hyponyms": 6785,
+    "lead": 437933,
+    "lead-link": 207297,
+    "synonyms": 165801
+   },
+   "attestations_total": 4880463
+  },
+  "needs": {
+   "06f04340": {
+    "count": 0,
+    "attestations": [],
+    "gloss": "what to serve for dinner <-> the herb-recipe session",
+    "register": "food",
+    "supported": false
+   },
+   "09d032c9": {
+    "count": 3,
+    "attestations": [
+     [
+      "battery",
+      "power",
+      "gloss",
+      "wiktionary"
+     ],
+     [
+      "charging",
+      "battery",
+      "gloss-link",
+      "wiktionary"
+     ],
+     [
+      "charging",
+      "battery",
+      "gloss",
+      "wiktionary"
+     ]
+    ],
+    "gloss": "phone battery life <-> the power-bank/charging-pad session",
+    "register": "consumer-tech",
+    "supported": true
+   },
+   "195a1a1b": {
+    "count": 0,
+    "attestations": [],
+    "gloss": "evening activities <-> the time-management/schedule session",
+    "register": "everyday-planning",
+    "supported": false
+   },
+   "1a1907b4": {
+    "count": 3,
+    "attestations": [
+     [
+      "cocktail",
+      "drink",
+      "synonyms",
+      "wiktionary"
+     ],
+     [
+      "cocktail",
+      "drink",
+      "lead-link",
+      "simplewiki"
+     ],
+     [
+      "cocktail",
+      "drink",
+      "lead",
+      "simplewiki"
+     ]
+    ],
+    "gloss": "cocktail suggestions <-> the Pimm's Cup / Collins-glass session",
+    "register": "food/drink",
+    "supported": true
+   },
+   "505af2f5": {
+    "count": 0,
+    "attestations": [],
+    "gloss": "creamer recipe <-> the making-my-own-creamer session",
+    "register": "food",
+    "supported": false
+   },
+   "75832dbd": {
+    "count": 0,
+    "attestations": [],
+    "gloss": "recent publications/conferences <-> the research-interest session (deep learning, medical image analysis)",
+    "register": "academic/technical",
+    "supported": false
+   },
+   "95228167": {
+    "count": 7,
+    "attestations": [
+     [
+      "fender",
+      "guitar",
+      "gloss-link",
+      "wiktionary"
+     ],
+     [
+      "fender",
+      "guitar",
+      "gloss",
+      "wiktionary"
+     ],
+     [
+      "stratocaster",
+      "guitar",
+      "gloss-link",
+      "wiktionary"
+     ],
+     [
+      "stratocaster",
+      "guitar",
+      "gloss",
+      "wiktionary"
+     ],
+     [
+      "fender",
+      "guitar",
+      "lead-link",
+      "simplewiki"
+     ],
+     [
+      "gibson",
+      "guitar",
+      "lead-link",
+      "simplewiki"
+     ],
+     [
+      "gibson",
+      "guitar",
+      "lead",
+      "simplewiki"
+     ]
+    ],
+    "gloss": "what to look for in a guitar <-> the Les Paul session",
+    "register": "music-gear",
+    "supported": true
+   },
+   "d6233ab6": {
+    "count": 0,
+    "attestations": [],
+    "gloss": "nostalgic / reunion <-> the remembered-high-school session",
+    "register": "everyday-emotional",
+    "supported": false
+   }
+  },
+  "floors": {
+   "V": {
+    "threshold_edges": 250000,
+    "distinct_edges": 3670112,
+    "holds": true
+   },
+   "C": {
+    "threshold_needs": 4,
+    "attestations_per_need": 2,
+    "needs_supported": 3,
+    "holds": false
+   }
+  },
+  "g0_verdict": "PARK-AT-CENSUS"
+ },
+ "register_overlap": {
+  "preference_ask_tokens": 173,
+  "preference_ask_fraction_in_pair_vocab": 1.0,
+  "miss_gold_tokens": 2964,
+  "miss_gold_fraction_in_pair_vocab": 0.9551
+ },
+ "pass_seconds": 501.5
+}
