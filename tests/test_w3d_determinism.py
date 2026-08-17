@@ -93,9 +93,7 @@ WIKTIONARY_STREAM: list[bytes] = [
         keepends=True
     ),
     # Filler-stem head: gated out by the tokenizer.
-    *_page("guess", 0, "==English==\n# A [[conjecture]].\n").splitlines(
-        keepends=True
-    ),
+    *_page("guess", 0, "==English==\n# A [[conjecture]].\n").splitlines(keepends=True),
     # Talk namespace: filtered before parsing.
     *_page("battery", 1, "==English==\n# A [[talkpage]] note.\n").splitlines(
         keepends=True
