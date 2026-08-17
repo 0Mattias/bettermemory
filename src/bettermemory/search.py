@@ -1384,6 +1384,30 @@ _CONV_WINDOW_DEMOTE = 0.0
 _CONV_SELECTOR_BOOST = 0.0
 _CONV_SELECTOR_DECAY = 0.7
 
+# L2 (declared in bench/l/L2_DECLARATION.md): the pricing gate's
+# widening and the keyword leg's scaffold weight. Both ship None —
+# dark: with both None the engine is behaviorally identical to 6.1.0,
+# and only a tuning-read config commit under the declaration's
+# protocol may set an arm.
+#
+# _CONV_SCAFFOLD_MIN_STEMS — a query with NO temporal reading still
+# enters the PRICING gate (the BM25 df-floor and the keyword
+# repricing, never the window rerank) when it carries at least this
+# many distinct scaffold tokens plus at least one content token. The
+# count asks that dominate the multi-session residual ("how many
+# projects have I led…") carry the scaffold class densely but parse
+# no window and no selector; co-occurrence plus content is the
+# structural signal. None removes the widening — the pricing gate is
+# L1's temporal reading alone.
+_CONV_SCAFFOLD_MIN_STEMS: int | None = None
+# _CONV_KEYWORD_SCAFFOLD_WEIGHT — a priced query's scaffold terms
+# contribute this multiple of their standard keyword-scorer
+# contribution, and the coverage multiplier is computed over content
+# terms alone (see score_memory). None leaves the keyword leg stock:
+# L1 repriced only the BM25 half of the fusion's vote, and this
+# constant is the other half.
+_CONV_KEYWORD_SCAFFOLD_WEIGHT: float | None = None
+
 _MONTH_NAMES = (
     "january",
     "february",
@@ -1568,6 +1592,22 @@ def _conv_scaffold_terms(tokens: list[str]) -> list[str]:
     return [
         t for t in tokens if t in _CONV_SCAFFOLD_STEMS or (t.isdigit() and len(t) <= 2)
     ]
+
+
+def _conv_scaffold_shaped(query_tokens: list[str]) -> bool:
+    """The widened pricing-gate predicate (L2): at least
+    `_CONV_SCAFFOLD_MIN_STEMS` distinct scaffold tokens AND at least
+    one content token. Count asks carry the scaffold class without
+    parsing a window or a selector; requiring co-occurrence plus
+    content is what keeps single common stems ("long", "time") from
+    firing on non-count discourse — the declaration's rejected head
+    trigger. None disables the widening entirely.
+    """
+    if _CONV_SCAFFOLD_MIN_STEMS is None:
+        return False
+    distinct = list(dict.fromkeys(query_tokens))
+    scaffold = _conv_scaffold_terms(distinct)
+    return len(scaffold) >= _CONV_SCAFFOLD_MIN_STEMS and len(scaffold) < len(distinct)
 
 
 def _scaffold_floor_stats(
@@ -2315,6 +2355,8 @@ def score_memory(
     now: datetime,
     half_life_days: float = 30.0,
     tokens: _MemoryTokens | None = None,
+    scaffold_terms: frozenset[str] | None = None,
+    scaffold_weight: float = 0.0,
 ) -> tuple[float, list[str]]:
     """Score a memory against a query. Return `(score, matched_terms)`.
 
@@ -2325,6 +2367,18 @@ def score_memory(
     ``tokens``: optional precomputed `_MemoryTokens` for this memory —
     `search()` tokenizes each candidate once and threads the streams
     here. None recomputes them; identical output either way.
+
+    ``scaffold_terms`` / ``scaffold_weight`` (L2, lane-internal): when
+    `scaffold_terms` is given — search() passes it only for a priced
+    conversational query with at least one content term — each scaffold
+    term's contribution is multiplied by `scaffold_weight`, and the
+    coverage multiplier is computed over content terms alone, so
+    scaffold can neither pay for rank nor dilute coverage. A scaffold
+    hit that coexists with content still appends to `matched_terms`
+    (display and evidence read as before); a candidate whose every
+    match is scaffold scores `raw == 0` at weight zero and drops from
+    the leg. None (the default, and every non-lane caller) is the
+    stock scorer, byte-identical to before the parameters existed.
     """
     if not query_tokens:
         return 0.0, []
@@ -2345,6 +2399,7 @@ def score_memory(
 
     raw = 0.0
     matched: list[str] = []
+    content_matched = 0
     query_unique = len(set(query_tokens))
     # De-duplicate query tokens (insertion-ordered) before accumulating:
     # coverage and `matched` always used set semantics, but the raw loop
@@ -2392,7 +2447,12 @@ def score_memory(
             contrib += math.log1p(body_hits - 2)
         if contrib > 0:
             matched.append(tok)
-        raw += contrib
+        if scaffold_terms is not None and tok in scaffold_terms:
+            raw += contrib * scaffold_weight
+        else:
+            raw += contrib
+            if contrib > 0:
+                content_matched += 1
 
     if raw == 0.0:
         return 0.0, []
@@ -2400,7 +2460,15 @@ def score_memory(
     # Mild boost for matching multiple distinct query terms — together with
     # the per-term TF cap above, this is what actually keeps "foo bar"
     # ranked above "foo foo foo" when the latter is just keyword spam.
-    coverage = len(matched) / query_unique
+    if scaffold_terms is None:
+        coverage = len(matched) / query_unique
+    else:
+        # L2: content coverage. The caller guarantees at least one
+        # content term in the query, so the denominator is never zero.
+        content_unique = sum(
+            1 for t in dict.fromkeys(query_tokens) if t not in scaffold_terms
+        )
+        coverage = content_matched / content_unique
     base = raw * (0.5 + 0.5 * coverage)
 
     # Recency boost reads from the freshness timestamp — `max(created, updated)`
@@ -2794,10 +2862,16 @@ def _score_keyword(
     negative_by_id: dict[str, tuple[int, int]] | None = None,
     corroboration_boost: bool = False,
     candidate_tokens: list[_MemoryTokens] | None = None,
+    scaffold_terms: frozenset[str] | None = None,
+    scaffold_weight: float = 0.0,
 ) -> list[tuple[Memory, float, list[str]]]:
     """Run the original keyword scorer across all candidates. Returns
     `(memory, score, matched)` tuples for every candidate with `score > 0`.
     Order preserved from the input — sorting happens at the caller.
+
+    `scaffold_terms` / `scaffold_weight` thread through to
+    `score_memory` (L2, lane-internal — see there). None is the stock
+    scorer.
 
     `applied_by_id` (optional) maps memory id → explicit-applied count; when
     given, a bounded `_endorsement_factor` nudges endorsed memories. None
@@ -2818,6 +2892,8 @@ def _score_keyword(
             now=now,
             half_life_days=half_life_days,
             tokens=candidate_tokens[i] if candidate_tokens is not None else None,
+            scaffold_terms=scaffold_terms,
+            scaffold_weight=scaffold_weight,
         )
         if score > 0:
             if applied_by_id:
@@ -3277,6 +3353,20 @@ def search(
         reading = _temporal_reading(query, now)
         if reading.is_temporal:
             conv_reading = reading
+    # L2: the PRICING gate — the repricing mechanisms' key, wider than
+    # the temporal reading when the widening constant is set. The
+    # window/selector rerank below stays keyed on `conv_reading` alone:
+    # a scaffold-shaped query has no window to boost. With
+    # `_CONV_SCAFFOLD_MIN_STEMS` None the predicate is constant-False
+    # and `conv_pricing == (conv_reading is not None)` — L1's key.
+    conv_pricing = conv_reading is not None
+    if (
+        not conv_pricing
+        and conversational
+        and mode == "hybrid"
+        and not stopword_fallback
+    ):
+        conv_pricing = _conv_scaffold_shaped(query_tokens)
 
     corpus_stats: CorpusStats | None = None
     if corpus_stats_provider is not None and mode in ("bm25", "hybrid"):
@@ -3334,11 +3424,24 @@ def search(
         )
         # Lane L's scaffold floor composes AFTER the filler floor: both
         # only ever raise a term's df, they touch disjoint classes, and
-        # a temporal reading is required — no reading, no repricing.
-        if conv_reading is not None:
+        # the pricing gate is required — no priced reading, no
+        # repricing. (L1 keyed this on the temporal reading; L2's gate
+        # subsumes it and is identical while the widening ships dark.)
+        if conv_pricing:
             hybrid_stats = _scaffold_floor_stats(
                 hybrid_stats, query_tokens, len(candidates)
             )
+        # L2: the keyword leg's scaffold repricing, the fusion's other
+        # half. Engaged only for a priced query with at least one
+        # content term (an all-scaffold temporal query leaves the leg
+        # stock — the shipped behavior), and only when the weight
+        # constant is set; None is byte-identical to 6.1.0.
+        conv_scaffold: frozenset[str] | None = None
+        if conv_pricing and _CONV_KEYWORD_SCAFFOLD_WEIGHT is not None:
+            distinct_q = list(dict.fromkeys(query_tokens))
+            scaffold_q = _conv_scaffold_terms(distinct_q)
+            if scaffold_q and len(scaffold_q) < len(distinct_q):
+                conv_scaffold = frozenset(scaffold_q)
         rankings: list[list[tuple[Memory, float, list[str]]]] = [
             _score_keyword(
                 candidates,
@@ -3349,6 +3452,8 @@ def search(
                 negative_by_id=negative_by_id,
                 corroboration_boost=corroboration_boost,
                 candidate_tokens=candidate_tokens,
+                scaffold_terms=conv_scaffold,
+                scaffold_weight=_CONV_KEYWORD_SCAFFOLD_WEIGHT or 0.0,
             ),
             _score_bm25(
                 candidates,

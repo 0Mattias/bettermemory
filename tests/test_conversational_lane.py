@@ -372,3 +372,159 @@ def test_lane_on_is_deterministic() -> None:
     a = search(mems, q, mode="hybrid", max_results=3, now=_NOW, conversational=True)
     b = search(mems, q, mode="hybrid", max_results=3, now=_NOW, conversational=True)
     assert _pairs(a) == _pairs(b)
+
+
+# ---------------------------------------------------------------------------
+# L2 — the pricing gate's widening and the keyword-leg repricing
+# (bench/l/L2_DECLARATION.md §3; dark by default, arms via config commits)
+# ---------------------------------------------------------------------------
+
+
+def _count_ask_store() -> list[Memory]:
+    """The L2 anatomy's untreated cluster in miniature: a count ask
+    with no window and no selector, a gold matching its content, and a
+    distractor matching its scaffold repeatedly."""
+    return [
+        _memory(
+            "[2023/03/12 (Sun) 11:00]\nuser: I went to visit the doctor "
+            "about my knee; Dr Patel says the knee is healing.",
+            offset_seconds=0,
+        ),
+        _memory(
+            "[2023/03/18 (Sat) 09:30]\nuser: So many appointments in the "
+            "past month, and many many things besides — the past weeks ran "
+            "long, month after month.",
+            offset_seconds=1,
+        ),
+        _memory(
+            "[2023/03/21 (Tue) 15:00]\nuser: How many days of rain in the "
+            "past month? Many, and the month is not done.",
+            offset_seconds=2,
+        ),
+    ]
+
+
+_COUNT_ASK = "How many doctors did I visit in the past month?"
+
+
+def test_l2_constants_ship_dark() -> None:
+    import bettermemory.search as engine
+
+    assert engine._CONV_SCAFFOLD_MIN_STEMS is None
+    assert engine._CONV_KEYWORD_SCAFFOLD_WEIGHT is None
+
+
+def test_l2_dark_state_leaves_count_asks_inert() -> None:
+    # With both constants None a scaffold-shaped, non-temporal query
+    # never enters the lane: on equals off, byte for byte.
+    mems = _count_ask_store()
+    off = search(
+        mems, _COUNT_ASK, mode="hybrid", max_results=3, now=_NOW, conversational=False
+    )
+    on = search(
+        mems, _COUNT_ASK, mode="hybrid", max_results=3, now=_NOW, conversational=True
+    )
+    assert _pairs(off) == _pairs(on)
+
+
+def test_scaffold_shaped_predicate(monkeypatch) -> None:
+    import bettermemory.search as engine
+
+    from bettermemory.search import _conv_scaffold_shaped, _strip_stopwords, tokenize
+
+    def toks(q: str) -> list[str]:
+        return _strip_stopwords(tokenize(q))
+
+    # None: constant-False, whatever the query.
+    assert not _conv_scaffold_shaped(toks(_COUNT_ASK))
+    monkeypatch.setattr(engine, "_CONV_SCAFFOLD_MIN_STEMS", 2)
+    # A count ask carries the class in co-occurrence plus content.
+    assert _conv_scaffold_shaped(toks(_COUNT_ASK))
+    # One scaffold stem is not a shape.
+    assert not _conv_scaffold_shaped(toks("how many doctors treated my knee"))
+    # All scaffold, no content: not priced (nothing left to rank on).
+    assert not _conv_scaffold_shaped(toks("how many days in the past month"))
+    monkeypatch.setattr(engine, "_CONV_SCAFFOLD_MIN_STEMS", 3)
+    assert _conv_scaffold_shaped(toks("how many times in the past month did I bake"))
+    # Two stems clear 2 but not 3 — the threshold is live.
+    assert not _conv_scaffold_shaped(toks("how many doctors did I visit this week"))
+
+
+def test_widened_gate_reprices_count_asks(monkeypatch) -> None:
+    import bettermemory.search as engine
+
+    monkeypatch.setattr(engine, "_CONV_SCAFFOLD_MIN_STEMS", 2)
+    monkeypatch.setattr(engine, "_CONV_KEYWORD_SCAFFOLD_WEIGHT", 0.0)
+    mems = _count_ask_store()
+    off = search(
+        mems, _COUNT_ASK, mode="hybrid", max_results=3, now=_NOW, conversational=False
+    )
+    on = search(
+        mems, _COUNT_ASK, mode="hybrid", max_results=3, now=_NOW, conversational=True
+    )
+    # Off: the scaffold matcher outprices the narration in both legs.
+    assert _ids(off)[0] != mems[0].id
+    # On: both legs price content alone, and the narration leads.
+    assert _ids(on)[0] == mems[0].id
+
+
+def test_keyword_repricing_weights_and_content_coverage() -> None:
+    from bettermemory.search import score_memory
+
+    q = ["doctor", "visit", "mani", "past", "month"]
+    scaffold = frozenset({"mani", "past", "month"})
+    gold = _memory("user: I went to visit the doctor; the doctor is Dr Patel.")
+    lookalike = _memory("user: many many past months, past month after month, so many.")
+    stock_gold, _ = score_memory(gold, q, now=_NOW)
+    priced_gold, gold_matched = score_memory(
+        gold, q, now=_NOW, scaffold_terms=scaffold, scaffold_weight=0.0
+    )
+    # Content coverage: the gold matches every content term, so its
+    # priced coverage multiplier is full — above its stock one, where
+    # scaffold dilutes the denominator.
+    assert priced_gold > stock_gold
+    assert set(gold_matched) == {"doctor", "visit"}
+    # A candidate whose every match is scaffold leaves the leg whole.
+    priced_look, look_matched = score_memory(
+        lookalike, q, now=_NOW, scaffold_terms=scaffold, scaffold_weight=0.0
+    )
+    assert (priced_look, look_matched) == (0.0, [])
+    # At an interior weight the scaffold hits still append to matched —
+    # display and evidence read as before — while the contribution is
+    # priced down.
+    part, part_matched = score_memory(
+        lookalike, q, now=_NOW, scaffold_terms=scaffold, scaffold_weight=0.25
+    )
+    assert 0.0 < part < score_memory(lookalike, q, now=_NOW)[0]
+    assert set(part_matched) == {"mani", "past", "month"}
+
+
+def test_widening_leaves_explicit_modes_pure(monkeypatch) -> None:
+    import bettermemory.search as engine
+
+    monkeypatch.setattr(engine, "_CONV_SCAFFOLD_MIN_STEMS", 2)
+    monkeypatch.setattr(engine, "_CONV_KEYWORD_SCAFFOLD_WEIGHT", 0.0)
+    mems = _count_ask_store()
+    for mode in ("keyword", "bm25"):
+        off = search(
+            mems, _COUNT_ASK, mode=mode, max_results=3, now=_NOW, conversational=False
+        )
+        on = search(
+            mems, _COUNT_ASK, mode=mode, max_results=3, now=_NOW, conversational=True
+        )
+        assert _pairs(off) == _pairs(on)
+
+
+def test_all_scaffold_temporal_query_leaves_keyword_leg_stock(monkeypatch) -> None:
+    # A temporal query with no content term keeps the shipped shape:
+    # the floor applies, the keyword leg stays stock, and the weight
+    # constant has nothing to change.
+    import bettermemory.search as engine
+
+    mems = _adversarial_store()
+    q = "how many days ago?"
+    monkeypatch.setattr(engine, "_CONV_SCAFFOLD_MIN_STEMS", 2)
+    dark = search(mems, q, mode="hybrid", max_results=3, now=_NOW, conversational=True)
+    monkeypatch.setattr(engine, "_CONV_KEYWORD_SCAFFOLD_WEIGHT", 0.0)
+    lit = search(mems, q, mode="hybrid", max_results=3, now=_NOW, conversational=True)
+    assert _pairs(dark) == _pairs(lit)
