@@ -1407,8 +1407,13 @@ _CONV_SELECTOR_DECAY = 0.7
 # toxin: zeroed scaffold collapses a temporal gold's separation over
 # generic content matchers into a raw/coverage tie, and the recency
 # tiebreak hands the rank to the newer wrong doc — the inverse of the
-# gold-is-earliest evidence. Read 2 prices the interior weight.
-_CONV_SCAFFOLD_MIN_STEMS: int | None = 2
+# gold-is-earliest evidence. Read 2 priced the interior weight: the
+# temporal edge went positive and the widening's three multi-session
+# downs persisted at both weights — in count asks the bodies' own
+# scaffold (amounts, "total", "this year") is evidence, and the
+# widened floor strips the gold's edge over content lookalikes. Read
+# 3 drops the widening and prices the keyword edge clean.
+_CONV_SCAFFOLD_MIN_STEMS: int | None = None
 # _CONV_KEYWORD_SCAFFOLD_WEIGHT — a priced query's scaffold terms
 # contribute this multiple of their standard keyword-scorer
 # contribution, and the coverage multiplier is computed over content
