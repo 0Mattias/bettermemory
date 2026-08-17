@@ -1,0 +1,114 @@
+{
+ "provenance": {
+  "commit": "298e8dd",
+  "date": "2026-08-17",
+  "machine": {
+   "os": "Darwin 25.5.0",
+   "machine": "arm64",
+   "python": "3.13.13"
+  }
+ },
+ "declaration": "bench/w/W3P_DECLARATION.md",
+ "corpus": {
+  "name": "stackoverflow-posts-archive",
+  "archive": "bench/w/corpus/stackexchange/stackoverflow.com-Posts.7z",
+  "sha256_pinned": "1fcde86b9a0d701261a96698e78f65b7436d896eece5361ec7922d7c725c41cd",
+  "sha256_reverified": "1fcde86b9a0d701261a96698e78f65b7436d896eece5361ec7922d7c725c41cd",
+  "sha_seconds": 28.7,
+  "members": [
+   "Posts.xml"
+  ]
+ },
+ "pair_file": {
+  "path": "bench/w/corpus/derived/w3p-pairs-2026-08-17.tsv",
+  "sha256": "4951b279c094ca0638fcfa766d04190384d69da578e78daa8adb042443797512",
+  "bytes": 3912153
+ },
+ "census": {
+  "rows_scanned": 59819048,
+  "rows_by_post_type": {
+   "1": 24101803,
+   "2": 35603624,
+   "3": 167,
+   "4": 56547,
+   "5": 56546,
+   "6": 354,
+   "7": 5,
+   "8": 2
+  },
+  "marker_rows": 40785,
+  "pairs_total": 40103,
+  "pair_vocabulary_terms": 15924,
+  "needs": {
+   "06f04340": {
+    "count": 0,
+    "gloss": "what to serve for dinner <-> the herb-recipe session",
+    "register": "food",
+    "supported": false
+   },
+   "09d032c9": {
+    "count": 1,
+    "gloss": "phone battery life <-> the power-bank/charging-pad session",
+    "register": "consumer-tech",
+    "supported": false
+   },
+   "195a1a1b": {
+    "count": 0,
+    "gloss": "evening activities <-> the time-management/schedule session",
+    "register": "everyday-planning",
+    "supported": false
+   },
+   "1a1907b4": {
+    "count": 0,
+    "gloss": "cocktail suggestions <-> the Pimm's Cup / Collins-glass session",
+    "register": "food/drink",
+    "supported": false
+   },
+   "505af2f5": {
+    "count": 0,
+    "gloss": "creamer recipe <-> the making-my-own-creamer session",
+    "register": "food",
+    "supported": false
+   },
+   "75832dbd": {
+    "count": 0,
+    "gloss": "recent publications/conferences <-> the research-interest session (deep learning, medical image analysis)",
+    "register": "academic/technical",
+    "supported": false
+   },
+   "95228167": {
+    "count": 0,
+    "gloss": "what to look for in a guitar <-> the Les Paul session",
+    "register": "music-gear",
+    "supported": false
+   },
+   "d6233ab6": {
+    "count": 0,
+    "gloss": "nostalgic / reunion <-> the remembered-high-school session",
+    "register": "everyday-emotional",
+    "supported": false
+   }
+  },
+  "floors": {
+   "V": {
+    "threshold_pairs": 50000,
+    "pairs_total": 40103,
+    "holds": false
+   },
+   "C": {
+    "threshold_needs": 3,
+    "pairs_per_need": 5,
+    "needs_supported": 0,
+    "holds": false
+   }
+  },
+  "g0_verdict": "PARK-AT-CENSUS"
+ },
+ "register_overlap": {
+  "preference_ask_tokens": 173,
+  "preference_ask_fraction_in_pair_vocab": 0.7457,
+  "miss_gold_tokens": 2964,
+  "miss_gold_fraction_in_pair_vocab": 0.5435
+ },
+ "pass_seconds": 747.3
+}
