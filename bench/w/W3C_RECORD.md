@@ -54,8 +54,10 @@ leg's only vocabulary, the paired incumbent in the same set:
   (`gate-w3c-dev-bridge-2026-08-17.json`) against guards of 0.35
   and 0.60.
 - **G3 holds.** The repeat reproduced the primary's results block
-  and every per-question rank identically; the CI leg is committed
-  and green.
+  and every per-question rank identically; the build repeated over
+  the same inputs reproduced the committed table byte-identically
+  (only the run JSON's provenance commit stamp moves between
+  invocations); the CI leg is committed and green.
 
 **Verdict: W3C-PARK**, per the declared grid — G2 failed, G1 and
 G1p failed, and the class net-moved nothing. The engine is
