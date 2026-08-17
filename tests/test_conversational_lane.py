@@ -407,16 +407,17 @@ def _count_ask_store() -> list[Memory]:
 _COUNT_ASK = "How many doctors did I visit in the past month?"
 
 
-def test_l2_constants_ship_dark() -> None:
+def test_l2_dark_state_leaves_count_asks_inert(monkeypatch) -> None:
+    # The dark contract, value-agnostic: with BOTH constants None — the
+    # implementation-commit state, and the reversion point if the owner
+    # declines the ship — a scaffold-shaped, non-temporal query never
+    # enters the lane: on equals off, byte for byte. The constants'
+    # committed values move with the declared tuning reads and are
+    # pinned by the artifacts, not by this suite.
     import bettermemory.search as engine
 
-    assert engine._CONV_SCAFFOLD_MIN_STEMS is None
-    assert engine._CONV_KEYWORD_SCAFFOLD_WEIGHT is None
-
-
-def test_l2_dark_state_leaves_count_asks_inert() -> None:
-    # With both constants None a scaffold-shaped, non-temporal query
-    # never enters the lane: on equals off, byte for byte.
+    monkeypatch.setattr(engine, "_CONV_SCAFFOLD_MIN_STEMS", None)
+    monkeypatch.setattr(engine, "_CONV_KEYWORD_SCAFFOLD_WEIGHT", None)
     mems = _count_ask_store()
     off = search(
         mems, _COUNT_ASK, mode="hybrid", max_results=3, now=_NOW, conversational=False
@@ -436,6 +437,7 @@ def test_scaffold_shaped_predicate(monkeypatch) -> None:
         return _strip_stopwords(tokenize(q))
 
     # None: constant-False, whatever the query.
+    monkeypatch.setattr(engine, "_CONV_SCAFFOLD_MIN_STEMS", None)
     assert not _conv_scaffold_shaped(toks(_COUNT_ASK))
     monkeypatch.setattr(engine, "_CONV_SCAFFOLD_MIN_STEMS", 2)
     # A count ask carries the class in co-occurrence plus content.
