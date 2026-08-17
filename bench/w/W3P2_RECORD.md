@@ -74,9 +74,11 @@ the L2 record left it.
    relation type matches; the census now prices which needs it can
    ever serve: two of eight, and the class bar needs four.
 3. **The extraction infrastructure is the durable product, again.**
-   Eighteen sha-verified archives, 38k labeled edges, >98%
-   resolution, 140 seconds, deterministic, with per-site row censuses
-   W1b's declaration can reuse. The register-matched corpus is real,
+   Eighteen sha-verified archives; 37,436 well-formed pairs
+   (`pairs_total` in `bench/w/results/w3p2-census-2026-08-17.json`)
+   from the labeled duplicate edges, deterministic, in minutes rather
+   than hours, with per-site row censuses W1b's declaration can
+   reuse. The register-matched corpus is real,
    pinned, and now measured — it simply answers a different question
    than the one the preference class asks.
 
