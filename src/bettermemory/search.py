@@ -1400,33 +1400,27 @@ _CONV_SELECTOR_DECAY = 0.7
 # structural signal. None removes the widening — the pricing gate is
 # L1's temporal reading alone.
 #
-# Tuning read 1 (L2 §5): the declared defaults, armed whole — the
-# widening at two stems, the keyword leg at weight zero. Net -0.68 @5
-# on the half; the paired movers decompose 7-down/2-up temporal
-# against 3-down/2-up scaffold-gated, so the α=0 keyword edge is the
-# toxin: zeroed scaffold collapses a temporal gold's separation over
-# generic content matchers into a raw/coverage tie, and the recency
-# tiebreak hands the rank to the newer wrong doc — the inverse of the
-# gold-is-earliest evidence. Read 2 priced the interior weight: the
-# temporal edge went positive and the widening's three multi-session
-# downs persisted at both weights — in count asks the bodies' own
-# scaffold (amounts, "total", "this year") is evidence, and the
-# widened floor strips the gold's edge over content lookalikes. Read
-# 3 drops the widening and prices the keyword edge clean.
+# None is the L2-PARK reversion (bench/l/L2_RECORD.md): the widening
+# died in tuning — in count asks the bodies' own scaffold (amounts,
+# "total", "this year") is evidence, and the widened floor strips the
+# gold's edge over content lookalikes — and the keyword weight died
+# at the gate, so the constant pair ships dark and the engine is
+# behaviorally 6.1.0.
 _CONV_SCAFFOLD_MIN_STEMS: int | None = None
 # _CONV_KEYWORD_SCAFFOLD_WEIGHT — a priced query's scaffold terms
 # contribute this multiple of their standard keyword-scorer
 # contribution, and the coverage multiplier is computed over content
 # terms alone (see score_memory). None leaves the keyword leg stock:
 # L1 repriced only the BM25 half of the fusion's vote, and this
-# constant is the other half. Read 2: the interior weight — scaffold
-# priced down fourfold but not erased, keeping the separation the
-# zero arm collapsed into recency-tiebreak losses. Read 4: the cap —
-# the curve read -0.89, +0.25 type points at weights 0 and 0.25 on
-# the temporal half's own type; the half weight prices the top of
-# the declared range, where the two remaining partial losses stand
-# to recover and the full rescue stands to survive.
-_CONV_KEYWORD_SCAFFOLD_WEIGHT: float | None = 0.5
+# constant is the other half. None is the L2-PARK reversion
+# (bench/l/L2_RECORD.md): the tuning half's weight curve rose
+# monotonically into the declared cap, and the holdout half inverted
+# it — the gate read moved the untouched half down and the
+# multi-session type below its guard, the exact overfit G1h exists
+# to catch. A temporal gold's scaffold co-match is load-bearing
+# separation in this leg; repricing it trades rescues for losses at
+# every weight the unit was allowed to price.
+_CONV_KEYWORD_SCAFFOLD_WEIGHT: float | None = None
 
 _MONTH_NAMES = (
     "january",
