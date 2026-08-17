@@ -1401,15 +1401,23 @@ _CONV_SELECTOR_DECAY = 0.7
 # L1's temporal reading alone.
 #
 # Tuning read 1 (L2 §5): the declared defaults, armed whole — the
-# widening at two stems, the keyword leg at weight zero.
+# widening at two stems, the keyword leg at weight zero. Net -0.68 @5
+# on the half; the paired movers decompose 7-down/2-up temporal
+# against 3-down/2-up scaffold-gated, so the α=0 keyword edge is the
+# toxin: zeroed scaffold collapses a temporal gold's separation over
+# generic content matchers into a raw/coverage tie, and the recency
+# tiebreak hands the rank to the newer wrong doc — the inverse of the
+# gold-is-earliest evidence. Read 2 prices the interior weight.
 _CONV_SCAFFOLD_MIN_STEMS: int | None = 2
 # _CONV_KEYWORD_SCAFFOLD_WEIGHT — a priced query's scaffold terms
 # contribute this multiple of their standard keyword-scorer
 # contribution, and the coverage multiplier is computed over content
 # terms alone (see score_memory). None leaves the keyword leg stock:
 # L1 repriced only the BM25 half of the fusion's vote, and this
-# constant is the other half.
-_CONV_KEYWORD_SCAFFOLD_WEIGHT: float | None = 0.0
+# constant is the other half. Read 2: the interior weight — scaffold
+# priced down fourfold but not erased, keeping the separation the
+# zero arm collapsed into recency-tiebreak losses.
+_CONV_KEYWORD_SCAFFOLD_WEIGHT: float | None = 0.25
 
 _MONTH_NAMES = (
     "january",
