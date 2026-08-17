@@ -279,6 +279,7 @@ async def memory_audit_turn(
         negative_by_id=ranking.negative_by_id,
         corroboration_boost=ranking.corroboration_boost,
         rescue_expansion=ranking.rescue_expansion,
+        conversational=ranking.conversational,
         corpus_stats_provider=probe_pool.corpus_stats_provider,
     )
 

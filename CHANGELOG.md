@@ -7,6 +7,35 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 6.1.0 - 2026-08-16
+
+### Changed — the conversational lane ships default-on
+
+Hybrid search now runs the Lane L conversational repairs by default
+(`search(conversational=True)`, `[behavior] conversational = true`):
+when a query has a temporal reading — "how many weeks ago did I…",
+"what did I do in March?" — its temporal-scaffold words
+(day/week/ago/last/many and kin, a committed 40-stem closed class)
+price as common words in the BM25 legs so the question's own syntax
+cannot outprice its content, and date-anchored items matching an
+explicit window get a bounded boost. Queries with no temporal reading
+are untouched byte for byte; `conversational = false` reproduces the
+pre-6.1.0 ranking exactly.
+
+The lane ran as a declared unit, bars fixed before any code
+(`bench/l/L1_DECLARATION.md`), and shipped on its gate read
+(`bench/l/L1_RECORD.md`): +1.27 LongMemEval macro-recall@5 points and
++0.93 at @1 on the full 500 against the paired off arm, the dev
+instrument byte-identical, no question type regressed, and the
+untouched holdout half generalizing stronger than the tuning half.
+The default install's standing LongMemEval sentence moves from 89.3%
+to 90.6% macro recall@5 — one point behind the 91.6% reference, from
+2.3, stated plainly: the reference line is not met. The silent-miss
+probe threads the flag through `RankingInputs` like every ranking
+input, so audit verdicts keep matching production. Both bench runners
+default `--conversational on` to keep a bare invocation measuring the
+default install; `off` reproduces every prior baseline row.
+
 ## 6.0.0 - 2026-08-15
 
 A major by the [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract):

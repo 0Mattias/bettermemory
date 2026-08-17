@@ -317,6 +317,7 @@ class RankingInputs(NamedTuple):
     corroboration_boost: bool
     half_life_days: float
     rescue_expansion: bool
+    conversational: bool
     events: list[dict[str, Any]] | None
 
 
@@ -438,6 +439,7 @@ def resolve_ranking_inputs(
         corroboration_boost=behavior.corroboration_boost,
         half_life_days=behavior.recency_boost_half_life_days,
         rescue_expansion=behavior.rescue_expansion,
+        conversational=behavior.conversational,
         events=tally_events,
     )
 
@@ -858,6 +860,7 @@ async def memory_search(
         corpus_stats_provider=corpus_stats_provider,
         matched_leg_out=matched_leg,
         rescue_expansion=ranking.rescue_expansion,
+        conversational=ranking.conversational,
     )
     # Pin one `now` for the whole response so the verification verdict
     # is consistent across hits — the alternative (let each helper

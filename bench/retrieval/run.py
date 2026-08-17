@@ -143,11 +143,14 @@ LEG_MARGIN_CAP = True
 
 # Whether the arms rank with the Lane L conversational repairs
 # (`search.search(conversational=...)`, bench/l/L1_DECLARATION.md).
-# Module-level, defaulting to the PRODUCT default (off), same shape as
-# RESCUE_EXPANSION. The declaration's expectation on THIS instrument is
-# inertness — its queries carry no temporal reading — and the lane-on
-# read exists to measure that expectation rather than assume it.
-CONVERSATIONAL = False
+# Module-level, defaulting to the PRODUCT default, same shape as
+# RESCUE_EXPANSION. The product default flipped ON at 6.1.0 (the L1
+# ship) and this default flipped with it. The lane is measured INERT on
+# this instrument — the L1 gate's dev results block is byte-identical
+# lane-on vs lane-off (bench/l/results/gate-dev-conv-2026-08-16.json) —
+# so the flip changes no number here; `--conversational off` stays the
+# committed-baseline arm for exactness.
+CONVERSATIONAL = True
 
 # Digest of the corpus the four committed artifacts ran against. The
 # `off` half of a `--prefilter both` run re-measures exactly what
@@ -752,12 +755,12 @@ def main() -> int:
     parser.add_argument(
         "--conversational",
         choices=("on", "off"),
-        default="off",
+        default="on",
         help=(
             "Rank with the Lane L conversational repairs "
-            "(bench/l/L1_DECLARATION.md). Default off — the product "
-            "default. Declared expectation here: inert (no dev query "
-            "carries a temporal reading)."
+            "(bench/l/L1_DECLARATION.md). Default on — the product "
+            "default since 6.1.0. Measured inert on this instrument "
+            "(no dev query carries a temporal reading)."
         ),
     )
     parser.add_argument("--json", action="store_true", help="Emit JSON.")

@@ -35,16 +35,21 @@ was committed before the corpus was downloaded.
 ## The standing comparison
 
 **bettermemory's default install retrieves with deterministic lexical
-code only and scores 89.3% macro recall@5 on this harness; claude-mem's
-embedding-native stack scores 91.6%. The default is 2.3 points behind,
-by our own measurement.** With the opt-in `embeddings` extra
-(restored 5.5.0 under the door C contract), bettermemory reads
-**91.8% — meeting and exceeding the reference by 0.2** — and the
-retrieval-recall campaign that governed this gap is closed
-(`../R3_DEFAULT_DECISION.md`): every deterministic mechanism was
+code only and scores 90.6% macro recall@5 on this harness; claude-mem's
+embedding-native stack scores 91.6%. The default is 1.0 point behind,
+by our own measurement** — from 2.3 before the 6.1.0 conversational
+lane (`../l/L1_RECORD.md`; the gate artifact is
+`../l/results/gate-lme-conv-a-2026-08-16.json`, its paired lane-off
+control reproducing the prior 89.3% default reading exactly). The
+now-removed opt-in `embeddings` extra read **91.8%** in its day
+(restored 5.5.0 under the door C contract, revoked by owner doctrine in
+6.0.0), and the retrieval-recall campaign that governed this gap is
+closed (`../R3_DEFAULT_DECISION.md`): every deterministic mechanism was
 measured to its own declared criterion, the default install stays
 lexical by doctrine, and the campaign's default-engine success bar was
-never claimed.
+never claimed. The 6.1.0 default reading comes from Lane L's own
+declared unit, gated primary on this instrument with the dev instrument
+as its no-regression guard.
 
 The dated best-arm-vs-best-arm record behind those numbers, measured
 2026-07-26/27 (`results/s-cleaned-both-arms.json`,
@@ -86,7 +91,11 @@ releases" wording against the artifact's own provenance block), and
 again through the restored opt-in arm at R2 (below).
 
 Session-level recall@k, macro-averaged, **[ceiling]** = maximum
-achievable at that k:
+achievable at that k. These rows are the LANE-OFF record — the engine
+before the 6.1.0 conversational lane, still reproducible via
+`--conversational off` and re-proven exactly as the L1 gate's paired
+control; the 6.1.0 default reading (53.4% / 90.6% / 94.9%) lives in
+`../l/results/gate-lme-conv-a-2026-08-16.json`:
 
 | arm | @1 | @5 | @10 |
 | --- | --- | --- | --- |

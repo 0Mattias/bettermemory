@@ -4,13 +4,15 @@ The mechanism pair, declared in bench/l/L1_DECLARATION.md §3: a
 temporal-SCAFFOLD df-floor through the filler-floor stats seam (L1-S),
 and date-anchor selection inside the fused ranking's near-tie band
 (L1-T), both engaged only when the flag is on AND the query parses as
-temporal. These tests pin the properties the declaration leans on: the
-shipped default is off and byte-stable, a non-temporal query is inert
-under the flag, the parser reads the declared shapes against the
-caller's clock, anchors resolve header-then-body-then-created, and the
-two repairs move an adversarial ranking the way the L1 miss anatomy
-says the real corpus needs — without touching keyword/bm25 modes or
-the stopword fallback.
+temporal. These tests pin the properties the declaration leans on —
+and, since the 6.1.0 ship, the default-on contract: the engine default
+matches the product default (ON, `[behavior] conversational` opting
+out), `conversational=False` reproduces the pre-lane ranking, a
+non-temporal query is inert either way, the parser reads the declared
+shapes against the caller's clock, anchors resolve
+header-then-body-then-created, and the repairs move an adversarial
+ranking the way the L1 miss anatomy says the real corpus needs —
+without touching keyword/bm25 modes or the stopword fallback.
 """
 
 from __future__ import annotations
@@ -210,20 +212,50 @@ def _adversarial_store() -> list[Memory]:
     ]
 
 
-def test_flag_off_is_the_default_and_byte_stable() -> None:
+def test_default_is_on_and_false_reproduces_the_pre_lane_ranking() -> None:
+    import inspect
+
+    # The engine default is the product default: ON since the 6.1.0
+    # ship (bench/l/L1_RECORD.md's owner door, taken 2026-08-16).
+    assert inspect.signature(search).parameters["conversational"].default is True
+
     mems = _adversarial_store()
     q = "How many days ago did I buy a smoker?"
     default = search(mems, q, mode="hybrid", max_results=3, now=_NOW)
-    explicit = search(
+    lane_on = search(
+        mems, q, mode="hybrid", max_results=3, now=_NOW, conversational=True
+    )
+    lane_off = search(
         mems, q, mode="hybrid", max_results=3, now=_NOW, conversational=False
     )
-    assert _pairs(default) == _pairs(explicit)
+    # A bare call ranks lane-on…
+    assert _pairs(default) == _pairs(lane_on)
+    # …and the opt-out reproduces the pre-lane ranking: the anatomy's
+    # shape, scaffold matcher on top, the narration displaced.
+    assert _ids(lane_off)[0] != mems[0].id
+    assert _pairs(lane_off) != _pairs(lane_on)
+
+
+def test_ranking_surfaces_carry_the_conversational_flag() -> None:
+    """The same parity contract `rescue_expansion` carries: a flag the
+    silent-miss probe cannot see makes the probe rank differently from
+    production, and the miss verdict reads only rank 1."""
+    import inspect
+
+    from bettermemory.audit import probe_for_miss
+    from bettermemory.config import BehaviorConfig
+    from bettermemory.handlers.search import RankingInputs
+
+    assert "conversational" in RankingInputs._fields
+    assert "conversational" in inspect.signature(probe_for_miss).parameters
+    assert BehaviorConfig().conversational is True
+    assert BehaviorConfig(conversational=False).conversational is False
 
 
 def test_non_temporal_query_is_inert_under_the_flag() -> None:
     mems = _adversarial_store()
     q = "wood pellets for the smoker"
-    off = search(mems, q, mode="hybrid", max_results=3, now=_NOW)
+    off = search(mems, q, mode="hybrid", max_results=3, now=_NOW, conversational=False)
     on = search(mems, q, mode="hybrid", max_results=3, now=_NOW, conversational=True)
     assert _pairs(off) == _pairs(on)
 
@@ -231,7 +263,7 @@ def test_non_temporal_query_is_inert_under_the_flag() -> None:
 def test_lane_lifts_content_match_over_scaffold_matchers(monkeypatch) -> None:
     mems = _adversarial_store()
     q = "How many days ago did I buy a smoker?"
-    off = search(mems, q, mode="hybrid", max_results=3, now=_NOW)
+    off = search(mems, q, mode="hybrid", max_results=3, now=_NOW, conversational=False)
     on = search(mems, q, mode="hybrid", max_results=3, now=_NOW, conversational=True)
     # Off: scaffold matchers outrank the narration (the anatomy's shape,
     # gold last in this deliberately pessimistic one-content-token store).
@@ -319,7 +351,7 @@ def test_keyword_and_bm25_modes_are_untouched() -> None:
     mems = _adversarial_store()
     q = "How many days ago did I buy a smoker?"
     for mode in ("keyword", "bm25"):
-        off = search(mems, q, mode=mode, max_results=3, now=_NOW)
+        off = search(mems, q, mode=mode, max_results=3, now=_NOW, conversational=False)
         on = search(mems, q, mode=mode, max_results=3, now=_NOW, conversational=True)
         assert _pairs(off) == _pairs(on)
 
@@ -329,7 +361,7 @@ def test_stopword_fallback_skips_the_lane() -> None:
     # stream; the lane must not engage there (declaration §3 scope).
     mems = [_memory("what is the where is the", offset_seconds=0)]
     q = "what is the"
-    off = search(mems, q, mode="hybrid", max_results=1, now=_NOW)
+    off = search(mems, q, mode="hybrid", max_results=1, now=_NOW, conversational=False)
     on = search(mems, q, mode="hybrid", max_results=1, now=_NOW, conversational=True)
     assert _pairs(off) == _pairs(on)
 

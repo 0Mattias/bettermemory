@@ -82,6 +82,18 @@ search_mode = "hybrid"
 # the gains were measured on.
 rescue_expansion = false
 
+# The Lane L conversational repairs (6.1.0): when a query has a temporal
+# reading ("how many weeks ago did I…", "what did I do in March?"), its
+# temporal-scaffold words (day/week/ago/last/many and kin) are priced as
+# common words in the BM25 legs so the question's own syntax cannot
+# outprice its content, and date-anchored items matching an explicit
+# window are boosted. ON BY DEFAULT: the L1 gate read measured +1.27
+# LongMemEval macro-recall@5 points (+0.93 at @1) with the dev
+# instrument byte-identical and no question type regressed
+# (bench/l/L1_RECORD.md). Queries with no temporal reading are untouched
+# byte for byte. Set false to reproduce the pre-6.1.0 ranking exactly.
+conversational = true
+
 # Usage-aware ranking. When true, a bounded "endorsement" factor (the same
 # shape as the recency boost — capped at +10%, so it only breaks near-ties,
 # never overrides relevance) nudges memories the model has DELIBERATELY
@@ -359,6 +371,17 @@ class BehaviorConfig:
     # shaped like the gold set; the DEFAULT flips only via a fresh
     # preregistration on both instruments.
     rescue_expansion: bool = False
+    # The Lane L conversational repairs: the temporal-scaffold df-floor
+    # plus boost-only date-anchor windows (see `search.search`'s
+    # `conversational` parameter; unit contract bench/l/L1_DECLARATION.md,
+    # gate read bench/l/L1_RECORD.md). DEFAULT ON since 6.1.0 — the gate
+    # measured +1.27 LongMemEval macro@5 / +0.93 @1 on the full 500 with
+    # the dev instrument byte-identical, no question type regressed, and
+    # the untouched holdout half generalizing stronger than the tuning
+    # half. False reproduces the pre-6.1.0 ranking exactly (the repairs
+    # engage only on queries with a temporal reading, so non-temporal
+    # queries are byte-identical either way).
+    conversational: bool = True
     # Retrieval ranker for `memory_search`. One of `keyword` (the
     # original TF + coverage + recency scorer; legacy), `bm25` (Okapi
     # BM25), or `hybrid` (RRF fusion of both; default since 2.6.8 —
@@ -1043,6 +1066,7 @@ def load_config(path: Path | None = None) -> Config:
                 behavior_raw.get("search_mode"), config_path=config_path
             ),
             rescue_expansion=_coerce_bool(behavior_raw.get("rescue_expansion"), False),
+            conversational=_coerce_bool(behavior_raw.get("conversational"), True),
             recency_boost_half_life_days=_coerce_float(
                 behavior_raw.get("recency_boost_half_life_days"),
                 30.0,

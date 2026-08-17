@@ -175,9 +175,13 @@ ABLATIONS = ("none", "floor-only", "leg-only", "floor-off")
 
 # Whether the arms rank with the Lane L conversational repairs
 # (`search.search(conversational=...)`, bench/l/L1_DECLARATION.md).
-# Module-level and defaulting to the PRODUCT default (off), the same
-# shape as RESCUE_EXPANSION above.
-CONVERSATIONAL = False
+# Module-level and defaulting to the PRODUCT default, the same shape as
+# RESCUE_EXPANSION above. The product default flipped ON at 6.1.0 (the
+# L1 ship) and this default flipped with it, so a bare invocation keeps
+# measuring what a default install ranks with; `--conversational off`
+# reproduces every pre-6.1.0 baseline row, including the L1 gate's own
+# paired control (bench/l/results/gate-lme-off-2026-08-16.json).
+CONVERSATIONAL = True
 
 # The question's own date, parsed per instance and passed as the
 # engine's `now` — the clock a live assistant has at query time.
@@ -650,12 +654,13 @@ def main() -> int:
     p.add_argument(
         "--conversational",
         choices=("on", "off"),
-        default="off",
+        default="on",
         help=(
             "Rank with the Lane L conversational repairs (temporal-scaffold "
-            "df-floor + date-anchor selection, bench/l/L1_DECLARATION.md). "
-            "Default off — the product default. The question's own date is "
-            "passed as the engine clock in every arm either way."
+            "df-floor + date-anchor windows, bench/l/L1_DECLARATION.md). "
+            "Default on — the product default since 6.1.0. 'off' reproduces "
+            "the pre-6.1.0 baseline rows. The question's own date is passed "
+            "as the engine clock in every arm either way."
         ),
     )
     p.add_argument(

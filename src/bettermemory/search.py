@@ -3033,7 +3033,7 @@ def search(
     corpus_stats_provider: Callable[[list[str]], CorpusStats | None] | None = None,
     matched_leg_out: dict[str, str] | None = None,
     rescue_expansion: bool = False,
-    conversational: bool = False,
+    conversational: bool = True,
 ) -> list[MemoryHit]:
     """Rank `memories` against `query` and return up to `max_results` hits.
 
@@ -3135,22 +3135,33 @@ def search(
       nominates the pool from the CALLER's tokens, so there the rescue
       re-ranks the nominated pool rather than widening it — a
       documented limit, not a silent one.
-    - `conversational`: hybrid-mode only, DEFAULT OFF. The Lane L
-      repairs for conversation-shaped stores
-      (`bench/l/L1_DECLARATION.md`): when the query has a temporal
-      reading, (a) temporal-SCAFFOLD tokens (day/week/ago/last/many
-      and kin — the question's syntax, not its content) get a
-      document-frequency floor in the BM25 legs through the same
-      stats seam as the filler floor, so they cannot outprice content
-      terms; and (b) date anchors break lookalike ties inside the
-      fused ranking's near-tie band — an explicit window (a named
-      month, a date, "last month" resolved against `now`) boosts
-      in-window anchors and demotes out-of-window ones, and an
-      elapsed/order-shaped ask boosts the earliest (or, under "the
-      last time I…", the latest) narration. A query with no temporal
-      reading is untouched byte for byte, as is every call with the
-      flag off. The module constants carry the declared defaults;
-      the unit's gate artifacts record the finals they ranked with.
+    - `conversational`: hybrid-mode only, DEFAULT ON since 6.1.0 (the
+      L1 ship, owner decision 2026-08-16). The Lane L repairs for
+      conversation-shaped stores (`bench/l/L1_DECLARATION.md`): when
+      the query has a temporal reading, (a) temporal-SCAFFOLD tokens
+      (day/week/ago/last/many and kin — the question's syntax, not
+      its content) get a document-frequency floor in the BM25 legs
+      through the same stats seam as the filler floor, so they cannot
+      outprice content terms; and (b) date anchors break lookalike
+      ties inside the fused ranking's near-tie band — an explicit
+      window (a named month, a date, "last month" resolved against
+      `now`) boosts in-window anchors, and boosts only: the demote
+      and the earliest/latest selector were measured net-negative at
+      tuning and are dead (the record has the join). A query with no
+      temporal reading is untouched byte for byte, as is every call
+      with the flag off, so `conversational=False` reproduces the
+      pre-6.1.0 ranking exactly.
+
+      Why the default is on: the unit's gate read
+      (`bench/l/L1_RECORD.md`, artifacts beside it) measured +1.27
+      LongMemEval macro-recall@5 points and +0.93 at @1 on the full
+      500 against the paired off arm, with the dev instrument
+      byte-identical, no question type regressed, and the untouched
+      holdout half generalizing stronger than the tuning half. The
+      reference line (0.916) is NOT met — the shipped reading is
+      0.9062, stated plainly in the record. `[behavior]
+      conversational = false` is the supported opt-out; the module
+      constants carry the tuned finals the gate ranked with.
 
     Score semantics vary by mode: keyword/BM25 scores live on
     different scales and are not comparable across modes. Hybrid scores
