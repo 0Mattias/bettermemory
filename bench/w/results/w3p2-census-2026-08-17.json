@@ -1,0 +1,918 @@
+{
+ "provenance": {
+  "commit": "87a6541",
+  "date": "2026-08-17",
+  "machine": {
+   "os": "Darwin 25.5.0",
+   "machine": "arm64",
+   "python": "3.13.13"
+  }
+ },
+ "declaration": "bench/w/W3P2_DECLARATION.md",
+ "archives": [
+  {
+   "site": "academia-stackexchange-archive",
+   "archive": "bench/w/corpus/stackexchange/academia.stackexchange.com.7z",
+   "sha256_pinned": "5113eb82928523f259cde2ace39c43ce34655b9eb2d765dddaae8477007ec06a",
+   "sha256_reverified": "5113eb82928523f259cde2ace39c43ce34655b9eb2d765dddaae8477007ec06a",
+   "sha_seconds": 0.3,
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ]
+  },
+  {
+   "site": "android-stackexchange-archive",
+   "archive": "bench/w/corpus/stackexchange/android.stackexchange.com.7z",
+   "sha256_pinned": "840a581fd6debf034fd91605151f1ffd2a3083fb4f414165b2cc50be3430e55c",
+   "sha256_reverified": "840a581fd6debf034fd91605151f1ffd2a3083fb4f414165b2cc50be3430e55c",
+   "sha_seconds": 0.2,
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ]
+  },
+  {
+   "site": "apple-stackexchange-archive",
+   "archive": "bench/w/corpus/stackexchange/apple.stackexchange.com.7z",
+   "sha256_pinned": "eecb496259890c898af3000b20f75c938395845c8707d083053906374d4ab54f",
+   "sha256_reverified": "eecb496259890c898af3000b20f75c938395845c8707d083053906374d4ab54f",
+   "sha_seconds": 0.4,
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ]
+  },
+  {
+   "site": "beer-stackexchange-archive",
+   "archive": "bench/w/corpus/stackexchange/beer.stackexchange.com.7z",
+   "sha256_pinned": "29e057c640ad2792c8fc063d3ef52e6d2ce397db995a8ca5a06f1735a82d84c2",
+   "sha256_reverified": "29e057c640ad2792c8fc063d3ef52e6d2ce397db995a8ca5a06f1735a82d84c2",
+   "sha_seconds": 0.0,
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ]
+  },
+  {
+   "site": "coffee-stackexchange-archive",
+   "archive": "bench/w/corpus/stackexchange/coffee.stackexchange.com.7z",
+   "sha256_pinned": "ed92031e75185b1e5549ae257b5280423941d17751042b0369b1f2d3e8d90952",
+   "sha256_reverified": "ed92031e75185b1e5549ae257b5280423941d17751042b0369b1f2d3e8d90952",
+   "sha_seconds": 0.0,
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ]
+  },
+  {
+   "site": "cooking-stackexchange-archive",
+   "archive": "bench/w/corpus/stackexchange/cooking.stackexchange.com.7z",
+   "sha256_pinned": "de98b85f9807a23dfc8c91006f8b59b2149089e94ea9d54676d215ea156a9ac6",
+   "sha256_reverified": "de98b85f9807a23dfc8c91006f8b59b2149089e94ea9d54676d215ea156a9ac6",
+   "sha_seconds": 0.1,
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ]
+  },
+  {
+   "site": "diy-stackexchange-archive",
+   "archive": "bench/w/corpus/stackexchange/diy.stackexchange.com.7z",
+   "sha256_pinned": "f795b4dbe32aabc97802bd3846484fa01d580b23b98c8ab88162bf3e90107743",
+   "sha256_reverified": "f795b4dbe32aabc97802bd3846484fa01d580b23b98c8ab88162bf3e90107743",
+   "sha_seconds": 0.3,
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ]
+  },
+  {
+   "site": "fitness-stackexchange-archive",
+   "archive": "bench/w/corpus/stackexchange/fitness.stackexchange.com.7z",
+   "sha256_pinned": "5fe08b64b0fbdc917aa66217af5d162270a59159eccd2fff8bc287674d4f52a7",
+   "sha256_reverified": "5fe08b64b0fbdc917aa66217af5d162270a59159eccd2fff8bc287674d4f52a7",
+   "sha_seconds": 0.0,
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ]
+  },
+  {
+   "site": "gardening-stackexchange-archive",
+   "archive": "bench/w/corpus/stackexchange/gardening.stackexchange.com.7z",
+   "sha256_pinned": "f739cc994a19445f6c2b54277e762980f28c82f7b1c2d1a12028f1fca3387d63",
+   "sha256_reverified": "f739cc994a19445f6c2b54277e762980f28c82f7b1c2d1a12028f1fca3387d63",
+   "sha_seconds": 0.1,
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ]
+  },
+  {
+   "site": "interpersonal-stackexchange-archive",
+   "archive": "bench/w/corpus/stackexchange/interpersonal.stackexchange.com.7z",
+   "sha256_pinned": "6979dc44c79cc2b0028b3088de977151ef32e865acd26c78532d8810ffa57dc9",
+   "sha256_reverified": "6979dc44c79cc2b0028b3088de977151ef32e865acd26c78532d8810ffa57dc9",
+   "sha_seconds": 0.0,
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ]
+  },
+  {
+   "site": "lifehacks-stackexchange-archive",
+   "archive": "bench/w/corpus/stackexchange/lifehacks.stackexchange.com.7z",
+   "sha256_pinned": "b96ac28fd3c19244c1fd995caa5054bb8af2271104f8738a3e8042172842447f",
+   "sha256_reverified": "b96ac28fd3c19244c1fd995caa5054bb8af2271104f8738a3e8042172842447f",
+   "sha_seconds": 0.0,
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ]
+  },
+  {
+   "site": "movies-stackexchange-archive",
+   "archive": "bench/w/corpus/stackexchange/movies.stackexchange.com.7z",
+   "sha256_pinned": "6dc79d53d3dbaa7b08ebfc3e2cc664c5d0ec8248282a9c5913c67f429feecb3f",
+   "sha256_reverified": "6dc79d53d3dbaa7b08ebfc3e2cc664c5d0ec8248282a9c5913c67f429feecb3f",
+   "sha_seconds": 0.1,
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ]
+  },
+  {
+   "site": "music-stackexchange-archive",
+   "archive": "bench/w/corpus/stackexchange/music.stackexchange.com.7z",
+   "sha256_pinned": "3c2ac909c108f5580aad724ce4e8170fc8e5a547e8cfc84850d9c235dc5adcf4",
+   "sha256_reverified": "3c2ac909c108f5580aad724ce4e8170fc8e5a547e8cfc84850d9c235dc5adcf4",
+   "sha_seconds": 0.1,
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ]
+  },
+  {
+   "site": "outdoors-stackexchange-archive",
+   "archive": "bench/w/corpus/stackexchange/outdoors.stackexchange.com.7z",
+   "sha256_pinned": "f45a642dcedcfc9642002aaf297426121aa2a0fa62799592ca2819d265f01a05",
+   "sha256_reverified": "f45a642dcedcfc9642002aaf297426121aa2a0fa62799592ca2819d265f01a05",
+   "sha_seconds": 0.0,
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ]
+  },
+  {
+   "site": "parenting-stackexchange-archive",
+   "archive": "bench/w/corpus/stackexchange/parenting.stackexchange.com.7z",
+   "sha256_pinned": "70a624fcb885e4aff13a18613163e34c0a07e61bc761381053f89c12fc13212f",
+   "sha256_reverified": "70a624fcb885e4aff13a18613163e34c0a07e61bc761381053f89c12fc13212f",
+   "sha_seconds": 0.1,
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ]
+  },
+  {
+   "site": "pets-stackexchange-archive",
+   "archive": "bench/w/corpus/stackexchange/pets.stackexchange.com.7z",
+   "sha256_pinned": "5fb7c41000f0c629a15b9cd940c16bf3c63ec45443c574abe06b2d3502ac38df",
+   "sha256_reverified": "5fb7c41000f0c629a15b9cd940c16bf3c63ec45443c574abe06b2d3502ac38df",
+   "sha_seconds": 0.0,
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ]
+  },
+  {
+   "site": "superuser-archive",
+   "archive": "bench/w/corpus/stackexchange/superuser.com.7z",
+   "sha256_pinned": "8fd7d7acff1498193f8024a6a290ca46e3730d0442655739a8bdec49fd4bf5cb",
+   "sha256_reverified": "8fd7d7acff1498193f8024a6a290ca46e3730d0442655739a8bdec49fd4bf5cb",
+   "sha_seconds": 1.6,
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ]
+  },
+  {
+   "site": "travel-stackexchange-archive",
+   "archive": "bench/w/corpus/stackexchange/travel.stackexchange.com.7z",
+   "sha256_pinned": "4c33527edc970cc32a159607372ba652d4328fa007e1214f3510595f55629169",
+   "sha256_reverified": "4c33527edc970cc32a159607372ba652d4328fa007e1214f3510595f55629169",
+   "sha_seconds": 0.2,
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ]
+  }
+ ],
+ "pair_file": {
+  "path": "bench/w/corpus/derived/w3p2-pairs-2026-08-17.tsv",
+  "sha256": "bc1d7d49a1793c6d5d297c09f92f58cf2adfd1afde23c1814a1cb6aa3b0dee8e",
+  "bytes": 5271081
+ },
+ "census": {
+  "rows_scanned": 2640234,
+  "sites": {
+   "academia-stackexchange-archive": {
+    "status": "read",
+    "rows_scanned": 148806,
+    "rows_by_post_type": {
+     "1": 43792,
+     "2": 103840,
+     "4": 576,
+     "5": 576,
+     "6": 17,
+     "7": 5
+    },
+    "link_rows": 17657,
+    "duplicate_edge_rows": 2702,
+    "deduped_edges": 2702,
+    "unresolved_edges": 6,
+    "dropped_by_rule": 4,
+    "pairs": 2692,
+    "needs": {
+     "06f04340": 0,
+     "09d032c9": 0,
+     "195a1a1b": 0,
+     "1a1907b4": 0,
+     "505af2f5": 0,
+     "75832dbd": 13,
+     "95228167": 0,
+     "d6233ab6": 0
+    }
+   },
+   "android-stackexchange-archive": {
+    "status": "read",
+    "rows_scanned": 129815,
+    "rows_by_post_type": {
+     "1": 58621,
+     "2": 68916,
+     "3": 12,
+     "4": 1117,
+     "5": 1117,
+     "6": 26,
+     "7": 6
+    },
+    "link_rows": 20734,
+    "duplicate_edge_rows": 3007,
+    "deduped_edges": 3007,
+    "unresolved_edges": 18,
+    "dropped_by_rule": 13,
+    "pairs": 2976,
+    "needs": {
+     "06f04340": 0,
+     "09d032c9": 5,
+     "195a1a1b": 0,
+     "1a1907b4": 0,
+     "505af2f5": 0,
+     "75832dbd": 0,
+     "95228167": 0,
+     "d6233ab6": 0
+    }
+   },
+   "apple-stackexchange-archive": {
+    "status": "read",
+    "rows_scanned": 322218,
+    "rows_by_post_type": {
+     "1": 129215,
+     "2": 190749,
+     "3": 15,
+     "4": 1102,
+     "5": 1102,
+     "6": 29,
+     "7": 6
+    },
+    "link_rows": 32793,
+    "duplicate_edge_rows": 5402,
+    "deduped_edges": 5402,
+    "unresolved_edges": 25,
+    "dropped_by_rule": 10,
+    "pairs": 5367,
+    "needs": {
+     "06f04340": 0,
+     "09d032c9": 22,
+     "195a1a1b": 0,
+     "1a1907b4": 0,
+     "505af2f5": 0,
+     "75832dbd": 0,
+     "95228167": 0,
+     "d6233ab6": 0
+    }
+   },
+   "beer-stackexchange-archive": {
+    "status": "read",
+    "rows_scanned": 3924,
+    "rows_by_post_type": {
+     "1": 1173,
+     "2": 2580,
+     "4": 83,
+     "5": 83,
+     "6": 2,
+     "7": 3
+    },
+    "link_rows": 152,
+    "duplicate_edge_rows": 25,
+    "deduped_edges": 25,
+    "unresolved_edges": 0,
+    "dropped_by_rule": 0,
+    "pairs": 25,
+    "needs": {
+     "06f04340": 0,
+     "09d032c9": 0,
+     "195a1a1b": 0,
+     "1a1907b4": 0,
+     "505af2f5": 0,
+     "75832dbd": 0,
+     "95228167": 0,
+     "d6233ab6": 0
+    }
+   },
+   "coffee-stackexchange-archive": {
+    "status": "read",
+    "rows_scanned": 4525,
+    "rows_by_post_type": {
+     "1": 1475,
+     "2": 2898,
+     "4": 71,
+     "5": 71,
+     "6": 9,
+     "7": 1
+    },
+    "link_rows": 622,
+    "duplicate_edge_rows": 34,
+    "deduped_edges": 34,
+    "unresolved_edges": 0,
+    "dropped_by_rule": 1,
+    "pairs": 33,
+    "needs": {
+     "06f04340": 0,
+     "09d032c9": 0,
+     "195a1a1b": 0,
+     "1a1907b4": 0,
+     "505af2f5": 0,
+     "75832dbd": 0,
+     "95228167": 0,
+     "d6233ab6": 0
+    }
+   },
+   "cooking-stackexchange-archive": {
+    "status": "read",
+    "rows_scanned": 92200,
+    "rows_by_post_type": {
+     "1": 27325,
+     "2": 64239,
+     "3": 4,
+     "4": 306,
+     "5": 306,
+     "6": 15,
+     "7": 5
+    },
+    "link_rows": 9336,
+    "duplicate_edge_rows": 1385,
+    "deduped_edges": 1385,
+    "unresolved_edges": 7,
+    "dropped_by_rule": 1,
+    "pairs": 1377,
+    "needs": {
+     "06f04340": 0,
+     "09d032c9": 0,
+     "195a1a1b": 0,
+     "1a1907b4": 0,
+     "505af2f5": 0,
+     "75832dbd": 0,
+     "95228167": 0,
+     "d6233ab6": 0
+    }
+   },
+   "diy-stackexchange-archive": {
+    "status": "read",
+    "rows_scanned": 223560,
+    "rows_by_post_type": {
+     "1": 84628,
+     "2": 138269,
+     "4": 321,
+     "5": 321,
+     "6": 16,
+     "7": 5
+    },
+    "link_rows": 10213,
+    "duplicate_edge_rows": 1227,
+    "deduped_edges": 1227,
+    "unresolved_edges": 17,
+    "dropped_by_rule": 7,
+    "pairs": 1203,
+    "needs": {
+     "06f04340": 0,
+     "09d032c9": 0,
+     "195a1a1b": 0,
+     "1a1907b4": 0,
+     "505af2f5": 0,
+     "75832dbd": 0,
+     "95228167": 0,
+     "d6233ab6": 0
+    }
+   },
+   "fitness-stackexchange-archive": {
+    "status": "read",
+    "rows_scanned": 29704,
+    "rows_by_post_type": {
+     "1": 10217,
+     "2": 19171,
+     "4": 154,
+     "5": 154,
+     "6": 7,
+     "7": 1
+    },
+    "link_rows": 3357,
+    "duplicate_edge_rows": 450,
+    "deduped_edges": 450,
+    "unresolved_edges": 2,
+    "dropped_by_rule": 1,
+    "pairs": 447,
+    "needs": {
+     "06f04340": 0,
+     "09d032c9": 0,
+     "195a1a1b": 0,
+     "1a1907b4": 0,
+     "505af2f5": 0,
+     "75832dbd": 0,
+     "95228167": 0,
+     "d6233ab6": 0
+    }
+   },
+   "gardening-stackexchange-archive": {
+    "status": "read",
+    "rows_scanned": 44155,
+    "rows_by_post_type": {
+     "1": 17860,
+     "2": 25421,
+     "4": 433,
+     "5": 433,
+     "6": 6,
+     "7": 2
+    },
+    "link_rows": 2390,
+    "duplicate_edge_rows": 246,
+    "deduped_edges": 246,
+    "unresolved_edges": 0,
+    "dropped_by_rule": 1,
+    "pairs": 245,
+    "needs": {
+     "06f04340": 0,
+     "09d032c9": 0,
+     "195a1a1b": 0,
+     "1a1907b4": 0,
+     "505af2f5": 0,
+     "75832dbd": 0,
+     "95228167": 0,
+     "d6233ab6": 0
+    }
+   },
+   "interpersonal-stackexchange-archive": {
+    "status": "read",
+    "rows_scanned": 18766,
+    "rows_by_post_type": {
+     "1": 3929,
+     "2": 14381,
+     "4": 225,
+     "5": 225,
+     "6": 5,
+     "7": 1
+    },
+    "link_rows": 901,
+    "duplicate_edge_rows": 77,
+    "deduped_edges": 77,
+    "unresolved_edges": 0,
+    "dropped_by_rule": 0,
+    "pairs": 77,
+    "needs": {
+     "06f04340": 0,
+     "09d032c9": 0,
+     "195a1a1b": 0,
+     "1a1907b4": 0,
+     "505af2f5": 0,
+     "75832dbd": 0,
+     "95228167": 0,
+     "d6233ab6": 0
+    }
+   },
+   "lifehacks-stackexchange-archive": {
+    "status": "read",
+    "rows_scanned": 14864,
+    "rows_by_post_type": {
+     "1": 3075,
+     "2": 11346,
+     "4": 216,
+     "5": 216,
+     "6": 8,
+     "7": 3
+    },
+    "link_rows": 532,
+    "duplicate_edge_rows": 102,
+    "deduped_edges": 102,
+    "unresolved_edges": 0,
+    "dropped_by_rule": 0,
+    "pairs": 102,
+    "needs": {
+     "06f04340": 0,
+     "09d032c9": 0,
+     "195a1a1b": 0,
+     "1a1907b4": 0,
+     "505af2f5": 0,
+     "75832dbd": 0,
+     "95228167": 0,
+     "d6233ab6": 0
+    }
+   },
+   "movies-stackexchange-archive": {
+    "status": "read",
+    "rows_scanned": 65069,
+    "rows_by_post_type": {
+     "1": 22924,
+     "2": 37661,
+     "4": 2229,
+     "5": 2229,
+     "6": 21,
+     "7": 5
+    },
+    "link_rows": 3209,
+    "duplicate_edge_rows": 585,
+    "deduped_edges": 585,
+    "unresolved_edges": 1,
+    "dropped_by_rule": 1,
+    "pairs": 583,
+    "needs": {
+     "06f04340": 0,
+     "09d032c9": 0,
+     "195a1a1b": 0,
+     "1a1907b4": 0,
+     "505af2f5": 0,
+     "75832dbd": 0,
+     "95228167": 0,
+     "d6233ab6": 0
+    }
+   },
+   "music-stackexchange-archive": {
+    "status": "read",
+    "rows_scanned": 93531,
+    "rows_by_post_type": {
+     "1": 25722,
+     "2": 66722,
+     "3": 14,
+     "4": 528,
+     "5": 528,
+     "6": 13,
+     "7": 4
+    },
+    "link_rows": 7841,
+    "duplicate_edge_rows": 1334,
+    "deduped_edges": 1334,
+    "unresolved_edges": 0,
+    "dropped_by_rule": 2,
+    "pairs": 1332,
+    "needs": {
+     "06f04340": 0,
+     "09d032c9": 0,
+     "195a1a1b": 0,
+     "1a1907b4": 0,
+     "505af2f5": 0,
+     "75832dbd": 0,
+     "95228167": 0,
+     "d6233ab6": 0
+    }
+   },
+   "outdoors-stackexchange-archive": {
+    "status": "read",
+    "rows_scanned": 22399,
+    "rows_by_post_type": {
+     "1": 6168,
+     "2": 15078,
+     "4": 573,
+     "5": 573,
+     "6": 5,
+     "7": 2
+    },
+    "link_rows": 2379,
+    "duplicate_edge_rows": 162,
+    "deduped_edges": 162,
+    "unresolved_edges": 0,
+    "dropped_by_rule": 1,
+    "pairs": 161,
+    "needs": {
+     "06f04340": 0,
+     "09d032c9": 0,
+     "195a1a1b": 0,
+     "1a1907b4": 0,
+     "505af2f5": 0,
+     "75832dbd": 0,
+     "95228167": 0,
+     "d6233ab6": 0
+    }
+   },
+   "parenting-stackexchange-archive": {
+    "status": "read",
+    "rows_scanned": 29944,
+    "rows_by_post_type": {
+     "1": 6872,
+     "2": 22601,
+     "3": 2,
+     "4": 228,
+     "5": 228,
+     "6": 11,
+     "7": 2
+    },
+    "link_rows": 1826,
+    "duplicate_edge_rows": 213,
+    "deduped_edges": 213,
+    "unresolved_edges": 0,
+    "dropped_by_rule": 1,
+    "pairs": 212,
+    "needs": {
+     "06f04340": 0,
+     "09d032c9": 0,
+     "195a1a1b": 0,
+     "1a1907b4": 0,
+     "505af2f5": 0,
+     "75832dbd": 0,
+     "95228167": 0,
+     "d6233ab6": 0
+    }
+   },
+   "pets-stackexchange-archive": {
+    "status": "read",
+    "rows_scanned": 21334,
+    "rows_by_post_type": {
+     "1": 8360,
+     "2": 12440,
+     "4": 261,
+     "5": 261,
+     "6": 12
+    },
+    "link_rows": 3648,
+    "duplicate_edge_rows": 754,
+    "deduped_edges": 754,
+    "unresolved_edges": 1,
+    "dropped_by_rule": 1,
+    "pairs": 752,
+    "needs": {
+     "06f04340": 0,
+     "09d032c9": 0,
+     "195a1a1b": 0,
+     "1a1907b4": 0,
+     "505af2f5": 0,
+     "75832dbd": 0,
+     "95228167": 0,
+     "d6233ab6": 0
+    }
+   },
+   "superuser-archive": {
+    "status": "read",
+    "rows_scanned": 1245418,
+    "rows_by_post_type": {
+     "1": 505136,
+     "2": 732567,
+     "3": 12,
+     "4": 3823,
+     "5": 3822,
+     "6": 53,
+     "7": 4,
+     "8": 1
+    },
+    "link_rows": 90722,
+    "duplicate_edge_rows": 15075,
+    "deduped_edges": 15075,
+    "unresolved_edges": 415,
+    "dropped_by_rule": 125,
+    "pairs": 14535,
+    "needs": {
+     "06f04340": 0,
+     "09d032c9": 15,
+     "195a1a1b": 2,
+     "1a1907b4": 0,
+     "505af2f5": 0,
+     "75832dbd": 0,
+     "95228167": 0,
+     "d6233ab6": 0
+    }
+   },
+   "travel-stackexchange-archive": {
+    "status": "read",
+    "rows_scanned": 130002,
+    "rows_by_post_type": {
+     "1": 48768,
+     "2": 76736,
+     "4": 2230,
+     "5": 2230,
+     "6": 34,
+     "7": 4
+    },
+    "link_rows": 22361,
+    "duplicate_edge_rows": 5331,
+    "deduped_edges": 5331,
+    "unresolved_edges": 10,
+    "dropped_by_rule": 4,
+    "pairs": 5317,
+    "needs": {
+     "06f04340": 0,
+     "09d032c9": 3,
+     "195a1a1b": 0,
+     "1a1907b4": 0,
+     "505af2f5": 0,
+     "75832dbd": 0,
+     "95228167": 0,
+     "d6233ab6": 0
+    }
+   }
+  },
+  "pairs_total": 37436,
+  "pair_vocabulary_terms": 20364,
+  "needs": {
+   "06f04340": {
+    "count": 0,
+    "gloss": "what to serve for dinner <-> the herb-recipe session",
+    "register": "food",
+    "supported": false
+   },
+   "09d032c9": {
+    "count": 45,
+    "gloss": "phone battery life <-> the power-bank/charging-pad session",
+    "register": "consumer-tech",
+    "supported": true
+   },
+   "195a1a1b": {
+    "count": 2,
+    "gloss": "evening activities <-> the time-management/schedule session",
+    "register": "everyday-planning",
+    "supported": false
+   },
+   "1a1907b4": {
+    "count": 0,
+    "gloss": "cocktail suggestions <-> the Pimm's Cup / Collins-glass session",
+    "register": "food/drink",
+    "supported": false
+   },
+   "505af2f5": {
+    "count": 0,
+    "gloss": "creamer recipe <-> the making-my-own-creamer session",
+    "register": "food",
+    "supported": false
+   },
+   "75832dbd": {
+    "count": 13,
+    "gloss": "recent publications/conferences <-> the research-interest session (deep learning, medical image analysis)",
+    "register": "academic/technical",
+    "supported": true
+   },
+   "95228167": {
+    "count": 0,
+    "gloss": "what to look for in a guitar <-> the Les Paul session",
+    "register": "music-gear",
+    "supported": false
+   },
+   "d6233ab6": {
+    "count": 0,
+    "gloss": "nostalgic / reunion <-> the remembered-high-school session",
+    "register": "everyday-emotional",
+    "supported": false
+   }
+  },
+  "floors": {
+   "V": {
+    "threshold_pairs": 25000,
+    "pairs_total": 37436,
+    "holds": true
+   },
+   "C": {
+    "threshold_needs": 4,
+    "pairs_per_need": 5,
+    "needs_supported": 2,
+    "holds": false
+   }
+  },
+  "w3p_floor_continuity": {
+   "_": "informational: the W3-P floors applied to these counts",
+   "V_50000_holds": false,
+   "C_3_of_8_holds": false
+  },
+  "g0_verdict": "PARK-AT-CENSUS"
+ },
+ "register_overlap": {
+  "preference_ask_tokens": 173,
+  "preference_ask_fraction_in_pair_vocab": 0.948,
+  "miss_gold_tokens": 2964,
+  "miss_gold_fraction_in_pair_vocab": 0.7581
+ },
+ "pass_seconds": 139.9
+}
