@@ -1,0 +1,129 @@
+W3-P anatomy — the eight single-session-preference misses
+sidecar: bench/l/results/per-question/gate-lme-conv-a-pq-2026-08-16.json
+corpus:  bench/longmemeval/data/longmemeval_s_cleaned.json (sha256 d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442)
+engine: conversational lane on, rescue expansion off (the incumbent default arm)
+============================================================================
+qid 195a1a1b  gold session rank 6  register: everyday-planning
+ask (2023/05/30 (Tue) 22:28): Can you suggest some activities that I can do in the evening?
+gold (item rank 8):
+    [2023/05/30 (Tue) 15:46]
+    user: I'm struggling to manage my time effectively. Can you help me prioritize my tasks and create a schedule that works for me?
+    assistant: I'd be happy to help you prioritize your tasks and create a schedule that suits your needs.
+    
+    To get started, can you please share some information about your current situation? This will help me better understand your needs and provide
+bridge need: evening activities <-> the time-management/schedule session
+    ask-side  ['activities', 'activity', 'evening']
+    gold-side ['prioritize', 'schedule', 'task', 'tasks']
+top outrankers:
+    - [2023/05/23 (Tue) 08:03] | user: Can you suggest any affordable yet luxurious spa resorts in Bali, and what treatments do 
+    - [2023/05/24 (Wed) 23:24] | user: I'll definitely check out those companies, thanks for the recommendations. I'm also think
+    - [2023/05/30 (Tue) 00:59] | user: I'm planning to start a new exercise routine and was wondering if you could recommend som
+============================================================================
+qid 505af2f5  gold session rank 6  register: food
+ask (2023/05/30 (Tue) 20:16): I was thinking of trying a new coffee creamer recipe. Any recommendations?
+gold (item rank 10):
+    [2023/05/21 (Sun) 10:36]
+    user: I'm trying to reduce my sugar intake and save money, so I've started making my own flavored creamer with almond milk, vanilla extract, and honey. Can you give me some tips on how to make it even healthier?
+    assistant: What a great step you've taken! Making your own flavored creamer is a fantastic way to reduce sugar intake and save money. Here are some tips to make yo
+bridge need: creamer recipe <-> the making-my-own-creamer session
+    ask-side  ['recipe']
+    gold-side ['homemade', 'making']
+top outrankers:
+    - [2023/05/21 (Sun) 18:04] | user: I'm thinking of trying some new coffee flavors, do you have any recommendations for sprin
+    - [2023/05/24 (Wed) 20:21] | user: I like the idea of trying out different marinades for chicken. By the way, I used a Grubh
+    - [2023/05/25 (Thu) 18:38] | user: I'm thinking of going to the local state park where I went with friends on April 17th, it
+============================================================================
+qid 09d032c9  gold session rank 7  register: consumer-tech
+ask (2023/05/30 (Tue) 16:42): I've been having trouble with the battery life on my phone lately. Any tips?
+gold (item rank 8):
+    [2023/05/27 (Sat) 05:53]
+    user: I'm looking for some advice on the best way to organize my tech accessories, like my new portable power bank and wireless charging pad, when I'm traveling.
+    assistant: The eternal struggle of keeping tech accessories organized while traveling! I'm happy to help you with that. Here are some tips to keep your portable power bank, wireless charging pad, and other tech ac
+bridge need: phone battery life <-> the power-bank/charging-pad session
+    ask-side  ['battery']
+    gold-side ['charger', 'charging', 'power']
+top outrankers:
+    - [2023/05/22 (Mon) 07:08] | user: I've already started packing some non-essential items like winter clothes and books, but 
+    - [2023/05/22 (Mon) 22:16] | user: I'm looking for some new TV show recommendations. I've been watching a lot of Netflix lat
+    - [2023/05/21 (Sun) 01:29] | user: I've been slacking off on my exercise routine during my week-long beach vacation, and I'm
+============================================================================
+qid 95228167  gold session rank 8  register: music-gear
+ask (2023/05/30 (Tue) 21:04): I'm getting excited about my visit to the music store this weekend. Any tips on what to look for in a new guitar?
+gold (item rank 11):
+    [2023/05/25 (Thu) 23:11]
+    user: What are the most common types of music that people play on a Les Paul?
+    assistant: The Gibson Les Paul is a versatile guitar that can be used to play a wide range of music genres, but it's particularly well-suited to certain styles that benefit from its warm, rich, and sustainful tone. Here are some of the most common types of music associated with the Les Paul:
+    
+    1. 
+bridge need: what to look for in a guitar <-> the Les Paul session
+    ask-side  ['guitar']
+    gold-side ['fender', 'gibson', 'stratocaster']
+top outrankers:
+    - [2023/05/28 (Sun) 20:10] | user: I think I'm going to try out the outfit tomorrow for work. I'm really excited to see how 
+    - [2023/05/25 (Thu) 04:10] | user: I meant to say road bike, yeah. Thanks for the tips! I'll definitely check the brake pads
+    - [2023/05/27 (Sat) 01:58] | user: I'll try to pay attention to those signs, thanks for the advice! Speaking of romantic ges
+============================================================================
+qid d6233ab6  gold session rank 10  register: everyday-emotional
+ask (2023/05/30 (Tue) 01:29): I've been feeling nostalgic lately. Do you think it would be a good idea to attend my high school reunion?
+gold (item rank 16):
+    [2023/05/23 (Tue) 16:25]
+    user: I still remember the happy high school experiences such as being part of the debate team and taking advanced placement courses in economics. Now, I am surprised that I will become a Economics major so soon. Speaking of future, what are the average salaries for data scientists in different industries, and are there any specific industries that are more in demand for d
+bridge need: nostalgic / reunion <-> the remembered-high-school session
+    ask-side  ['nostalgic', 'reunion']
+    gold-side ['memories', 'memory', 'remember']
+top outrankers:
+    - [2023/05/24 (Wed) 20:07] | user: I think I'm starting to understand the concept of vulnerability better, but I'm still str
+    - [2023/05/21 (Sun) 20:03] | user: That's really encouraging to hear! Have there been any specific innovative programs or in
+    - [2023/05/22 (Mon) 22:28] | user: I think I'll use a dedicated journal for my gratitude habit. I like the idea of having a 
+============================================================================
+qid 1a1907b4  gold session rank 14  register: food/drink
+ask (2023/05/30 (Tue) 22:31): I've been thinking about making a cocktail for an upcoming get-together, but I'm not sure which one to choose. Any suggestions?
+gold (item rank 23):
+    [2023/05/21 (Sun) 00:41]
+    user: I think I'll try serving the Pimm's Cup with a Twist in a Collins glass. The tall, slender shape will showcase the layers of color and the garnishes nicely. Plus, it's a classic choice for serving refreshing summer drinks. What do you think?
+    assistant: A Collins glass is a perfect choice for serving the Pimm's Cup with a Twist! The tall, slender shape will indeed sho
+bridge need: cocktail suggestions <-> the Pimm's Cup / Collins-glass session
+    ask-side  ['cocktail', 'cocktails']
+    gold-side ['drink', 'drinks', 'glass']
+top outrankers:
+    - [2023/05/25 (Thu) 23:17] | user: I think I'll start by choosing one prompt per day and seeing how it goes. I might experim
+    - [2023/05/23 (Tue) 12:53] | user: I'll definitely follow those tips when selling my old flash. By the way, I've been thinki
+    - [2023/05/20 (Sat) 16:12] | user: I'm glad you found the tips helpful! As you start creating your scented sprays, keep in m
+============================================================================
+qid 06f04340  gold session rank 25  register: food
+ask (2023/05/30 (Tue) 21:35): What should I serve for dinner this weekend with my homegrown ingredients?
+gold (item rank 45):
+    [2023/05/23 (Tue) 00:29]
+    user: I'm trying to find some new recipe ideas that use fresh basil and mint. Can you suggest any?
+    assistant: What a refreshing combination! Fresh basil and mint can add a bright, herbaceous flavor to many dishes. Here are some recipe ideas that feature these two herbs as main attractions:
+    
+    **Basil Recipes**
+    
+    1. **Caprese Salad**: A classic Italian salad made with fresh mo
+bridge need: what to serve for dinner <-> the herb-recipe session
+    ask-side  ['dinner', 'homegrown', 'serve']
+    gold-side ['basil', 'mint', 'recipe', 'recipes']
+top outrankers:
+    - [2023/05/25 (Thu) 00:06] | assistant: To write a product profile description, start with the product name and describe wha
+    - [2023/05/24 (Wed) 22:45] | user: I'm trying to plan a family dinner for my mom's 60th birthday, which is coming up soon. C
+    - [2023/05/27 (Sat) 15:58] | user: I've been experimenting with some unique flavor profiles lately, like the Spicy Mango Mar
+============================================================================
+qid 75832dbd  gold session rank 30  register: academic/technical
+ask (2023/05/30 (Tue) 13:53): Can you recommend some recent publications or conferences that I might find interesting?
+gold (item rank 63):
+    [2023/05/22 (Mon) 00:37]
+    user: Can you recommend some popular datasets for training deep learning models in medical image analysis, specifically for segmentation tasks?
+    assistant: Here are some popular datasets for training deep learning models in medical image analysis, specifically for segmentation tasks:
+    
+    **1. Brain Segmentation**
+    
+    * **BRATS (Brain Tumor Segmentation Challenge)**: A widely used
+bridge need: recent publications/conferences <-> the research-interest session (deep learning, medical image analysis)
+    ask-side  ['conference', 'conferences', 'publication', 'publications']
+    gold-side ['dataset', 'datasets', 'learning', 'medical', 'research']
+top outrankers:
+    - [2023/05/23 (Tue) 17:12] | user: Rewrite the below Statement of purpose to increase my odds of getting an admission in Uni
+    - [2023/05/27 (Sat) 17:49] | user: I'm still a bit worried that I might not be able to connect with people at the book club.
+    - [2023/05/28 (Sun) 16:33] | user: I've had some experience with trolls on Reddit, and it's good to know there are ways to d
+============================================================================
+misses: 8 of 30; class recall@5 22/30 = 0.7333
