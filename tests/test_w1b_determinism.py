@@ -25,19 +25,35 @@ mechanism, which is parameter-independent.
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 _ROOT = Path(__file__).parent.parent
 _REDUCED = _ROOT / "bench" / "w" / "ci_register" / "reduced_se.txt"
 
-sys.path.insert(0, str(_ROOT / "bench" / "w"))
 
-from w1b_corpus import se_row_doc  # noqa: E402
+def _load_corpus() -> Any:
+    """The W1b reader, loaded by path like the other bench-side tests.
+
+    A file-location load rather than a `sys.path` import: `bench/` is not
+    a package on the type checker's search path, and the w3 determinism
+    tests already establish this idiom for reaching bench modules.
+    """
+    spec = importlib.util.spec_from_file_location(
+        "w1b_corpus", _ROOT / "bench" / "w" / "w1b_corpus.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["w1b_corpus"] = module
+    spec.loader.exec_module(module)
+    return module
+
 
 _TRAIN_ARGS = [
     "--ci-register",
@@ -98,6 +114,7 @@ def _train_and_emit(out: Path, segment: str) -> dict[str, str]:
 
 
 def test_se_row_parsing() -> None:
+    se_row_doc = _load_corpus().se_row_doc
     question = (
         '  <row Id="1" PostTypeId="1" '
         'Body="&lt;p&gt;Fizz &amp;amp; foam everywhere.&lt;/p&gt;&#xA;" '
