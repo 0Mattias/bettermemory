@@ -1040,6 +1040,20 @@
    }
   },
   {
+   "name": "w1b-ci-reduced-se-register",
+   "admitted": true,
+   "derived_from": "beer-stackexchange-archive",
+   "derivation": "Post documents of the beer archive through the W1b Stack Exchange reader (w1b_corpus.iter_se_docs: PostTypeId 1 title+body, 2 body, HTML stripped), document order, blank-line separated, truncated at exactly 1,000,000 bytes; bench/w/w1b_ci_register.py is the committed derivation and replays it from the pin",
+   "retrieved": "2026-08-18",
+   "bytes": 1000000,
+   "sha256": "4714b86ccf87826ac230e95bfa613997700427c64b263ae9e7fae366370d7990",
+   "license": "CC BY-SA (derived from Stack Exchange network content; attribution carried by the parent pin's archive.org item)",
+   "local_path": "bench/w/ci_register/reduced_se.txt",
+   "verification": {
+    "note": "Committed to git like the Gutenberg-derived slice: W1b's CI determinism check (tests/test_w1b_determinism.py) retrains it on every push, asserting both retrain byte-identity and segment-size invariance."
+   }
+  },
+  {
    "name": "enwiki-20260801-pages-articles-parts2-71",
    "admitted": true,
    "source_url": "https://dumps.wikimedia.org/enwiki/20260801/",
