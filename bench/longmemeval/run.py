@@ -86,8 +86,13 @@ from typing import Any
 _SRC = Path(__file__).resolve().parents[2] / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
+# ...and `bench/`, for the shared interval module.
+_BENCH = Path(__file__).resolve().parents[1]
+if str(_BENCH) not in sys.path:
+    sys.path.insert(0, str(_BENCH))
 
 from bettermemory import search as _engine  # noqa: E402
+from interval import mean_ci, paired_mean_diff_ci  # noqa: E402
 from bettermemory.search import search as run_search  # noqa: E402
 from bettermemory.store import Store  # noqa: E402
 
@@ -458,6 +463,36 @@ class ArmResult:
     def recall_macro(self, k: int) -> float:
         return self.macro[k] / self.n if self.n else 0.0
 
+    def per_question_recalls(self, k: int) -> list[float]:
+        """Rebuild each question's recall@k from its retained record.
+
+        Exactly the formula `question_record`'s docstring specifies, so
+        this adds no new measurement — it re-reads one already taken.
+        """
+        out: list[float] = []
+        for q in self.per_question:
+            n_ev = q["n_evidence"]
+            if not n_ev:
+                continue
+            got = sum(1 for r in q["evidence_ranks"] if r is not None and r < k)
+            out.append(got / n_ev)
+        return out
+
+    def macro_ci(self, k: int) -> tuple[float, float]:
+        """95% CI on macro recall@k — the mean, not a proportion.
+
+        Macro recall averages per-question FRACTIONS: a question with
+        three evidence sessions of which two surfaced scores 2/3. That
+        is not a count of successes, so Wilson does not apply and would
+        report a falsely tight interval. This is the standard error of
+        a mean, which at n=500 is well behaved.
+
+        Worth stating plainly because of what it does to a bar written
+        to four decimals: at this instrument's spread, two arms
+        separated in the fourth decimal are the same arm.
+        """
+        return mean_ci(self.per_question_recalls(k))
+
     def recall_micro(self, k: int) -> float:
         return self.hit[k] / self.total_evidence if self.total_evidence else 0.0
 
@@ -600,6 +635,59 @@ def _format_text(rows: list[ArmResult], meta: dict[str, Any]) -> str:
     return "\n".join(out) + "\n"
 
 
+def _format_comparison(rows: list[ArmResult], prior_path: Path) -> str:
+    """Paired reading of this run against a prior --per-question sidecar.
+
+    Pairs on question id, so a comparison survives a reordered corpus
+    and refuses a mismatched one rather than silently comparing
+    different questions to each other.
+    """
+    try:
+        prior = json.loads(prior_path.read_text())
+    except (OSError, ValueError) as exc:
+        return f"--compare: cannot read {prior_path}: {exc}"
+    prior_arms = prior.get("arms", {})
+    if not prior_arms:
+        return f"--compare: no per-question arms in {prior_path.name}"
+    out = [f"paired against {prior_path.name} (mean difference, 95% CI):"]
+    for r in rows:
+        theirs = prior_arms.get(r.arm)
+        if theirs is None:
+            out.append(f"  {r.arm}: absent from the prior sidecar — not compared.")
+            continue
+        prior_by_qid = {q["qid"]: q for q in theirs}
+        mine_by_qid = {q["qid"]: q for q in r.per_question}
+        shared = sorted(set(prior_by_qid) & set(mine_by_qid))
+        if not shared:
+            out.append(f"  {r.arm}: no shared question ids — not compared.")
+            continue
+        if len(shared) != len(mine_by_qid) or len(shared) != len(prior_by_qid):
+            out.append(
+                f"  {r.arm}: question sets differ ({len(mine_by_qid)} here, "
+                f"{len(prior_by_qid)} prior, {len(shared)} shared) — "
+                f"comparing the shared {len(shared)} only."
+            )
+
+        def recall_of(rec: dict[str, Any], k: int) -> float:
+            n_ev = rec["n_evidence"]
+            if not n_ev:
+                return 0.0
+            return (
+                sum(1 for x in rec["evidence_ranks"] if x is not None and x < k) / n_ev
+            )
+
+        for k in K_VALUES:
+            mine = [recall_of(mine_by_qid[q], k) for q in shared]
+            them = [recall_of(prior_by_qid[q], k) for q in shared]
+            diff, lo, hi = paired_mean_diff_ci(mine, them)
+            verdict = "no measurable change" if lo <= 0.0 <= hi else "measurable at 95%"
+            out.append(
+                f"  macro@{k}: {diff:+.4f} [{lo:+.4f}, {hi:+.4f}] "
+                f"on n={len(shared)} — {verdict}"
+            )
+    return "\n".join(out)
+
+
 def main() -> int:
     p = argparse.ArgumentParser(
         description="Session-level retrieval recall on LongMemEval.",
@@ -694,6 +782,20 @@ def main() -> int:
             "run's meta and, per arm, one record per scored question "
             "(see question_record). The published summary keeps its own "
             "shape; this is a separate dated artifact."
+        ),
+    )
+    p.add_argument(
+        "--compare",
+        default=None,
+        metavar="PRIOR.json",
+        help=(
+            "Read this run PAIRED against a prior --per-question sidecar: "
+            "per-question recall differences on the SAME questions, with a "
+            "CI on the mean difference. Required for any two-arm claim on "
+            "this instrument — a single arm's own interval is ~2 points "
+            "wide because questions differ in difficulty, and that "
+            "variance cancels in the difference. Comparing a two-arm gap "
+            "against one arm's interval would wave away real differences."
         ),
     )
     args = p.parse_args()
@@ -836,6 +938,11 @@ def main() -> int:
         )
         print(f"per-question records written to {pq_path}", file=sys.stderr)
 
+    if args.compare:
+        print(
+            _format_comparison(rows, Path(args.compare).expanduser()), file=sys.stderr
+        )
+
     if args.json:
         print(
             json.dumps(
@@ -851,6 +958,13 @@ def main() -> int:
                             "dup_session_questions": r.dup_session_questions,
                             "macro": {
                                 str(k): round(r.recall_macro(k), 4) for k in K_VALUES
+                            },
+                            # Additive, and the point estimate above is
+                            # untouched. A macro separated from a floor
+                            # in the fourth decimal is inside this.
+                            "macro_ci95": {
+                                str(k): [round(v, 4) for v in r.macro_ci(k)]
+                                for k in K_VALUES
                             },
                             "micro": {
                                 str(k): round(r.recall_micro(k), 4) for k in K_VALUES

@@ -48,7 +48,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import math
 import shutil
 import sys
 import tempfile
@@ -66,6 +65,8 @@ sys.path.insert(0, str(_HERE))
 import bettermemory.search as engine  # noqa: E402
 from bettermemory.models import Memory  # noqa: E402
 from bettermemory.store import Store  # noqa: E402
+from interval import two_proportion_p as _interval_two_proportion_p  # noqa: E402
+from interval import wilson as _interval_wilson  # noqa: E402
 from embed_train import (  # noqa: E402
     load,
     load_bench_module,
@@ -249,16 +250,17 @@ def wilson(hits: int, total: int, z: float = 1.96) -> tuple[float, float]:
     An interval does not soften the bar — the gate is still a point
     comparison, and addendum 8 fixed it that way. It stops the RECORD
     from over-reading a number in either direction.
+
+    The arithmetic now lives in `bench/interval.py`, which took this
+    docstring's reasoning to the gate reads where it was missing. The
+    `z=1.96` default is KEPT here rather than inherited: the shared
+    module carries full double precision for z, and the committed
+    census artifacts were computed at the rounded 1.96. Delegating
+    without pinning z would move published bounds in the fourth
+    decimal, which is exactly the silent renegotiation this repository
+    does not do.
     """
-    if total <= 0:
-        return (0.0, 0.0)
-    p = hits / total
-    denom = 1.0 + z * z / total
-    centre = (p + z * z / (2 * total)) / denom
-    spread = (
-        z * math.sqrt(p * (1.0 - p) / total + z * z / (4.0 * total * total)) / denom
-    )
-    return (max(0.0, centre - spread), min(1.0, centre + spread))
+    return _interval_wilson(hits, total, z)
 
 
 def two_proportion_p(hits_a: int, n_a: int, hits_b: int, n_b: int) -> float:
@@ -270,17 +272,14 @@ def two_proportion_p(hits_a: int, n_a: int, hits_b: int, n_b: int) -> float:
     difference between "misses the bar" and "cannot be told apart from
     the bar" is the entire finding. Reporting the ratio without it would
     let a 0.79x read as a kill when the data does not support one.
+
+    Delegates to `bench/interval.py`. Note for anyone reaching for this
+    on a GATE read: the census's two term sets are independent samples,
+    which is what this test assumes. The dev instrument's arms are not
+    — they answer the same twenty questions — and `interval.read_delta`
+    is the paired test that belongs there.
     """
-    if n_a <= 0 or n_b <= 0:
-        return 1.0
-    pooled = (hits_a + hits_b) / (n_a + n_b)
-    if pooled in (0.0, 1.0):
-        return 1.0
-    se = math.sqrt(pooled * (1.0 - pooled) * (1.0 / n_a + 1.0 / n_b))
-    if se == 0.0:
-        return 1.0
-    z = (hits_a / n_a - hits_b / n_b) / se
-    return math.erfc(abs(z) / math.sqrt(2.0))
+    return _interval_two_proportion_p(hits_a, n_a, hits_b, n_b)
 
 
 def summarise(records: list[dict[str, Any]]) -> dict[str, Any]:

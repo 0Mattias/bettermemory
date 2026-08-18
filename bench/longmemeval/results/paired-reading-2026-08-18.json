@@ -1,0 +1,87 @@
+{
+  "kind": "bettermemory-lme-paired-reading",
+  "date": "2026-08-18",
+  "note": "First PAIRED reading on this instrument. Arms are expansion-off against the static hand tables, same 500 questions, produced by bench/longmemeval/run.py --compare. Point estimates reproduce the committed same-engine arms exactly; what is new is the interval on the DIFFERENCE, which a single-arm interval cannot supply.",
+  "provenance": {
+    "bettermemory_version": "6.1.0",
+    "commit": "b2ce56e",
+    "tree_dirty": true,
+    "date": "2026-08-18",
+    "machine": {
+      "os": "Darwin 25.5.0",
+      "machine": "arm64",
+      "python": "3.13.13"
+    }
+  },
+  "n": 500,
+  "arms": {
+    "expansion_off": {
+      "macro": {
+        "1": 0.5339,
+        "5": 0.9062,
+        "10": 0.9494
+      },
+      "macro_ci95": {
+        "1": [
+          0.5045,
+          0.5633
+        ],
+        "5": [
+          0.8852,
+          0.9272
+        ],
+        "10": [
+          0.9341,
+          0.9648
+        ]
+      }
+    },
+    "static_hand_tables": {
+      "macro": {
+        "1": 0.5071,
+        "5": 0.8974,
+        "10": 0.951
+      },
+      "macro_ci95": {
+        "1": [
+          0.4771,
+          0.537
+        ],
+        "5": [
+          0.8757,
+          0.9191
+        ],
+        "10": [
+          0.9361,
+          0.966
+        ]
+      }
+    }
+  },
+  "paired_difference_static_minus_off": {
+    "1": {
+      "mean": -0.0268,
+      "ci95": [
+        -0.0419,
+        -0.0118
+      ],
+      "verdict": "measurable at 95%"
+    },
+    "5": {
+      "mean": -0.0088,
+      "ci95": [
+        -0.0153,
+        -0.0023
+      ],
+      "verdict": "measurable at 95%"
+    },
+    "10": {
+      "mean": 0.0016,
+      "ci95": [
+        -0.0034,
+        0.0066
+      ],
+      "verdict": "no measurable change"
+    }
+  }
+}

@@ -513,7 +513,18 @@ def test_the_prefilter_really_engages_on_every_committed_question(
         assert row["mean_pool_size"] <= committed["prefilter_cap"], row
         # A pool cannot return what it never contained.
         assert row["recall_at_5"] <= row["gold_nominated"], row
-        assert row == published[(row["arm"], row["probe"])], (
+        # Compared key by key over what the artifact PUBLISHED, not by
+        # whole-dict equality. The runner now emits interval fields and
+        # a per-question record beside the same measurements, and an
+        # additive field is not a divergence — freezing the schema here
+        # would mean no measurement could ever gain a reading without
+        # looking like the engine had changed. Every published key must
+        # still be present and equal, so a dropped or altered field
+        # fails exactly as before.
+        prior = published[(row["arm"], row["probe"])]
+        missing = sorted(set(prior) - set(row))
+        assert not missing, f"published keys dropped from the live row: {missing}"
+        assert {k: row[k] for k in prior} == prior, (
             "live run diverged from the committed artifact — re-run "
             "bench/retrieval/run.py and update results/ if ranking changed"
         )

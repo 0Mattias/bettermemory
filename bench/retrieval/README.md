@@ -285,3 +285,33 @@ its numbers in the named artifact. One line each, newest last:
   (`src/bettermemory/origin.py`) treats a null memory origin as
   global, so every published recall figure describes a store where
   scope filtering structurally cannot bite.
+
+## How much of these numbers is the instrument, 2026-08-18
+
+This file has always carried the right reading rule for its own size —
+"one question out of twenty, read as no measurable change", in the
+prefilter section above. `bench/POWER_AUDIT.md` states what that rule
+implies across the whole campaign, and it is sharper than the rule
+sounds: at twenty questions the 95% Wilson interval on a recall figure
+is about forty points wide, and on the paired test the arms actually
+warrant, **six questions must move one way before anything reaches
+p<0.05** — a thirty-point swing. The largest dev-side gap ever recorded
+here is four questions.
+
+That does not retract a single published figure. The two findings this
+README is built on both survive the paired test comfortably: requery
+beats asked by nine questions at recall@1 (p=0.022) and eight at
+recall@5 (p=0.008), and control against asked is zero questions,
+p=1.000. A forty-five point effect is exactly what this instrument can
+resolve. A five-point one is not, and several of the campaign's most
+recent bars were written five points above an incumbent.
+
+The runner now prints this for itself: every read reports Wilson
+intervals, the paired resolution floor, and McNemar between probes,
+and `--compare PRIOR.json` does the paired reading across two
+invocations, which is the shape a gate read actually has.
+
+`I1_DECLARATION.md`, beside this file, is the unit that fixes the
+underlying problem — the instrument is a structure of gold topics and
+their near-duplicate competition, not a list of questions, so growing
+it means growing the corpus with it.

@@ -91,8 +91,14 @@ from typing import Any
 _SRC = Path(__file__).resolve().parents[2] / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
+# ...and `bench/`, for the shared interval module. Same reason: the
+# instrument has to stay runnable straight from a checkout.
+_BENCH = Path(__file__).resolve().parents[1]
+if str(_BENCH) not in sys.path:
+    sys.path.insert(0, str(_BENCH))
 
 
+from interval import min_n_for, read_delta, wilson  # noqa: E402
 from bettermemory import index as _index  # noqa: E402
 from bettermemory._handlers import (  # noqa: E402
     _PREFILTER_CAP,
@@ -357,6 +363,16 @@ class ArmResult:
     # Queries whose pool came back un-prefiltered. Non-empty means the
     # run measured `load_all` while claiming to measure the prefilter.
     unengaged: list[str] = field(default_factory=list)
+    # Per-question outcomes, kept so the arms can be compared PAIRED.
+    # `hits_at` alone forces an unpaired test, which on twenty questions
+    # throws away the instrument's one statistical advantage: both arms
+    # answer the same questions, so the questions both got and both
+    # missed carry no information about the difference between them.
+    per_question: list[dict[str, Any]] = field(default_factory=list)
+
+    def hit_vector(self, k: int) -> list[bool]:
+        """Per-question hit/miss at depth k, in question order."""
+        return [bool(r["hit_at"].get(str(k), False)) for r in self.per_question]
 
     def recall(self, k: int) -> float:
         return self.hits_at.get(k, 0) / self.n if self.n else 0.0
@@ -414,9 +430,13 @@ def run_arm(
         # as an unexplained recall drop.
         if gold_id in pool_ids:
             result.nominated += 1
+        hit_at: dict[str, bool] = {}
         for k in K_VALUES:
-            if gold_id in ranked[:k]:
+            hit = gold_id in ranked[:k]
+            hit_at[str(k)] = hit
+            if hit:
                 result.hits_at[k] = result.hits_at.get(k, 0) + 1
+        result.per_question.append({"slug": q["slug"], "hit_at": hit_at})
     return result
 
 
@@ -495,9 +515,13 @@ def run_arm_prefiltered(
         result.pool_sizes.append(len(pool.memories))
         if gold_id in {m.id for m in pool.memories}:
             result.nominated += 1
+        hit_at: dict[str, bool] = {}
         for k in K_VALUES:
-            if gold_id in ranked[:k]:
+            hit = gold_id in ranked[:k]
+            hit_at[str(k)] = hit
+            if hit:
                 result.hits_at[k] = result.hits_at.get(k, 0) + 1
+        result.per_question.append({"slug": q["slug"], "hit_at": hit_at})
     return result
 
 
@@ -652,9 +676,149 @@ def _format_text(
                 f"| {100 * d.recall_loss_at[1]:>+3.0f} "
                 f"| {100 * d.recall_loss_at[5]:>+3.0f} |"
             )
+    out += _reading_section(rows)
     if notes:
         out += [""] + [f"note: {n}" for n in notes]
     return "\n".join(out) + "\n"
+
+
+def _reading_section(rows: list[ArmResult]) -> list[str]:
+    """How much of each recall figure is the instrument rather than the engine.
+
+    Appended BELOW the table rather than added as columns, for the same
+    reason `show_pool` is conditional: a default run's table stays
+    byte-identical to every earlier one, so this addition cannot make
+    old output look changed.
+
+    The paired rows compare probes WITHIN this run, which is the only
+    comparison a single invocation can make honestly. The comparison
+    the gate reads actually want — one table against another — spans
+    invocations, and `--compare` does it against a prior artifact that
+    carries `per_question`.
+    """
+    if not rows:
+        return []
+    n = rows[0].n
+    out = [
+        "",
+        f"reading — 95% Wilson intervals on n={n}:",
+        "| arm      | probe   | recall@1 95% CI  | recall@5 95% CI  |",
+        "|----------|---------|------------------|------------------|",
+    ]
+    for r in rows:
+        lo1, hi1 = wilson(r.hits_at.get(1, 0), r.n)
+        lo5, hi5 = wilson(r.hits_at.get(5, 0), r.n)
+        out.append(
+            f"| {r.arm:<8} | {r.probe:<7} "
+            f"| [{100 * lo1:>4.0f}%, {100 * hi1:>4.0f}%]  "
+            f"| [{100 * lo5:>4.0f}%, {100 * hi5:>4.0f}%]  |"
+        )
+    # The resolution floor, stated rather than left for a reader to
+    # derive. The floor in QUESTIONS is a property of the test, not of
+    # the instrument: six discordant questions all moving one way is
+    # p=0.031 whether n is twenty or twelve hundred. What n changes is
+    # what those six questions are WORTH — 30 points here, 5 points at
+    # n=120 — and that is the whole argument for growing the corpus.
+    floor = _one_way_floor(n)
+    out += [
+        "",
+        f"paired resolution floor: {floor} questions moving one way "
+        f"(McNemar exact, alpha=0.05) — at n={n} that is "
+        f"{100 * floor / n:.0f} points.",
+        f"separating 55% from 60% at 80% power would need "
+        f"~{min_n_for(0.55, 0.60):,} questions per arm.",
+    ]
+    base = rows[0]
+    if len(rows) > 1:
+        out += ["", f"paired against {base.arm}/{base.probe} (same questions):"]
+        for r in rows[1:]:
+            for k in K_VALUES:
+                d = read_delta(r.hit_vector(k), base.hit_vector(k))
+                out.append(
+                    f"  @{k} "
+                    + d.line(f"{r.arm}/{r.probe}", f"{base.arm}/{base.probe}")
+                )
+    return out
+
+
+def _format_comparison(rows: list[ArmResult], prior_path: Path) -> str:
+    """Paired reading of this run against a prior artifact.
+
+    Pairs on question SLUG rather than position, so a comparison
+    survives a reordered question file and refuses a mismatched one
+    instead of quietly comparing different questions to each other.
+    """
+    try:
+        prior = json.loads(prior_path.read_text())
+    except (OSError, ValueError) as exc:
+        return f"\n--compare: cannot read {prior_path}: {exc}\n"
+    out = ["", f"paired against {prior_path.name} (McNemar exact, by slug):"]
+    # Two artifact shapes in the tree. `run.py --json` writes `results`
+    # at the top level; the Lane W gate wrapper nests that whole payload
+    # under `runner` and adds its own keys beside it. Unwrap rather than
+    # require the caller to know which they have.
+    prior_rows = prior.get("results") or prior.get("runner", {}).get("results", [])
+    if not prior_rows:
+        out.append(f"  no results rows found in {prior_path.name}.")
+        return "\n".join(out) + "\n"
+    unpairable = [
+        f"{r.get('arm')}/{r.get('probe')}"
+        for r in prior_rows
+        if not r.get("per_question")
+    ]
+    if unpairable:
+        out.append(
+            f"  {len(unpairable)} of {len(prior_rows)} prior cell(s) carry no "
+            f"per-question record ({', '.join(sorted(set(unpairable)))}) — "
+            f"written before that field existed. Unpairable, and NOT "
+            f"compared unpaired."
+        )
+    if len(unpairable) == len(prior_rows):
+        out.append(
+            "  nothing to compare. Every published artifact predating this "
+            "field is in that position: the paired reading is available "
+            "from here forward, not retroactively."
+        )
+    for r in rows:
+        match = next(
+            (
+                pr
+                for pr in prior_rows
+                if pr.get("arm") == r.arm
+                and pr.get("probe") == r.probe
+                and pr.get("prefilter", False) == r.prefilter
+                and pr.get("per_question")
+            ),
+            None,
+        )
+        if match is None:
+            continue
+        prior_by_slug = {q["slug"]: q for q in match["per_question"]}
+        mine_by_slug = {q["slug"]: q for q in r.per_question}
+        shared = sorted(set(prior_by_slug) & set(mine_by_slug))
+        if len(shared) != len(mine_by_slug) or len(shared) != len(prior_by_slug):
+            out.append(
+                f"  {r.arm}/{r.probe}: question sets differ "
+                f"({len(mine_by_slug)} here, {len(prior_by_slug)} prior, "
+                f"{len(shared)} shared) — comparing the shared "
+                f"{len(shared)} only."
+            )
+        for k in K_VALUES:
+            mine = [bool(mine_by_slug[sl]["hit_at"].get(str(k))) for sl in shared]
+            theirs = [bool(prior_by_slug[sl]["hit_at"].get(str(k))) for sl in shared]
+            d = read_delta(mine, theirs)
+            out.append(f"  @{k} " + d.line(f"{r.arm}/{r.probe} (now)", "prior"))
+    return "\n".join(out) + "\n"
+
+
+def _one_way_floor(n: int) -> int:
+    """Smallest all-one-direction discordant count reaching p<0.05."""
+    from interval import mcnemar_exact as _mx
+
+    for d in range(1, n + 1):
+        if _mx(d, 0) < 0.05:
+            return d
+    return n + 1
 
 
 def main() -> int:
@@ -764,6 +928,19 @@ def main() -> int:
         ),
     )
     parser.add_argument("--json", action="store_true", help="Emit JSON.")
+    parser.add_argument(
+        "--compare",
+        metavar="PRIOR.json",
+        help=(
+            "Read this run PAIRED against a prior artifact, question by "
+            "question (McNemar exact). The comparison every gate read "
+            "makes — one table against another — spans two invocations, "
+            "so it cannot be done from a single run's rows. Requires the "
+            "prior artifact to carry `per_question`; artifacts written "
+            "before that field existed are reported as unpairable rather "
+            "than silently compared unpaired."
+        ),
+    )
     args = parser.parse_args()
 
     # Module-level so the two arm runners read one flag without a
@@ -955,6 +1132,18 @@ def main() -> int:
                             "n": r.n,
                             "recall_at_1": round(r.recall(1), 4),
                             "recall_at_5": round(r.recall(5), 4),
+                            # Additive. Every recall figure this
+                            # instrument has ever published rests on
+                            # twenty questions, and the point estimates
+                            # above are unchanged — these say how much
+                            # of the number is the instrument.
+                            "recall_at_1_ci95": [
+                                round(v, 4) for v in wilson(r.hits_at.get(1, 0), r.n)
+                            ],
+                            "recall_at_5_ci95": [
+                                round(v, 4) for v in wilson(r.hits_at.get(5, 0), r.n)
+                            ],
+                            "per_question": r.per_question,
                             "engaged": r.engaged,
                             "gold_nominated": round(r.nomination_rate(), 4),
                             "mean_pool_size": round(r.mean_pool(), 2),
@@ -977,6 +1166,8 @@ def main() -> int:
         )
     else:
         print(_format_text(rows, corpus_n, notes, corpus_path.name, deltas))
+    if args.compare:
+        print(_format_comparison(rows, Path(args.compare)))
     return 0
 
 
