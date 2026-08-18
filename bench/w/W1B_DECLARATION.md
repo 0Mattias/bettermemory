@@ -115,11 +115,10 @@ Budgets, hard: the trainer reads at most **200,000,000 tokens** from
 the register under §3's per-source caps (actual counts in the
 artifact), and at most **24 wall-clock hours per training run** on
 this machine, single process, per the standing compute ruling. W1's
-receipt prices the expectation honestly: 556M pair-updates took
-6,662 seconds (`bench/w/artifacts/w1_table_2026-08-16.json`), so this
-unit's ~4x pair volume projects to roughly eight hours per run — the
-24-hour cap is headroom, not a target. A budget overrun is a published
-park, not a quiet cap raise.
+committed receipt carries its own run block — pair volume and wall
+seconds — and this unit's pair volume is several times W1's, so the
+24-hour cap is headroom rather than a target. A budget overrun is a
+published park, not a quiet cap raise.
 
 ## 3. The corpus slice — pinned already, budgeted per source
 
@@ -257,8 +256,8 @@ sentence and any W2 declaration, exactly as in W1.
   epsilons of 1.0 and 2.0 points against the committed same-engine
   expansion-off baseline of §1 (0.9062 / 0.5339,
   `bench/w/results/gate-w3c-lme-incumbent-2026-08-17.json`). The
-  epsilons sit strictly inside the static tables' last measured
-  same-engine costs (1.12 points at @5, 2.32 at @1:
+  epsilons sit strictly inside the static tables' own same-engine
+  costs as recorded at W1's gate (1.12 points at @5, 2.32 at @1:
   `bench/w/results/gate-lme-static-2026-08-16.json` against
   `bench/w/results/gate-lme-off-2026-08-16.json`): the learned table
   must not merely tie the hand tables' damage; it must shrink it, at
@@ -329,9 +328,9 @@ sentence and any W2 declaration, exactly as in W1.
    head-frequency skipping is the declared mitigation whose value the
    tuning trail may move.
 4. **The memory budget is a real wall.** The segmented revision exists
-   because this machine holds ~19 GB; if the 200M-token stream still
-   cannot run inside it, the park prices the machine honestly — the
-   cap is not quietly cut to fit.
+   because this machine's memory ceiling binds before the corpus does;
+   if the 200M-token stream still cannot run inside it, the park
+   prices the machine honestly — the cap is not quietly cut to fit.
 
 ## What is not claimed
 
