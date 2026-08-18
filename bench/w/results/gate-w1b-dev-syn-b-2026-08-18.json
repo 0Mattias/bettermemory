@@ -1,0 +1,75 @@
+{
+ "runner": {
+  "above_threshold": false,
+  "base_withhold": false,
+  "conversational": true,
+  "corpus": "corpus.jsonl",
+  "corpus_sha256": "c40acee95ce1bb70ac6ea788e0fb4a9a1c6eff1fc55fe4569b651b5b156ea2ea",
+  "corpus_size": 180,
+  "evidence_scaling": false,
+  "index_threshold": 500,
+  "index_threshold_forced": null,
+  "leg_margin_cap": true,
+  "notes": [
+   "rescue-expansion repairs ON (the 5.1 lane: filler df-floor + coverage-gated vocabulary leg). The product DEFAULT is off \u2014 the lane's preregistered held-out check killed default-on; see the README's 5.1 section and bench/longmemeval/."
+  ],
+  "padded": false,
+  "prefilter_cap": 50,
+  "prefilter_delta": [],
+  "prefilter_mode": "off",
+  "provenance": {
+   "bettermemory_version": "6.1.0",
+   "commit": "997756a",
+   "date": "2026-08-18",
+   "machine": {
+    "machine": "arm64",
+    "os": "Darwin 25.5.0",
+    "python": "3.13.13"
+   },
+   "tree_dirty": false
+  },
+  "rescue_expansion": true,
+  "results": [
+   {
+    "arm": "lexical",
+    "engaged": 0,
+    "gold_nominated": 1.0,
+    "mean_pool_size": 180.0,
+    "n": 20,
+    "prefilter": false,
+    "probe": "asked",
+    "recall_at_1": 0.55,
+    "recall_at_5": 0.7
+   },
+   {
+    "arm": "lexical",
+    "engaged": 0,
+    "gold_nominated": 1.0,
+    "mean_pool_size": 180.0,
+    "n": 20,
+    "prefilter": false,
+    "probe": "requery",
+    "recall_at_1": 0.8,
+    "recall_at_5": 1.0
+   },
+   {
+    "arm": "lexical",
+    "engaged": 0,
+    "gold_nominated": 1.0,
+    "mean_pool_size": 180.0,
+    "n": 20,
+    "prefilter": false,
+    "probe": "control",
+    "recall_at_1": 0.5,
+    "recall_at_5": 0.7
+   }
+  ]
+ },
+ "w1": {
+  "arm": "syn",
+  "instrument": "dev",
+  "runner_args": "",
+  "table": "bench/w/artifacts/w1b_table_2026-08-18.py",
+  "table_sha256": "d500d38912a6291235b6b926d1c997316b49f6bc0431e261dc0d7da3d1e923df"
+ }
+}
