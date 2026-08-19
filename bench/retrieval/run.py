@@ -364,10 +364,10 @@ class ArmResult:
     # run measured `load_all` while claiming to measure the prefilter.
     unengaged: list[str] = field(default_factory=list)
     # Per-question outcomes, kept so the arms can be compared PAIRED.
-    # `hits_at` alone forces an unpaired test, which on twenty questions
-    # throws away the instrument's one statistical advantage: both arms
-    # answer the same questions, so the questions both got and both
-    # missed carry no information about the difference between them.
+    # `hits_at` alone forces an unpaired test, which throws away the
+    # instrument's one statistical advantage: both arms answer the same
+    # questions, so the questions both got and both missed carry no
+    # information about the difference between them.
     per_question: list[dict[str, Any]] = field(default_factory=list)
 
     def hit_vector(self, k: int) -> list[bool]:
@@ -875,6 +875,20 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--questions",
+        type=str,
+        default=str(QUESTIONS),
+        help=(
+            "Questions JSONL. Defaults to the canonical questions.jsonl. "
+            "Point at questions-v2.jsonl for the original-twenty cell — "
+            "either against corpus-v2.jsonl (the I1 integrity anchor, the "
+            "old instrument reproduced whole) or against the full corpus "
+            "(the original-twenty subset scored in the expanded field). "
+            "A question whose slug has no gold document in the corpus is a "
+            "hard error, not a silent exclusion."
+        ),
+    )
+    parser.add_argument(
         "--rescue-expansion",
         choices=("on", "off"),
         default="off",
@@ -963,7 +977,10 @@ def main() -> int:
     corpus_path = Path(args.corpus).expanduser()
     if not corpus_path.is_absolute():
         corpus_path = (_HERE / corpus_path).resolve()
-    if not corpus_path.exists() or not QUESTIONS.exists():
+    questions_path = Path(args.questions).expanduser()
+    if not questions_path.is_absolute():
+        questions_path = (_HERE / questions_path).resolve()
+    if not corpus_path.exists() or not questions_path.exists():
         print(f"missing corpus or questions under {_HERE}", file=sys.stderr)
         return 1
 
@@ -1012,7 +1029,24 @@ def main() -> int:
         # Both arms start from this one store: the off arm gets the whole
         # thing up front, the on arm lets production choose per query.
         memories = store.load_all()
-        questions = _read_jsonl(QUESTIONS)
+        questions = _read_jsonl(questions_path)
+        # `run_arm` skips a question whose slug has no gold document, so a
+        # mismatched --corpus/--questions pair would score only the
+        # intersection and report it under the full file's name — 20
+        # questions answered, "120-question instrument" on the artifact.
+        # Cheap to make impossible, so it is.
+        orphans = [q["slug"] for q in questions if q["slug"] not in slug_to_id]
+        if orphans:
+            print(
+                f"{len(orphans)} of {len(questions)} questions in "
+                f"{questions_path.name} have no gold document in "
+                f"{corpus_path.name}: {orphans[:5]}"
+                f"{' ...' if len(orphans) > 5 else ''}\n"
+                f"Refusing to run — the result would be scored over the "
+                f"intersection and labelled with the full question count.",
+                file=sys.stderr,
+            )
+            return 1
 
         rows: list[ArmResult] = []
         for arm in arms:
@@ -1112,6 +1146,9 @@ def main() -> int:
                     "corpus": corpus_path.name,
                     "corpus_sha256": corpus_fingerprint(corpus_path),
                     "corpus_size": corpus_n,
+                    "questions": questions_path.name,
+                    "questions_sha256": corpus_fingerprint(questions_path),
+                    "questions_n": len(questions),
                     "index_threshold": INDEX_THRESHOLD,
                     "index_threshold_forced": args.index_threshold,
                     "above_threshold": corpus_n >= INDEX_THRESHOLD,
@@ -1133,10 +1170,11 @@ def main() -> int:
                             "recall_at_1": round(r.recall(1), 4),
                             "recall_at_5": round(r.recall(5), 4),
                             # Additive. Every recall figure this
-                            # instrument has ever published rests on
-                            # twenty questions, and the point estimates
-                            # above are unchanged — these say how much
-                            # of the number is the instrument.
+                            # instrument publishes rests on a finite
+                            # question set — twenty before I1, 120
+                            # after — and the point estimates above are
+                            # unchanged; these say how much of the
+                            # number is the instrument.
                             "recall_at_1_ci95": [
                                 round(v, 4) for v in wilson(r.hits_at.get(1, 0), r.n)
                             ],
