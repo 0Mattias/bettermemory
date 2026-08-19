@@ -6,7 +6,11 @@ has carried a Wilson interval since P1e, with a docstring that states
 the reason exactly: an interval "stops the RECORD from over-reading a
 number in either direction." That reasoning was applied to census work,
 where n is a few hundred emitted terms, and never to the gate reads,
-where n is twenty questions and the over-reading risk is far worse.
+which at the time ran on twenty questions where the over-reading risk
+is far worse. I1 has since taken the dev instrument to 120 questions
+(`bench/retrieval/I1_RECORD.md`), which moves the resolution floor
+from 30 points to 5 — it does not make the interval optional, and the
+gate reads still print one.
 
 The numbers that motivated the extraction, all on the twenty-question
 dev instrument:
@@ -63,7 +67,7 @@ def two_proportion_p(hits_a: int, n_a: int, hits_b: int, n_b: int) -> float:
     """Two-sided p for `p_a == p_b`, pooled normal approximation.
 
     For INDEPENDENT samples. The dev arms are not independent — they
-    answer the same twenty questions — so `mcnemar_exact` is the
+    answer the same questions — so `mcnemar_exact` is the
     correct test there and this one is kept for the census callers it
     was written for, where the two term sets genuinely differ.
     """

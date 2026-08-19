@@ -1,0 +1,519 @@
+{
+  "provenance": {
+    "bettermemory_version": "6.1.0",
+    "commit": "4734a8e",
+    "tree_dirty": true,
+    "date": "2026-08-18",
+    "machine": {
+      "os": "Darwin 25.5.0",
+      "machine": "arm64",
+      "python": "3.13.13"
+    }
+  },
+  "corpus": "corpus-v2.jsonl",
+  "corpus_sha256": "c40acee95ce1bb70ac6ea788e0fb4a9a1c6eff1fc55fe4569b651b5b156ea2ea",
+  "corpus_size": 180,
+  "questions": "questions-v2.jsonl",
+  "questions_sha256": "f83737772dcdc57bfe4c1b496a6d377e26ad863b1d6ebbf6160b413654779739",
+  "questions_n": 20,
+  "index_threshold": 500,
+  "index_threshold_forced": null,
+  "above_threshold": false,
+  "padded": false,
+  "prefilter_mode": "off",
+  "prefilter_cap": 50,
+  "rescue_expansion": true,
+  "conversational": true,
+  "leg_margin_cap": true,
+  "evidence_scaling": false,
+  "base_withhold": false,
+  "notes": [
+    "rescue-expansion repairs ON (the 5.1 lane: filler df-floor + coverage-gated vocabulary leg). The product DEFAULT is off \u2014 the lane's preregistered held-out check killed default-on; see the README's 5.1 section and bench/longmemeval/."
+  ],
+  "results": [
+    {
+      "arm": "lexical",
+      "probe": "asked",
+      "prefilter": false,
+      "n": 20,
+      "recall_at_1": 0.55,
+      "recall_at_5": 0.9,
+      "recall_at_1_ci95": [
+        0.3421,
+        0.7418
+      ],
+      "recall_at_5_ci95": [
+        0.699,
+        0.9721
+      ],
+      "per_question": [
+        {
+          "slug": "how-database-migrations-are-rolled-back",
+          "hit_at": {
+            "1": false,
+            "5": true
+          }
+        },
+        {
+          "slug": "how-feature-flags-get-cleaned-up",
+          "hit_at": {
+            "1": false,
+            "5": true
+          }
+        },
+        {
+          "slug": "how-nightly-backups-are-verified-not-just-taken",
+          "hit_at": {
+            "1": true,
+            "5": true
+          }
+        },
+        {
+          "slug": "how-oncall-escalation-actually-works-here",
+          "hit_at": {
+            "1": true,
+            "5": true
+          }
+        },
+        {
+          "slug": "how-rate-limiting-is-tuned-for-the-public-api",
+          "hit_at": {
+            "1": true,
+            "5": true
+          }
+        },
+        {
+          "slug": "how-secrets-reach-containers-at-runtime",
+          "hit_at": {
+            "1": false,
+            "5": true
+          }
+        },
+        {
+          "slug": "the-agreement-about-code-review-turnaround",
+          "hit_at": {
+            "1": false,
+            "5": true
+          }
+        },
+        {
+          "slug": "the-convention-for-naming-background-jobs",
+          "hit_at": {
+            "1": true,
+            "5": true
+          }
+        },
+        {
+          "slug": "the-cutover-plan-for-the-legacy-billing-service",
+          "hit_at": {
+            "1": false,
+            "5": false
+          }
+        },
+        {
+          "slug": "the-decision-to-stop-using-a-monorepo",
+          "hit_at": {
+            "1": false,
+            "5": false
+          }
+        },
+        {
+          "slug": "the-policy-on-adding-new-runtime-dependencies",
+          "hit_at": {
+            "1": false,
+            "5": true
+          }
+        },
+        {
+          "slug": "the-reason-log-retention-is-only-14-days",
+          "hit_at": {
+            "1": true,
+            "5": true
+          }
+        },
+        {
+          "slug": "the-rule-about-never-force-pushing-shared-branches",
+          "hit_at": {
+            "1": true,
+            "5": true
+          }
+        },
+        {
+          "slug": "why-error-tracking-ignores-a-specific-exception-class",
+          "hit_at": {
+            "1": true,
+            "5": true
+          }
+        },
+        {
+          "slug": "why-integration-tests-run-serially",
+          "hit_at": {
+            "1": true,
+            "5": true
+          }
+        },
+        {
+          "slug": "why-postgres-connection-pooling-was-moved-out-of-the-app",
+          "hit_at": {
+            "1": true,
+            "5": true
+          }
+        },
+        {
+          "slug": "why-the-frontend-build-is-not-cached-in-ci",
+          "hit_at": {
+            "1": false,
+            "5": true
+          }
+        },
+        {
+          "slug": "why-the-staging-environment-shares-one-database",
+          "hit_at": {
+            "1": true,
+            "5": true
+          }
+        },
+        {
+          "slug": "why-we-pin-the-base-image-by-digest",
+          "hit_at": {
+            "1": false,
+            "5": true
+          }
+        },
+        {
+          "slug": "why-we-stopped-using-a-shared-dev-server",
+          "hit_at": {
+            "1": true,
+            "5": true
+          }
+        }
+      ],
+      "engaged": 0,
+      "gold_nominated": 1.0,
+      "mean_pool_size": 180.0
+    },
+    {
+      "arm": "lexical",
+      "probe": "requery",
+      "prefilter": false,
+      "n": 20,
+      "recall_at_1": 0.8,
+      "recall_at_5": 1.0,
+      "recall_at_1_ci95": [
+        0.584,
+        0.9193
+      ],
+      "recall_at_5_ci95": [
+        0.8389,
+        1.0
+      ],
+      "per_question": [
+        {
+          "slug": "how-database-migrations-are-rolled-back",
+          "hit_at": {
+            "1": true,
+            "5": true
+          }
+        },
+        {
+          "slug": "how-feature-flags-get-cleaned-up",
+          "hit_at": {
+            "1": true,
+            "5": true
+          }
+        },
+        {
+          "slug": "how-nightly-backups-are-verified-not-just-taken",
+          "hit_at": {
+            "1": true,
+            "5": true
+          }
+        },
+        {
+          "slug": "how-oncall-escalation-actually-works-here",
+          "hit_at": {
+            "1": true,
+            "5": true
+          }
+        },
+        {
+          "slug": "how-rate-limiting-is-tuned-for-the-public-api",
+          "hit_at": {
+            "1": false,
+            "5": true
+          }
+        },
+        {
+          "slug": "how-secrets-reach-containers-at-runtime",
+          "hit_at": {
+            "1": true,
+            "5": true
+          }
+        },
+        {
+          "slug": "the-agreement-about-code-review-turnaround",
+          "hit_at": {
+            "1": false,
+            "5": true
+          }
+        },
+        {
+          "slug": "the-convention-for-naming-background-jobs",
+          "hit_at": {
+            "1": true,
+            "5": true
+          }
+        },
+        {
+          "slug": "the-cutover-plan-for-the-legacy-billing-service",
+          "hit_at": {
+            "1": true,
+            "5": true
+          }
+        },
+        {
+          "slug": "the-decision-to-stop-using-a-monorepo",
+          "hit_at": {
+            "1": false,
+            "5": true
+          }
+        },
+        {
+          "slug": "the-policy-on-adding-new-runtime-dependencies",
+          "hit_at": {
+            "1": true,
+            "5": true
+          }
+        },
+        {
+          "slug": "the-reason-log-retention-is-only-14-days",
+          "hit_at": {
+            "1": true,
+            "5": true
+          }
+        },
+        {
+          "slug": "the-rule-about-never-force-pushing-shared-branches",
+          "hit_at": {
+            "1": true,
+            "5": true
+          }
+        },
+        {
+          "slug": "why-error-tracking-ignores-a-specific-exception-class",
+          "hit_at": {
+            "1": true,
+            "5": true
+          }
+        },
+        {
+          "slug": "why-integration-tests-run-serially",
+          "hit_at": {
+            "1": true,
+            "5": true
+          }
+        },
+        {
+          "slug": "why-postgres-connection-pooling-was-moved-out-of-the-app",
+          "hit_at": {
+            "1": true,
+            "5": true
+          }
+        },
+        {
+          "slug": "why-the-frontend-build-is-not-cached-in-ci",
+          "hit_at": {
+            "1": true,
+            "5": true
+          }
+        },
+        {
+          "slug": "why-the-staging-environment-shares-one-database",
+          "hit_at": {
+            "1": false,
+            "5": true
+          }
+        },
+        {
+          "slug": "why-we-pin-the-base-image-by-digest",
+          "hit_at": {
+            "1": true,
+            "5": true
+          }
+        },
+        {
+          "slug": "why-we-stopped-using-a-shared-dev-server",
+          "hit_at": {
+            "1": true,
+            "5": true
+          }
+        }
+      ],
+      "engaged": 0,
+      "gold_nominated": 1.0,
+      "mean_pool_size": 180.0
+    },
+    {
+      "arm": "lexical",
+      "probe": "control",
+      "prefilter": false,
+      "n": 20,
+      "recall_at_1": 0.5,
+      "recall_at_5": 0.85,
+      "recall_at_1_ci95": [
+        0.2993,
+        0.7007
+      ],
+      "recall_at_5_ci95": [
+        0.6396,
+        0.9476
+      ],
+      "per_question": [
+        {
+          "slug": "how-database-migrations-are-rolled-back",
+          "hit_at": {
+            "1": false,
+            "5": true
+          }
+        },
+        {
+          "slug": "how-feature-flags-get-cleaned-up",
+          "hit_at": {
+            "1": false,
+            "5": true
+          }
+        },
+        {
+          "slug": "how-nightly-backups-are-verified-not-just-taken",
+          "hit_at": {
+            "1": true,
+            "5": true
+          }
+        },
+        {
+          "slug": "how-oncall-escalation-actually-works-here",
+          "hit_at": {
+            "1": true,
+            "5": true
+          }
+        },
+        {
+          "slug": "how-rate-limiting-is-tuned-for-the-public-api",
+          "hit_at": {
+            "1": true,
+            "5": true
+          }
+        },
+        {
+          "slug": "how-secrets-reach-containers-at-runtime",
+          "hit_at": {
+            "1": false,
+            "5": false
+          }
+        },
+        {
+          "slug": "the-agreement-about-code-review-turnaround",
+          "hit_at": {
+            "1": false,
+            "5": true
+          }
+        },
+        {
+          "slug": "the-convention-for-naming-background-jobs",
+          "hit_at": {
+            "1": true,
+            "5": true
+          }
+        },
+        {
+          "slug": "the-cutover-plan-for-the-legacy-billing-service",
+          "hit_at": {
+            "1": false,
+            "5": false
+          }
+        },
+        {
+          "slug": "the-decision-to-stop-using-a-monorepo",
+          "hit_at": {
+            "1": false,
+            "5": false
+          }
+        },
+        {
+          "slug": "the-policy-on-adding-new-runtime-dependencies",
+          "hit_at": {
+            "1": false,
+            "5": true
+          }
+        },
+        {
+          "slug": "the-reason-log-retention-is-only-14-days",
+          "hit_at": {
+            "1": true,
+            "5": true
+          }
+        },
+        {
+          "slug": "the-rule-about-never-force-pushing-shared-branches",
+          "hit_at": {
+            "1": true,
+            "5": true
+          }
+        },
+        {
+          "slug": "why-error-tracking-ignores-a-specific-exception-class",
+          "hit_at": {
+            "1": false,
+            "5": true
+          }
+        },
+        {
+          "slug": "why-integration-tests-run-serially",
+          "hit_at": {
+            "1": true,
+            "5": true
+          }
+        },
+        {
+          "slug": "why-postgres-connection-pooling-was-moved-out-of-the-app",
+          "hit_at": {
+            "1": true,
+            "5": true
+          }
+        },
+        {
+          "slug": "why-the-frontend-build-is-not-cached-in-ci",
+          "hit_at": {
+            "1": false,
+            "5": true
+          }
+        },
+        {
+          "slug": "why-the-staging-environment-shares-one-database",
+          "hit_at": {
+            "1": true,
+            "5": true
+          }
+        },
+        {
+          "slug": "why-we-pin-the-base-image-by-digest",
+          "hit_at": {
+            "1": false,
+            "5": true
+          }
+        },
+        {
+          "slug": "why-we-stopped-using-a-shared-dev-server",
+          "hit_at": {
+            "1": true,
+            "5": true
+          }
+        }
+      ],
+      "engaged": 0,
+      "gold_nominated": 1.0,
+      "mean_pool_size": 180.0
+    }
+  ],
+  "prefilter_delta": []
+}

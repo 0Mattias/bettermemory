@@ -52,11 +52,21 @@ contribution this directory can receive.
 
 ## Corpus shape
 
-- **20 gold documents**, one per slug, each with exactly one correct answer.
-- **160 near-duplicate distractors** — eight per gold topic, same
-  subsystem, different decision (the v2 set; v1's six-theme distractors
-  proved too easy and `corpus-v1.jsonl` is retained for verification,
-  with every result file recording the `corpus_sha256` it ran against).
+Expanded by I1 on 2026-08-18, from 20 questions / 180 documents to the
+below. The old pair is retained beside the new one as
+`corpus-v2.jsonl` / `questions-v2.jsonl`, because every figure this
+campaign published before that date was measured on it —
+`I1_RECORD.md` has the read.
+
+- **120 gold documents**, one per slug, each with exactly one correct answer.
+- **960 near-duplicate distractors** — eight per gold topic, same
+  subsystem, different decision (v1's six-theme distractors proved too
+  easy and `corpus-v1.jsonl` is retained for verification, with every
+  result file recording the `corpus_sha256` it ran against).
+- **1,080 documents total, which is above the 500-memory index
+  threshold**, so the default install runs the prefilter path on this
+  instrument where the 180-document version did not. Reads report both
+  regimes.
 - **Class mix matched to reality.** Roughly 64% of documents carry a
   mechanically checkable literal (a path, a `snake_case` identifier, a
   command, a `key = value` line) and roughly 36% are pure judgement with
@@ -288,30 +298,36 @@ its numbers in the named artifact. One line each, newest last:
 
 ## How much of these numbers is the instrument, 2026-08-18
 
-This file has always carried the right reading rule for its own size —
-"one question out of twenty, read as no measurable change", in the
-prefilter section above. `bench/POWER_AUDIT.md` states what that rule
-implies across the whole campaign, and it is sharper than the rule
-sounds: at twenty questions the 95% Wilson interval on a recall figure
-is about forty points wide, and on the paired test the arms actually
-warrant, **six questions must move one way before anything reaches
-p<0.05** — a thirty-point swing. The largest dev-side gap ever recorded
-here is four questions.
+`bench/POWER_AUDIT.md` priced what the twenty-question instrument
+could say: a 95% Wilson interval about forty points wide, and on the
+paired test the arms actually warrant, **six questions moving one way
+before anything reaches p<0.05** — a thirty-point swing, against a
+largest-ever recorded dev-side gap of four questions. No dev cell in
+the campaign had ever been measurable.
 
-That does not retract a single published figure. The two findings this
-README is built on both survive the paired test comfortably: requery
-beats asked by nine questions at recall@1 (p=0.022) and eight at
-recall@5 (p=0.008), and control against asked is zero questions,
-p=1.000. A forty-five point effect is exactly what this instrument can
-resolve. A five-point one is not, and several of the campaign's most
-recent bars were written five points above an incumbent.
+**I1 fixed it.** At 120 questions the floor is still six questions but
+they are worth **5.0 points**, so the five-to-fifteen point
+differences the campaign argues about are now resolvable. What that
+bought, on the first read (`I1_RECORD.md`):
 
-The runner now prints this for itself: every read reports Wilson
+- **requery over asked replicates and hardens** — +58 questions of 120
+  at recall@1 (p=7.7e-14) and +55 at recall@5 (p=3.3e-14), against +9
+  and +8 on the old instrument. This is the best-supported finding the
+  directory has.
+- **control over asked stays flat** at recall@5, net 0 of 120,
+  p=1.000. At recall@1 it is +5 of 120, p=0.063 — control marginally
+  ahead, under the threshold, recorded to be watched rather than
+  claimed.
+- **the static hand tables' advantage does not replicate.** On 20
+  questions the arm read +20 points at recall@1 and +30 at recall@5.
+  On 120 it is **net 0 of 120 (p=1.000)** and **+4 of 120 (p=0.289)**.
+  The tables are general dev vocabulary by construction, so the effect
+  was expected across all 120 topics; a +20-point one would have moved
+  about 24 questions. The corpus grew 6× alongside the question count,
+  so the claim is that the advantage does not survive a
+  1,080-document field — not that it never existed at 180.
+
+The runner prints the reading for itself: every read reports Wilson
 intervals, the paired resolution floor, and McNemar between probes,
 and `--compare PRIOR.json` does the paired reading across two
 invocations, which is the shape a gate read actually has.
-
-`I1_DECLARATION.md`, beside this file, is the unit that fixes the
-underlying problem — the instrument is a structure of gold topics and
-their near-duplicate competition, not a list of questions, so growing
-it means growing the corpus with it.
