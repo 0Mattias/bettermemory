@@ -13,6 +13,7 @@ So the invariants the published figures depend on are pinned here.
 from __future__ import annotations
 
 import ast
+import hashlib
 import importlib.util
 import json
 import re
@@ -80,9 +81,9 @@ def test_no_distractor_is_secretly_a_gold_topic() -> None:
 
 
 def test_corpus_is_large_enough_for_retrieval_to_be_nontrivial() -> None:
-    """20 gold documents in a field of 20 would make recall meaningless."""
-    assert len([r for r in CORPUS if r["gold"]]) == 20
-    assert len(CORPUS) >= 150
+    """120 gold documents in a field of 120 would make recall meaningless."""
+    assert len([r for r in CORPUS if r["gold"]]) == 120
+    assert len(CORPUS) >= 1000
 
 
 def test_every_gold_topic_has_near_duplicate_competition() -> None:
@@ -115,6 +116,41 @@ def test_v1_corpus_is_retained_so_published_figures_stay_reproducible() -> None:
     assert v1.exists(), "corpus-v1.jsonl was removed; v1 results are now unverifiable"
     rows = [json.loads(line) for line in v1.read_text().splitlines() if line.strip()]
     assert len([r for r in rows if r["gold"]]) == 20
+
+
+def test_v2_corpus_is_retained_so_the_twenty_question_figures_stay_reproducible() -> None:
+    """Every dev-side figure the campaign published before I1 was measured
+    on the 180-document / 20-question instrument. I1 expanded it to
+    1,080 / 120; the old pair is retained beside the new one so those
+    figures stay checkable, and so I1-G1's integrity anchor has
+    something to run against. run.py pins this corpus digest as
+    `_V2_CORPUS_SHA256` to decide whether a run reproduces a committed
+    artifact, so a byte of drift here silently breaks that claim too."""
+    corpus = _HERE / "corpus-v2.jsonl"
+    questions = _HERE / "questions-v2.jsonl"
+    assert corpus.exists(), "corpus-v2.jsonl was removed; pre-I1 results are now unverifiable"
+    assert questions.exists(), "questions-v2.jsonl was removed; pre-I1 results are now unverifiable"
+    rows = [json.loads(line) for line in corpus.read_text().splitlines() if line.strip()]
+    assert len(rows) == 180
+    assert len([r for r in rows if r["gold"]]) == 20
+    qs = [json.loads(line) for line in questions.read_text().splitlines() if line.strip()]
+    assert len(qs) == 20
+    digest = hashlib.sha256(corpus.read_bytes()).hexdigest()
+    assert digest == runner._V2_CORPUS_SHA256, (
+        f"corpus-v2.jsonl digest {digest} no longer matches run.py's "
+        f"_V2_CORPUS_SHA256 — the reproduction claim it gates is now false"
+    )
+
+
+def test_the_original_twenty_are_carried_verbatim_into_the_expanded_corpus() -> None:
+    """I1 §3.1 freezes the original topics 'slug for slug, byte for byte'.
+    That is what keeps every published figure on this instrument
+    checkable, and what makes the original-twenty subset cell a like-for-
+    like comparison rather than a re-authored approximation."""
+    v2_corpus = (_HERE / "corpus-v2.jsonl").read_text()
+    v2_questions = (_HERE / "questions-v2.jsonl").read_text()
+    assert (_HERE / "corpus.jsonl").read_text().startswith(v2_corpus)
+    assert (_HERE / "questions.jsonl").read_text().startswith(v2_questions)
 
 
 def test_class_mix_matches_what_a_real_store_measured() -> None:
@@ -480,6 +516,16 @@ def test_the_prefilter_really_engages_on_every_committed_question(
         "argv",
         [
             "run.py",
+            # I1 expanded corpus.jsonl in place (180 -> 1,080 documents,
+            # 20 -> 120 questions) and retained the original pair as
+            # corpus-v2.jsonl / questions-v2.jsonl. This test reproduces a
+            # golden measured on that original pair and asserts n == 20
+            # below, so it names the corpus it means rather than
+            # inheriting whichever one currently sits at corpus.jsonl.
+            "--corpus",
+            "corpus-v2.jsonl",
+            "--questions",
+            "questions-v2.jsonl",
             "--pad-to",
             "600",
             "--prefilter",
@@ -554,7 +600,22 @@ def test_prefilter_artifacts_are_internally_consistent(name: str) -> None:
     rows really engaged, that the deltas are the subtraction they claim to
     be, and that both halves ran against the corpus on disk."""
     art = json.loads((_RESULTS / name).read_text(encoding="utf-8"))
-    assert art["corpus_sha256"] == runner.corpus_fingerprint(_HERE / art["corpus"])
+    # Resolved by DIGEST, not by the filename the artifact recorded. Every
+    # one of these ran against the 180-document corpus while it was called
+    # corpus.jsonl; I1 expanded that filename in place and retained the
+    # exact bytes as corpus-v2.jsonl. Checking the digest against the files
+    # actually in the tree keeps the property this line is for — the corpus
+    # this artifact was measured on is still here, byte for byte — and is
+    # strictly stronger than trusting a name that can be reused.
+    on_disk = {
+        runner.corpus_fingerprint(path): path.name
+        for path in sorted(_HERE.glob("corpus*.jsonl"))
+    }
+    assert art["corpus_sha256"] in on_disk, (
+        f"{name} names corpus {art['corpus']} at {art['corpus_sha256'][:12]}, "
+        f"which is no longer any corpus in the tree "
+        f"({sorted(on_disk.values())}) — the artifact is unverifiable"
+    )
     assert art["index_threshold"] == runner.INDEX_THRESHOLD
     assert art["prefilter_cap"] == runner.PREFILTER_CAP
     assert art["prefilter_mode"] == "both"
