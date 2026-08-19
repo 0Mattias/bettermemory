@@ -22,8 +22,9 @@ load.
 ## There are two search stacks, and the base install runs the smaller one
 
 `pip install mem0ai` retrieves with **semantic scoring only**. The 2.0.x
-search path is written as a hybrid — vector search with 4x over-fetch, a
-BM25 keyword leg, spaCy entity boosts, additively fused
+search path is written as a hybrid — vector search over a deliberately
+over-fetched candidate pool, a BM25 keyword leg, spaCy entity boosts,
+additively fused
 (`mem0/utils/scoring.py::score_and_rank`:
 `combined = (semantic + bm25 + entity) / max_possible`) — but both extra
 legs disable themselves at init in the base install, each with a log
@@ -50,9 +51,9 @@ a pure MiniLM-vector baseline.
 search(query, *, top_k=20, filters=None, threshold=0.1, rerank=False, ...)
 ```
 
-`threshold=0.1` drops every candidate whose **semantic** score is below
-0.1 — the docstring's "Minimum score" gates the raw cosine *before*
-hybrid fusion (scoring.py: "Threshold gates the semantic score BEFORE
+The shipped threshold default — pinned in the signature above — drops
+every candidate whose **semantic** score sits below it; the docstring's
+"Minimum score" gates the raw cosine *before* hybrid fusion (scoring.py: "Threshold gates the semantic score BEFORE
 combining"). Measured on the e47becba store: the default form at
 top_k=200 returns **3 hits of 277 stored**. A benchmark that published
 that would measure a list-truncation default, not retrieval — the same
@@ -63,7 +64,7 @@ The depth form is public API, no code surgery: `top_k=200,
 threshold=0.0`. Two boundaries that must be declared beside any number:
 
 - `threshold=None` does **not** disable the cut — `_search_vector_store`
-  coerces None back to 0.1 ("Guard against None threshold (backward
+  coerces None back to the shipped default ("Guard against None threshold (backward
   compat)"). 0.0 is the floor the validator admits.
 - At threshold=0.0 the e47becba store returns 50 of 277 items (the
   neighbor instance 56 of 244): sub-zero-cosine items are unreachable
@@ -152,7 +153,7 @@ graduate with?", evidence session `answer_280352e9`):
    stays honest either way, dated and disclosed.
 5. **Store growth curve.** One collection holding ~124k vectors of 384
    dims is small for qdrant, but embedded-mode memory behavior at that
-   size on a 19GB machine should be watched once during the first full
+   size on this machine should be watched once during the first full
    ingest, not assumed.
 
 ## What must not happen
