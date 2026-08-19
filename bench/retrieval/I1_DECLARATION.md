@@ -76,8 +76,24 @@ size of effect the campaign actually argues about).
    technical-operational register as the existing twenty, because the
    corpus register is a confound the campaign has already been burned
    by (W1's park) and this unit is not the place to change it.
-5. **No LLM-synthesized corpus text.** Same doctrine clause the W
-   program runs under. Authored text is authored.
+5. **Authored, not bulk-generated — and the W clause is not the one
+   that governs here.** An earlier draft of this rule read "no
+   LLM-synthesized corpus text, same doctrine clause the W program
+   runs under," which contradicted the instrument it expands: the
+   original twenty were written by language models running as separate
+   agents with separate contexts (`bench/retrieval/README.md`, "Blind
+   authoring"), so a flat ban would bar the exact procedure that
+   produced the questions §3.1 freezes verbatim. The W program's
+   exclusion is narrower and aimed elsewhere — it bars LLM-synthesized
+   *training pairs*, because a model's paraphrase judgements carry its
+   learned geometry in through a side door, neither reproducible nor
+   auditable. Authoring benchmark prose borrows no geometry: here the
+   text is the instrument being read from, not a source of
+   supervision. What this rule does bar is bulk generation. Each topic
+   family is authored deliberately as a family — one gold document and
+   its distractor set, same subsystem, different decisions — and no
+   document is written in a context that has seen the question that
+   will retrieve it.
 
 ## 4. The bars — fixed now
 
