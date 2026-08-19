@@ -2618,3 +2618,151 @@ are gated at no-regression (P66) but their gains are not predicted.
   macro@5 ≥ 0.9160) is reached — P67's ceiling is 35% as-asked at @1.
   This is one mechanism, not the campaign.
 
+## Addendum 13 — declared before the mem0 arms are built, 2026-08-19
+
+Written after probing `mem0ai==2.0.18` as published on PyPI (the recon
+record is `MEM0-ADAPTER.md`, committed before this addendum), and
+**before any mem0 number exists.** Predictions continue — this document
+owns **P71–P75**.
+
+### The arms
+
+Two, both fully local and keyless, published side by side; neither
+alone is "the" mem0 number:
+
+| arm | install | search stack |
+| --- | --- | --- |
+| mem0-base | `pip install mem0ai` | semantic only — the BM25 keyword leg and spaCy entity boosts disable themselves at init; the fused score reduces to raw cosine |
+| mem0-extras | base + `mem0ai[extras]` + `mem0ai[nlp]` | their full hybrid — vector + normalized BM25 + entity boosts, additively fused by their own scoring module, untuned |
+
+Embedder in both arms: their supported local HuggingFace path
+(`sentence-transformers/all-MiniLM-L6-v2`) over embedded qdrant — the
+same keyless accommodation the committed 10-fact matrix used and
+disclosed. `rerank` stays at its shipped default (no reranker is
+configured in either keyless arm). fastembed/spaCy versions and their
+model identities are pinned in the artifact's provenance block at run
+time.
+
+### The depth form, declared as the most consequential knob
+
+`Memory.search()` ships a similarity threshold whose default drops
+candidates below it before fusion (`MEM0-ADAPTER.md`, "The default
+threshold is this adapter's recency window"). On a store the size of
+one haystack, the default form returns a single-digit result list — a
+number that would measure list truncation, not retrieval. **Publishing
+it would be a false accusation** — claude-mem's recency window again,
+in a different coat.
+
+The harness therefore calls the public API as
+`search(question, filters={"user_id": qid}, top_k=200, threshold=0.0)`:
+
+- `top_k=200` matches `RETRIEVAL_DEPTH`; every arm in this directory
+  ranks to the same depth.
+- `threshold=0.0` is the lowest value their validator admits; `None`
+  is coerced back to the shipped default, so zero IS the no-cut form.
+- The residual boundary travels with any number: candidates with
+  negative semantic score are unreachable through the public API, so a
+  question's distinct-session list may end early. The per-question
+  record's `n_ranked` counts it, and depth-truncation is reported per
+  arm exactly as for our own.
+
+### Ingest and attribution
+
+One memory per round, `rounds_of()` bodies with the date-prefix line —
+byte-identical to both existing arms. `user_id` = question id, their
+native entity isolation (unfiltered search refuses structurally). The
+LongMemEval session id travels ONLY in `metadata={"session_id": ...}` —
+qdrant payload, never embedded content — the same property the side
+map enforces on our side and the native session column on claude-mem's.
+Writes bypass their extraction (`infer=False`); reads go through the
+real `Memory.search()`. Both halves are disclosed together, as always.
+
+**The extraction asymmetry, said as loudly as their threshold.** mem0's
+real product runs LLM fact-extraction before storage; `infer=False`
+stores the raw round. The arms are symmetric in input and asymmetric in
+how much of mem0's design is exercised — this may understate them, and
+no result may be published without this beside the number. Enriching
+for them is rejected for the same three reasons Addendum 2 rejected it:
+an API key at write time, a non-$0 non-deterministic run, and authoring
+a competitor's extraction ourselves.
+
+`add(..., infer=False)` performed no content dedup under probe, so
+items-written is expected to equal rounds-offered; the shortfall is
+reported for both arms and any non-zero value is a finding, not noise
+(P75).
+
+### Gates, before any question is scored
+
+- **G-ready** — for every one of the 500 users, the store's exact
+  per-user count equals rounds offered. A single mismatch stops the
+  run. This is the half-built-index lesson; it has fired three times
+  in this directory, and it is cheap insurance the fourth time.
+- **G-iso** — the full-scale leak probe against the live store:
+  sampled searches under many user filters return only session ids
+  belonging to the filtered user's own haystack. Any leak voids the
+  run (the cm precedent measured all 500 projects at zero leaks; this
+  store must earn the same sentence).
+
+### Record shape and publication rule
+
+One artifact per arm in `results/`, provenance-stamped (package
+versions, corpus sha256, depth, threshold, arm label), with the same
+per-question sidecar fields as `run.py` (`qid`, `type`, `n_evidence`,
+`evidence_ranks`, `n_ranked`) so every published aggregate is a
+function of committed rows. The published read places both mem0 arms
+beside the standing table (bettermemory default and dated claude-mem),
+with the threshold form, the extraction bypass, and the enrichment
+asymmetry in the same breath as any headline. The runner is a sibling
+of `cm_run.py` (`mem0_run.py`); `run.py` continues to score
+bettermemory alone.
+
+### Predictions
+
+**P71 — the MiniLM convergence.** mem0-base macro session-level
+recall@5 lands within **3 points** of claude-mem's semantic arm
+(0.9160 — `results/claude-mem-full500.json`). Mechanism: both are
+MiniLM-class vector retrieval over identical round texts with the
+identical distinct-session collapse, and this corpus is close to
+saturated at @5 for any competent design — the README's "parity, not
+victory" reading, now tested on a third system. **MISSED if** the gap
+exceeds 3 points either way, which would locate a real architectural
+differentiator (chunk shape, fusion, the score floor) and the read
+must name it.
+
+**P72 — the hybrid adds little here.** mem0-extras beats mem0-base at
+macro recall@5 by **0 to 5 points**, both ends inclusive. Rationale:
+the keyword leg rewards verbatim vocabulary and LongMemEval is built
+colloquial and indirect; our own fusion lift on this corpus read about
+one point (`../l/L1_RECORD.md`). **MISSED if** extras loses to base
+(their fusion mis-weights, and that becomes the arm's headline) or
+wins by more than 5 (the keyword leg is load-bearing at scale, and our
+own lexical-fusion story deserves a second look).
+
+**P73 — the score floor is immaterial at the published depths.** Fewer
+than **5%** of questions per arm are depth-truncated at k=10
+(`n_ranked` below 10 distinct sessions). **MISSED if** more — the
+public API's floor is then a real ceiling on their score and must
+headline the read rather than footnote it.
+
+**P74 — the preference class flips against our default.** mem0-base
+beats bettermemory's default (6.1.0, lexical + conversational lane) on
+`single-session-preference` recall@5 by **at least 10 points**. That
+class is where our default is weakest and where our own removed
+semantic arm was strongest; if MiniLM-anything replicates the
+advantage, the class's difficulty is vector-general rather than
+arm-specific. **MISSED if** within 10 points — a genuinely important
+null: the class would then be hard for reasons embeddings alone do not
+fix.
+
+**P75 — no silent collapse at bulk.** Items written equals rounds
+offered in both arms across all 500 stores. **MISSED if** any
+shortfall appears — an undocumented bulk-path dedup exists, every
+touched question is named, and the count gates the read.
+
+### What is not claimed
+
+- Not correctness, helpfulness, or staleness — recall only, as ever.
+- Not that either mem0 arm is their ceiling: the extraction bypass and
+  the score floor both bound from below, and the read must say so.
+- Not a re-measurement of claude-mem; the dated 13.12.4 record stands.
+
