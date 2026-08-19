@@ -118,7 +118,7 @@ def test_v1_corpus_is_retained_so_published_figures_stay_reproducible() -> None:
     assert len([r for r in rows if r["gold"]]) == 20
 
 
-def test_v2_corpus_is_retained_so_the_twenty_question_figures_stay_reproducible() -> None:
+def test_v2_instrument_is_retained_so_pre_i1_figures_stay_reproducible() -> None:
     """Every dev-side figure the campaign published before I1 was measured
     on the 180-document / 20-question instrument. I1 expanded it to
     1,080 / 120; the old pair is retained beside the new one so those
@@ -128,12 +128,20 @@ def test_v2_corpus_is_retained_so_the_twenty_question_figures_stay_reproducible(
     artifact, so a byte of drift here silently breaks that claim too."""
     corpus = _HERE / "corpus-v2.jsonl"
     questions = _HERE / "questions-v2.jsonl"
-    assert corpus.exists(), "corpus-v2.jsonl was removed; pre-I1 results are now unverifiable"
-    assert questions.exists(), "questions-v2.jsonl was removed; pre-I1 results are now unverifiable"
-    rows = [json.loads(line) for line in corpus.read_text().splitlines() if line.strip()]
+    assert corpus.exists(), (
+        "corpus-v2.jsonl was removed; pre-I1 results are now unverifiable"
+    )
+    assert questions.exists(), (
+        "questions-v2.jsonl was removed; pre-I1 results are now unverifiable"
+    )
+    rows = [
+        json.loads(line) for line in corpus.read_text().splitlines() if line.strip()
+    ]
     assert len(rows) == 180
     assert len([r for r in rows if r["gold"]]) == 20
-    qs = [json.loads(line) for line in questions.read_text().splitlines() if line.strip()]
+    qs = [
+        json.loads(line) for line in questions.read_text().splitlines() if line.strip()
+    ]
     assert len(qs) == 20
     digest = hashlib.sha256(corpus.read_bytes()).hexdigest()
     assert digest == runner._V2_CORPUS_SHA256, (
