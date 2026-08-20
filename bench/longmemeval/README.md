@@ -77,7 +77,82 @@ retrieve better."
 The claude-mem side is dated 2026-07-27 at `claude-mem@13.12.4` and
 stays so (the tooling is no longer installed here); the bettermemory
 side has since reproduced bit-for-bit through twelve engine releases
-and the restored arm (below).
+and the restored arm (below). **The mem0 arms (2026-08-19, next
+section) moved the field's best measured number to 93.8%**, so the
+parity sentence above now describes the MiniLM-class cluster, not the
+default's distance to the front.
+
+## The mem0 arms — the best measured number moves, 2026-08-19
+
+Declared before any number existed (PREREGISTRATION.md addendum 13),
+recon'd against the published artifact (MEM0-ADAPTER.md), run by
+`mem0_run.py` at `mem0ai==2.0.18` — two arms, both keyless and local,
+published side by side as the addendum requires. Artifacts:
+`results/mem0-base-full500-2026-08-19.json`,
+`results/mem0-extras-full500-2026-08-19.json`, with per-question
+sidecars one directory below.
+
+| system / arm | @1 | @5 | @10 |
+| --- | --- | --- | --- |
+| bettermemory default (6.1.0) | 53.4% | 90.6% | 94.9% |
+| claude-mem semantic (13.12.4, dated) | 54.2% | 91.6% | **96.9%** |
+| mem0-base | 53.5% | 92.4% | 96.3% |
+| mem0-extras | **57.1%** | **93.8%** | 97.7% |
+
+Read beside the numbers, not after them:
+
+- **Both arms bypass mem0's LLM extraction** (`add(..., infer=False)`):
+  their real pipeline extracts facts before storage, so these are
+  floors, not ceilings — the same enrichment asymmetry the claude-mem
+  arm carries, disclosed the same way.
+- **The depth form is the harness's, declared in the addendum.** Their
+  shipped search default truncates the result list on stores this size
+  (the recon's headline); the harness runs their public API at the
+  shared retrieval depth with the score cut at its validated floor.
+  Zero of 500 questions were depth-truncated at k=10 in either arm, so
+  the residual boundary did not bind.
+- **Gates held exactly on both arms**: per-user store counts exact
+  (124,361 rounds each), the fifty-user leak probe read zero, shortfall
+  zero — mem0's bulk add really does write one memory per round.
+- The extras arm runs their full hybrid untuned (fastembed 0.8.0,
+  spacy 3.8.13, en_core_web_sm) on top of the same ingest.
+
+Addendum 13's predictions, scored:
+
+| # | prediction | outcome |
+| --- | --- | --- |
+| P71 | mem0-base within 3 points of claude-mem semantic @5 | **HELD — 0.8 apart** |
+| P72 | extras adds 0–5 points over base @5 | **HELD — +1.5** |
+| P73 | fewer than 5% of questions depth-truncated @10 | **HELD — 0 of 500** |
+| P74 | base beats our default on preference @5 by ≥10 | **HELD — +23.3** |
+| P75 | zero ingest shortfall in both arms | **HELD — 0.0 both** |
+
+Five of five, and the two that matter most tell one story between
+them: P71 says MiniLM-class vector retrieval converges (91.6, 92.4 —
+0.8 apart across two entirely different products), and P74 says the
+preference class is where all of it comes from — mem0-base's +23.3
+there is our removed semantic arm's +23.3, reproduced in someone
+else's stack. The class is vector-general, not arm-specific.
+
+Two findings the predictions did not fully anticipate. First, the
+extras arm's fusion is real but uneven: +1.5 pooled, yet it *loses*
+the preference class to its own base arm (90.0% vs 96.7%) — the BM25
+keyword leg dilutes exactly the class the vector leg owns — while
+winning every other class. Second, against mem0-extras the by-type
+trade that held against claude-mem is gone: knowledge-update and
+single-session-user, the two classes our default won, read 98.7% and
+97.1% on their side against our 98.1% and 97.1% — a wash — and every
+other class is theirs. The default's honest position is now **3.2
+points behind the field's best measured arm**, up from 1.0.
+
+What this does not change: the correctness axis. No mem0 arm runs in
+`bench/rot/`, recall does not measure whether a store knows a fact is
+superseded, and the defensible sentence stays "we verify and here is
+the measured accuracy." What it does change: **the campaign's LME bar
+(macro@5 ≥ 0.9160) was set as the then-best measured competitor, and
+the best measured competitor is now 0.9383 with extraction bypassed.**
+Restating the bar is charter surgery — an owner door, named here, not
+walked through.
 
 ## Results — canonical
 
