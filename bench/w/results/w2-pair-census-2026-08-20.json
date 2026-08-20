@@ -1,0 +1,551 @@
+{
+ "committed_six": [
+  {
+   "exclusive_all": 0,
+   "exclusive_tech": 0,
+   "left": "toggle",
+   "right": "flag",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 0,
+   "exclusive_tech": 0,
+   "left": "undo",
+   "right": "rollback",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 0,
+   "exclusive_tech": 0,
+   "left": "revert",
+   "right": "rollback",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 0,
+   "exclusive_tech": 0,
+   "left": "timeout",
+   "right": "expiry",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 0,
+   "exclusive_tech": 0,
+   "left": "flag",
+   "right": "boolean",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 0,
+   "exclusive_tech": 0,
+   "left": "error",
+   "right": "exception",
+   "same_side_all": 1,
+   "stem_conflated": false,
+   "supported": false
+  }
+ ],
+ "expanded_family": [
+  {
+   "exclusive_all": 0,
+   "exclusive_tech": 0,
+   "left": "toggle",
+   "right": "flag",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 0,
+   "exclusive_tech": 0,
+   "left": "rip",
+   "right": "remove",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 0,
+   "exclusive_tech": 0,
+   "left": "rip",
+   "right": "removal",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 8,
+   "exclusive_tech": 6,
+   "left": "remove",
+   "right": "removal",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": true
+  },
+  {
+   "exclusive_all": 0,
+   "exclusive_tech": 0,
+   "left": "hash",
+   "right": "digest",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 0,
+   "exclusive_tech": 0,
+   "left": "hash",
+   "right": "sha256",
+   "same_side_all": 1,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 1,
+   "exclusive_tech": 1,
+   "left": "hash",
+   "right": "checksum",
+   "same_side_all": 3,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 0,
+   "exclusive_tech": 0,
+   "left": "digest",
+   "right": "sha256",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 0,
+   "exclusive_tech": 0,
+   "left": "digest",
+   "right": "checksum",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 1,
+   "exclusive_tech": 1,
+   "left": "sha256",
+   "right": "checksum",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 0,
+   "exclusive_tech": 0,
+   "left": "cred",
+   "right": "credential",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 0,
+   "exclusive_tech": 0,
+   "left": "cred",
+   "right": "secret",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 0,
+   "exclusive_tech": 0,
+   "left": "credential",
+   "right": "secret",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 0,
+   "exclusive_tech": 0,
+   "left": "library",
+   "right": "dependency",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 1,
+   "exclusive_tech": 0,
+   "left": "library",
+   "right": "package",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 0,
+   "exclusive_tech": 0,
+   "left": "dependency",
+   "right": "package",
+   "same_side_all": 1,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 0,
+   "exclusive_tech": 0,
+   "left": "bar",
+   "right": "criteria",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 0,
+   "exclusive_tech": 0,
+   "left": "bar",
+   "right": "approval",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 0,
+   "exclusive_tech": 0,
+   "left": "bar",
+   "right": "policy",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 0,
+   "exclusive_tech": 0,
+   "left": "criteria",
+   "right": "approval",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 0,
+   "exclusive_tech": 0,
+   "left": "criteria",
+   "right": "policy",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 1,
+   "exclusive_tech": 0,
+   "left": "approval",
+   "right": "policy",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 0,
+   "exclusive_tech": 0,
+   "left": "undo",
+   "right": "rollback",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 1,
+   "exclusive_tech": 1,
+   "left": "undo",
+   "right": "revert",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 0,
+   "exclusive_tech": 0,
+   "left": "rollback",
+   "right": "revert",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 0,
+   "exclusive_tech": 0,
+   "left": "dump",
+   "right": "backup",
+   "same_side_all": 3,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 0,
+   "exclusive_tech": 0,
+   "left": "dump",
+   "right": "restore",
+   "same_side_all": 2,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 13,
+   "exclusive_tech": 13,
+   "left": "backup",
+   "right": "restore",
+   "same_side_all": 42,
+   "stem_conflated": false,
+   "supported": true
+  },
+  {
+   "exclusive_all": 0,
+   "exclusive_tech": 0,
+   "left": "staged",
+   "right": "phased",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 0,
+   "exclusive_tech": 0,
+   "left": "staged",
+   "right": "stage",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 0,
+   "exclusive_tech": 0,
+   "left": "staged",
+   "right": "phase",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 0,
+   "exclusive_tech": 0,
+   "left": "phased",
+   "right": "stage",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 0,
+   "exclusive_tech": 0,
+   "left": "phased",
+   "right": "phase",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 1,
+   "exclusive_tech": 0,
+   "left": "stage",
+   "right": "phase",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 1,
+   "exclusive_tech": 1,
+   "left": "old",
+   "right": "legacy",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 0,
+   "exclusive_tech": 0,
+   "left": "cutover",
+   "right": "switchover",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 0,
+   "exclusive_tech": 0,
+   "left": "cutover",
+   "right": "switching",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 0,
+   "exclusive_tech": 0,
+   "left": "cutover",
+   "right": "decommission",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 0,
+   "exclusive_tech": 0,
+   "left": "cutover",
+   "right": "shutdown",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 0,
+   "exclusive_tech": 0,
+   "left": "switchover",
+   "right": "switching",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 0,
+   "exclusive_tech": 0,
+   "left": "switchover",
+   "right": "decommission",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 0,
+   "exclusive_tech": 0,
+   "left": "switchover",
+   "right": "shutdown",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 0,
+   "exclusive_tech": 0,
+   "left": "switching",
+   "right": "decommission",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 0,
+   "exclusive_tech": 0,
+   "left": "switching",
+   "right": "shutdown",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  },
+  {
+   "exclusive_all": 0,
+   "exclusive_tech": 0,
+   "left": "decommission",
+   "right": "shutdown",
+   "same_side_all": 0,
+   "stem_conflated": false,
+   "supported": false
+  }
+ ],
+ "expanded_supported": 2,
+ "expanded_total": 45,
+ "needs_continuity": {
+  "06f04340": {
+   "count": 0,
+   "note": "what to serve for dinner <-> the herb-recipe session",
+   "register": "food"
+  },
+  "09d032c9": {
+   "count": 45,
+   "note": "phone battery life <-> the power-bank/charging-pad session",
+   "register": "consumer-tech"
+  },
+  "195a1a1b": {
+   "count": 2,
+   "note": "evening activities <-> the time-management/schedule session",
+   "register": "everyday-planning"
+  },
+  "1a1907b4": {
+   "count": 0,
+   "note": "cocktail suggestions <-> the Pimm's Cup / Collins-glass session",
+   "register": "food/drink"
+  },
+  "505af2f5": {
+   "count": 0,
+   "note": "creamer recipe <-> the making-my-own-creamer session",
+   "register": "food"
+  },
+  "75832dbd": {
+   "count": 13,
+   "note": "recent publications/conferences <-> the research-interest session (deep learning, medical image analysis)",
+   "register": "academic/technical"
+  },
+  "95228167": {
+   "count": 0,
+   "note": "what to look for in a guitar <-> the Les Paul session",
+   "register": "music-gear"
+  },
+  "d6233ab6": {
+   "count": 0,
+   "note": "nostalgic / reunion <-> the remembered-high-school session",
+   "register": "everyday-emotional"
+  }
+ },
+ "pairs_by_site": {
+  "academia-stackexchange-archive": 2692,
+  "android-stackexchange-archive": 2976,
+  "apple-stackexchange-archive": 5367,
+  "beer-stackexchange-archive": 25,
+  "coffee-stackexchange-archive": 33,
+  "cooking-stackexchange-archive": 1377,
+  "diy-stackexchange-archive": 1203,
+  "fitness-stackexchange-archive": 447,
+  "gardening-stackexchange-archive": 245,
+  "interpersonal-stackexchange-archive": 77,
+  "lifehacks-stackexchange-archive": 102,
+  "movies-stackexchange-archive": 583,
+  "music-stackexchange-archive": 1332,
+  "outdoors-stackexchange-archive": 161,
+  "parenting-stackexchange-archive": 212,
+  "pets-stackexchange-archive": 752,
+  "superuser-archive": 14535,
+  "travel-stackexchange-archive": 5317
+ },
+ "pairs_total": 37436,
+ "provenance": {
+  "bettermemory_version": "6.1.0",
+  "declaration": "bench/w/W2_PAIR_CENSUS_DECLARATION.md",
+  "generated": "2026-08-20",
+  "git_commit": "ebff5dc4edeafac88d02059b8f0e2b4ac1d58ec9",
+  "pairs_sha256": "bc1d7d49a1793c6d5d297c09f92f58cf2adfd1afde23c1814a1cb6aa3b0dee8e",
+  "pairs_tsv": "bench/w/corpus/derived/w3p2-pairs-2026-08-17.tsv"
+ },
+ "readiness": {
+  "license_min_of_six": 4,
+  "outcome": "park",
+  "six_supported": 0,
+  "twitch_min_of_six": 2
+ },
+ "support_min": 5,
+ "tech_register_pairs": 22878,
+ "tech_register_sites": [
+  "android-stackexchange-archive",
+  "apple-stackexchange-archive",
+  "superuser-archive"
+ ]
+}
