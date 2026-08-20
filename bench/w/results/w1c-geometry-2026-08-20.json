@@ -1,0 +1,1543 @@
+{
+ "declaration": "bench/w/W1C_DECLARATION.md",
+ "expanded_pairs": [
+  [
+   "toggle",
+   "flag"
+  ],
+  [
+   "rip",
+   "remove"
+  ],
+  [
+   "rip",
+   "removal"
+  ],
+  [
+   "remove",
+   "removal"
+  ],
+  [
+   "hash",
+   "digest"
+  ],
+  [
+   "hash",
+   "sha256"
+  ],
+  [
+   "hash",
+   "checksum"
+  ],
+  [
+   "digest",
+   "sha256"
+  ],
+  [
+   "digest",
+   "checksum"
+  ],
+  [
+   "sha256",
+   "checksum"
+  ],
+  [
+   "cred",
+   "credential"
+  ],
+  [
+   "cred",
+   "secret"
+  ],
+  [
+   "credential",
+   "secret"
+  ],
+  [
+   "library",
+   "dependency"
+  ],
+  [
+   "library",
+   "package"
+  ],
+  [
+   "dependency",
+   "package"
+  ],
+  [
+   "bar",
+   "criteria"
+  ],
+  [
+   "bar",
+   "approval"
+  ],
+  [
+   "bar",
+   "policy"
+  ],
+  [
+   "criteria",
+   "approval"
+  ],
+  [
+   "criteria",
+   "policy"
+  ],
+  [
+   "approval",
+   "policy"
+  ],
+  [
+   "undo",
+   "rollback"
+  ],
+  [
+   "undo",
+   "revert"
+  ],
+  [
+   "rollback",
+   "revert"
+  ],
+  [
+   "dump",
+   "backup"
+  ],
+  [
+   "dump",
+   "restore"
+  ],
+  [
+   "backup",
+   "restore"
+  ],
+  [
+   "staged",
+   "phased"
+  ],
+  [
+   "staged",
+   "stage"
+  ],
+  [
+   "staged",
+   "phase"
+  ],
+  [
+   "phased",
+   "stage"
+  ],
+  [
+   "phased",
+   "phase"
+  ],
+  [
+   "stage",
+   "phase"
+  ],
+  [
+   "old",
+   "legacy"
+  ],
+  [
+   "cutover",
+   "switchover"
+  ],
+  [
+   "cutover",
+   "switching"
+  ],
+  [
+   "cutover",
+   "decommission"
+  ],
+  [
+   "cutover",
+   "shutdown"
+  ],
+  [
+   "switchover",
+   "switching"
+  ],
+  [
+   "switchover",
+   "decommission"
+  ],
+  [
+   "switchover",
+   "shutdown"
+  ],
+  [
+   "switching",
+   "decommission"
+  ],
+  [
+   "switching",
+   "shutdown"
+  ],
+  [
+   "decommission",
+   "shutdown"
+  ]
+ ],
+ "mutual_rank_window": 64,
+ "readiness": {
+  "expanded_in_vocab_w15": 41,
+  "expanded_inside_w15": 6,
+  "expanded_share_w15": 0.1463,
+  "morphological_share_w15": 1.0,
+  "outcome": "objective-is-the-wall"
+ },
+ "readings": {
+  "w15": {
+   "families": {
+    "cross_form": [
+     {
+      "cosine": 0.2533,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "toggle",
+      "left_vocab_rank": 5452,
+      "rank_left_to_right": 3978,
+      "rank_right_to_left": 1910,
+      "right": "flag",
+      "right_vocab_rank": 1655
+     },
+     {
+      "cosine": 0.3446,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "undo",
+      "left_vocab_rank": 6324,
+      "rank_left_to_right": 421,
+      "rank_right_to_left": 527,
+      "right": "rollback",
+      "right_vocab_rank": 7366
+     },
+     {
+      "cosine": 0.3113,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "revert",
+      "left_vocab_rank": 6830,
+      "rank_left_to_right": 6556,
+      "rank_right_to_left": 917,
+      "right": "rollback",
+      "right_vocab_rank": 7366
+     },
+     {
+      "cosine": 0.4113,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "timeout",
+      "left_vocab_rank": 2878,
+      "rank_left_to_right": 409,
+      "rank_right_to_left": 316,
+      "right": "expiry",
+      "right_vocab_rank": 18011
+     },
+     {
+      "cosine": -0.0724,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "flag",
+      "left_vocab_rank": 1655,
+      "rank_left_to_right": 113310,
+      "rank_right_to_left": 97890,
+      "right": "boolean",
+      "right_vocab_rank": 1805
+     },
+     {
+      "cosine": 0.3476,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "error",
+      "left_vocab_rank": 199,
+      "rank_left_to_right": 2077,
+      "rank_right_to_left": 776,
+      "right": "exception",
+      "right_vocab_rank": 511
+     }
+    ],
+    "cross_form_expanded": [
+     {
+      "cosine": 0.2533,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "toggle",
+      "left_vocab_rank": 5452,
+      "rank_left_to_right": 3978,
+      "rank_right_to_left": 1910,
+      "right": "flag",
+      "right_vocab_rank": 1655
+     },
+     {
+      "cosine": 0.3586,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "rip",
+      "left_vocab_rank": 9487,
+      "rank_left_to_right": 1121,
+      "rank_right_to_left": 5486,
+      "right": "remove",
+      "right_vocab_rank": 507
+     },
+     {
+      "cosine": 0.2945,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "rip",
+      "left_vocab_rank": 9487,
+      "rank_left_to_right": 3500,
+      "rank_right_to_left": 8570,
+      "right": "removal",
+      "right_vocab_rank": 4962
+     },
+     {
+      "cosine": 0.7562,
+      "in_vocabulary": true,
+      "inside_emission_window": true,
+      "left": "remove",
+      "left_vocab_rank": 507,
+      "rank_left_to_right": 6,
+      "rank_right_to_left": 4,
+      "right": "removal",
+      "right_vocab_rank": 4962
+     },
+     {
+      "cosine": 0.5027,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "hash",
+      "left_vocab_rank": 1349,
+      "rank_left_to_right": 151,
+      "rank_right_to_left": 78,
+      "right": "digest",
+      "right_vocab_rank": 8596
+     },
+     {
+      "cosine": 0.6446,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "hash",
+      "left_vocab_rank": 1349,
+      "rank_left_to_right": 24,
+      "rank_right_to_left": 117,
+      "right": "sha256",
+      "right_vocab_rank": 29886
+     },
+     {
+      "cosine": 0.5576,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "hash",
+      "left_vocab_rank": 1349,
+      "rank_left_to_right": 80,
+      "rank_right_to_left": 27,
+      "right": "checksum",
+      "right_vocab_rank": 8941
+     },
+     {
+      "cosine": 0.5142,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "digest",
+      "left_vocab_rank": 8596,
+      "rank_left_to_right": 66,
+      "rank_right_to_left": 352,
+      "right": "sha256",
+      "right_vocab_rank": 29886
+     },
+     {
+      "cosine": 0.3707,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "digest",
+      "left_vocab_rank": 8596,
+      "rank_left_to_right": 621,
+      "rank_right_to_left": 797,
+      "right": "checksum",
+      "right_vocab_rank": 8941
+     },
+     {
+      "cosine": 0.5539,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "sha256",
+      "left_vocab_rank": 29886,
+      "rank_left_to_right": 263,
+      "rank_right_to_left": 28,
+      "right": "checksum",
+      "right_vocab_rank": 8941
+     },
+     {
+      "cosine": 0.6032,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "cred",
+      "left_vocab_rank": 40280,
+      "rank_left_to_right": 3,
+      "rank_right_to_left": 93,
+      "right": "credential",
+      "right_vocab_rank": 20124
+     },
+     {
+      "cosine": 0.4224,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "cred",
+      "left_vocab_rank": 40280,
+      "rank_left_to_right": 94,
+      "rank_right_to_left": 453,
+      "right": "secret",
+      "right_vocab_rank": 2542
+     },
+     {
+      "cosine": 0.408,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "credential",
+      "left_vocab_rank": 20124,
+      "rank_left_to_right": 903,
+      "rank_right_to_left": 589,
+      "right": "secret",
+      "right_vocab_rank": 2542
+     },
+     {
+      "cosine": 0.1175,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "library",
+      "left_vocab_rank": 310,
+      "rank_left_to_right": 22724,
+      "rank_right_to_left": 27960,
+      "right": "dependency",
+      "right_vocab_rank": 2686
+     },
+     {
+      "cosine": 0.2679,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "library",
+      "left_vocab_rank": 310,
+      "rank_left_to_right": 2626,
+      "rank_right_to_left": 5074,
+      "right": "package",
+      "right_vocab_rank": 1046
+     },
+     {
+      "cosine": 0.4308,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "dependency",
+      "left_vocab_rank": 2686,
+      "rank_left_to_right": 91,
+      "rank_right_to_left": 228,
+      "right": "package",
+      "right_vocab_rank": 1046
+     },
+     {
+      "cosine": 0.0178,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "bar",
+      "left_vocab_rank": 514,
+      "rank_left_to_right": 67719,
+      "rank_right_to_left": 68275,
+      "right": "criteria",
+      "right_vocab_rank": 3160
+     },
+     {
+      "cosine": 0.0395,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "bar",
+      "left_vocab_rank": 514,
+      "rank_left_to_right": 58622,
+      "rank_right_to_left": 59593,
+      "right": "approval",
+      "right_vocab_rank": 5828
+     },
+     {
+      "cosine": 0.0653,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "bar",
+      "left_vocab_rank": 514,
+      "rank_left_to_right": 48509,
+      "rank_right_to_left": 47899,
+      "right": "policy",
+      "right_vocab_rank": 1501
+     },
+     {
+      "cosine": 0.379,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "criteria",
+      "left_vocab_rank": 3160,
+      "rank_left_to_right": 1542,
+      "rank_right_to_left": 1968,
+      "right": "approval",
+      "right_vocab_rank": 5828
+     },
+     {
+      "cosine": 0.1719,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "criteria",
+      "left_vocab_rank": 3160,
+      "rank_left_to_right": 22257,
+      "rank_right_to_left": 20306,
+      "right": "policy",
+      "right_vocab_rank": 1501
+     },
+     {
+      "cosine": 0.3667,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "approval",
+      "left_vocab_rank": 5828,
+      "rank_left_to_right": 2313,
+      "rank_right_to_left": 2472,
+      "right": "policy",
+      "right_vocab_rank": 1501
+     },
+     {
+      "cosine": 0.3446,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "undo",
+      "left_vocab_rank": 6324,
+      "rank_left_to_right": 421,
+      "rank_right_to_left": 527,
+      "right": "rollback",
+      "right_vocab_rank": 7366
+     },
+     {
+      "cosine": 0.606,
+      "in_vocabulary": true,
+      "inside_emission_window": true,
+      "left": "undo",
+      "left_vocab_rank": 6324,
+      "rank_left_to_right": 5,
+      "rank_right_to_left": 15,
+      "right": "revert",
+      "right_vocab_rank": 6830
+     },
+     {
+      "cosine": 0.3113,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "rollback",
+      "left_vocab_rank": 7366,
+      "rank_left_to_right": 917,
+      "rank_right_to_left": 6556,
+      "right": "revert",
+      "right_vocab_rank": 6830
+     },
+     {
+      "cosine": 0.3157,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "dump",
+      "left_vocab_rank": 2991,
+      "rank_left_to_right": 1092,
+      "rank_right_to_left": 627,
+      "right": "backup",
+      "right_vocab_rank": 999
+     },
+     {
+      "cosine": 0.1753,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "dump",
+      "left_vocab_rank": 2991,
+      "rank_left_to_right": 12830,
+      "rank_right_to_left": 18260,
+      "right": "restore",
+      "right_vocab_rank": 1813
+     },
+     {
+      "cosine": 0.5299,
+      "in_vocabulary": true,
+      "inside_emission_window": true,
+      "left": "backup",
+      "left_vocab_rank": 999,
+      "rank_left_to_right": 22,
+      "rank_right_to_left": 53,
+      "right": "restore",
+      "right_vocab_rank": 1813
+     },
+     {
+      "cosine": 0.4773,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "staged",
+      "left_vocab_rank": 12526,
+      "rank_left_to_right": 464,
+      "rank_right_to_left": 180,
+      "right": "phased",
+      "right_vocab_rank": 21266
+     },
+     {
+      "cosine": 0.7815,
+      "in_vocabulary": true,
+      "inside_emission_window": true,
+      "left": "staged",
+      "left_vocab_rank": 12526,
+      "rank_left_to_right": 1,
+      "rank_right_to_left": 3,
+      "right": "stage",
+      "right_vocab_rank": 1710
+     },
+     {
+      "cosine": 0.3459,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "staged",
+      "left_vocab_rank": 12526,
+      "rank_left_to_right": 4857,
+      "rank_right_to_left": 3406,
+      "right": "phase",
+      "right_vocab_rank": 2547
+     },
+     {
+      "cosine": 0.4542,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "phased",
+      "left_vocab_rank": 21266,
+      "rank_left_to_right": 335,
+      "rank_right_to_left": 644,
+      "right": "stage",
+      "right_vocab_rank": 1710
+     },
+     {
+      "cosine": 0.7063,
+      "in_vocabulary": true,
+      "inside_emission_window": true,
+      "left": "phased",
+      "left_vocab_rank": 21266,
+      "rank_left_to_right": 4,
+      "rank_right_to_left": 3,
+      "right": "phase",
+      "right_vocab_rank": 2547
+     },
+     {
+      "cosine": 0.5117,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "stage",
+      "left_vocab_rank": 1710,
+      "rank_left_to_right": 134,
+      "rank_right_to_left": 76,
+      "right": "phase",
+      "right_vocab_rank": 2547
+     },
+     {
+      "cosine": 0.0101,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "old",
+      "left_vocab_rank": 229,
+      "rank_left_to_right": 74357,
+      "rank_right_to_left": 72080,
+      "right": "legacy",
+      "right_vocab_rank": 2729
+     },
+     {
+      "in_vocabulary": false,
+      "left": "cutover",
+      "right": "switchover"
+     },
+     {
+      "in_vocabulary": false,
+      "left": "cutover",
+      "right": "switching"
+     },
+     {
+      "in_vocabulary": false,
+      "left": "cutover",
+      "right": "decommission"
+     },
+     {
+      "in_vocabulary": false,
+      "left": "cutover",
+      "right": "shutdown"
+     },
+     {
+      "cosine": 0.7826,
+      "in_vocabulary": true,
+      "inside_emission_window": true,
+      "left": "switchover",
+      "left_vocab_rank": 87516,
+      "rank_left_to_right": 1,
+      "rank_right_to_left": 3,
+      "right": "switching",
+      "right_vocab_rank": 3168
+     },
+     {
+      "cosine": 0.0223,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "switchover",
+      "left_vocab_rank": 87516,
+      "rank_left_to_right": 68470,
+      "rank_right_to_left": 67536,
+      "right": "decommission",
+      "right_vocab_rank": 136597
+     },
+     {
+      "cosine": 0.1999,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "switchover",
+      "left_vocab_rank": 87516,
+      "rank_left_to_right": 17373,
+      "rank_right_to_left": 9714,
+      "right": "shutdown",
+      "right_vocab_rank": 4818
+     },
+     {
+      "cosine": 0.1574,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "switching",
+      "left_vocab_rank": 3168,
+      "rank_left_to_right": 34529,
+      "rank_right_to_left": 27920,
+      "right": "decommission",
+      "right_vocab_rank": 136597
+     },
+     {
+      "cosine": 0.1973,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "switching",
+      "left_vocab_rank": 3168,
+      "rank_left_to_right": 26750,
+      "rank_right_to_left": 10016,
+      "right": "shutdown",
+      "right_vocab_rank": 4818
+     },
+     {
+      "cosine": 0.1895,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "decommission",
+      "left_vocab_rank": 136597,
+      "rank_left_to_right": 21336,
+      "rank_right_to_left": 11104,
+      "right": "shutdown",
+      "right_vocab_rank": 4818
+     }
+    ],
+    "morphological": [
+     {
+      "cosine": 0.7823,
+      "in_vocabulary": true,
+      "inside_emission_window": true,
+      "left": "config",
+      "left_vocab_rank": 835,
+      "rank_left_to_right": 14,
+      "rank_right_to_left": 33,
+      "right": "configuration",
+      "right_vocab_rank": 814
+     },
+     {
+      "cosine": 0.8282,
+      "in_vocabulary": true,
+      "inside_emission_window": true,
+      "left": "deploy",
+      "left_vocab_rank": 3239,
+      "rank_left_to_right": 15,
+      "rank_right_to_left": 10,
+      "right": "deployment",
+      "right_vocab_rank": 3050
+     },
+     {
+      "cosine": 0.7614,
+      "in_vocabulary": true,
+      "inside_emission_window": true,
+      "left": "auth",
+      "left_vocab_rank": 5107,
+      "rank_left_to_right": 8,
+      "rank_right_to_left": 42,
+      "right": "authentication",
+      "right_vocab_rank": 1915
+     },
+     {
+      "cosine": 0.7305,
+      "in_vocabulary": true,
+      "inside_emission_window": true,
+      "left": "cache",
+      "left_vocab_rank": 915,
+      "rank_left_to_right": 20,
+      "rank_right_to_left": 8,
+      "right": "caching",
+      "right_vocab_rank": 2956
+     }
+    ],
+    "near_synonym": [
+     {
+      "cosine": 0.606,
+      "in_vocabulary": true,
+      "inside_emission_window": true,
+      "left": "undo",
+      "left_vocab_rank": 6324,
+      "rank_left_to_right": 5,
+      "rank_right_to_left": 15,
+      "right": "revert",
+      "right_vocab_rank": 6830
+     },
+     {
+      "cosine": 0.4588,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "toggle",
+      "left_vocab_rank": 5452,
+      "rank_left_to_right": 184,
+      "rank_right_to_left": 386,
+      "right": "switch",
+      "right_vocab_rank": 884
+     },
+     {
+      "cosine": 0.4974,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "toggle",
+      "left_vocab_rank": 5452,
+      "rank_left_to_right": 84,
+      "rank_right_to_left": 194,
+      "right": "checkbox",
+      "right_vocab_rank": 3007
+     },
+     {
+      "cosine": 0.3925,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "bug",
+      "left_vocab_rank": 1323,
+      "rank_left_to_right": 267,
+      "rank_right_to_left": 1143,
+      "right": "defect",
+      "right_vocab_rank": 11152
+     },
+     {
+      "cosine": 0.4988,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "database",
+      "left_vocab_rank": 223,
+      "rank_left_to_right": 197,
+      "rank_right_to_left": 76,
+      "right": "db",
+      "right_vocab_rank": 701
+     }
+    ]
+   },
+   "fractions": {
+    "cross_form": {
+     "in_vocabulary": 6,
+     "inside": 0,
+     "total": 6
+    },
+    "cross_form_expanded": {
+     "in_vocabulary": 41,
+     "inside": 6,
+     "total": 45
+    },
+    "morphological": {
+     "in_vocabulary": 4,
+     "inside": 4,
+     "total": 4
+    },
+    "near_synonym": {
+     "in_vocabulary": 5,
+     "inside": 1,
+     "total": 5
+    }
+   },
+   "run": "/Volumes/data/bettermemory/runs/w1c-2026-08-20",
+   "vectors_sha256": "915053697255e880ecd29fcbc2e73edf644d9c6451c691aa19f83ea6c5c3b4aa",
+   "vocab_size": 150000,
+   "window": 15
+  },
+  "w5": {
+   "families": {
+    "cross_form": [
+     {
+      "cosine": 0.2839,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "toggle",
+      "left_vocab_rank": 5452,
+      "rank_left_to_right": 4007,
+      "rank_right_to_left": 907,
+      "right": "flag",
+      "right_vocab_rank": 1655
+     },
+     {
+      "cosine": 0.3913,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "undo",
+      "left_vocab_rank": 6324,
+      "rank_left_to_right": 127,
+      "rank_right_to_left": 272,
+      "right": "rollback",
+      "right_vocab_rank": 7366
+     },
+     {
+      "cosine": 0.382,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "revert",
+      "left_vocab_rank": 6830,
+      "rank_left_to_right": 2406,
+      "rank_right_to_left": 328,
+      "right": "rollback",
+      "right_vocab_rank": 7366
+     },
+     {
+      "cosine": 0.4173,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "timeout",
+      "left_vocab_rank": 2878,
+      "rank_left_to_right": 552,
+      "rank_right_to_left": 305,
+      "right": "expiry",
+      "right_vocab_rank": 18011
+     },
+     {
+      "cosine": -0.019,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "flag",
+      "left_vocab_rank": 1655,
+      "rank_left_to_right": 85115,
+      "rank_right_to_left": 73652,
+      "right": "boolean",
+      "right_vocab_rank": 1805
+     },
+     {
+      "cosine": 0.4566,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "error",
+      "left_vocab_rank": 199,
+      "rank_left_to_right": 234,
+      "rank_right_to_left": 343,
+      "right": "exception",
+      "right_vocab_rank": 511
+     }
+    ],
+    "cross_form_expanded": [
+     {
+      "cosine": 0.2839,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "toggle",
+      "left_vocab_rank": 5452,
+      "rank_left_to_right": 4007,
+      "rank_right_to_left": 907,
+      "right": "flag",
+      "right_vocab_rank": 1655
+     },
+     {
+      "cosine": 0.2777,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "rip",
+      "left_vocab_rank": 9487,
+      "rank_left_to_right": 5194,
+      "rank_right_to_left": 16462,
+      "right": "remove",
+      "right_vocab_rank": 507
+     },
+     {
+      "cosine": 0.1931,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "rip",
+      "left_vocab_rank": 9487,
+      "rank_left_to_right": 15388,
+      "rank_right_to_left": 30130,
+      "right": "removal",
+      "right_vocab_rank": 4962
+     },
+     {
+      "cosine": 0.7397,
+      "in_vocabulary": true,
+      "inside_emission_window": true,
+      "left": "remove",
+      "left_vocab_rank": 507,
+      "rank_left_to_right": 10,
+      "rank_right_to_left": 6,
+      "right": "removal",
+      "right_vocab_rank": 4962
+     },
+     {
+      "cosine": 0.4828,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "hash",
+      "left_vocab_rank": 1349,
+      "rank_left_to_right": 130,
+      "rank_right_to_left": 112,
+      "right": "digest",
+      "right_vocab_rank": 8596
+     },
+     {
+      "cosine": 0.5754,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "hash",
+      "left_vocab_rank": 1349,
+      "rank_left_to_right": 57,
+      "rank_right_to_left": 185,
+      "right": "sha256",
+      "right_vocab_rank": 29886
+     },
+     {
+      "cosine": 0.5345,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "hash",
+      "left_vocab_rank": 1349,
+      "rank_left_to_right": 79,
+      "rank_right_to_left": 44,
+      "right": "checksum",
+      "right_vocab_rank": 8941
+     },
+     {
+      "cosine": 0.4076,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "digest",
+      "left_vocab_rank": 8596,
+      "rank_left_to_right": 488,
+      "rank_right_to_left": 1463,
+      "right": "sha256",
+      "right_vocab_rank": 29886
+     },
+     {
+      "cosine": 0.4111,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "digest",
+      "left_vocab_rank": 8596,
+      "rank_left_to_right": 453,
+      "rank_right_to_left": 473,
+      "right": "checksum",
+      "right_vocab_rank": 8941
+     },
+     {
+      "cosine": 0.4921,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "sha256",
+      "left_vocab_rank": 29886,
+      "rank_left_to_right": 457,
+      "rank_right_to_left": 99,
+      "right": "checksum",
+      "right_vocab_rank": 8941
+     },
+     {
+      "cosine": 0.5248,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "cred",
+      "left_vocab_rank": 40280,
+      "rank_left_to_right": 308,
+      "rank_right_to_left": 220,
+      "right": "credential",
+      "right_vocab_rank": 20124
+     },
+     {
+      "cosine": 0.4333,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "cred",
+      "left_vocab_rank": 40280,
+      "rank_left_to_right": 1868,
+      "rank_right_to_left": 225,
+      "right": "secret",
+      "right_vocab_rank": 2542
+     },
+     {
+      "cosine": 0.4201,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "credential",
+      "left_vocab_rank": 20124,
+      "rank_left_to_right": 737,
+      "rank_right_to_left": 281,
+      "right": "secret",
+      "right_vocab_rank": 2542
+     },
+     {
+      "cosine": 0.1044,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "library",
+      "left_vocab_rank": 310,
+      "rank_left_to_right": 26898,
+      "rank_right_to_left": 35966,
+      "right": "dependency",
+      "right_vocab_rank": 2686
+     },
+     {
+      "cosine": 0.2042,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "library",
+      "left_vocab_rank": 310,
+      "rank_left_to_right": 6778,
+      "rank_right_to_left": 13849,
+      "right": "package",
+      "right_vocab_rank": 1046
+     },
+     {
+      "cosine": 0.2902,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "dependency",
+      "left_vocab_rank": 2686,
+      "rank_left_to_right": 3577,
+      "rank_right_to_left": 3515,
+      "right": "package",
+      "right_vocab_rank": 1046
+     },
+     {
+      "cosine": -0.1564,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "bar",
+      "left_vocab_rank": 514,
+      "rank_left_to_right": 124354,
+      "rank_right_to_left": 125086,
+      "right": "criteria",
+      "right_vocab_rank": 3160
+     },
+     {
+      "cosine": 0.0436,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "bar",
+      "left_vocab_rank": 514,
+      "rank_left_to_right": 57934,
+      "rank_right_to_left": 54551,
+      "right": "approval",
+      "right_vocab_rank": 5828
+     },
+     {
+      "cosine": 0.0054,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "bar",
+      "left_vocab_rank": 514,
+      "rank_left_to_right": 70986,
+      "rank_right_to_left": 69120,
+      "right": "policy",
+      "right_vocab_rank": 1501
+     },
+     {
+      "cosine": 0.4067,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "criteria",
+      "left_vocab_rank": 3160,
+      "rank_left_to_right": 653,
+      "rank_right_to_left": 1839,
+      "right": "approval",
+      "right_vocab_rank": 5828
+     },
+     {
+      "cosine": 0.2292,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "criteria",
+      "left_vocab_rank": 3160,
+      "rank_left_to_right": 12977,
+      "rank_right_to_left": 10813,
+      "right": "policy",
+      "right_vocab_rank": 1501
+     },
+     {
+      "cosine": 0.3518,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "approval",
+      "left_vocab_rank": 5828,
+      "rank_left_to_right": 3711,
+      "rank_right_to_left": 2958,
+      "right": "policy",
+      "right_vocab_rank": 1501
+     },
+     {
+      "cosine": 0.3913,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "undo",
+      "left_vocab_rank": 6324,
+      "rank_left_to_right": 127,
+      "rank_right_to_left": 272,
+      "right": "rollback",
+      "right_vocab_rank": 7366
+     },
+     {
+      "cosine": 0.584,
+      "in_vocabulary": true,
+      "inside_emission_window": true,
+      "left": "undo",
+      "left_vocab_rank": 6324,
+      "rank_left_to_right": 5,
+      "rank_right_to_left": 35,
+      "right": "revert",
+      "right_vocab_rank": 6830
+     },
+     {
+      "cosine": 0.382,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "rollback",
+      "left_vocab_rank": 7366,
+      "rank_left_to_right": 328,
+      "rank_right_to_left": 2406,
+      "right": "revert",
+      "right_vocab_rank": 6830
+     },
+     {
+      "cosine": 0.3562,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "dump",
+      "left_vocab_rank": 2991,
+      "rank_left_to_right": 197,
+      "rank_right_to_left": 458,
+      "right": "backup",
+      "right_vocab_rank": 999
+     },
+     {
+      "cosine": 0.2827,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "dump",
+      "left_vocab_rank": 2991,
+      "rank_left_to_right": 1169,
+      "rank_right_to_left": 6586,
+      "right": "restore",
+      "right_vocab_rank": 1813
+     },
+     {
+      "cosine": 0.5388,
+      "in_vocabulary": true,
+      "inside_emission_window": true,
+      "left": "backup",
+      "left_vocab_rank": 999,
+      "rank_left_to_right": 27,
+      "rank_right_to_left": 52,
+      "right": "restore",
+      "right_vocab_rank": 1813
+     },
+     {
+      "cosine": 0.595,
+      "in_vocabulary": true,
+      "inside_emission_window": true,
+      "left": "staged",
+      "left_vocab_rank": 12526,
+      "rank_left_to_right": 16,
+      "rank_right_to_left": 12,
+      "right": "phased",
+      "right_vocab_rank": 21266
+     },
+     {
+      "cosine": 0.7773,
+      "in_vocabulary": true,
+      "inside_emission_window": true,
+      "left": "staged",
+      "left_vocab_rank": 12526,
+      "rank_left_to_right": 1,
+      "rank_right_to_left": 3,
+      "right": "stage",
+      "right_vocab_rank": 1710
+     },
+     {
+      "cosine": 0.4133,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "staged",
+      "left_vocab_rank": 12526,
+      "rank_left_to_right": 1831,
+      "rank_right_to_left": 992,
+      "right": "phase",
+      "right_vocab_rank": 2547
+     },
+     {
+      "cosine": 0.4457,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "phased",
+      "left_vocab_rank": 21266,
+      "rank_left_to_right": 730,
+      "rank_right_to_left": 652,
+      "right": "stage",
+      "right_vocab_rank": 1710
+     },
+     {
+      "cosine": 0.6856,
+      "in_vocabulary": true,
+      "inside_emission_window": true,
+      "left": "phased",
+      "left_vocab_rank": 21266,
+      "rank_left_to_right": 2,
+      "rank_right_to_left": 7,
+      "right": "phase",
+      "right_vocab_rank": 2547
+     },
+     {
+      "cosine": 0.5546,
+      "in_vocabulary": true,
+      "inside_emission_window": true,
+      "left": "stage",
+      "left_vocab_rank": 1710,
+      "rank_left_to_right": 29,
+      "rank_right_to_left": 27,
+      "right": "phase",
+      "right_vocab_rank": 2547
+     },
+     {
+      "cosine": 0.0548,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "old",
+      "left_vocab_rank": 229,
+      "rank_left_to_right": 58302,
+      "rank_right_to_left": 53962,
+      "right": "legacy",
+      "right_vocab_rank": 2729
+     },
+     {
+      "in_vocabulary": false,
+      "left": "cutover",
+      "right": "switchover"
+     },
+     {
+      "in_vocabulary": false,
+      "left": "cutover",
+      "right": "switching"
+     },
+     {
+      "in_vocabulary": false,
+      "left": "cutover",
+      "right": "decommission"
+     },
+     {
+      "in_vocabulary": false,
+      "left": "cutover",
+      "right": "shutdown"
+     },
+     {
+      "cosine": 0.7671,
+      "in_vocabulary": true,
+      "inside_emission_window": true,
+      "left": "switchover",
+      "left_vocab_rank": 87516,
+      "rank_left_to_right": 2,
+      "rank_right_to_left": 3,
+      "right": "switching",
+      "right_vocab_rank": 3168
+     },
+     {
+      "cosine": 0.0297,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "switchover",
+      "left_vocab_rank": 87516,
+      "rank_left_to_right": 64684,
+      "rank_right_to_left": 61907,
+      "right": "decommission",
+      "right_vocab_rank": 136597
+     },
+     {
+      "cosine": 0.2196,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "switchover",
+      "left_vocab_rank": 87516,
+      "rank_left_to_right": 13888,
+      "rank_right_to_left": 9225,
+      "right": "shutdown",
+      "right_vocab_rank": 4818
+     },
+     {
+      "cosine": 0.1625,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "switching",
+      "left_vocab_rank": 3168,
+      "rank_left_to_right": 33331,
+      "rank_right_to_left": 25089,
+      "right": "decommission",
+      "right_vocab_rank": 136597
+     },
+     {
+      "cosine": 0.1967,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "switching",
+      "left_vocab_rank": 3168,
+      "rank_left_to_right": 26660,
+      "rank_right_to_left": 12013,
+      "right": "shutdown",
+      "right_vocab_rank": 4818
+     },
+     {
+      "cosine": 0.1745,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "decommission",
+      "left_vocab_rank": 136597,
+      "rank_left_to_right": 22719,
+      "rank_right_to_left": 15362,
+      "right": "shutdown",
+      "right_vocab_rank": 4818
+     }
+    ],
+    "morphological": [
+     {
+      "cosine": 0.7816,
+      "in_vocabulary": true,
+      "inside_emission_window": true,
+      "left": "config",
+      "left_vocab_rank": 835,
+      "rank_left_to_right": 16,
+      "rank_right_to_left": 33,
+      "right": "configuration",
+      "right_vocab_rank": 814
+     },
+     {
+      "cosine": 0.7921,
+      "in_vocabulary": true,
+      "inside_emission_window": true,
+      "left": "deploy",
+      "left_vocab_rank": 3239,
+      "rank_left_to_right": 18,
+      "rank_right_to_left": 10,
+      "right": "deployment",
+      "right_vocab_rank": 3050
+     },
+     {
+      "cosine": 0.8036,
+      "in_vocabulary": true,
+      "inside_emission_window": true,
+      "left": "auth",
+      "left_vocab_rank": 5107,
+      "rank_left_to_right": 7,
+      "rank_right_to_left": 36,
+      "right": "authentication",
+      "right_vocab_rank": 1915
+     },
+     {
+      "cosine": 0.7024,
+      "in_vocabulary": true,
+      "inside_emission_window": true,
+      "left": "cache",
+      "left_vocab_rank": 915,
+      "rank_left_to_right": 27,
+      "rank_right_to_left": 8,
+      "right": "caching",
+      "right_vocab_rank": 2956
+     }
+    ],
+    "near_synonym": [
+     {
+      "cosine": 0.584,
+      "in_vocabulary": true,
+      "inside_emission_window": true,
+      "left": "undo",
+      "left_vocab_rank": 6324,
+      "rank_left_to_right": 5,
+      "rank_right_to_left": 35,
+      "right": "revert",
+      "right_vocab_rank": 6830
+     },
+     {
+      "cosine": 0.5308,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "toggle",
+      "left_vocab_rank": 5452,
+      "rank_left_to_right": 99,
+      "rank_right_to_left": 29,
+      "right": "switch",
+      "right_vocab_rank": 884
+     },
+     {
+      "cosine": 0.5437,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "toggle",
+      "left_vocab_rank": 5452,
+      "rank_left_to_right": 78,
+      "rank_right_to_left": 206,
+      "right": "checkbox",
+      "right_vocab_rank": 3007
+     },
+     {
+      "cosine": 0.4853,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "bug",
+      "left_vocab_rank": 1323,
+      "rank_left_to_right": 25,
+      "rank_right_to_left": 392,
+      "right": "defect",
+      "right_vocab_rank": 11152
+     },
+     {
+      "cosine": 0.5633,
+      "in_vocabulary": true,
+      "inside_emission_window": false,
+      "left": "database",
+      "left_vocab_rank": 223,
+      "rank_left_to_right": 113,
+      "rank_right_to_left": 53,
+      "right": "db",
+      "right_vocab_rank": 701
+     }
+    ]
+   },
+   "fractions": {
+    "cross_form": {
+     "in_vocabulary": 6,
+     "inside": 0,
+     "total": 6
+    },
+    "cross_form_expanded": {
+     "in_vocabulary": 41,
+     "inside": 8,
+     "total": 45
+    },
+    "morphological": {
+     "in_vocabulary": 4,
+     "inside": 4,
+     "total": 4
+    },
+    "near_synonym": {
+     "in_vocabulary": 5,
+     "inside": 1,
+     "total": 5
+    }
+   },
+   "run": "/Volumes/data/bettermemory/runs/w1b-2026-08-18",
+   "vectors_sha256": "4b00db09f40a06c6bbe9628d91d8bbfca54bcfbd4bfd87d8cb11e616f1e46cb9",
+   "vocab_size": 150000,
+   "window": 5
+  }
+ }
+}
