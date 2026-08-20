@@ -321,7 +321,8 @@ def _print_headline(counts: dict[str, Any]) -> None:
 
 def _write_artifact(path: Path, payload: dict[str, object]) -> None:
     path.write_text(json.dumps(payload, indent=1, sort_keys=True) + "\n")
-    print(f"\nartifact: {path.relative_to(REPO)}")
+    shown = path.relative_to(REPO) if path.is_relative_to(REPO) else path
+    print(f"\nartifact: {shown}")
 
 
 def run_stage0(out: str | None, date: str) -> int:
