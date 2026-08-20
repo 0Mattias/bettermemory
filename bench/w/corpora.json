@@ -1573,6 +1573,21 @@
    }
   },
   {
+   "name": "stackoverflow-postlinks-archive",
+   "admitted": true,
+   "source_url": "https://archive.org/download/stackexchange/stackoverflow.com-PostLinks.7z",
+   "retrieved": "2026-08-20",
+   "bytes": 151452449,
+   "sha256": "321c4fd59e8c743a3943deca04e6e6d07ab84325978d40fc8d47bee65b703fa6",
+   "publisher_md5": "300e6c8d90fd12abf2d2976f3085a44c",
+   "license": "CC BY-SA (Stack Exchange network content, per the archive.org stackexchange item's published terms; per-post attribution obligations noted for any redistribution — training-input use records the source here)",
+   "local_path": "bench/w/corpus/stackexchange/stackoverflow.com-PostLinks.7z",
+   "verification": {
+    "publisher_md5_matches": true,
+    "note": "The W2 SO census declaration's stage 1 fetch (bench/w/W2_SO_CENSUS_DECLARATION.md §3): one member of the same archive.org item every Stack Exchange pin here names, fetched under the declared 200 MB cap; md5 recomputed over the fetched bytes and equal to the publisher's declared value; the sha256 above is over the exact fetched bytes and is the register's authoritative pin. Single member PostLinks.xml confirmed on arrival."
+   }
+  },
+  {
    "name": "cooking-stackexchange-archive",
    "admitted": true,
    "source_url": "https://archive.org/download/stackexchange/cooking.stackexchange.com.7z",
