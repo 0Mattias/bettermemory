@@ -1,0 +1,76 @@
+{
+ "emission": {
+  "drop_rule_covered": true,
+  "entries": 3200,
+  "floor": 0.5,
+  "head_min_rank": 2500,
+  "max_entries": 3200,
+  "mutual_rank": 64,
+  "per_term": 3,
+  "remove_components": 2,
+  "table_path": "bench/w/artifacts/w1c_table_2026-08-20.py",
+  "table_sha256": "1e4c2633e3c1b681707fbcca2bf286a92268254e1570d4bb28c4efa7301684aa"
+ },
+ "run_meta": {
+  "batch": 1024,
+  "buckets": 524288,
+  "ci_register": null,
+  "dim": 100,
+  "epoch_pairs": [
+   1703510683,
+   1703706737,
+   1703708403
+  ],
+  "epochs": 3,
+  "lr": 0.025,
+  "min_count": 10,
+  "negatives": 5,
+  "numpy_version": "2.4.4",
+  "pairs_done": 5110925823,
+  "seed": 20260818,
+  "segment": 8000000,
+  "sha256": {
+   "ctx.npy": "5bcb4b1de7da1edcbbf4b1a691e8e45d213f8d400076b9a94d9b8f4f283f6e27",
+   "inp.npy": "915053697255e880ecd29fcbc2e73edf644d9c6451c691aa19f83ea6c5c3b4aa",
+   "vocab.txt": "a48798da59854edc9a2319c6e4c49af82ce1f7625bd496dc9bc783869cd65a00"
+  },
+  "subsample": 0.0001,
+  "token_cap": 200000000,
+  "tokens_read": 196088986,
+  "vocab_cap": 150000,
+  "vocab_size": 150000,
+  "w1b_cache": {
+   "bytes": 1152252440,
+   "path": "/Users/mattias/Documents/projects/bettermemory/bench/w/corpus/derived/w1b-tokens.txt",
+   "per_source": {
+    "academia-stackexchange-archive": 1700000,
+    "android-stackexchange-archive": 5000000,
+    "apple-stackexchange-archive": 5000000,
+    "beer-stackexchange-archive": 468443,
+    "coffee-stackexchange-archive": 578723,
+    "cooking-stackexchange-archive": 1700000,
+    "diy-stackexchange-archive": 1700000,
+    "enwiki-parts-1-71": 50000000,
+    "enwiktionary-20260801-pages-articles": 5000000,
+    "fitness-stackexchange-archive": 1700000,
+    "gardening-stackexchange-archive": 1700000,
+    "gutenberg-curated-2026-08-15": 8131169,
+    "interpersonal-stackexchange-archive": 1700000,
+    "lifehacks-stackexchange-archive": 1510651,
+    "movies-stackexchange-archive": 1700000,
+    "music-stackexchange-archive": 1700000,
+    "outdoors-stackexchange-archive": 1700000,
+    "parenting-stackexchange-archive": 1700000,
+    "pets-stackexchange-archive": 1700000,
+    "simplewiki-20260801-pages-articles-multistream": 10000000,
+    "stackoverflow-posts-archive": 80000000,
+    "superuser-archive": 10000000,
+    "travel-stackexchange-archive": 1700000
+   },
+   "sha256": "919550ab8ff156c44d9f21420cec4df57da3d1809c991ccd0fa7f00557dfd7cf",
+   "total_tokens": 196088986
+  },
+  "wall_seconds": 39640.3,
+  "window": 15
+ }
+}
