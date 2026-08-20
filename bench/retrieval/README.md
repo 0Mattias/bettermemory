@@ -268,6 +268,16 @@ its numbers in the named artifact. One line each, newest last:
   gap lives in-store (`results/register-df-census-2026-08-12.json`).
 - **Requery census** (2026-08-13): feedback requery parks itself
   (`results/requery-census-2026-08-13.json`).
+- **Requery census 2** (2026-08-19): the follow-up that park licensed,
+  on the 120-question instrument and the shipped prefilter regime —
+  the family parks again, this time decisively. Primary cell asked
+  recall@1 0.2333 against the 0.2167 baseline (McNemar p 0.774414);
+  the far/absent pool shows the cluster pattern named in advance
+  (recall@5 moves, recall@1 stays 0.0); and the oracle-min bound tops
+  at 0.3083 against the 0.45 license bar, so no acceptance rule could
+  save the shape. The two-pass family is closed on dev for good
+  (`results/requery-census2-2026-08-19.json`;
+  `../REQUERY_CENSUS_2_DECLARATION.md`).
 - **R1, the reentry** (2026-08-13): the restored opt-in arm
   reproduces the dated record exactly — +25-point margin, determinism
   repeat identical, prefilter-semantic cells answered
