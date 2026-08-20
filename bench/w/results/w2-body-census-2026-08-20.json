@@ -1,0 +1,1314 @@
+{
+ "archives": [
+  {
+   "archive": "bench/w/corpus/stackexchange/academia.stackexchange.com.7z",
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ],
+   "sha256_pinned": "5113eb82928523f259cde2ace39c43ce34655b9eb2d765dddaae8477007ec06a",
+   "sha256_reverified": "5113eb82928523f259cde2ace39c43ce34655b9eb2d765dddaae8477007ec06a",
+   "sha_seconds": 0.2,
+   "site": "academia-stackexchange-archive"
+  },
+  {
+   "archive": "bench/w/corpus/stackexchange/android.stackexchange.com.7z",
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ],
+   "sha256_pinned": "840a581fd6debf034fd91605151f1ffd2a3083fb4f414165b2cc50be3430e55c",
+   "sha256_reverified": "840a581fd6debf034fd91605151f1ffd2a3083fb4f414165b2cc50be3430e55c",
+   "sha_seconds": 0.2,
+   "site": "android-stackexchange-archive"
+  },
+  {
+   "archive": "bench/w/corpus/stackexchange/apple.stackexchange.com.7z",
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ],
+   "sha256_pinned": "eecb496259890c898af3000b20f75c938395845c8707d083053906374d4ab54f",
+   "sha256_reverified": "eecb496259890c898af3000b20f75c938395845c8707d083053906374d4ab54f",
+   "sha_seconds": 0.4,
+   "site": "apple-stackexchange-archive"
+  },
+  {
+   "archive": "bench/w/corpus/stackexchange/beer.stackexchange.com.7z",
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ],
+   "sha256_pinned": "29e057c640ad2792c8fc063d3ef52e6d2ce397db995a8ca5a06f1735a82d84c2",
+   "sha256_reverified": "29e057c640ad2792c8fc063d3ef52e6d2ce397db995a8ca5a06f1735a82d84c2",
+   "sha_seconds": 0.0,
+   "site": "beer-stackexchange-archive"
+  },
+  {
+   "archive": "bench/w/corpus/stackexchange/coffee.stackexchange.com.7z",
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ],
+   "sha256_pinned": "ed92031e75185b1e5549ae257b5280423941d17751042b0369b1f2d3e8d90952",
+   "sha256_reverified": "ed92031e75185b1e5549ae257b5280423941d17751042b0369b1f2d3e8d90952",
+   "sha_seconds": 0.0,
+   "site": "coffee-stackexchange-archive"
+  },
+  {
+   "archive": "bench/w/corpus/stackexchange/cooking.stackexchange.com.7z",
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ],
+   "sha256_pinned": "de98b85f9807a23dfc8c91006f8b59b2149089e94ea9d54676d215ea156a9ac6",
+   "sha256_reverified": "de98b85f9807a23dfc8c91006f8b59b2149089e94ea9d54676d215ea156a9ac6",
+   "sha_seconds": 0.1,
+   "site": "cooking-stackexchange-archive"
+  },
+  {
+   "archive": "bench/w/corpus/stackexchange/diy.stackexchange.com.7z",
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ],
+   "sha256_pinned": "f795b4dbe32aabc97802bd3846484fa01d580b23b98c8ab88162bf3e90107743",
+   "sha256_reverified": "f795b4dbe32aabc97802bd3846484fa01d580b23b98c8ab88162bf3e90107743",
+   "sha_seconds": 0.3,
+   "site": "diy-stackexchange-archive"
+  },
+  {
+   "archive": "bench/w/corpus/stackexchange/fitness.stackexchange.com.7z",
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ],
+   "sha256_pinned": "5fe08b64b0fbdc917aa66217af5d162270a59159eccd2fff8bc287674d4f52a7",
+   "sha256_reverified": "5fe08b64b0fbdc917aa66217af5d162270a59159eccd2fff8bc287674d4f52a7",
+   "sha_seconds": 0.0,
+   "site": "fitness-stackexchange-archive"
+  },
+  {
+   "archive": "bench/w/corpus/stackexchange/gardening.stackexchange.com.7z",
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ],
+   "sha256_pinned": "f739cc994a19445f6c2b54277e762980f28c82f7b1c2d1a12028f1fca3387d63",
+   "sha256_reverified": "f739cc994a19445f6c2b54277e762980f28c82f7b1c2d1a12028f1fca3387d63",
+   "sha_seconds": 0.1,
+   "site": "gardening-stackexchange-archive"
+  },
+  {
+   "archive": "bench/w/corpus/stackexchange/interpersonal.stackexchange.com.7z",
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ],
+   "sha256_pinned": "6979dc44c79cc2b0028b3088de977151ef32e865acd26c78532d8810ffa57dc9",
+   "sha256_reverified": "6979dc44c79cc2b0028b3088de977151ef32e865acd26c78532d8810ffa57dc9",
+   "sha_seconds": 0.0,
+   "site": "interpersonal-stackexchange-archive"
+  },
+  {
+   "archive": "bench/w/corpus/stackexchange/lifehacks.stackexchange.com.7z",
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ],
+   "sha256_pinned": "b96ac28fd3c19244c1fd995caa5054bb8af2271104f8738a3e8042172842447f",
+   "sha256_reverified": "b96ac28fd3c19244c1fd995caa5054bb8af2271104f8738a3e8042172842447f",
+   "sha_seconds": 0.0,
+   "site": "lifehacks-stackexchange-archive"
+  },
+  {
+   "archive": "bench/w/corpus/stackexchange/movies.stackexchange.com.7z",
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ],
+   "sha256_pinned": "6dc79d53d3dbaa7b08ebfc3e2cc664c5d0ec8248282a9c5913c67f429feecb3f",
+   "sha256_reverified": "6dc79d53d3dbaa7b08ebfc3e2cc664c5d0ec8248282a9c5913c67f429feecb3f",
+   "sha_seconds": 0.1,
+   "site": "movies-stackexchange-archive"
+  },
+  {
+   "archive": "bench/w/corpus/stackexchange/music.stackexchange.com.7z",
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ],
+   "sha256_pinned": "3c2ac909c108f5580aad724ce4e8170fc8e5a547e8cfc84850d9c235dc5adcf4",
+   "sha256_reverified": "3c2ac909c108f5580aad724ce4e8170fc8e5a547e8cfc84850d9c235dc5adcf4",
+   "sha_seconds": 0.1,
+   "site": "music-stackexchange-archive"
+  },
+  {
+   "archive": "bench/w/corpus/stackexchange/outdoors.stackexchange.com.7z",
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ],
+   "sha256_pinned": "f45a642dcedcfc9642002aaf297426121aa2a0fa62799592ca2819d265f01a05",
+   "sha256_reverified": "f45a642dcedcfc9642002aaf297426121aa2a0fa62799592ca2819d265f01a05",
+   "sha_seconds": 0.1,
+   "site": "outdoors-stackexchange-archive"
+  },
+  {
+   "archive": "bench/w/corpus/stackexchange/parenting.stackexchange.com.7z",
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ],
+   "sha256_pinned": "70a624fcb885e4aff13a18613163e34c0a07e61bc761381053f89c12fc13212f",
+   "sha256_reverified": "70a624fcb885e4aff13a18613163e34c0a07e61bc761381053f89c12fc13212f",
+   "sha_seconds": 0.1,
+   "site": "parenting-stackexchange-archive"
+  },
+  {
+   "archive": "bench/w/corpus/stackexchange/pets.stackexchange.com.7z",
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ],
+   "sha256_pinned": "5fb7c41000f0c629a15b9cd940c16bf3c63ec45443c574abe06b2d3502ac38df",
+   "sha256_reverified": "5fb7c41000f0c629a15b9cd940c16bf3c63ec45443c574abe06b2d3502ac38df",
+   "sha_seconds": 0.0,
+   "site": "pets-stackexchange-archive"
+  },
+  {
+   "archive": "bench/w/corpus/stackexchange/superuser.com.7z",
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ],
+   "sha256_pinned": "8fd7d7acff1498193f8024a6a290ca46e3730d0442655739a8bdec49fd4bf5cb",
+   "sha256_reverified": "8fd7d7acff1498193f8024a6a290ca46e3730d0442655739a8bdec49fd4bf5cb",
+   "sha_seconds": 1.6,
+   "site": "superuser-archive"
+  },
+  {
+   "archive": "bench/w/corpus/stackexchange/travel.stackexchange.com.7z",
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ],
+   "sha256_pinned": "4c33527edc970cc32a159607372ba652d4328fa007e1214f3510595f55629169",
+   "sha256_reverified": "4c33527edc970cc32a159607372ba652d4328fa007e1214f3510595f55629169",
+   "sha_seconds": 0.2,
+   "site": "travel-stackexchange-archive"
+  }
+ ],
+ "bettermemory_version": "6.1.0",
+ "census": {
+  "committed_six": [
+   {
+    "exclusive_all": 0,
+    "exclusive_markup_all": 0,
+    "exclusive_markup_tech": 0,
+    "exclusive_tech": 0,
+    "left": "toggle",
+    "right": "flag",
+    "same_side_all": 0,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 1,
+    "exclusive_markup_all": 1,
+    "exclusive_markup_tech": 1,
+    "exclusive_tech": 1,
+    "left": "undo",
+    "right": "rollback",
+    "same_side_all": 0,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 1,
+    "exclusive_markup_all": 1,
+    "exclusive_markup_tech": 1,
+    "exclusive_tech": 1,
+    "left": "revert",
+    "right": "rollback",
+    "same_side_all": 1,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 0,
+    "exclusive_markup_all": 0,
+    "exclusive_markup_tech": 0,
+    "exclusive_tech": 0,
+    "left": "timeout",
+    "right": "expiry",
+    "same_side_all": 0,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 0,
+    "exclusive_markup_all": 0,
+    "exclusive_markup_tech": 0,
+    "exclusive_tech": 0,
+    "left": "flag",
+    "right": "boolean",
+    "same_side_all": 0,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 4,
+    "exclusive_markup_all": 4,
+    "exclusive_markup_tech": 4,
+    "exclusive_tech": 4,
+    "left": "error",
+    "right": "exception",
+    "same_side_all": 22,
+    "stem_conflated": false,
+    "supported": false
+   }
+  ],
+  "expanded_family": [
+   {
+    "exclusive_all": 0,
+    "exclusive_markup_all": 0,
+    "exclusive_markup_tech": 0,
+    "exclusive_tech": 0,
+    "left": "toggle",
+    "right": "flag",
+    "same_side_all": 0,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 5,
+    "exclusive_markup_all": 5,
+    "exclusive_markup_tech": 2,
+    "exclusive_tech": 2,
+    "left": "rip",
+    "right": "remove",
+    "same_side_all": 5,
+    "stem_conflated": false,
+    "supported": true
+   },
+   {
+    "exclusive_all": 0,
+    "exclusive_markup_all": 0,
+    "exclusive_markup_tech": 0,
+    "exclusive_tech": 0,
+    "left": "rip",
+    "right": "removal",
+    "same_side_all": 0,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 12,
+    "exclusive_markup_all": 12,
+    "exclusive_markup_tech": 10,
+    "exclusive_tech": 10,
+    "left": "remove",
+    "right": "removal",
+    "same_side_all": 27,
+    "stem_conflated": false,
+    "supported": true
+   },
+   {
+    "exclusive_all": 0,
+    "exclusive_markup_all": 0,
+    "exclusive_markup_tech": 0,
+    "exclusive_tech": 0,
+    "left": "hash",
+    "right": "digest",
+    "same_side_all": 0,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 1,
+    "exclusive_markup_all": 1,
+    "exclusive_markup_tech": 1,
+    "exclusive_tech": 1,
+    "left": "hash",
+    "right": "sha256",
+    "same_side_all": 1,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 1,
+    "exclusive_markup_all": 1,
+    "exclusive_markup_tech": 1,
+    "exclusive_tech": 1,
+    "left": "hash",
+    "right": "checksum",
+    "same_side_all": 7,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 0,
+    "exclusive_markup_all": 0,
+    "exclusive_markup_tech": 0,
+    "exclusive_tech": 0,
+    "left": "digest",
+    "right": "sha256",
+    "same_side_all": 0,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 0,
+    "exclusive_markup_all": 0,
+    "exclusive_markup_tech": 0,
+    "exclusive_tech": 0,
+    "left": "digest",
+    "right": "checksum",
+    "same_side_all": 0,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 1,
+    "exclusive_markup_all": 1,
+    "exclusive_markup_tech": 1,
+    "exclusive_tech": 1,
+    "left": "sha256",
+    "right": "checksum",
+    "same_side_all": 1,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 0,
+    "exclusive_markup_all": 0,
+    "exclusive_markup_tech": 0,
+    "exclusive_tech": 0,
+    "left": "cred",
+    "right": "credential",
+    "same_side_all": 0,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 0,
+    "exclusive_markup_all": 0,
+    "exclusive_markup_tech": 0,
+    "exclusive_tech": 0,
+    "left": "cred",
+    "right": "secret",
+    "same_side_all": 0,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 0,
+    "exclusive_markup_all": 0,
+    "exclusive_markup_tech": 0,
+    "exclusive_tech": 0,
+    "left": "credential",
+    "right": "secret",
+    "same_side_all": 0,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 1,
+    "exclusive_markup_all": 2,
+    "exclusive_markup_tech": 2,
+    "exclusive_tech": 1,
+    "left": "library",
+    "right": "dependency",
+    "same_side_all": 5,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 7,
+    "exclusive_markup_all": 9,
+    "exclusive_markup_tech": 8,
+    "exclusive_tech": 6,
+    "left": "library",
+    "right": "package",
+    "same_side_all": 6,
+    "stem_conflated": false,
+    "supported": true
+   },
+   {
+    "exclusive_all": 2,
+    "exclusive_markup_all": 0,
+    "exclusive_markup_tech": 0,
+    "exclusive_tech": 2,
+    "left": "dependency",
+    "right": "package",
+    "same_side_all": 12,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 0,
+    "exclusive_markup_all": 0,
+    "exclusive_markup_tech": 0,
+    "exclusive_tech": 0,
+    "left": "bar",
+    "right": "criteria",
+    "same_side_all": 0,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 0,
+    "exclusive_markup_all": 0,
+    "exclusive_markup_tech": 0,
+    "exclusive_tech": 0,
+    "left": "bar",
+    "right": "approval",
+    "same_side_all": 0,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 1,
+    "exclusive_markup_all": 1,
+    "exclusive_markup_tech": 1,
+    "exclusive_tech": 1,
+    "left": "bar",
+    "right": "policy",
+    "same_side_all": 3,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 0,
+    "exclusive_markup_all": 0,
+    "exclusive_markup_tech": 0,
+    "exclusive_tech": 0,
+    "left": "criteria",
+    "right": "approval",
+    "same_side_all": 0,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 0,
+    "exclusive_markup_all": 0,
+    "exclusive_markup_tech": 0,
+    "exclusive_tech": 0,
+    "left": "criteria",
+    "right": "policy",
+    "same_side_all": 2,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 3,
+    "exclusive_markup_all": 3,
+    "exclusive_markup_tech": 1,
+    "exclusive_tech": 1,
+    "left": "approval",
+    "right": "policy",
+    "same_side_all": 1,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 1,
+    "exclusive_markup_all": 1,
+    "exclusive_markup_tech": 1,
+    "exclusive_tech": 1,
+    "left": "undo",
+    "right": "rollback",
+    "same_side_all": 0,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 3,
+    "exclusive_markup_all": 2,
+    "exclusive_markup_tech": 2,
+    "exclusive_tech": 3,
+    "left": "undo",
+    "right": "revert",
+    "same_side_all": 2,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 1,
+    "exclusive_markup_all": 1,
+    "exclusive_markup_tech": 1,
+    "exclusive_tech": 1,
+    "left": "rollback",
+    "right": "revert",
+    "same_side_all": 1,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 5,
+    "exclusive_markup_all": 7,
+    "exclusive_markup_tech": 7,
+    "exclusive_tech": 5,
+    "left": "dump",
+    "right": "backup",
+    "same_side_all": 9,
+    "stem_conflated": false,
+    "supported": true
+   },
+   {
+    "exclusive_all": 4,
+    "exclusive_markup_all": 5,
+    "exclusive_markup_tech": 4,
+    "exclusive_tech": 3,
+    "left": "dump",
+    "right": "restore",
+    "same_side_all": 7,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 42,
+    "exclusive_markup_all": 39,
+    "exclusive_markup_tech": 39,
+    "exclusive_tech": 42,
+    "left": "backup",
+    "right": "restore",
+    "same_side_all": 267,
+    "stem_conflated": false,
+    "supported": true
+   },
+   {
+    "exclusive_all": 0,
+    "exclusive_markup_all": 0,
+    "exclusive_markup_tech": 0,
+    "exclusive_tech": 0,
+    "left": "staged",
+    "right": "phased",
+    "same_side_all": 0,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 0,
+    "exclusive_markup_all": 0,
+    "exclusive_markup_tech": 0,
+    "exclusive_tech": 0,
+    "left": "staged",
+    "right": "stage",
+    "same_side_all": 0,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 0,
+    "exclusive_markup_all": 0,
+    "exclusive_markup_tech": 0,
+    "exclusive_tech": 0,
+    "left": "staged",
+    "right": "phase",
+    "same_side_all": 0,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 0,
+    "exclusive_markup_all": 0,
+    "exclusive_markup_tech": 0,
+    "exclusive_tech": 0,
+    "left": "phased",
+    "right": "stage",
+    "same_side_all": 0,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 0,
+    "exclusive_markup_all": 0,
+    "exclusive_markup_tech": 0,
+    "exclusive_tech": 0,
+    "left": "phased",
+    "right": "phase",
+    "same_side_all": 0,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 2,
+    "exclusive_markup_all": 2,
+    "exclusive_markup_tech": 0,
+    "exclusive_tech": 0,
+    "left": "stage",
+    "right": "phase",
+    "same_side_all": 6,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 5,
+    "exclusive_markup_all": 5,
+    "exclusive_markup_tech": 5,
+    "exclusive_tech": 5,
+    "left": "old",
+    "right": "legacy",
+    "same_side_all": 21,
+    "stem_conflated": false,
+    "supported": true
+   },
+   {
+    "exclusive_all": 0,
+    "exclusive_markup_all": 0,
+    "exclusive_markup_tech": 0,
+    "exclusive_tech": 0,
+    "left": "cutover",
+    "right": "switchover",
+    "same_side_all": 0,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 0,
+    "exclusive_markup_all": 0,
+    "exclusive_markup_tech": 0,
+    "exclusive_tech": 0,
+    "left": "cutover",
+    "right": "switching",
+    "same_side_all": 0,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 0,
+    "exclusive_markup_all": 0,
+    "exclusive_markup_tech": 0,
+    "exclusive_tech": 0,
+    "left": "cutover",
+    "right": "decommission",
+    "same_side_all": 0,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 0,
+    "exclusive_markup_all": 0,
+    "exclusive_markup_tech": 0,
+    "exclusive_tech": 0,
+    "left": "cutover",
+    "right": "shutdown",
+    "same_side_all": 0,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 0,
+    "exclusive_markup_all": 0,
+    "exclusive_markup_tech": 0,
+    "exclusive_tech": 0,
+    "left": "switchover",
+    "right": "switching",
+    "same_side_all": 0,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 0,
+    "exclusive_markup_all": 0,
+    "exclusive_markup_tech": 0,
+    "exclusive_tech": 0,
+    "left": "switchover",
+    "right": "decommission",
+    "same_side_all": 0,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 0,
+    "exclusive_markup_all": 0,
+    "exclusive_markup_tech": 0,
+    "exclusive_tech": 0,
+    "left": "switchover",
+    "right": "shutdown",
+    "same_side_all": 0,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 0,
+    "exclusive_markup_all": 0,
+    "exclusive_markup_tech": 0,
+    "exclusive_tech": 0,
+    "left": "switching",
+    "right": "decommission",
+    "same_side_all": 0,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 1,
+    "exclusive_markup_all": 0,
+    "exclusive_markup_tech": 0,
+    "exclusive_tech": 1,
+    "left": "switching",
+    "right": "shutdown",
+    "same_side_all": 2,
+    "stem_conflated": false,
+    "supported": false
+   },
+   {
+    "exclusive_all": 0,
+    "exclusive_markup_all": 0,
+    "exclusive_markup_tech": 0,
+    "exclusive_tech": 0,
+    "left": "decommission",
+    "right": "shutdown",
+    "same_side_all": 0,
+    "stem_conflated": false,
+    "supported": false
+   }
+  ],
+  "expanded_supported": 6,
+  "expanded_total": 45,
+  "needs_continuity": {
+   "06f04340": {
+    "count": 7,
+    "register": "food"
+   },
+   "09d032c9": {
+    "count": 67,
+    "register": "consumer-tech"
+   },
+   "195a1a1b": {
+    "count": 19,
+    "register": "everyday-planning"
+   },
+   "1a1907b4": {
+    "count": 1,
+    "register": "food/drink"
+   },
+   "505af2f5": {
+    "count": 23,
+    "register": "food"
+   },
+   "75832dbd": {
+    "count": 129,
+    "register": "academic/technical"
+   },
+   "95228167": {
+    "count": 0,
+    "register": "music-gear"
+   },
+   "d6233ab6": {
+    "count": 0,
+    "register": "everyday-emotional"
+   }
+  },
+  "pairs_total": 37502,
+  "presence_bodies_prose": {
+   "approval": 76,
+   "backup": 1509,
+   "bar": 1526,
+   "boolean": 5,
+   "checksum": 30,
+   "cred": 0,
+   "credential": 142,
+   "criteria": 147,
+   "cutover": 0,
+   "decommission": 3,
+   "dependenci": 41,
+   "digest": 8,
+   "dump": 124,
+   "error": 3292,
+   "exception": 233,
+   "expiri": 100,
+   "flag": 190,
+   "hash": 62,
+   "legaci": 118,
+   "librari": 532,
+   "old": 4492,
+   "packag": 481,
+   "phas": 107,
+   "phased": 3,
+   "polici": 450,
+   "remov": 2634,
+   "removal": 117,
+   "restor": 1006,
+   "revert": 173,
+   "rip": 82,
+   "rollback": 21,
+   "secret": 90,
+   "sha256": 3,
+   "shutdown": 297,
+   "stag": 260,
+   "staged": 1,
+   "switching": 398,
+   "switchover": 0,
+   "timeout": 49,
+   "toggl": 150,
+   "undo": 102
+  },
+  "readiness": {
+   "license_min_of_six": 4,
+   "outcome": "park",
+   "six_supported": 0,
+   "twitch_min_of_six": 2
+  },
+  "support_min": 5,
+  "tech_register_pairs": 22950
+ },
+ "declaration": "bench/w/W2_BODY_CENSUS_DECLARATION.md",
+ "derived_file": {
+  "bytes": 84531109,
+  "path": "bench/w/corpus/derived/w2-bodies-2026-08-20.tsv",
+  "sha256": "ed71c881e5affcb6627df611e3f28cd90e8cacd23b39e4359f911d36a4c341ff"
+ },
+ "pass_seconds": 147.8,
+ "provenance": {
+  "commit": "fc54ab8",
+  "date": "2026-08-20",
+  "machine": {
+   "machine": "arm64",
+   "os": "Darwin 25.5.0",
+   "python": "3.13.13"
+  }
+ },
+ "sites": {
+  "academia-stackexchange-archive": {
+   "deduped_edges": 2702,
+   "dropped_by_rule": 1,
+   "duplicate_edge_rows": 2702,
+   "link_rows": 17657,
+   "pairs": 2695,
+   "rows_by_post_type": {
+    "1": 43792,
+    "2": 103840,
+    "4": 576,
+    "5": 576,
+    "6": 17,
+    "7": 5
+   },
+   "rows_scanned": 148806,
+   "status": "read",
+   "unresolved_edges": 6
+  },
+  "android-stackexchange-archive": {
+   "deduped_edges": 3007,
+   "dropped_by_rule": 8,
+   "duplicate_edge_rows": 3007,
+   "link_rows": 20734,
+   "pairs": 2981,
+   "rows_by_post_type": {
+    "1": 58621,
+    "2": 68916,
+    "3": 12,
+    "4": 1117,
+    "5": 1117,
+    "6": 26,
+    "7": 6
+   },
+   "rows_scanned": 129815,
+   "status": "read",
+   "unresolved_edges": 18
+  },
+  "apple-stackexchange-archive": {
+   "deduped_edges": 5402,
+   "dropped_by_rule": 10,
+   "duplicate_edge_rows": 5402,
+   "link_rows": 32793,
+   "pairs": 5367,
+   "rows_by_post_type": {
+    "1": 129215,
+    "2": 190749,
+    "3": 15,
+    "4": 1102,
+    "5": 1102,
+    "6": 29,
+    "7": 6
+   },
+   "rows_scanned": 322218,
+   "status": "read",
+   "unresolved_edges": 25
+  },
+  "beer-stackexchange-archive": {
+   "deduped_edges": 25,
+   "dropped_by_rule": 0,
+   "duplicate_edge_rows": 25,
+   "link_rows": 152,
+   "pairs": 25,
+   "rows_by_post_type": {
+    "1": 1173,
+    "2": 2580,
+    "4": 83,
+    "5": 83,
+    "6": 2,
+    "7": 3
+   },
+   "rows_scanned": 3924,
+   "status": "read",
+   "unresolved_edges": 0
+  },
+  "coffee-stackexchange-archive": {
+   "deduped_edges": 34,
+   "dropped_by_rule": 0,
+   "duplicate_edge_rows": 34,
+   "link_rows": 622,
+   "pairs": 34,
+   "rows_by_post_type": {
+    "1": 1475,
+    "2": 2898,
+    "4": 71,
+    "5": 71,
+    "6": 9,
+    "7": 1
+   },
+   "rows_scanned": 4525,
+   "status": "read",
+   "unresolved_edges": 0
+  },
+  "cooking-stackexchange-archive": {
+   "deduped_edges": 1385,
+   "dropped_by_rule": 0,
+   "duplicate_edge_rows": 1385,
+   "link_rows": 9336,
+   "pairs": 1378,
+   "rows_by_post_type": {
+    "1": 27325,
+    "2": 64239,
+    "3": 4,
+    "4": 306,
+    "5": 306,
+    "6": 15,
+    "7": 5
+   },
+   "rows_scanned": 92200,
+   "status": "read",
+   "unresolved_edges": 7
+  },
+  "diy-stackexchange-archive": {
+   "deduped_edges": 1227,
+   "dropped_by_rule": 13,
+   "duplicate_edge_rows": 1227,
+   "link_rows": 10213,
+   "pairs": 1197,
+   "rows_by_post_type": {
+    "1": 84628,
+    "2": 138269,
+    "4": 321,
+    "5": 321,
+    "6": 16,
+    "7": 5
+   },
+   "rows_scanned": 223560,
+   "status": "read",
+   "unresolved_edges": 17
+  },
+  "fitness-stackexchange-archive": {
+   "deduped_edges": 450,
+   "dropped_by_rule": 1,
+   "duplicate_edge_rows": 450,
+   "link_rows": 3357,
+   "pairs": 447,
+   "rows_by_post_type": {
+    "1": 10217,
+    "2": 19171,
+    "4": 154,
+    "5": 154,
+    "6": 7,
+    "7": 1
+   },
+   "rows_scanned": 29704,
+   "status": "read",
+   "unresolved_edges": 2
+  },
+  "gardening-stackexchange-archive": {
+   "deduped_edges": 246,
+   "dropped_by_rule": 0,
+   "duplicate_edge_rows": 246,
+   "link_rows": 2390,
+   "pairs": 246,
+   "rows_by_post_type": {
+    "1": 17860,
+    "2": 25421,
+    "4": 433,
+    "5": 433,
+    "6": 6,
+    "7": 2
+   },
+   "rows_scanned": 44155,
+   "status": "read",
+   "unresolved_edges": 0
+  },
+  "interpersonal-stackexchange-archive": {
+   "deduped_edges": 77,
+   "dropped_by_rule": 0,
+   "duplicate_edge_rows": 77,
+   "link_rows": 901,
+   "pairs": 77,
+   "rows_by_post_type": {
+    "1": 3929,
+    "2": 14381,
+    "4": 225,
+    "5": 225,
+    "6": 5,
+    "7": 1
+   },
+   "rows_scanned": 18766,
+   "status": "read",
+   "unresolved_edges": 0
+  },
+  "lifehacks-stackexchange-archive": {
+   "deduped_edges": 102,
+   "dropped_by_rule": 0,
+   "duplicate_edge_rows": 102,
+   "link_rows": 532,
+   "pairs": 102,
+   "rows_by_post_type": {
+    "1": 3075,
+    "2": 11346,
+    "4": 216,
+    "5": 216,
+    "6": 8,
+    "7": 3
+   },
+   "rows_scanned": 14864,
+   "status": "read",
+   "unresolved_edges": 0
+  },
+  "movies-stackexchange-archive": {
+   "deduped_edges": 585,
+   "dropped_by_rule": 1,
+   "duplicate_edge_rows": 585,
+   "link_rows": 3209,
+   "pairs": 583,
+   "rows_by_post_type": {
+    "1": 22924,
+    "2": 37661,
+    "4": 2229,
+    "5": 2229,
+    "6": 21,
+    "7": 5
+   },
+   "rows_scanned": 65069,
+   "status": "read",
+   "unresolved_edges": 1
+  },
+  "music-stackexchange-archive": {
+   "deduped_edges": 1334,
+   "dropped_by_rule": 2,
+   "duplicate_edge_rows": 1334,
+   "link_rows": 7841,
+   "pairs": 1332,
+   "rows_by_post_type": {
+    "1": 25722,
+    "2": 66722,
+    "3": 14,
+    "4": 528,
+    "5": 528,
+    "6": 13,
+    "7": 4
+   },
+   "rows_scanned": 93531,
+   "status": "read",
+   "unresolved_edges": 0
+  },
+  "outdoors-stackexchange-archive": {
+   "deduped_edges": 162,
+   "dropped_by_rule": 2,
+   "duplicate_edge_rows": 162,
+   "link_rows": 2379,
+   "pairs": 160,
+   "rows_by_post_type": {
+    "1": 6168,
+    "2": 15078,
+    "4": 573,
+    "5": 573,
+    "6": 5,
+    "7": 2
+   },
+   "rows_scanned": 22399,
+   "status": "read",
+   "unresolved_edges": 0
+  },
+  "parenting-stackexchange-archive": {
+   "deduped_edges": 213,
+   "dropped_by_rule": 0,
+   "duplicate_edge_rows": 213,
+   "link_rows": 1826,
+   "pairs": 213,
+   "rows_by_post_type": {
+    "1": 6872,
+    "2": 22601,
+    "3": 2,
+    "4": 228,
+    "5": 228,
+    "6": 11,
+    "7": 2
+   },
+   "rows_scanned": 29944,
+   "status": "read",
+   "unresolved_edges": 0
+  },
+  "pets-stackexchange-archive": {
+   "deduped_edges": 754,
+   "dropped_by_rule": 0,
+   "duplicate_edge_rows": 754,
+   "link_rows": 3648,
+   "pairs": 753,
+   "rows_by_post_type": {
+    "1": 8360,
+    "2": 12440,
+    "4": 261,
+    "5": 261,
+    "6": 12
+   },
+   "rows_scanned": 21334,
+   "status": "read",
+   "unresolved_edges": 1
+  },
+  "superuser-archive": {
+   "deduped_edges": 15075,
+   "dropped_by_rule": 58,
+   "duplicate_edge_rows": 15075,
+   "link_rows": 90722,
+   "pairs": 14602,
+   "rows_by_post_type": {
+    "1": 505136,
+    "2": 732567,
+    "3": 12,
+    "4": 3823,
+    "5": 3822,
+    "6": 53,
+    "7": 4,
+    "8": 1
+   },
+   "rows_scanned": 1245418,
+   "status": "read",
+   "unresolved_edges": 415
+  },
+  "travel-stackexchange-archive": {
+   "deduped_edges": 5331,
+   "dropped_by_rule": 11,
+   "duplicate_edge_rows": 5331,
+   "link_rows": 22361,
+   "pairs": 5310,
+   "rows_by_post_type": {
+    "1": 48768,
+    "2": 76736,
+    "4": 2230,
+    "5": 2230,
+    "6": 34,
+    "7": 4
+   },
+   "rows_scanned": 130002,
+   "status": "read",
+   "unresolved_edges": 10
+  }
+ }
+}
