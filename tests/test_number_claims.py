@@ -207,53 +207,6 @@ _DOC_SURFACE_EXCLUSIONS: dict[str, str] = {
         "satisfy a linter is worse than the drift. tests/test_doc_claims.py "
         "tiers it out of its living-document rules for the same reason."
     ),
-    "bench/toolcost/README.md": (
-        "Deliberately an artifact-reference target rather than a scanned "
-        "surface: `_ARTIFACT_REF` resolves a claim naming this bench "
-        "against its committed results. Its own convention is the whole "
-        "tools array serialized to UTF-8 bytes, while the footprint prose "
-        "this module governs counts per-tool raw characters — "
-        "tests/test_resident_footprint.py records that neither figure is "
-        "derivable from the other, so scanning it would judge its numbers "
-        "against the wrong convention."
-    ),
-    "bench/dedup/README.md": (
-        "The dedup bench's own report. It publishes its run's thresholds "
-        "and rates rather than citing them from somewhere else, so no "
-        "chunk carries an artifact reference. The repair is a citation per "
-        "claim, or a directory-implicit rule letting a document inside "
-        "bench/X pin against bench/X's results — a rule change, not this."
-    ),
-    "bench/longmemeval/README.md": (
-        "The longmemeval bench's own report, same shape as the dedup "
-        "entry: its figures are that run's, published here rather than "
-        "cited here."
-    ),
-    "bench/longmemeval/PREREGISTRATION.md": (
-        "Pre-registration for that bench. It fixes corpus properties and a "
-        "cost estimate before the run, and the corpus count it states is "
-        "carried by no committed result file — a citation cannot be added "
-        "until the run that would hold it is committed."
-    ),
-    "bench/longmemeval/CLAUDE-MEM-ADAPTER.md": (
-        "The competitor-adapter note for that bench. Its figures describe "
-        "a third-party corpus and an arm that has not been run, so nothing "
-        "committed here can pin them; the repair is in the prose."
-    ),
-    "bench/retrieval/README.md": (
-        "The retrieval bench's own report, same shape as the other bench "
-        "reports: published rates stated without a per-chunk citation."
-    ),
-    "bench/rot/README.md": (
-        "The rot bench's own report — a scorecard of its own run, and the "
-        "largest block of uncited figures outside the changelog. Same "
-        "repair as the other bench reports."
-    ),
-    "bench/rot/PREREGISTRATION.md": (
-        "Pre-registration for the rot bench. Its percentages are stratum "
-        "properties of a corpus drawn before a single detector number "
-        "existed, which is exactly why no result file carries them."
-    ),
     "docs/ROADMAP.md": (
         "A plan. Its figures quote past runs and set targets for work not "
         "yet done. tests/test_doc_claims.py exempts it from path claims on "

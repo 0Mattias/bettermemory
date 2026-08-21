@@ -130,7 +130,7 @@ descriptions, 5,252 input schemas — on 2026-07-31 at 3.32.0. Every
 figure in that sentence, the version label included, is read off
 `bench/toolcost/results/bettermemory-2026-07-31.json`; quote the
 artifact rather than this paragraph when they disagree. Method and
-fairness rules: `bench/toolcost/README.md`. CI hard-caps the
+fairness rules: the toolcost-bench notes. CI hard-caps the
 description component so it cannot drift upward unnoticed.
 
 The 2026-07-26 head-to-head against claude-mem 13.12.4 in that same

@@ -1,7 +1,7 @@
 """Tests for `bench/heldout/run.py`, the held-out instrument's container.
 
 The instrument's content is authored independently under the seal in
-`bench/heldout/FORMAT.md`; this file tests the container that will hold
+the heldout FORMAT note; this file tests the container that will hold
 it. That ordering is the reason the tests matter: the harness has to be
 proven correct BEFORE any content exists, because once the instrument
 lands the implementer may not read it, and a harness bug found later

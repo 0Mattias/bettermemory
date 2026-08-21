@@ -1,6 +1,6 @@
 """G3's CI leg for W3-D: the reader reproduces itself byte-for-byte.
 
-The determinism bar of `bench/w/W3D_DECLARATION.md` §7 has a CI half:
+The determinism bar of the W3d declaration §7 has a CI half:
 the page parser, the four extraction rule steps, and the census run
 twice over committed synthetic page blocks — hand-written XML below,
 no corpus bytes — and must produce byte-identical edge output and an

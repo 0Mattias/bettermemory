@@ -1,6 +1,6 @@
 """The CI leg for the W2 SO census: the arrangement equals the reference.
 
-The determinism clause of `bench/w/W2_SO_CENSUS_DECLARATION.md` §6 has
+The determinism clause of the W2 SO-census declaration §6 has
 a CI half, and its center of gravity is an equivalence: the eager
 resolution arrangement the declaration owns must produce, on a
 committed synthetic fixture, exactly what the imported reference

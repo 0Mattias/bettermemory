@@ -29,7 +29,7 @@ The wire syntax
 One string per claim, four shapes. The first three are the kinds
 `bench/rot`'s corpus measured; the fourth is their polarity mirror,
 scoped by T1's live-store census
-(`bench/rot/T2_ABSENCE_CLAIM_DECLARATION.md`):
+(the T2 absence-claim declaration):
 
 - ``src/pkg/mod.py`` — a PATH claim: the file exists.
 - ``src/pkg/mod.py::name`` — a SYMBOL claim: `name` is a top-level

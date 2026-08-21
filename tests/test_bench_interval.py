@@ -65,7 +65,7 @@ def test_mcnemar_ignores_concordant_pairs() -> None:
 
 def test_mcnemar_resolution_floor_on_twenty_questions() -> None:
     """Six discordant questions one way is the first p<0.05 — the number
-    `bench/POWER_AUDIT.md` and the runner's report both quote."""
+    the power audit and the runner's report both quote."""
     assert interval.mcnemar_exact(5, 0) > 0.05
     assert interval.mcnemar_exact(6, 0) < 0.05
 
@@ -78,7 +78,7 @@ def test_mcnemar_is_symmetric_and_bounded() -> None:
 
 
 def test_read_delta_calls_a_one_question_move_unmeasurable() -> None:
-    """`bench/retrieval/README.md`'s own rule, made callable."""
+    """The retrieval-bench notes' own rule, made callable."""
     a = [True] * 11 + [False] * 9
     b = [True] * 10 + [False] * 10
     d = interval.read_delta(a, b)

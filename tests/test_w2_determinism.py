@@ -1,7 +1,7 @@
 """G3's CI legs for W2: the trainer reproduces itself, the grammar holds,
 and the blend's lambda=0 identity is pinned.
 
-`bench/w/W2_DECLARATION.md` §8 G3(c): committed fixtures driven through
+the W2 declaration §8 G3(c): committed fixtures driven through
 the tokenizer, stage A, stage B and the blend, byte-equality across two
 trains, no corpus bytes, no numpy import in the test venv. The
 tokenizer and the pair-row grammar are numpy-free by design

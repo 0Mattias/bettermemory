@@ -28,7 +28,7 @@ Description-edit history:
   nouns the documents actually contain; the control arm (question words
   stripped, content words kept) also scores 35% — identical to asking,
   because the ranker already strips stopwords. Only the within-corpus
-  contrast transfers: `bench/retrieval/README.md` establishes that this
+  contrast transfers: the retrieval-bench notes establish that this
   corpus is easier than a real store, so these are not a store's rates.
   The 10%→65% pair this block used to cite had no committed artifact
   behind it and that bench retired it.

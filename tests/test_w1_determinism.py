@@ -1,6 +1,6 @@
 """G3's CI leg: the W1 trainer reproduces itself bit-for-bit.
 
-The determinism bar of `bench/w/W1_DECLARATION.md` §7 has a CI half:
+The determinism bar of the W1 declaration §7 has a CI half:
 retrain the committed reduced register twice and require byte-identical
 artifacts on every push. This test is that check. It runs the real
 trainer and the real emitter — `bench/w/w1_train.py` and

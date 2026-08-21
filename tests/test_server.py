@@ -6643,7 +6643,7 @@ async def test_search_desc_tells_the_caller_how_to_word_a_query(
     180-document synthetic corpus, 20 blind-authored questions per probe —
     the lexical arm retrieves 35% recall@1 on questions as asked and 80%
     re-queried in nouns the documents actually contain. That corpus is
-    easier than a real store (`bench/retrieval/README.md` says so of its own
+    easier than a real store (the retrieval-bench notes say so of their own
     numbers), so the gap between the two probes is the finding and neither
     rate is a store's rate. The cue sits in `memory_search`'s description
     rather than the instructions block because it is written at the moment

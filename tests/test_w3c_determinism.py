@@ -1,6 +1,6 @@
 """G3's CI leg for W3-C: the builder reproduces itself byte-for-byte.
 
-The determinism bar of `bench/w/W3C_DECLARATION.md` §7 has a CI half:
+The determinism bar of the W3c declaration §7 has a CI half:
 both table builds, the composition, and the emission run twice over
 hand-written pair and edge fixtures — no derived-file bytes — and must
 produce byte-identical table source and identical build payloads on

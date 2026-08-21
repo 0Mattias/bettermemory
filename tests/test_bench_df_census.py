@@ -2,7 +2,7 @@
 
 This census is the ONLY thing round 2 reads from the held-out corpus
 before it runs, and the threshold in
-`bench/longmemeval/PREREGISTRATION.md` addendum 4 is read straight off
+the LongMemEval preregistration addendum 4 is read straight off
 its output. A census that silently measured a different quantity than
 the gate will price with would move that threshold without anything
 noticing — the output is aggregates, so a wrong number looks exactly

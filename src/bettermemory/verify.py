@@ -2778,7 +2778,7 @@ _VERDICT_RAISE_STATUSES: frozenset[str] = frozenset({"never", "stale"})
 # REPLACEMENT measured first, not a subtraction — the claim-level `weak`
 # tier costs 1.1 alerts per catch at 94% precision on the same corpus,
 # which is why "Claims-at-write" sits where it does in
-# `docs/ROADMAP.md`. Write-up: `bench/rot/README.md`.
+# `docs/ROADMAP.md`. Write-up: the rot-bench notes.
 #
 # THE REPLACEMENT HAS SINCE LANDED — WITHOUT TOUCHING THIS SWITCH. For a
 # memory that DECLARES claims, `_resolve_with_claims` narrows the count

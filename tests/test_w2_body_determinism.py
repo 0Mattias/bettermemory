@@ -1,6 +1,6 @@
 """The CI leg for the W2 body census: the reader reproduces itself.
 
-The determinism clause of `bench/w/W2_BODY_CENSUS_DECLARATION.md` §5
+The determinism clause of the W2 body-census declaration §5
 has a CI half: the extraction and census code paths run twice over a
 committed synthetic fixture — hand-written PostLinks and Posts rows
 below, no corpus bytes, no numpy — and must produce byte-identical

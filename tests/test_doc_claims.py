@@ -603,6 +603,125 @@ _ALLOWLIST: dict[tuple[str, str, str], str] = {
         "shape moved to tests/_mcp.py. Accurate release note, since-moved "
         "test helper."
     ),
+    (
+        "docs/incidents/2026-07-26-staleness-verdict-constant-function.md",
+        "path",
+        "bench/rot/README.md",
+    ): (
+        "Frozen incident post-mortem. The rot-bench write-up it cites "
+        "was withdrawn to the owner-side archive on 2026-08-21; the "
+        "post-mortem stays as recorded."
+    ),
+    (
+        _CHANGELOG,
+        "path",
+        "bench/l/L1_DECLARATION.md",
+    ): (
+        "Frozen history. The bench program documents were withdrawn "
+        "from the public tree on 2026-08-21 — the receipts live on in "
+        "the owner-side archive — and the entry was accurate when "
+        "written. Rewriting shipped release notes is worse than the "
+        "drift."
+    ),
+    (
+        _CHANGELOG,
+        "path",
+        "bench/l/L1_RECORD.md",
+    ): (
+        "Frozen history. The bench program documents were withdrawn "
+        "from the public tree on 2026-08-21 — the receipts live on in "
+        "the owner-side archive — and the entry was accurate when "
+        "written. Rewriting shipped release notes is worse than the "
+        "drift."
+    ),
+    (
+        _CHANGELOG,
+        "path",
+        "bench/rot/T3_NOTE_CAP_DECISION.md",
+    ): (
+        "Frozen history. The bench program documents were withdrawn "
+        "from the public tree on 2026-08-21 — the receipts live on in "
+        "the owner-side archive — and the entry was accurate when "
+        "written. Rewriting shipped release notes is worse than the "
+        "drift."
+    ),
+    (
+        _CHANGELOG,
+        "path",
+        "bench/rot/T1_LIVE_STORE_DECLARATION.md",
+    ): (
+        "Frozen history. The bench program documents were withdrawn "
+        "from the public tree on 2026-08-21 — the receipts live on in "
+        "the owner-side archive — and the entry was accurate when "
+        "written. Rewriting shipped release notes is worse than the "
+        "drift."
+    ),
+    (
+        _CHANGELOG,
+        "path",
+        "bench/rot/T2_ABSENCE_CLAIM_DECLARATION.md",
+    ): (
+        "Frozen history. The bench program documents were withdrawn "
+        "from the public tree on 2026-08-21 — the receipts live on in "
+        "the owner-side archive — and the entry was accurate when "
+        "written. Rewriting shipped release notes is worse than the "
+        "drift."
+    ),
+    (
+        _CHANGELOG,
+        "path",
+        "bench/DOOR_C_DECISION_BRIEF.md",
+    ): (
+        "Frozen history. The bench program documents were withdrawn "
+        "from the public tree on 2026-08-21 — the receipts live on in "
+        "the owner-side archive — and the entry was accurate when "
+        "written. Rewriting shipped release notes is worse than the "
+        "drift."
+    ),
+    (
+        _CHANGELOG,
+        "path",
+        "bench/R1_REENTRY_DECLARATION.md",
+    ): (
+        "Frozen history. The bench program documents were withdrawn "
+        "from the public tree on 2026-08-21 — the receipts live on in "
+        "the owner-side archive — and the entry was accurate when "
+        "written. Rewriting shipped release notes is worse than the "
+        "drift."
+    ),
+    (
+        _CHANGELOG,
+        "path",
+        "bench/longmemeval/README.md",
+    ): (
+        "Frozen history. The bench program documents were withdrawn "
+        "from the public tree on 2026-08-21 — the receipts live on in "
+        "the owner-side archive — and the entry was accurate when "
+        "written. Rewriting shipped release notes is worse than the "
+        "drift."
+    ),
+    (
+        _CHANGELOG,
+        "path",
+        "bench/retrieval/README.md",
+    ): (
+        "Frozen history. The bench program documents were withdrawn "
+        "from the public tree on 2026-08-21 — the receipts live on in "
+        "the owner-side archive — and the entry was accurate when "
+        "written. Rewriting shipped release notes is worse than the "
+        "drift."
+    ),
+    (
+        _CHANGELOG,
+        "path",
+        "bench/longmemeval/PREREGISTRATION.md",
+    ): (
+        "Frozen history. The bench program documents were withdrawn "
+        "from the public tree on 2026-08-21 — the receipts live on in "
+        "the owner-side archive — and the entry was accurate when "
+        "written. Rewriting shipped release notes is worse than the "
+        "drift."
+    ),
 }
 # NOTE on two RETIRED entries — the swarm plan's line-ref pair,
 # (docs/swarm-convergence-plan.md, line-ref, events.py:237) and

@@ -1,7 +1,7 @@
 """Pins on the MSC loader (`bench/msc/load.py`).
 
 The corpus is NOT committed (no redistribution grant; see the module
-docstring and `bench/THIRD_INSTRUMENT.md`), so these tests split along
+docstring and the third-instrument brief), so these tests split along
 that line: the pure construction functions are pinned unconditionally —
 they are what a future census's determinism rests on — and anything
 touching the data skips when the download is absent, which is every CI

@@ -3478,7 +3478,7 @@ def test_verdict_from_signals_takes_exactly_three_signals() -> None:
     EVIDENCE, not a new implementation: the full record, including the
     honest cost of the class left uncovered, is the ``SHA_MARKER``
     tombstone in ``src/bettermemory/durability.py`` and item 5 of
-    ``bench/rot/README.md``'s "What would actually improve the verdict".
+    the rot-bench notes' "What would actually improve the verdict".
     """
     import inspect
 
@@ -3855,7 +3855,7 @@ def test_report_to_dict_carries_a_populated_claim_anchored_missing() -> None:
 # did NOT come out, because the dry run recorded in
 # `bench/rot/results/escalation-off-60d-2026-07-31.json` scores the
 # subtraction itself as `never_flag`. The gate was retracted rather than
-# honoured; the write-up is in `bench/rot/README.md` and the standing
+# honoured; the write-up is in the rot-bench notes and the standing
 # decision in `docs/ROADMAP.md`. So these tests pin SHIPPED behaviour
 # (the leg escalates) and, separately, pin that flipping the switch does
 # exactly one thing.
@@ -3883,7 +3883,7 @@ def test_commit_leg_escalates_today() -> None:
     disjunction lost a term by accident; if it fails *because* someone
     flipped it, the number that justifies the flip has to be a measured
     replacement signal, not the 3.4 — see the retraction in
-    `bench/rot/README.md` and the `Not planned` entry in
+    the rot-bench notes and the `Not planned` entry in
     `docs/ROADMAP.md`.
     """
     from bettermemory.verify import _COMMIT_DRIFT_ESCALATES

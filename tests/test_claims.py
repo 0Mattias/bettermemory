@@ -9,7 +9,7 @@ this module owns is the part the bench never had: parsing
 caller-supplied claim strings, checking a claim against a live worktree
 at declaration — and the ABSENT kind's tier semantics, the one detector
 branch the bench corpus never contains
-(`bench/rot/T2_ABSENCE_CLAIM_DECLARATION.md`).
+(the T2 absence-claim declaration).
 """
 
 from __future__ import annotations

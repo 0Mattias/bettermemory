@@ -3227,7 +3227,7 @@ def search(
       documented limit, not a silent one.
     - `conversational`: hybrid-mode only, DEFAULT ON since 6.1.0 (the
       L1 ship, owner decision 2026-08-16). The Lane L repairs for
-      conversation-shaped stores (`bench/l/L1_DECLARATION.md`): when
+      conversation-shaped stores (the L1 declaration): when
       the query has a temporal reading, (a) temporal-SCAFFOLD tokens
       (day/week/ago/last/many and kin — the question's syntax, not
       its content) get a document-frequency floor in the BM25 legs
@@ -3243,7 +3243,7 @@ def search(
       pre-6.1.0 ranking exactly.
 
       Why the default is on: the unit's gate read
-      (`bench/l/L1_RECORD.md`, artifacts beside it) measured +1.27
+      (the L1 record, artifacts beside it) measured +1.27
       LongMemEval macro-recall@5 points and +0.93 at @1 on the full
       500 against the paired off arm, with the dev instrument
       byte-identical, no question type regressed, and the untouched

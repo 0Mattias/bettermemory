@@ -1,6 +1,6 @@
 """G3's CI leg for W3-P: the reader reproduces itself byte-for-byte.
 
-The determinism bar of `bench/w/W3P_DECLARATION.md` §7 has a CI half:
+The determinism bar of the W3p declaration §7 has a CI half:
 the extraction and census code paths run twice over a committed
 synthetic fixture — hand-written XML rows below, no corpus bytes — and
 must produce byte-identical pair output and an identical census

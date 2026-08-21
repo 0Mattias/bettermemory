@@ -1,7 +1,7 @@
 """G3's CI legs for W1b: the revised trainer reproduces itself, and the
 segment knob cannot move the emitted bytes.
 
-`bench/w/W1B_DECLARATION.md` §7 extends W1's CI half in three ways,
+the W1b declaration §7 extends W1's CI half in three ways,
 all covered here:
 
 * the reduced register is the SE-derived slice
