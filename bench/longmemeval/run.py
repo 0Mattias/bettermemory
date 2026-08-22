@@ -111,6 +111,9 @@ KNOWN_CORPORA = {
     "821a2034d219ab45846873dd14c14f12cfe7776e73527a483f9dac095d38620c": (
         "longmemeval_oracle.json"
     ),
+    "9d79e5524794a2e6900a3aa9cb7d9152c5a3e8319c9a87c25494ba1eacee495f": (
+        "longmemeval_m_cleaned.json"
+    ),
 }
 
 # The oracle variant holds evidence sessions and NO distractors, so any
