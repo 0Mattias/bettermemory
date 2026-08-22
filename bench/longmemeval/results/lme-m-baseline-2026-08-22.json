@@ -1,0 +1,118 @@
+{
+ "provenance": {
+  "bettermemory_version": "6.1.0",
+  "commit": "1cab1cb",
+  "tree_dirty": false,
+  "date": "2026-08-22",
+  "machine": {
+   "os": "Darwin 25.5.0",
+   "machine": "arm64",
+   "python": "3.13.13"
+  }
+ },
+ "corpus": "longmemeval_m_cleaned.json",
+ "corpus_sha256": "9d79e5524794a2e6900a3aa9cb7d9152c5a3e8319c9a87c25494ba1eacee495f",
+ "instances": 500,
+ "scored": 500,
+ "retrieval_depth": 200,
+ "k_values": [
+  1,
+  5,
+  10
+ ],
+ "rescue_expansion": false,
+ "conversational": true,
+ "half": "all",
+ "ablation": "none",
+ "leg_margin_cap": true,
+ "evidence_scaling": false,
+ "base_withhold": false,
+ "notes": [
+  "this runner measures bettermemory only; the claude-mem arms run through cm_run.py and publish their own artifacts \u2014 a single-system artifact licenses no comparative claim by itself.",
+  "ingest bypasses memory_write guardrails by design (Store.write in src/bettermemory/store.py); stores hold ~245 items, below the 500-item index threshold, so bm25 prefiltering never engages and the full store is ranked."
+ ],
+ "results": [
+  {
+   "arm": "lexical",
+   "n": 500,
+   "seconds": 3645.0,
+   "items_written": 1233387,
+   "rounds_offered": 1233387,
+   "dup_session_questions": 449,
+   "macro": {
+    "1": 0.4139,
+    "5": 0.7381,
+    "10": 0.8037
+   },
+   "macro_ci95": {
+    "1": [
+     0.3814,
+     0.4464
+    ],
+    "5": [
+     0.7047,
+     0.7716
+    ],
+    "10": [
+     0.7732,
+     0.8341
+    ]
+   },
+   "micro": {
+    "1": 0.3397,
+    "5": 0.6899,
+    "10": 0.7722
+   },
+   "ceiling": {
+    "1": 0.6442,
+    "5": 0.999,
+    "10": 1.0
+   },
+   "depth_truncated": {
+    "1": 0,
+    "5": 0,
+    "10": 1
+   },
+   "by_type": {
+    "knowledge-update": {
+     "1": 0.4487,
+     "5": 0.9103,
+     "10": 0.9423
+    },
+    "multi-session": {
+     "1": 0.2565,
+     "5": 0.636,
+     "10": 0.741
+    },
+    "single-session-assistant": {
+     "1": 0.9107,
+     "5": 1.0,
+     "10": 1.0
+    },
+    "single-session-preference": {
+     "1": 0.1333,
+     "5": 0.3,
+     "10": 0.3667
+    },
+    "single-session-user": {
+     "1": 0.5714,
+     "5": 0.8143,
+     "10": 0.9
+    },
+    "temporal-reasoning": {
+     "1": 0.3222,
+     "5": 0.6878,
+     "10": 0.7503
+    }
+   },
+   "type_n": {
+    "single-session-assistant": 56,
+    "single-session-user": 70,
+    "multi-session": 133,
+    "knowledge-update": 78,
+    "temporal-reasoning": 133,
+    "single-session-preference": 30
+   }
+  }
+ ]
+}
