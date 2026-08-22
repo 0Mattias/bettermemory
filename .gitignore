@@ -63,6 +63,10 @@ bench/longmemeval/results/*.log
 bench/longmemeval/vendor/
 bench/msc/data/
 
+# BEIR instrument datasets (bench/instruments): zips pinned by sha256 in
+# bench/instruments/PINS.json, bytes reproducible from the pins.
+bench/instruments/data/
+
 # W1 training-corpus bytes: pinned by sha256 in bench/w/corpora.json,
 # fetched under the declared plain-sentence gate, never committed. As of
 # 2026-08-16 the path is a symlink into the external training-data store

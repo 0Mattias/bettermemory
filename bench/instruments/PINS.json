@@ -1,0 +1,27 @@
+{
+ "arguana": {
+  "bytes": 3773617,
+  "url": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/arguana.zip",
+  "zip_sha256": "cfdf79adce27a401b3cd3ea267903134dbfab2c6afeb95d7fe5724a00bf7557b"
+ },
+ "fiqa": {
+  "bytes": 17948027,
+  "url": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/fiqa.zip",
+  "zip_sha256": "32c7df99ed21252fdfb2cf3f5673502a8d245ee0c44c4a133570d92ce2b3ad02"
+ },
+ "nfcorpus": {
+  "bytes": 2448432,
+  "url": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/nfcorpus.zip",
+  "zip_sha256": "efe5be03f8c5b86a5870102d0599d227c8c6e2484328e68c6522560385671b0b"
+ },
+ "scidocs": {
+  "bytes": 142471588,
+  "url": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/scidocs.zip",
+  "zip_sha256": "96640201687767c9b1fcc5af7a80b90fb325b37fa25329c2586c25edcfa17ef1"
+ },
+ "scifact": {
+  "bytes": 2816079,
+  "url": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/scifact.zip",
+  "zip_sha256": "536e14446a0ba56ed1398ab1055f39fe852686ecad24a6306c80c490fa8e0165"
+ }
+}
