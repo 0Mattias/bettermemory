@@ -532,23 +532,12 @@ def test_the_primary_cell_is_a_member_of_the_declared_family() -> None:
 
 
 def test_the_code_and_the_declaration_name_the_same_primary() -> None:
-    """The document is the contract; this file is its executable form.
-    If they drift, the committed declaration stops describing the run."""
-    text = (_BENCH / "P1E_CENSUS2_DECLARATION.md").read_text(encoding="utf-8")
-    assert "`store / centred / top_k=2 / tau=0.99 /" in text
+    """The declaration prose moved to the owner-side archive with the
+    rest of the bench documents (2026-08-21); these literals are the
+    primary it named, pinned so a later edit cannot quietly rebase the
+    retired census."""
     assert round2.PRIMARY_ARM == "centred"
     assert round2.PRIMARY_CELL == "k2_t0.99_ppmi_positive_nobridge"
-    # The declaration cites its bounds by name rather than copying the
-    # digits, so this checks the names it promises are the ones that
-    # exist. The digits themselves are checked against the artifact
-    # below — one source of truth, not two.
-    for constant in (
-        "READING_A_MIN_WIDTH",
-        "R3_CI_LOWER_BOUND",
-        "GATE_MULTIPLE",
-        "MIN_GATE_TERMS",
-    ):
-        assert constant in text, constant
 
 
 def test_the_declared_bounds_are_the_incumbents_own() -> None:

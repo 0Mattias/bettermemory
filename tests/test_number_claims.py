@@ -261,10 +261,11 @@ _DOC_SURFACE_EXCLUSIONS: dict[str, str] = {
     ),
 }
 
-# The two exclusions that are decisions about *conventions* rather than a
-# queue of unrepaired prose. Repairing a document cannot promote these, so
-# the drain guard leaves them alone.
-_CATEGORICAL_EXCLUSIONS = frozenset({"CHANGELOG.md", "bench/toolcost/README.md"})
+# The exclusion that is a decision about *conventions* rather than a queue
+# of unrepaired prose. Repairing a document cannot promote it, so the drain
+# guard leaves it alone. (bench/toolcost/README.md was its sibling until the
+# bench documents moved to the owner-side archive, 2026-08-21.)
+_CATEGORICAL_EXCLUSIONS = frozenset({"CHANGELOG.md"})
 
 
 @lru_cache(maxsize=None)
@@ -363,8 +364,8 @@ def _is_contract_constant(chunk: str, number: Number) -> bool:
 
 
 # A repo-relative reference to a committed artifact, or to the bench that
-# owns one. `bench/toolcost/README.md` and the bare `bench/toolcost` of a
-# markdown reference-link both resolve to that bench's result files.
+# owns one. A bare `bench/toolcost` markdown reference-link resolves to
+# that bench's result files.
 _ARTIFACT_REF = re.compile(r"\b(?:bench|docs)/[\w][\w./-]*")
 
 

@@ -182,15 +182,13 @@ def test_both_gates_passing_is_the_only_way_to_a_pass_verdict() -> None:
 
 def test_thresholds_match_the_preregistration() -> None:
     """Addendum 4 fixed these before the census existed. A later edit to
-    any of them re-opens a retired experiment on changed rules, which is
-    the one thing the document is meant to make impossible."""
+    any of them re-opens a retired experiment on changed rules. The
+    preregistration prose moved to the owner-side archive with the rest
+    of the bench documents (2026-08-21); these literals are the pinned
+    thresholds it fixed."""
     assert gate0.TAU == 0.05
     assert gate0.SEPARABILITY_MULTIPLE == 5.0
     assert gate0.REACHABILITY_MIN_QUESTIONS == 20
-    prereg = (_BENCH.parent / "PREREGISTRATION.md").read_text(encoding="utf-8")
-    assert "at least 5×" in prereg
-    assert "≥ 20 of the 25" in prereg
-    assert "| `_RESCUE_EXPANSION_DF_MAX` (τ) | **0.05** |" in prereg
 
 
 def test_the_published_verdict_is_the_kill() -> None:

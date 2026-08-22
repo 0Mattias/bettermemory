@@ -2486,7 +2486,10 @@ def test_every_markdown_on_disk_is_scanned_excluded_or_untracked() -> None:
     # Reach into the directories the glob could not see, asserted by prefix
     # so an ordinary rename does not fail this while a whole directory
     # dropping out of the corpus still does.
-    for prefix in ("bench/", "docs/incidents/", "plugin/", "examples/"):
+    # bench/ left this tuple 2026-08-21: the bench program documents were
+    # withdrawn from the public tree by owner decision (results *.json
+    # stay, but they are artifacts, not prose).
+    for prefix in ("docs/incidents/", "plugin/", "examples/"):
         assert any(rel.startswith(prefix) for rel in scanned), (
             f"nothing under {prefix} is in the markdown corpus"
         )

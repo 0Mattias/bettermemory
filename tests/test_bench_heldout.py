@@ -68,7 +68,6 @@ def test_the_fixture_declares_itself_not_an_instrument() -> None:
     manifest = json.loads((_FIXTURES / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["instrument"] == "harness-fixture"
     assert manifest["sealed"] is False
-    assert "not an instrument" in (_FIXTURES / "README.md").read_text().lower()
 
 
 def test_the_landed_instrument_is_loadable_and_sealed() -> None:
@@ -360,34 +359,3 @@ def test_validate_is_separate_from_score() -> None:
     source = (_BENCH / "run.py").read_text(encoding="utf-8")
     assert "add_mutually_exclusive_group(required=True)" in source
     assert "--validate" in source and "--score" in source
-
-
-def test_the_format_document_carries_the_seal_protocol() -> None:
-    """The enforcement record is the ordering of three shas, and it is
-    only enforceable if it is written down before the data lands."""
-    doc = (_BENCH / "FORMAT.md").read_text(encoding="utf-8")
-    assert "data commit  <  preregistration commit  <  run commit" in doc
-    assert "no-read attestation" in doc
-
-
-def test_the_format_document_gives_no_authoring_guidance() -> None:
-    """The instrument is only worth building if its content was authored
-    without knowledge of what the system under test finds hard. This
-    pins the omission, because it is the kind of thing a later edit
-    'helpfully' undoes.
-    """
-    doc = (_BENCH / "FORMAT.md").read_text(encoding="utf-8").lower()
-    for leak in (
-        "paraphrase",
-        "synonym",
-        "vocabulary gap",
-        "casual",
-        "colloquial",
-        "inflection",
-        "abbreviation",
-        "rephrase",
-    ):
-        assert leak not in doc, (
-            f"FORMAT.md mentions {leak!r} — that is authoring guidance about "
-            f"the system under test, and it compromises the instrument"
-        )

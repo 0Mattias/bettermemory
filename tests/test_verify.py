@@ -3953,8 +3953,9 @@ def test_disabling_commit_escalation_leaves_the_demotion_intact(
 
 
 def test_the_retraction_artifact_resolves_from_every_citation() -> None:
-    """The retraction's evidence is cited BY PATH from three files, and
-    nothing else makes those paths resolve.
+    """The retraction's evidence is cited BY PATH from two files (three
+    before the rot README moved to the owner-side archive, 2026-08-21),
+    and nothing else makes those paths resolve.
 
     The whole argument for keeping `_COMMIT_DRIFT_ESCALATES` at `True`
     against its own fired pre-registration is one dry run, and the only
@@ -3978,7 +3979,6 @@ def test_the_retraction_artifact_resolves_from_every_citation() -> None:
     citations = [
         ("src/bettermemory/verify.py", f"bench/rot/results/{artifact}", root),
         ("docs/ROADMAP.md", f"bench/rot/results/{artifact}", root),
-        ("bench/rot/README.md", f"results/{artifact}", root / "bench" / "rot"),
     ]
 
     checked = 0
@@ -3995,7 +3995,7 @@ def test_the_retraction_artifact_resolves_from_every_citation() -> None:
         )
         checked += 1
 
-    assert checked == 3, f"expected three live citations, checked {checked}"
+    assert checked == 2, f"expected two live citations, checked {checked}"
 
 
 def test_the_commit_escalation_switch_has_exactly_one_reader() -> None:

@@ -211,27 +211,6 @@ def test_perfect_recall_at_a_high_flag_rate_is_not_significant() -> None:
     assert genuinely_discriminating < 0.001
 
 
-def test_readme_never_reports_a_miss_rate_without_its_counterweights() -> None:
-    """A prose ratchet, in the style this project already uses on its docs.
-
-    The first version of the rot README led with "the verdict never
-    misses" and a 0% unflagged-stale rate, which is what `always_flag`
-    scores. Any future edit that reintroduces a bare miss-rate claim
-    without J, a significance test and alerts-per-catch nearby is
-    reproducing the exact framing error the benchmark was built to expose.
-    """
-    readme = (_ROOT / "bench" / "rot" / "README.md").read_text(encoding="utf-8")
-    lowered = readme.lower()
-    if "unflagged-stale" in lowered or "unflagged_stale" in lowered:
-        for required in ("youden", "fisher", "alerts/catch", "always_flag"):
-            assert required.lower() in lowered, (
-                f"rot README reports a miss rate without {required!r} — a "
-                "flag-everything detector scores a perfect miss rate, so the "
-                "number is meaningless without its counterweights"
-            )
-    assert "never misses" not in lowered
-
-
 def test_the_shipped_default_is_not_a_constant_function() -> None:
     """The regression guard for the 3.30.0 verdict fix.
 

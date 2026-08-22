@@ -641,11 +641,6 @@ def test_the_ablation_artifacts_declare_their_dirty_tree() -> None:
     ):
         art = json.loads((_HERE / "results" / name).read_text(encoding="utf-8"))
         assert art["provenance"]["tree_dirty"] is True, name
-    readme = (_HERE / "README.md").read_text(encoding="utf-8")
-    # The phrase survives only inside the dated correction that retracts
-    # it, so pin the retraction rather than the absence of the words.
-    assert "Both published ablation\nartifacts carry `tree_dirty: true`" in readme
-    assert "dirty BY CONSTRUCTION" in readme
 
 
 def test_oracle_variant_is_pinned_and_flagged_unpublishable() -> None:
