@@ -31,59 +31,68 @@ import numpy as np
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 _TOKENIZER = None
-_TOKENIZER_PATH: str | None = None
-_ENCODE_BATCH = 2048
+_FLUSH_TOKENS = 8 << 20  # tokens buffered before an append to the tmp file
 
 
 def _init_worker(tokenizer_path: str) -> None:
-    global _TOKENIZER, _TOKENIZER_PATH
+    # Hard-set in the worker itself, before the Rust side can size a thread
+    # pool: one worker = one thread, parallelism comes from the process pool.
+    os.environ["TOKENIZERS_PARALLELISM"] = "false"
+    global _TOKENIZER
     from tokenizers import Tokenizer
 
     _TOKENIZER = Tokenizer.from_file(tokenizer_path)
-    _TOKENIZER_PATH = tokenizer_path
 
 
 def _pack_one(job: tuple[str, str, str, str]) -> dict[str, object]:
     source, in_path, out_path, sidecar_path = job
     assert _TOKENIZER is not None
+    encode = _TOKENIZER.encode
     eos_id = _TOKENIZER.token_to_id("[EOS]")
-    parts: list[np.ndarray] = []
     docs = 0
-    batch: list[str] = []
+    tokens = 0
+    digest = hashlib.sha256()
+    parts: list[np.ndarray] = []
+    buffered = 0
 
-    def _flush() -> None:
-        nonlocal batch
-        if not batch:
-            return
-        for enc in _TOKENIZER.encode_batch(batch):
-            ids = enc.ids
-            ids.append(eos_id)
-            parts.append(np.asarray(ids, dtype=np.uint16))
-        batch = []
-
-    with gzip.open(in_path, "rt", encoding="utf-8") as fh:
-        for line in fh:
-            batch.append(json.loads(line)["text"])
-            docs += 1
-            if len(batch) >= _ENCODE_BATCH:
-                _flush()
-    _flush()
-
-    stream = np.concatenate(parts) if parts else np.zeros(0, dtype=np.uint16)
-    if int(stream.max(initial=0)) > np.iinfo(np.uint16).max:
-        raise ValueError(f"token id overflows uint16 in {in_path}")
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     tmp_path = out_path + ".tmp"
-    stream.tofile(tmp_path)
+    with open(tmp_path, "wb") as out:
+
+        def _flush() -> None:
+            nonlocal parts, buffered
+            if not parts:
+                return
+            arr = np.concatenate(parts)
+            if int(arr.max(initial=0)) > np.iinfo(np.uint16).max:
+                raise ValueError(f"token id overflows uint16 in {in_path}")
+            blob = arr.tobytes()
+            digest.update(blob)
+            out.write(blob)
+            parts = []
+            buffered = 0
+
+        with gzip.open(in_path, "rt", encoding="utf-8") as fh:
+            for line in fh:
+                ids = encode(json.loads(line)["text"]).ids
+                ids.append(eos_id)
+                arr = np.asarray(ids, dtype=np.uint16)
+                parts.append(arr)
+                docs += 1
+                tokens += arr.size
+                buffered += arr.size
+                if buffered >= _FLUSH_TOKENS:
+                    _flush()
+        _flush()
     os.replace(tmp_path, out_path)
     stat = {
         "source": source,
         "input": in_path,
         "output": out_path,
         "docs": docs,
-        "tokens": int(stream.size),
-        "bytes": int(stream.size) * 2,
-        "sha256": hashlib.sha256(stream.tobytes()).hexdigest(),
+        "tokens": tokens,
+        "bytes": tokens * 2,
+        "sha256": digest.hexdigest(),
     }
     Path(sidecar_path).write_text(json.dumps(stat, sort_keys=True) + "\n")
     return stat
