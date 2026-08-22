@@ -1,0 +1,2634 @@
+{
+ "runner": {
+  "above_threshold": true,
+  "base_withhold": false,
+  "conversational": true,
+  "corpus": "corpus.jsonl",
+  "corpus_sha256": "4fbe2fd59f0c41f4ffe7979ca70746aa2f9928f03fce7d602b653f1b80fe22b8",
+  "corpus_size": 1080,
+  "evidence_scaling": false,
+  "index_threshold": 500,
+  "index_threshold_forced": null,
+  "leg_margin_cap": true,
+  "notes": [
+   "corpus is above the index threshold, but this runner ranks the full corpus \u2014 production would prefilter through SQLite bm25 first. Treat this as an upper bound."
+  ],
+  "padded": false,
+  "prefilter_cap": 50,
+  "prefilter_delta": [],
+  "prefilter_mode": "off",
+  "provenance": {
+   "bettermemory_version": "6.1.0",
+   "commit": "f239e7c",
+   "date": "2026-08-21",
+   "machine": {
+    "machine": "arm64",
+    "os": "Darwin 25.5.0",
+    "python": "3.13.13"
+   },
+   "tree_dirty": false
+  },
+  "questions": "questions.jsonl",
+  "questions_n": 120,
+  "questions_sha256": "88d8d6501b22bfbb413c66304a6753d827d2952be46de7e4b4bb6817d527ba9e",
+  "rescue_expansion": false,
+  "results": [
+   {
+    "arm": "lexical",
+    "engaged": 0,
+    "gold_nominated": 1.0,
+    "mean_pool_size": 1080.0,
+    "n": 120,
+    "per_question": [
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-database-migrations-are-rolled-back"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-feature-flags-get-cleaned-up"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-nightly-backups-are-verified-not-just-taken"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-oncall-escalation-actually-works-here"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "how-rate-limiting-is-tuned-for-the-public-api"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-secrets-reach-containers-at-runtime"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "the-agreement-about-code-review-turnaround"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "the-convention-for-naming-background-jobs"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "the-cutover-plan-for-the-legacy-billing-service"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "the-decision-to-stop-using-a-monorepo"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "the-policy-on-adding-new-runtime-dependencies"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "the-reason-log-retention-is-only-14-days"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "the-rule-about-never-force-pushing-shared-branches"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "why-error-tracking-ignores-a-specific-exception-class"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-integration-tests-run-serially"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-postgres-connection-pooling-was-moved-out-of-the-app"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-the-frontend-build-is-not-cached-in-ci"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-the-staging-environment-shares-one-database"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "why-we-pin-the-base-image-by-digest"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-we-stopped-using-a-shared-dev-server"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-canary-deploys-get-promoted-or-rolled-back"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "why-deploys-are-blocked-after-4pm-on-fridays"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "the-decision-to-stop-cutting-release-branches"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "how-a-hotfix-skips-the-normal-queue"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-version-numbers-do-not-match-the-marketing-name"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-metric-cardinality-is-capped-per-service"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-trace-sampling-rates-were-chosen"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "the-rule-about-what-belongs-in-an-alert-versus-a-dashboard"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "why-we-stopped-alerting-on-cpu-utilisation"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-slo-error-budgets-gate-feature-work"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-flaky-tests-get-quarantined-not-deleted"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "how-test-fixtures-are-kept-in-sync-with-the-schema"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "the-decision-to-drop-end-to-end-browser-tests"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-coverage-is-reported-but-not-gated"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "how-contract-tests-between-services-are-owned"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-ci-runners-are-self-hosted-for-one-repository"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-long-build-artifacts-are-retained"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "the-rule-about-which-checks-can-block-a-merge"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-the-pipeline-cancels-superseded-runs"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "how-flapping-required-checks-get-demoted"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-dependency-cves-are-triaged-and-by-whom"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-service-accounts-are-not-shared-between-environments"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "the-policy-on-access-reviews-for-production-data"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-tls-certificates-are-renewed-without-downtime"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "why-audit-logs-live-in-a-separate-account"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-analytics-events-never-carry-raw-email-addresses"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-customer-data-deletion-requests-are-executed"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "the-decision-to-keep-the-warehouse-load-nightly-not-streaming"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "why-the-events-table-is-partitioned-by-month"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-schema-changes-reach-the-analytics-team"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "why-pods-have-memory-limits-but-not-cpu-limits"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "how-node-pools-are-split-between-workloads"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "the-reason-autoscaling-is-tuned-on-queue-depth"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "why-dns-changes-go-through-a-pull-request"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-the-cdn-cache-gets-purged-safely"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-public-api-versions-are-deprecated"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-idempotency-keys-are-required-on-writes"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "the-convention-for-paginating-large-collections"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-webhook-delivery-retries-stop-after-a-day"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-client-timeouts-were-agreed-with-the-mobile-team"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "why-the-dead-letter-queue-is-drained-by-hand"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-consumer-lag-alerts-were-calibrated"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "the-decision-to-give-up-strict-message-ordering"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "why-poison-messages-are-parked-not-dropped"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-queue-consumers-are-scaled-during-backlogs"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-cache-keys-include-a-schema-version"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-the-cache-stampede-problem-was-fixed"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "the-rule-about-what-may-be-cached-at-the-edge"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "why-redis-eviction-policy-was-changed-to-allkeys-lru"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-stale-while-revalidate-was-tuned"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-every-query-has-a-statement-timeout"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "how-slow-queries-get-turned-into-tickets"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "the-policy-on-adding-new-database-indexes"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "why-read-replicas-are-not-used-for-user-facing-reads"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-the-n-plus-one-detector-runs-in-ci"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-technical-decisions-get-written-down"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "why-postmortems-never-name-an-individual"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "the-agreement-about-meeting-free-afternoons"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-tech-debt-work-gets-scheduled"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "why-estimates-are-in-t-shirt-sizes-not-hours"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-incident-severity-levels-are-assigned"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-the-status-page-is-updated-before-the-fix"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "the-rule-about-who-can-declare-an-incident"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-customer-comms-are-drafted-during-an-outage"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "why-incident-channels-are-archived-not-deleted"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-session-tokens-are-invalidated-on-password-change"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-sso-is-required-for-internal-tools"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "the-decision-to-model-permissions-as-roles-not-scopes"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-machine-to-machine-credentials-rotate"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "why-admin-actions-require-a-second-approval"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-cloud-spend-is-attributed-to-teams"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-egress-costs-drove-the-storage-region-choice"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "the-decision-to-reserve-capacity-for-one-year"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-idle-environments-get-shut-down-automatically"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-log-ingestion-volume-is-billed-back-to-services"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-the-javascript-bundle-has-a-size-budget"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-browser-support-is-decided"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "the-rule-about-shipping-new-css-frameworks"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "why-client-side-errors-are-sampled-before-reporting"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "how-feature-detection-replaced-user-agent-sniffing"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-seed-data-for-local-development-is-generated"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-docker-compose-is-not-the-supported-setup"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "the-convention-for-environment-variable-names"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-local-tests-run-against-a-real-database"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-new-engineers-get-a-working-checkout-on-day-one"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "why-the-payment-provider-has-a-documented-fallback"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-vendor-outages-are-detected-independently"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "the-policy-on-signing-up-for-new-saas-tools"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-email-sending-was-moved-to-a-second-provider"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-third-party-sdk-upgrades-are-evaluated"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-uploaded-files-are-scanned-before-storage"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-object-storage-lifecycle-rules-expire-old-exports"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "the-decision-to-serve-user-uploads-from-a-separate-domain"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "why-large-exports-are-generated-asynchronously"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-storage-quotas-are-enforced-per-account"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-the-runbook-lives-next-to-the-code"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-api-documentation-stays-in-sync-with-the-server"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "the-rule-about-updating-docs-in-the-same-pull-request"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-architecture-diagrams-are-generated-not-drawn"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-onboarding-docs-get-tested-for-rot"
+     }
+    ],
+    "prefilter": false,
+    "probe": "asked",
+    "recall_at_1": 0.2667,
+    "recall_at_1_ci95": [
+     0.1957,
+     0.3521
+    ],
+    "recall_at_5": 0.5583,
+    "recall_at_5_ci95": [
+     0.469,
+     0.644
+    ]
+   },
+   {
+    "arm": "lexical",
+    "engaged": 0,
+    "gold_nominated": 1.0,
+    "mean_pool_size": 1080.0,
+    "n": 120,
+    "per_question": [
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "how-database-migrations-are-rolled-back"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "how-feature-flags-get-cleaned-up"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "how-nightly-backups-are-verified-not-just-taken"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-oncall-escalation-actually-works-here"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "how-rate-limiting-is-tuned-for-the-public-api"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-secrets-reach-containers-at-runtime"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "the-agreement-about-code-review-turnaround"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "the-convention-for-naming-background-jobs"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "the-cutover-plan-for-the-legacy-billing-service"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "the-decision-to-stop-using-a-monorepo"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "the-policy-on-adding-new-runtime-dependencies"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "the-reason-log-retention-is-only-14-days"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "the-rule-about-never-force-pushing-shared-branches"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "why-error-tracking-ignores-a-specific-exception-class"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-integration-tests-run-serially"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-postgres-connection-pooling-was-moved-out-of-the-app"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-the-frontend-build-is-not-cached-in-ci"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-the-staging-environment-shares-one-database"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-we-pin-the-base-image-by-digest"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-we-stopped-using-a-shared-dev-server"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-canary-deploys-get-promoted-or-rolled-back"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-deploys-are-blocked-after-4pm-on-fridays"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "the-decision-to-stop-cutting-release-branches"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-a-hotfix-skips-the-normal-queue"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-version-numbers-do-not-match-the-marketing-name"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-metric-cardinality-is-capped-per-service"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-trace-sampling-rates-were-chosen"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "the-rule-about-what-belongs-in-an-alert-versus-a-dashboard"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-we-stopped-alerting-on-cpu-utilisation"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-slo-error-budgets-gate-feature-work"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-flaky-tests-get-quarantined-not-deleted"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "how-test-fixtures-are-kept-in-sync-with-the-schema"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "the-decision-to-drop-end-to-end-browser-tests"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-coverage-is-reported-but-not-gated"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "how-contract-tests-between-services-are-owned"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-ci-runners-are-self-hosted-for-one-repository"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-long-build-artifacts-are-retained"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "the-rule-about-which-checks-can-block-a-merge"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-the-pipeline-cancels-superseded-runs"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-flapping-required-checks-get-demoted"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-dependency-cves-are-triaged-and-by-whom"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-service-accounts-are-not-shared-between-environments"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "the-policy-on-access-reviews-for-production-data"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-tls-certificates-are-renewed-without-downtime"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-audit-logs-live-in-a-separate-account"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-analytics-events-never-carry-raw-email-addresses"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-customer-data-deletion-requests-are-executed"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "the-decision-to-keep-the-warehouse-load-nightly-not-streaming"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-the-events-table-is-partitioned-by-month"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-schema-changes-reach-the-analytics-team"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-pods-have-memory-limits-but-not-cpu-limits"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "how-node-pools-are-split-between-workloads"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "the-reason-autoscaling-is-tuned-on-queue-depth"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-dns-changes-go-through-a-pull-request"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-the-cdn-cache-gets-purged-safely"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "how-public-api-versions-are-deprecated"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-idempotency-keys-are-required-on-writes"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "the-convention-for-paginating-large-collections"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-webhook-delivery-retries-stop-after-a-day"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "how-client-timeouts-were-agreed-with-the-mobile-team"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-the-dead-letter-queue-is-drained-by-hand"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "how-consumer-lag-alerts-were-calibrated"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "the-decision-to-give-up-strict-message-ordering"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-poison-messages-are-parked-not-dropped"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "how-queue-consumers-are-scaled-during-backlogs"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-cache-keys-include-a-schema-version"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "how-the-cache-stampede-problem-was-fixed"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "the-rule-about-what-may-be-cached-at-the-edge"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-redis-eviction-policy-was-changed-to-allkeys-lru"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "how-stale-while-revalidate-was-tuned"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-every-query-has-a-statement-timeout"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "how-slow-queries-get-turned-into-tickets"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "the-policy-on-adding-new-database-indexes"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-read-replicas-are-not-used-for-user-facing-reads"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "how-the-n-plus-one-detector-runs-in-ci"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "how-technical-decisions-get-written-down"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "why-postmortems-never-name-an-individual"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "the-agreement-about-meeting-free-afternoons"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-tech-debt-work-gets-scheduled"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-estimates-are-in-t-shirt-sizes-not-hours"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "how-incident-severity-levels-are-assigned"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-the-status-page-is-updated-before-the-fix"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "the-rule-about-who-can-declare-an-incident"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "how-customer-comms-are-drafted-during-an-outage"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-incident-channels-are-archived-not-deleted"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-session-tokens-are-invalidated-on-password-change"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-sso-is-required-for-internal-tools"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "the-decision-to-model-permissions-as-roles-not-scopes"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-machine-to-machine-credentials-rotate"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-admin-actions-require-a-second-approval"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-cloud-spend-is-attributed-to-teams"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-egress-costs-drove-the-storage-region-choice"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "the-decision-to-reserve-capacity-for-one-year"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "how-idle-environments-get-shut-down-automatically"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-log-ingestion-volume-is-billed-back-to-services"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-the-javascript-bundle-has-a-size-budget"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "how-browser-support-is-decided"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "the-rule-about-shipping-new-css-frameworks"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-client-side-errors-are-sampled-before-reporting"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-feature-detection-replaced-user-agent-sniffing"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-seed-data-for-local-development-is-generated"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-docker-compose-is-not-the-supported-setup"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "the-convention-for-environment-variable-names"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-local-tests-run-against-a-real-database"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "how-new-engineers-get-a-working-checkout-on-day-one"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-the-payment-provider-has-a-documented-fallback"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-vendor-outages-are-detected-independently"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "the-policy-on-signing-up-for-new-saas-tools"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-email-sending-was-moved-to-a-second-provider"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-third-party-sdk-upgrades-are-evaluated"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "how-uploaded-files-are-scanned-before-storage"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "why-object-storage-lifecycle-rules-expire-old-exports"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "the-decision-to-serve-user-uploads-from-a-separate-domain"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-large-exports-are-generated-asynchronously"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "how-storage-quotas-are-enforced-per-account"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-the-runbook-lives-next-to-the-code"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-api-documentation-stays-in-sync-with-the-server"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "the-rule-about-updating-docs-in-the-same-pull-request"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-architecture-diagrams-are-generated-not-drawn"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-onboarding-docs-get-tested-for-rot"
+     }
+    ],
+    "prefilter": false,
+    "probe": "requery",
+    "recall_at_1": 0.5167,
+    "recall_at_1_ci95": [
+     0.4281,
+     0.6042
+    ],
+    "recall_at_5": 0.8917,
+    "recall_at_5_ci95": [
+     0.8234,
+     0.9356
+    ]
+   },
+   {
+    "arm": "lexical",
+    "engaged": 0,
+    "gold_nominated": 1.0,
+    "mean_pool_size": 1080.0,
+    "n": 120,
+    "per_question": [
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-database-migrations-are-rolled-back"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-feature-flags-get-cleaned-up"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "how-nightly-backups-are-verified-not-just-taken"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-oncall-escalation-actually-works-here"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-rate-limiting-is-tuned-for-the-public-api"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-secrets-reach-containers-at-runtime"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "the-agreement-about-code-review-turnaround"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "the-convention-for-naming-background-jobs"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "the-cutover-plan-for-the-legacy-billing-service"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "the-decision-to-stop-using-a-monorepo"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "the-policy-on-adding-new-runtime-dependencies"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "the-reason-log-retention-is-only-14-days"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "the-rule-about-never-force-pushing-shared-branches"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "why-error-tracking-ignores-a-specific-exception-class"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-integration-tests-run-serially"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-postgres-connection-pooling-was-moved-out-of-the-app"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-the-frontend-build-is-not-cached-in-ci"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-the-staging-environment-shares-one-database"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "why-we-pin-the-base-image-by-digest"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-we-stopped-using-a-shared-dev-server"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-canary-deploys-get-promoted-or-rolled-back"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "why-deploys-are-blocked-after-4pm-on-fridays"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "the-decision-to-stop-cutting-release-branches"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "how-a-hotfix-skips-the-normal-queue"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-version-numbers-do-not-match-the-marketing-name"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-metric-cardinality-is-capped-per-service"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-trace-sampling-rates-were-chosen"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "the-rule-about-what-belongs-in-an-alert-versus-a-dashboard"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "why-we-stopped-alerting-on-cpu-utilisation"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-slo-error-budgets-gate-feature-work"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-flaky-tests-get-quarantined-not-deleted"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-test-fixtures-are-kept-in-sync-with-the-schema"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "the-decision-to-drop-end-to-end-browser-tests"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-coverage-is-reported-but-not-gated"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "how-contract-tests-between-services-are-owned"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-ci-runners-are-self-hosted-for-one-repository"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-long-build-artifacts-are-retained"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "the-rule-about-which-checks-can-block-a-merge"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-the-pipeline-cancels-superseded-runs"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "how-flapping-required-checks-get-demoted"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-dependency-cves-are-triaged-and-by-whom"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-service-accounts-are-not-shared-between-environments"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "the-policy-on-access-reviews-for-production-data"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-tls-certificates-are-renewed-without-downtime"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-audit-logs-live-in-a-separate-account"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-analytics-events-never-carry-raw-email-addresses"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-customer-data-deletion-requests-are-executed"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "the-decision-to-keep-the-warehouse-load-nightly-not-streaming"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "why-the-events-table-is-partitioned-by-month"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-schema-changes-reach-the-analytics-team"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "why-pods-have-memory-limits-but-not-cpu-limits"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-node-pools-are-split-between-workloads"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "the-reason-autoscaling-is-tuned-on-queue-depth"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-dns-changes-go-through-a-pull-request"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-the-cdn-cache-gets-purged-safely"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-public-api-versions-are-deprecated"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-idempotency-keys-are-required-on-writes"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "the-convention-for-paginating-large-collections"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-webhook-delivery-retries-stop-after-a-day"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "how-client-timeouts-were-agreed-with-the-mobile-team"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-the-dead-letter-queue-is-drained-by-hand"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-consumer-lag-alerts-were-calibrated"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "the-decision-to-give-up-strict-message-ordering"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "why-poison-messages-are-parked-not-dropped"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-queue-consumers-are-scaled-during-backlogs"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-cache-keys-include-a-schema-version"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-the-cache-stampede-problem-was-fixed"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "the-rule-about-what-may-be-cached-at-the-edge"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "why-redis-eviction-policy-was-changed-to-allkeys-lru"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-stale-while-revalidate-was-tuned"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-every-query-has-a-statement-timeout"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-slow-queries-get-turned-into-tickets"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "the-policy-on-adding-new-database-indexes"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "why-read-replicas-are-not-used-for-user-facing-reads"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-the-n-plus-one-detector-runs-in-ci"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-technical-decisions-get-written-down"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "why-postmortems-never-name-an-individual"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "the-agreement-about-meeting-free-afternoons"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "how-tech-debt-work-gets-scheduled"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "why-estimates-are-in-t-shirt-sizes-not-hours"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-incident-severity-levels-are-assigned"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-the-status-page-is-updated-before-the-fix"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "the-rule-about-who-can-declare-an-incident"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-customer-comms-are-drafted-during-an-outage"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "why-incident-channels-are-archived-not-deleted"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-session-tokens-are-invalidated-on-password-change"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-sso-is-required-for-internal-tools"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "the-decision-to-model-permissions-as-roles-not-scopes"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-machine-to-machine-credentials-rotate"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "why-admin-actions-require-a-second-approval"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-cloud-spend-is-attributed-to-teams"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-egress-costs-drove-the-storage-region-choice"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "the-decision-to-reserve-capacity-for-one-year"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-idle-environments-get-shut-down-automatically"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-log-ingestion-volume-is-billed-back-to-services"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-the-javascript-bundle-has-a-size-budget"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-browser-support-is-decided"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "the-rule-about-shipping-new-css-frameworks"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "why-client-side-errors-are-sampled-before-reporting"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "how-feature-detection-replaced-user-agent-sniffing"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-seed-data-for-local-development-is-generated"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-docker-compose-is-not-the-supported-setup"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "the-convention-for-environment-variable-names"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-local-tests-run-against-a-real-database"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-new-engineers-get-a-working-checkout-on-day-one"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "why-the-payment-provider-has-a-documented-fallback"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-vendor-outages-are-detected-independently"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "the-policy-on-signing-up-for-new-saas-tools"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-email-sending-was-moved-to-a-second-provider"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-third-party-sdk-upgrades-are-evaluated"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-uploaded-files-are-scanned-before-storage"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "why-object-storage-lifecycle-rules-expire-old-exports"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "the-decision-to-serve-user-uploads-from-a-separate-domain"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "why-large-exports-are-generated-asynchronously"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "how-storage-quotas-are-enforced-per-account"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": true
+      },
+      "slug": "why-the-runbook-lives-next-to-the-code"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-api-documentation-stays-in-sync-with-the-server"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "the-rule-about-updating-docs-in-the-same-pull-request"
+     },
+     {
+      "hit_at": {
+       "1": true,
+       "5": true
+      },
+      "slug": "why-architecture-diagrams-are-generated-not-drawn"
+     },
+     {
+      "hit_at": {
+       "1": false,
+       "5": false
+      },
+      "slug": "how-onboarding-docs-get-tested-for-rot"
+     }
+    ],
+    "prefilter": false,
+    "probe": "control",
+    "recall_at_1": 0.2417,
+    "recall_at_1_ci95": [
+     0.1739,
+     0.3255
+    ],
+    "recall_at_5": 0.575,
+    "recall_at_5_ci95": [
+     0.4856,
+     0.6598
+    ]
+   }
+  ]
+ },
+ "w2": {
+  "arm": "rerank",
+  "distinct_bodies_encoded": 1080,
+  "identity_checks": 360,
+  "instrument": "dev",
+  "lambda": 0.6,
+  "run": "/Volumes/data/bettermemory/runs/f0-2026-08-21",
+  "runner_args": "",
+  "search_calls": 360,
+  "vector_cache_sha256": "5cf5b120a421018ea76bcca081cf80bef91b32de5de47fc22e26d8e5ad77f1fe",
+  "weights_sha256": "d10ca4291634d1756ab970200e2e553d6b48681f18d72c0bbc468a7164df69eb",
+  "window": 50
+ }
+}
