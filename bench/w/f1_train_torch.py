@@ -38,9 +38,21 @@ import time
 from pathlib import Path
 
 os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+# The NGC image ships triton stripped of its backends/nvidia include/ and
+# bin/ payloads; inductor needs the toolkit's own copies findable or
+# torch.compile dies in codegen (cuda.h, then ptxas). Set only where the
+# toolkit actually lives so other hosts keep triton's own discovery.
+for _var, _path in (
+    ("CPATH", "/usr/local/cuda/include"),
+    ("TRITON_PTXAS_PATH", "/usr/local/cuda/bin/ptxas"),
+    ("TRITON_CUOBJDUMP_PATH", "/usr/local/cuda/bin/cuobjdump"),
+    ("TRITON_NVDISASM_PATH", "/usr/local/cuda/bin/nvdisasm"),
+):
+    if os.path.exists(_path):
+        os.environ.setdefault(_var, _path)
 
-import numpy as np
-import torch
+import numpy as np  # noqa: E402  (env pins must precede the imports)
+import torch  # noqa: E402  (env pins must precede the imports)
 
 # Declared mixture: repeat weight per source. Sampling probability is
 # proportional to (unique tokens in the packed subset) x (this weight).
@@ -117,16 +129,16 @@ def _rope_cache(cfg: Config, device: torch.device) -> tuple[torch.Tensor, torch.
     )
     pos = torch.arange(cfg.seq, dtype=torch.float32, device=device)
     ang = torch.outer(pos, freqs)
+    ang = torch.cat([ang, ang], dim=-1)
     return torch.cos(ang), torch.sin(ang)
 
 
 def _apply_rope(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
-    # x: (batch, heads, seq, head_dim); rotate pairs (even, odd).
-    x1, x2 = x[..., 0::2], x[..., 1::2]
-    out = torch.empty_like(x)
-    out[..., 0::2] = x1 * cos - x2 * sin
-    out[..., 1::2] = x1 * sin + x2 * cos
-    return out
+    # x: (batch, heads, seq, head_dim); half-split rotation (dim i pairs
+    # with i + head_dim/2) — contiguous chunk/cat instead of strided writes.
+    x1, x2 = x.chunk(2, dim=-1)
+    rotated = torch.cat([-x2, x1], dim=-1)
+    return x * cos + rotated * sin
 
 
 def init_params(cfg: Config, seed: int) -> dict[str, torch.Tensor]:
@@ -189,33 +201,50 @@ def forward_trunk(
     return _norm(x, params["final_norm"])
 
 
-def mlm_loss(
+def mlm_head_loss(
     params: dict[str, torch.Tensor],
-    hidden: torch.Tensor,
-    labels: torch.Tensor,
+    h: torch.Tensor,
+    y: torch.Tensor,
     chunk: int = 16384,
 ) -> torch.Tensor:
-    """Cross-entropy over the masked positions only, head applied in chunks.
-
-    Projecting every position against the full vocabulary materializes a
-    seq x vocab logits tensor measured in tens of GB; selecting the ~30%
-    masked rows first and slicing the head keeps the peak small. The
-    slice order is fixed, so the summed loss is the declared computation.
-    """
-    flat_labels = labels.view(-1)
-    sel = flat_labels != -100
-    h = hidden.view(-1, hidden.shape[-1])[sel]
-    y = flat_labels[sel]
+    """Summed cross-entropy of pre-selected masked rows, head in fixed chunks."""
     h = _norm(torch.nn.functional.gelu(h @ params["head_dense"]), params["head_norm"])
-    total = torch.zeros((), device=hidden.device, dtype=torch.float32)
+    total = torch.zeros((), device=h.device, dtype=torch.float32)
     for start in range(0, h.shape[0], chunk):
         logits = (
             h[start : start + chunk] @ params["emb"].T + params["head_bias"]
         ).float()
         total = total + torch.nn.functional.cross_entropy(
-            logits, y[start : start + chunk], reduction="sum"
+            logits, y[start : start + chunk], reduction="sum", ignore_index=-100
         )
-    return total / y.shape[0]
+    return total
+
+
+def mlm_loss(
+    params: dict[str, torch.Tensor],
+    hidden: torch.Tensor,
+    labels: torch.Tensor,
+    head_fn,
+    max_sel: int,
+) -> torch.Tensor:
+    """Cross-entropy over the masked positions only.
+
+    Projecting every position against the full vocabulary materializes a
+    seq x vocab logits tensor measured in tens of GB; selecting the ~30%
+    masked rows first keeps the peak small. The selection is padded to a
+    fixed row count so the compiled head sees static shapes; padded rows
+    carry the -100 label and contribute nothing to loss or gradients.
+    """
+    flat_labels = labels.view(-1)
+    sel = (flat_labels != -100).nonzero(as_tuple=True)[0]
+    if sel.shape[0] > max_sel:
+        raise RuntimeError(f"masked rows {sel.shape[0]} exceed max_sel {max_sel}")
+    h_sel = hidden.view(-1, hidden.shape[-1])[sel]
+    y_sel = flat_labels[sel]
+    pad = max_sel - sel.shape[0]
+    h_pad = torch.nn.functional.pad(h_sel, (0, 0, 0, pad))
+    y_pad = torch.nn.functional.pad(y_sel, (0, pad), value=-100)
+    return head_fn(params, h_pad, y_pad) / y_sel.shape[0]
 
 
 def attention_masks(cfg: Config, device: torch.device) -> dict[str, torch.Tensor]:
@@ -394,6 +423,12 @@ def train(args: argparse.Namespace) -> int:
     masks = attention_masks(cfg, device)
     rope = _rope_cache(cfg, device)
     names = sorted(params)
+    trunk_fn = forward_trunk
+    head_fn = mlm_head_loss
+    if args.compile:
+        trunk_fn = torch.compile(forward_trunk, dynamic=False)
+        head_fn = torch.compile(mlm_head_loss, dynamic=False)
+    max_sel = ((int(args.micro_batch * cfg.seq * 0.34) + 16383) // 16384) * 16384
 
     run_meta = {
         "unit": "F1 stage P",
@@ -432,8 +467,8 @@ def train(args: argparse.Namespace) -> int:
             with torch.autocast(
                 "cuda", dtype=torch.bfloat16, enabled=device.type == "cuda"
             ):
-                hidden = forward_trunk(params, cfg, ids, masks, rope)
-                loss = mlm_loss(params, hidden, labels)
+                hidden = trunk_fn(params, cfg, ids, masks, rope)
+                loss = mlm_loss(params, hidden, labels, head_fn, max_sel)
             (loss / args.accum).backward()
             step_loss += float(loss.detach()) / args.accum
         torch.nn.utils.clip_grad_norm_([params[k] for k in names], 1.0)
@@ -495,6 +530,9 @@ def main() -> int:
     parser.add_argument("--ckpt-every", type=int, default=1000)
     parser.add_argument("--max-hours", type=float, default=0.0)
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument(
+        "--compile", action=argparse.BooleanOptionalAction, default=True
+    )
     return train(parser.parse_args())
 
 
