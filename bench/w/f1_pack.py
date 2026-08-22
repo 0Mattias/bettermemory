@@ -17,18 +17,27 @@ snapshot alone.
 
 from __future__ import annotations
 
-import argparse
-import gzip
-import hashlib
-import json
 import os
-import sys
-from concurrent.futures import ProcessPoolExecutor
-from pathlib import Path
 
-import numpy as np
-
+for _var in (
+    "OPENBLAS_NUM_THREADS",
+    "OMP_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+):
+    os.environ.setdefault(_var, "1")
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
+import argparse  # noqa: E402  (env pins must precede numpy)
+import gzip  # noqa: E402  (env pins must precede numpy)
+import hashlib  # noqa: E402  (env pins must precede numpy)
+import json  # noqa: E402  (env pins must precede numpy)
+import sys  # noqa: E402  (env pins must precede numpy)
+from concurrent.futures import ProcessPoolExecutor  # noqa: E402
+from pathlib import Path  # noqa: E402  (env pins must precede numpy)
+
+import numpy as np  # noqa: E402  (env pins must precede numpy)
 
 _TOKENIZER = None
 _FLUSH_TOKENS = 8 << 20  # tokens buffered before an append to the tmp file
