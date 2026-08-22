@@ -51,6 +51,15 @@ for _var, _path in (
     if os.path.exists(_path):
         os.environ.setdefault(_var, _path)
 
+# The full shard set is memory-mapped in one sweep (1,500+ files); the
+# default 1,024-fd soft limit dies there, so take the hard limit.
+if os.name == "posix":
+    import resource
+
+    _soft, _hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    if _soft < _hard:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (_hard, _hard))
+
 import numpy as np  # noqa: E402  (env pins must precede the imports)
 import torch  # noqa: E402  (env pins must precede the imports)
 
