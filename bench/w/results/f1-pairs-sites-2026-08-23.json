@@ -1,0 +1,1794 @@
+{
+ "archives": [
+  {
+   "archive": "bench/w/corpus/stackexchange/academia.stackexchange.com.7z",
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ],
+   "sha256_pinned": "5113eb82928523f259cde2ace39c43ce34655b9eb2d765dddaae8477007ec06a",
+   "sha256_reverified": "5113eb82928523f259cde2ace39c43ce34655b9eb2d765dddaae8477007ec06a",
+   "sha_seconds": 0.3,
+   "site": "academia-stackexchange-archive"
+  },
+  {
+   "archive": "bench/w/corpus/stackexchange/android.stackexchange.com.7z",
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ],
+   "sha256_pinned": "840a581fd6debf034fd91605151f1ffd2a3083fb4f414165b2cc50be3430e55c",
+   "sha256_reverified": "840a581fd6debf034fd91605151f1ffd2a3083fb4f414165b2cc50be3430e55c",
+   "sha_seconds": 0.4,
+   "site": "android-stackexchange-archive"
+  },
+  {
+   "archive": "bench/w/corpus/stackexchange/apple.stackexchange.com.7z",
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ],
+   "sha256_pinned": "eecb496259890c898af3000b20f75c938395845c8707d083053906374d4ab54f",
+   "sha256_reverified": "eecb496259890c898af3000b20f75c938395845c8707d083053906374d4ab54f",
+   "sha_seconds": 0.6,
+   "site": "apple-stackexchange-archive"
+  },
+  {
+   "archive": "bench/w/corpus/stackexchange/beer.stackexchange.com.7z",
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ],
+   "sha256_pinned": "29e057c640ad2792c8fc063d3ef52e6d2ce397db995a8ca5a06f1735a82d84c2",
+   "sha256_reverified": "29e057c640ad2792c8fc063d3ef52e6d2ce397db995a8ca5a06f1735a82d84c2",
+   "sha_seconds": 0.0,
+   "site": "beer-stackexchange-archive"
+  },
+  {
+   "archive": "bench/w/corpus/stackexchange/coffee.stackexchange.com.7z",
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ],
+   "sha256_pinned": "ed92031e75185b1e5549ae257b5280423941d17751042b0369b1f2d3e8d90952",
+   "sha256_reverified": "ed92031e75185b1e5549ae257b5280423941d17751042b0369b1f2d3e8d90952",
+   "sha_seconds": 0.0,
+   "site": "coffee-stackexchange-archive"
+  },
+  {
+   "archive": "bench/w/corpus/stackexchange/cooking.stackexchange.com.7z",
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ],
+   "sha256_pinned": "de98b85f9807a23dfc8c91006f8b59b2149089e94ea9d54676d215ea156a9ac6",
+   "sha256_reverified": "de98b85f9807a23dfc8c91006f8b59b2149089e94ea9d54676d215ea156a9ac6",
+   "sha_seconds": 0.1,
+   "site": "cooking-stackexchange-archive"
+  },
+  {
+   "archive": "bench/w/corpus/stackexchange/diy.stackexchange.com.7z",
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ],
+   "sha256_pinned": "f795b4dbe32aabc97802bd3846484fa01d580b23b98c8ab88162bf3e90107743",
+   "sha256_reverified": "f795b4dbe32aabc97802bd3846484fa01d580b23b98c8ab88162bf3e90107743",
+   "sha_seconds": 0.3,
+   "site": "diy-stackexchange-archive"
+  },
+  {
+   "archive": "bench/w/corpus/stackexchange/fitness.stackexchange.com.7z",
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ],
+   "sha256_pinned": "5fe08b64b0fbdc917aa66217af5d162270a59159eccd2fff8bc287674d4f52a7",
+   "sha256_reverified": "5fe08b64b0fbdc917aa66217af5d162270a59159eccd2fff8bc287674d4f52a7",
+   "sha_seconds": 0.1,
+   "site": "fitness-stackexchange-archive"
+  },
+  {
+   "archive": "bench/w/corpus/stackexchange/gardening.stackexchange.com.7z",
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ],
+   "sha256_pinned": "f739cc994a19445f6c2b54277e762980f28c82f7b1c2d1a12028f1fca3387d63",
+   "sha256_reverified": "f739cc994a19445f6c2b54277e762980f28c82f7b1c2d1a12028f1fca3387d63",
+   "sha_seconds": 0.1,
+   "site": "gardening-stackexchange-archive"
+  },
+  {
+   "archive": "bench/w/corpus/stackexchange/interpersonal.stackexchange.com.7z",
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ],
+   "sha256_pinned": "6979dc44c79cc2b0028b3088de977151ef32e865acd26c78532d8810ffa57dc9",
+   "sha256_reverified": "6979dc44c79cc2b0028b3088de977151ef32e865acd26c78532d8810ffa57dc9",
+   "sha_seconds": 0.1,
+   "site": "interpersonal-stackexchange-archive"
+  },
+  {
+   "archive": "bench/w/corpus/stackexchange/lifehacks.stackexchange.com.7z",
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ],
+   "sha256_pinned": "b96ac28fd3c19244c1fd995caa5054bb8af2271104f8738a3e8042172842447f",
+   "sha256_reverified": "b96ac28fd3c19244c1fd995caa5054bb8af2271104f8738a3e8042172842447f",
+   "sha_seconds": 0.0,
+   "site": "lifehacks-stackexchange-archive"
+  },
+  {
+   "archive": "bench/w/corpus/stackexchange/movies.stackexchange.com.7z",
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ],
+   "sha256_pinned": "6dc79d53d3dbaa7b08ebfc3e2cc664c5d0ec8248282a9c5913c67f429feecb3f",
+   "sha256_reverified": "6dc79d53d3dbaa7b08ebfc3e2cc664c5d0ec8248282a9c5913c67f429feecb3f",
+   "sha_seconds": 0.1,
+   "site": "movies-stackexchange-archive"
+  },
+  {
+   "archive": "bench/w/corpus/stackexchange/music.stackexchange.com.7z",
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ],
+   "sha256_pinned": "3c2ac909c108f5580aad724ce4e8170fc8e5a547e8cfc84850d9c235dc5adcf4",
+   "sha256_reverified": "3c2ac909c108f5580aad724ce4e8170fc8e5a547e8cfc84850d9c235dc5adcf4",
+   "sha_seconds": 0.2,
+   "site": "music-stackexchange-archive"
+  },
+  {
+   "archive": "bench/w/corpus/stackexchange/outdoors.stackexchange.com.7z",
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ],
+   "sha256_pinned": "f45a642dcedcfc9642002aaf297426121aa2a0fa62799592ca2819d265f01a05",
+   "sha256_reverified": "f45a642dcedcfc9642002aaf297426121aa2a0fa62799592ca2819d265f01a05",
+   "sha_seconds": 0.0,
+   "site": "outdoors-stackexchange-archive"
+  },
+  {
+   "archive": "bench/w/corpus/stackexchange/parenting.stackexchange.com.7z",
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ],
+   "sha256_pinned": "70a624fcb885e4aff13a18613163e34c0a07e61bc761381053f89c12fc13212f",
+   "sha256_reverified": "70a624fcb885e4aff13a18613163e34c0a07e61bc761381053f89c12fc13212f",
+   "sha_seconds": 0.1,
+   "site": "parenting-stackexchange-archive"
+  },
+  {
+   "archive": "bench/w/corpus/stackexchange/pets.stackexchange.com.7z",
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ],
+   "sha256_pinned": "5fb7c41000f0c629a15b9cd940c16bf3c63ec45443c574abe06b2d3502ac38df",
+   "sha256_reverified": "5fb7c41000f0c629a15b9cd940c16bf3c63ec45443c574abe06b2d3502ac38df",
+   "sha_seconds": 0.1,
+   "site": "pets-stackexchange-archive"
+  },
+  {
+   "archive": "bench/w/corpus/stackexchange/superuser.com.7z",
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ],
+   "sha256_pinned": "8fd7d7acff1498193f8024a6a290ca46e3730d0442655739a8bdec49fd4bf5cb",
+   "sha256_reverified": "8fd7d7acff1498193f8024a6a290ca46e3730d0442655739a8bdec49fd4bf5cb",
+   "sha_seconds": 2.6,
+   "site": "superuser-archive"
+  },
+  {
+   "archive": "bench/w/corpus/stackexchange/travel.stackexchange.com.7z",
+   "members": [
+    "Badges.xml",
+    "Comments.xml",
+    "PostHistory.xml",
+    "PostLinks.xml",
+    "Posts.xml",
+    "Tags.xml",
+    "Users.xml",
+    "Votes.xml"
+   ],
+   "sha256_pinned": "4c33527edc970cc32a159607372ba652d4328fa007e1214f3510595f55629169",
+   "sha256_reverified": "4c33527edc970cc32a159607372ba652d4328fa007e1214f3510595f55629169",
+   "sha_seconds": 0.3,
+   "site": "travel-stackexchange-archive"
+  }
+ ],
+ "pairs_total": {
+  "cm": 2957282,
+  "qa": 403827,
+  "tb": 1004312
+ },
+ "pass_seconds": 346.7,
+ "provenance": {
+  "commit": "e0a772b",
+  "date": "2026-08-23",
+  "machine": {
+   "machine": "arm64",
+   "os": "Darwin 25.6.0",
+   "python": "3.13.13"
+  }
+ },
+ "reader": "bench/w/f1_pairs.py",
+ "sites": {
+  "academia-stackexchange-archive": {
+   "readers": {
+    "cm": {
+     "comment_rows": 366546,
+     "dropped_by_rule": 472,
+     "left_tokens_hist": {
+      "16": 89671,
+      "2": 3810,
+      "32": 85095,
+      "4": 17680,
+      "64": 28841,
+      "8": 50821
+     },
+     "pairs": 275918,
+     "right_tokens_hist": {
+      "16": 87971,
+      "2": 4203,
+      "32": 86555,
+      "4": 17651,
+      "64": 30239,
+      "8": 49299
+     },
+     "stream_sha256": "3b5d88eccc1ce0ad69b264b74cb3a69a604ad44ee8a8f8f29121a7ef5ef7f1e9"
+    },
+    "qa": {
+     "dropped_by_rule": 13,
+     "left_tokens_hist": {
+      "16": 634,
+      "2": 622,
+      "4": 7490,
+      "8": 10035
+     },
+     "pairs": 18781,
+     "right_tokens_hist": {
+      "128": 6038,
+      "16": 803,
+      "2": 8,
+      "256": 2098,
+      "32": 2990,
+      "4": 44,
+      "512": 344,
+      "64": 6296,
+      "8": 160
+     },
+     "stream_sha256": "29c8db1a596c1fa518ee4c885f97182726e671f109f68e86de2ca65f1c9c20cc",
+     "unresolved": 2
+    },
+    "tb": {
+     "dropped_by_rule": 21,
+     "left_tokens_hist": {
+      "16": 1655,
+      "2": 1561,
+      "4": 17267,
+      "8": 23288
+     },
+     "pairs": 43771,
+     "right_tokens_hist": {
+      "128": 10029,
+      "16": 3654,
+      "2": 2,
+      "256": 2684,
+      "32": 10850,
+      "4": 37,
+      "512": 273,
+      "64": 15746,
+      "8": 496
+     },
+     "stream_sha256": "6c1dae998ad149401c07a69a5807ae7111d33f5efa3b6ff62841749b8ff28218"
+    }
+   },
+   "rows_by_post_type": {
+    "1": 43792,
+    "2": 103840,
+    "4": 576,
+    "5": 576,
+    "6": 17,
+    "7": 5
+   },
+   "rows_scanned": 148806,
+   "site_receipt_sha256": "e0fb5c4c1d5b3d57bc4272e9aff2966a296476d87b0a79ab06905e94263bc331",
+   "status": "read"
+  },
+  "android-stackexchange-archive": {
+   "readers": {
+    "cm": {
+     "comment_rows": 176703,
+     "dropped_by_rule": 255,
+     "left_tokens_hist": {
+      "16": 39435,
+      "2": 2459,
+      "32": 25859,
+      "4": 11063,
+      "64": 5298,
+      "8": 27416
+     },
+     "pairs": 111530,
+     "right_tokens_hist": {
+      "16": 39031,
+      "2": 3053,
+      "32": 25510,
+      "4": 11503,
+      "64": 5394,
+      "8": 27039
+     },
+     "stream_sha256": "353127ba4a313862ad7dc090aa4477df1d433d7bca887ee37ee90fddc7d178b1"
+    },
+    "qa": {
+     "dropped_by_rule": 20,
+     "left_tokens_hist": {
+      "16": 159,
+      "2": 766,
+      "4": 8807,
+      "8": 6925
+     },
+     "pairs": 16657,
+     "right_tokens_hist": {
+      "128": 2124,
+      "16": 2946,
+      "2": 39,
+      "256": 552,
+      "32": 5019,
+      "4": 226,
+      "512": 118,
+      "64": 4536,
+      "8": 1097
+     },
+     "stream_sha256": "52c90de18e116c43880e138ffdf7e6a875faddb1beb1cc1006d660a5b9671350",
+     "unresolved": 4
+    },
+    "tb": {
+     "dropped_by_rule": 70,
+     "left_tokens_hist": {
+      "16": 810,
+      "2": 3256,
+      "4": 30634,
+      "8": 23851
+     },
+     "pairs": 58551,
+     "right_tokens_hist": {
+      "128": 6263,
+      "16": 10249,
+      "2": 4,
+      "256": 915,
+      "32": 21052,
+      "4": 154,
+      "512": 70,
+      "64": 17922,
+      "8": 1922
+     },
+     "stream_sha256": "1dd2f8c0bf6a54d0ef73de87a3b54e5e0cf7320a3dc604f2416eff9e97d1dae6"
+    }
+   },
+   "rows_by_post_type": {
+    "1": 58621,
+    "2": 68916,
+    "3": 12,
+    "4": 1117,
+    "5": 1117,
+    "6": 26,
+    "7": 6
+   },
+   "rows_scanned": 129815,
+   "site_receipt_sha256": "81fa8d48b95e4d139249781124d28aeb3f0f415a7561623295c70e8958d5b0d4",
+   "status": "read"
+  },
+  "apple-stackexchange-archive": {
+   "readers": {
+    "cm": {
+     "comment_rows": 465947,
+     "dropped_by_rule": 1000,
+     "left_tokens_hist": {
+      "16": 105495,
+      "2": 6836,
+      "32": 64411,
+      "4": 32287,
+      "64": 12269,
+      "8": 78656
+     },
+     "pairs": 299954,
+     "right_tokens_hist": {
+      "16": 104284,
+      "2": 8169,
+      "32": 65701,
+      "4": 32463,
+      "64": 13036,
+      "8": 76301
+     },
+     "stream_sha256": "1bbb327e3a0b786e94716d291796bdcd5e6aa69de28317fa51a75ca05df9d85a"
+    },
+    "qa": {
+     "dropped_by_rule": 74,
+     "left_tokens_hist": {
+      "16": 635,
+      "2": 1904,
+      "4": 24009,
+      "8": 22040
+     },
+     "pairs": 48588,
+     "right_tokens_hist": {
+      "128": 5901,
+      "16": 9292,
+      "2": 172,
+      "256": 1478,
+      "32": 14670,
+      "4": 882,
+      "512": 268,
+      "64": 12544,
+      "8": 3381
+     },
+     "stream_sha256": "6bb98be44bd05417c9703e737b53ff7c0f1fdafb74e433c833e366daed8a85fc",
+     "unresolved": 5
+    },
+    "tb": {
+     "dropped_by_rule": 100,
+     "left_tokens_hist": {
+      "16": 2054,
+      "2": 5361,
+      "4": 63042,
+      "8": 58658
+     },
+     "pairs": 129115,
+     "right_tokens_hist": {
+      "128": 13732,
+      "16": 21296,
+      "2": 17,
+      "256": 1988,
+      "32": 46334,
+      "4": 339,
+      "512": 164,
+      "64": 41115,
+      "8": 4130
+     },
+     "stream_sha256": "8fccbfbbf9526db904709489133d468df41aa4a477f84a7bbe4dce39a1e020b8"
+    }
+   },
+   "rows_by_post_type": {
+    "1": 129215,
+    "2": 190749,
+    "3": 15,
+    "4": 1102,
+    "5": 1102,
+    "6": 29,
+    "7": 6
+   },
+   "rows_scanned": 322218,
+   "site_receipt_sha256": "be09e2f1e6f6605c78bc6eb7fdc354ab5e6638b5ab7b2b04b24c8b527f508a27",
+   "status": "read"
+  },
+  "beer-stackexchange-archive": {
+   "readers": {
+    "cm": {
+     "comment_rows": 4007,
+     "dropped_by_rule": 5,
+     "left_tokens_hist": {
+      "16": 782,
+      "2": 48,
+      "32": 452,
+      "4": 255,
+      "64": 106,
+      "8": 644
+     },
+     "pairs": 2287,
+     "right_tokens_hist": {
+      "16": 774,
+      "2": 61,
+      "32": 495,
+      "4": 240,
+      "64": 123,
+      "8": 594
+     },
+     "stream_sha256": "1c3dc89d6ca038b326287e668d08e161ca48badd28fa4ab612b786c5c35487cc"
+    },
+    "qa": {
+     "dropped_by_rule": 0,
+     "left_tokens_hist": {
+      "16": 6,
+      "2": 63,
+      "4": 354,
+      "8": 281
+     },
+     "pairs": 704,
+     "right_tokens_hist": {
+      "128": 173,
+      "16": 49,
+      "256": 50,
+      "32": 142,
+      "4": 3,
+      "512": 9,
+      "64": 265,
+      "8": 13
+     },
+     "stream_sha256": "0f5eeff627945bc061e555e877def3ea909c256e5089edf49d104b42183418c1",
+     "unresolved": 0
+    },
+    "tb": {
+     "dropped_by_rule": 0,
+     "left_tokens_hist": {
+      "16": 10,
+      "2": 98,
+      "4": 620,
+      "8": 445
+     },
+     "pairs": 1173,
+     "right_tokens_hist": {
+      "128": 49,
+      "16": 299,
+      "256": 3,
+      "32": 476,
+      "4": 6,
+      "64": 269,
+      "8": 71
+     },
+     "stream_sha256": "65c52079c5e9820a75aa8ab2ea5b90a300d6ff8732f0612676dc584c48ed49e6"
+    }
+   },
+   "rows_by_post_type": {
+    "1": 1173,
+    "2": 2580,
+    "4": 83,
+    "5": 83,
+    "6": 2,
+    "7": 3
+   },
+   "rows_scanned": 3924,
+   "site_receipt_sha256": "db1c5381923fea676208f8dcd7478d8dabc75305fb9fa6a58bcb686f93f533cf",
+   "status": "read"
+  },
+  "coffee-stackexchange-archive": {
+   "readers": {
+    "cm": {
+     "comment_rows": 4985,
+     "dropped_by_rule": 12,
+     "left_tokens_hist": {
+      "16": 948,
+      "2": 36,
+      "32": 814,
+      "4": 232,
+      "64": 285,
+      "8": 598
+     },
+     "pairs": 2913,
+     "right_tokens_hist": {
+      "16": 903,
+      "2": 47,
+      "32": 823,
+      "4": 256,
+      "64": 298,
+      "8": 586
+     },
+     "stream_sha256": "131ffc9805f161a778c43e01fc3f1de5e2d596a66b4dc4b351e270bc7e082f5d"
+    },
+    "qa": {
+     "dropped_by_rule": 0,
+     "left_tokens_hist": {
+      "16": 9,
+      "2": 35,
+      "4": 359,
+      "8": 288
+     },
+     "pairs": 691,
+     "right_tokens_hist": {
+      "128": 208,
+      "16": 40,
+      "256": 77,
+      "32": 119,
+      "4": 1,
+      "512": 16,
+      "64": 222,
+      "8": 8
+     },
+     "stream_sha256": "090fc96d4f225da48ccd706248a86e6564744879744ff37c8b126ee55e1a5646",
+     "unresolved": 0
+    },
+    "tb": {
+     "dropped_by_rule": 1,
+     "left_tokens_hist": {
+      "16": 19,
+      "2": 84,
+      "4": 782,
+      "8": 589
+     },
+     "pairs": 1474,
+     "right_tokens_hist": {
+      "128": 144,
+      "16": 318,
+      "256": 14,
+      "32": 557,
+      "4": 3,
+      "64": 380,
+      "8": 58
+     },
+     "stream_sha256": "8813885e68e598f53df7cd1891ba63c2ee9faf3f412582869dd761397f7dd93d"
+    }
+   },
+   "rows_by_post_type": {
+    "1": 1475,
+    "2": 2898,
+    "4": 71,
+    "5": 71,
+    "6": 9,
+    "7": 1
+   },
+   "rows_scanned": 4525,
+   "site_receipt_sha256": "751e1ad6616d336bf2729307437dab7040349dedcbbc495d1e0abe4ca7c7be31",
+   "status": "read"
+  },
+  "cooking-stackexchange-archive": {
+   "readers": {
+    "cm": {
+     "comment_rows": 142919,
+     "dropped_by_rule": 148,
+     "left_tokens_hist": {
+      "16": 33148,
+      "2": 1488,
+      "32": 24578,
+      "4": 7580,
+      "64": 5886,
+      "8": 20946
+     },
+     "pairs": 93626,
+     "right_tokens_hist": {
+      "16": 32694,
+      "2": 1661,
+      "32": 25579,
+      "4": 7299,
+      "64": 6474,
+      "8": 19919
+     },
+     "stream_sha256": "82f7f4bc3fec082df7974f294df60090c035afadc61a9fd4e89a1f96aeda3d50"
+    },
+    "qa": {
+     "dropped_by_rule": 1,
+     "left_tokens_hist": {
+      "16": 131,
+      "2": 926,
+      "4": 7363,
+      "8": 5002
+     },
+     "pairs": 13422,
+     "right_tokens_hist": {
+      "128": 3360,
+      "16": 963,
+      "2": 8,
+      "256": 1058,
+      "32": 2950,
+      "4": 51,
+      "512": 210,
+      "64": 4580,
+      "8": 242
+     },
+     "stream_sha256": "d0e6fe36913b96b3d305139510817e40d36fcf73ed60930d1f28ce4d0d326975",
+     "unresolved": 0
+    },
+    "tb": {
+     "dropped_by_rule": 23,
+     "left_tokens_hist": {
+      "16": 365,
+      "2": 2048,
+      "4": 14508,
+      "8": 10381
+     },
+     "pairs": 27302,
+     "right_tokens_hist": {
+      "128": 2572,
+      "16": 5352,
+      "2": 1,
+      "256": 375,
+      "32": 9783,
+      "4": 83,
+      "512": 29,
+      "64": 7972,
+      "8": 1135
+     },
+     "stream_sha256": "f09746f84fd6ee5c7cf5296304c924e2ae4d6edf05c47e6b5ce2801880c7b425"
+    }
+   },
+   "rows_by_post_type": {
+    "1": 27325,
+    "2": 64239,
+    "3": 4,
+    "4": 306,
+    "5": 306,
+    "6": 15,
+    "7": 5
+   },
+   "rows_scanned": 92200,
+   "site_receipt_sha256": "a2ea9b0c1f9bee932156f7ca34c8c13a8fb4bd940f3af45b3d25fdf44ff87cfb",
+   "status": "read"
+  },
+  "diy-stackexchange-archive": {
+   "readers": {
+    "cm": {
+     "comment_rows": 470109,
+     "dropped_by_rule": 547,
+     "left_tokens_hist": {
+      "16": 111394,
+      "2": 4897,
+      "32": 92134,
+      "4": 25205,
+      "64": 25881,
+      "8": 69444
+     },
+     "pairs": 328955,
+     "right_tokens_hist": {
+      "16": 109215,
+      "2": 5327,
+      "32": 94351,
+      "4": 24825,
+      "64": 27731,
+      "8": 67506
+     },
+     "stream_sha256": "8b49b853733b8d320208ca35ad99591af708654c7d9fe240f2d59b3b14869c1a"
+    },
+    "qa": {
+     "dropped_by_rule": 11,
+     "left_tokens_hist": {
+      "16": 375,
+      "2": 1042,
+      "4": 13817,
+      "8": 13198
+     },
+     "pairs": 28432,
+     "right_tokens_hist": {
+      "128": 6613,
+      "16": 2328,
+      "2": 9,
+      "256": 2151,
+      "32": 6537,
+      "4": 116,
+      "512": 413,
+      "64": 9742,
+      "8": 523
+     },
+     "stream_sha256": "d59e627dbe3094cffdef83a9b55893481a2aff56c43f273b0dd8f990633690f9",
+     "unresolved": 0
+    },
+    "tb": {
+     "dropped_by_rule": 58,
+     "left_tokens_hist": {
+      "16": 1602,
+      "2": 4316,
+      "4": 40959,
+      "8": 37693
+     },
+     "pairs": 84570,
+     "right_tokens_hist": {
+      "128": 15694,
+      "16": 8842,
+      "2": 3,
+      "256": 3070,
+      "32": 23974,
+      "4": 135,
+      "512": 245,
+      "64": 31126,
+      "8": 1481
+     },
+     "stream_sha256": "86733183e319f855494ae519afbb29e9df74f3af83e1e76538b5ea8b5963c4db"
+    }
+   },
+   "rows_by_post_type": {
+    "1": 84628,
+    "2": 138269,
+    "4": 321,
+    "5": 321,
+    "6": 16,
+    "7": 5
+   },
+   "rows_scanned": 223560,
+   "site_receipt_sha256": "45331650a6106430bc3ada6a302130cd72c589bbe81815c62a8308b1d15b04d3",
+   "status": "read"
+  },
+  "fitness-stackexchange-archive": {
+   "readers": {
+    "cm": {
+     "comment_rows": 44707,
+     "dropped_by_rule": 62,
+     "left_tokens_hist": {
+      "16": 9815,
+      "2": 520,
+      "32": 8157,
+      "4": 2289,
+      "64": 2467,
+      "8": 6037
+     },
+     "pairs": 29285,
+     "right_tokens_hist": {
+      "16": 9511,
+      "2": 599,
+      "32": 8503,
+      "4": 2289,
+      "64": 2714,
+      "8": 5669
+     },
+     "stream_sha256": "e4c2b746c8018394c0eff78b46f414985f00b99995d76c460eaf036e4033ac52"
+    },
+    "qa": {
+     "dropped_by_rule": 3,
+     "left_tokens_hist": {
+      "16": 63,
+      "2": 350,
+      "4": 2802,
+      "8": 1804
+     },
+     "pairs": 5019,
+     "right_tokens_hist": {
+      "128": 1784,
+      "16": 149,
+      "2": 2,
+      "256": 843,
+      "32": 565,
+      "4": 3,
+      "512": 183,
+      "64": 1454,
+      "8": 36
+     },
+     "stream_sha256": "297b331c90364de0fdb4dc436238a9e9343b8999904b5774ad1661c86cb0d05c",
+     "unresolved": 1
+    },
+    "tb": {
+     "dropped_by_rule": 5,
+     "left_tokens_hist": {
+      "16": 146,
+      "2": 777,
+      "4": 5582,
+      "8": 3707
+     },
+     "pairs": 10212,
+     "right_tokens_hist": {
+      "128": 1691,
+      "16": 1235,
+      "256": 332,
+      "32": 3115,
+      "4": 13,
+      "512": 25,
+      "64": 3620,
+      "8": 181
+     },
+     "stream_sha256": "fa83efb318d7c87dd98c5eaa3b769f0e5582bef043825b8526a4181b5c1f60d5"
+    }
+   },
+   "rows_by_post_type": {
+    "1": 10217,
+    "2": 19171,
+    "4": 154,
+    "5": 154,
+    "6": 7,
+    "7": 1
+   },
+   "rows_scanned": 29704,
+   "site_receipt_sha256": "87c3f51018e749a70dd0e9e84bb82787bf391a8678a7ca92e095f5e010d1c35c",
+   "status": "read"
+  },
+  "gardening-stackexchange-archive": {
+   "readers": {
+    "cm": {
+     "comment_rows": 60624,
+     "dropped_by_rule": 82,
+     "left_tokens_hist": {
+      "16": 12129,
+      "2": 813,
+      "32": 9862,
+      "4": 3336,
+      "64": 4567,
+      "8": 7981
+     },
+     "pairs": 38688,
+     "right_tokens_hist": {
+      "16": 11920,
+      "2": 911,
+      "32": 10058,
+      "4": 3333,
+      "64": 4823,
+      "8": 7643
+     },
+     "stream_sha256": "b1bd7c474284647c373a6ad8ba1918383f701cca7c02c5146efb9c3b143bd38a"
+    },
+    "qa": {
+     "dropped_by_rule": 1,
+     "left_tokens_hist": {
+      "16": 42,
+      "2": 511,
+      "4": 4087,
+      "8": 3092
+     },
+     "pairs": 7732,
+     "right_tokens_hist": {
+      "128": 2044,
+      "16": 568,
+      "2": 4,
+      "256": 648,
+      "32": 1521,
+      "4": 47,
+      "512": 129,
+      "64": 2604,
+      "8": 167
+     },
+     "stream_sha256": "10d4459db93992b55991d403b99a3b021e395ac15c846d1f2bfd53b4c21220e4",
+     "unresolved": 0
+    },
+    "tb": {
+     "dropped_by_rule": 22,
+     "left_tokens_hist": {
+      "16": 150,
+      "2": 1378,
+      "4": 9712,
+      "8": 6598
+     },
+     "pairs": 17838,
+     "right_tokens_hist": {
+      "128": 1858,
+      "16": 3229,
+      "2": 2,
+      "256": 294,
+      "32": 5894,
+      "4": 161,
+      "512": 27,
+      "64": 5452,
+      "8": 921
+     },
+     "stream_sha256": "46cdb5c7408c0c7cf6dc1a74d0929e2f2fe1212fc6fe29dd67527748bd132bcf"
+    }
+   },
+   "rows_by_post_type": {
+    "1": 17860,
+    "2": 25421,
+    "4": 433,
+    "5": 433,
+    "6": 6,
+    "7": 2
+   },
+   "rows_scanned": 44155,
+   "site_receipt_sha256": "c93e50a35fc22bc3df34f495a4490c5a578f9e4c07d46c0788743956728d0d07",
+   "status": "read"
+  },
+  "interpersonal-stackexchange-archive": {
+   "readers": {
+    "cm": {
+     "comment_rows": 35166,
+     "dropped_by_rule": 20,
+     "left_tokens_hist": {
+      "16": 8459,
+      "2": 224,
+      "32": 8432,
+      "4": 1255,
+      "64": 2851,
+      "8": 4198
+     },
+     "pairs": 25419,
+     "right_tokens_hist": {
+      "16": 8253,
+      "2": 288,
+      "32": 8402,
+      "4": 1366,
+      "64": 2930,
+      "8": 4180
+     },
+     "stream_sha256": "4328fd0ca9252ee3637d943e9bd0481def0ea41666026bb1f23d8e9ec64b3d33"
+    },
+    "qa": {
+     "dropped_by_rule": 0,
+     "left_tokens_hist": {
+      "16": 75,
+      "2": 17,
+      "4": 724,
+      "8": 1351
+     },
+     "pairs": 2167,
+     "right_tokens_hist": {
+      "128": 820,
+      "16": 16,
+      "256": 670,
+      "32": 84,
+      "512": 160,
+      "64": 415,
+      "8": 2
+     },
+     "stream_sha256": "af32a1bbdfc2a412441ccb542f0a9b2a55b98c72af52e397e3fd9d81b6fb51e3",
+     "unresolved": 0
+    },
+    "tb": {
+     "dropped_by_rule": 0,
+     "left_tokens_hist": {
+      "16": 137,
+      "2": 40,
+      "4": 1336,
+      "8": 2416
+     },
+     "pairs": 3929,
+     "right_tokens_hist": {
+      "128": 1565,
+      "16": 32,
+      "256": 1015,
+      "32": 251,
+      "512": 179,
+      "64": 887
+     },
+     "stream_sha256": "5defd47644e903b8dbd2247ff8a9c053d481f3638bf436d12d98ded5ad090946"
+    }
+   },
+   "rows_by_post_type": {
+    "1": 3929,
+    "2": 14381,
+    "4": 225,
+    "5": 225,
+    "6": 5,
+    "7": 1
+   },
+   "rows_scanned": 18766,
+   "site_receipt_sha256": "a9878b96a59ab682043d98ac86b750fc8cad27c3a8ed8ff30e367f28ddfd79b4",
+   "status": "read"
+  },
+  "lifehacks-stackexchange-archive": {
+   "readers": {
+    "cm": {
+     "comment_rows": 19854,
+     "dropped_by_rule": 37,
+     "left_tokens_hist": {
+      "16": 4356,
+      "2": 316,
+      "32": 2762,
+      "4": 1370,
+      "64": 555,
+      "8": 3248
+     },
+     "pairs": 12607,
+     "right_tokens_hist": {
+      "16": 4340,
+      "2": 321,
+      "32": 2896,
+      "4": 1366,
+      "64": 611,
+      "8": 3073
+     },
+     "stream_sha256": "59c481e75c68dea28e0bf854936609cfa75586db345fb94ed5688e06046817c4"
+    },
+    "qa": {
+     "dropped_by_rule": 0,
+     "left_tokens_hist": {
+      "16": 4,
+      "2": 60,
+      "4": 838,
+      "8": 477
+     },
+     "pairs": 1379,
+     "right_tokens_hist": {
+      "128": 316,
+      "16": 124,
+      "256": 76,
+      "32": 348,
+      "4": 6,
+      "512": 9,
+      "64": 478,
+      "8": 22
+     },
+     "stream_sha256": "50d840fd8cbece5cb424bc3de3444230d5a092be9bdf1147a86c419140b99335",
+     "unresolved": 0
+    },
+    "tb": {
+     "dropped_by_rule": 1,
+     "left_tokens_hist": {
+      "16": 23,
+      "2": 148,
+      "4": 1778,
+      "8": 1125
+     },
+     "pairs": 3074,
+     "right_tokens_hist": {
+      "128": 278,
+      "16": 586,
+      "256": 40,
+      "32": 1156,
+      "4": 4,
+      "512": 3,
+      "64": 934,
+      "8": 73
+     },
+     "stream_sha256": "f40e6843718123399eafc805fbb162b581177e68b61806adcb442dd06a7aaec8"
+    }
+   },
+   "rows_by_post_type": {
+    "1": 3075,
+    "2": 11346,
+    "4": 216,
+    "5": 216,
+    "6": 8,
+    "7": 3
+   },
+   "rows_scanned": 14864,
+   "site_receipt_sha256": "35b3be6ec4be6a3d1fb0caaeec52b3b99350a0d58d26bfd6f077bee7e5047d3c",
+   "status": "read"
+  },
+  "movies-stackexchange-archive": {
+   "readers": {
+    "cm": {
+     "comment_rows": 103188,
+     "dropped_by_rule": 187,
+     "left_tokens_hist": {
+      "16": 23574,
+      "2": 1386,
+      "32": 17174,
+      "4": 6272,
+      "64": 4837,
+      "8": 16440
+     },
+     "pairs": 69683,
+     "right_tokens_hist": {
+      "16": 22936,
+      "2": 1526,
+      "32": 17654,
+      "4": 6296,
+      "64": 5234,
+      "8": 16037
+     },
+     "stream_sha256": "a62ce7b00d2821a274a7003935a765fbe43e6cb5ecc38468293f8f28927ae197"
+    },
+    "qa": {
+     "dropped_by_rule": 14,
+     "left_tokens_hist": {
+      "16": 224,
+      "2": 369,
+      "4": 5779,
+      "8": 7501
+     },
+     "pairs": 13873,
+     "right_tokens_hist": {
+      "128": 2619,
+      "16": 1639,
+      "2": 103,
+      "256": 893,
+      "32": 3369,
+      "4": 265,
+      "512": 188,
+      "64": 4117,
+      "8": 680
+     },
+     "stream_sha256": "21fcd080407e7594824dcecf14d0e7c3ac784c31874711903521dd47856e8521",
+     "unresolved": 0
+    },
+    "tb": {
+     "dropped_by_rule": 14,
+     "left_tokens_hist": {
+      "16": 457,
+      "2": 603,
+      "4": 9439,
+      "8": 12411
+     },
+     "pairs": 22910,
+     "right_tokens_hist": {
+      "128": 2412,
+      "16": 3897,
+      "2": 5,
+      "256": 304,
+      "32": 8620,
+      "4": 20,
+      "512": 36,
+      "64": 7066,
+      "8": 550
+     },
+     "stream_sha256": "e6d7c420b889f6115f0334f85ab838226c07876bdccc507c4221919f08a0ab82"
+    }
+   },
+   "rows_by_post_type": {
+    "1": 22924,
+    "2": 37661,
+    "4": 2229,
+    "5": 2229,
+    "6": 21,
+    "7": 5
+   },
+   "rows_scanned": 65069,
+   "site_receipt_sha256": "92ce6bf628f2b21554d9f3521080c360421b73de233eed46c027aada4e31d2c7",
+   "status": "read"
+  },
+  "music-stackexchange-archive": {
+   "readers": {
+    "cm": {
+     "comment_rows": 157996,
+     "dropped_by_rule": 232,
+     "left_tokens_hist": {
+      "16": 36302,
+      "2": 1568,
+      "32": 31206,
+      "4": 7605,
+      "64": 10524,
+      "8": 21935
+     },
+     "pairs": 109140,
+     "right_tokens_hist": {
+      "16": 35511,
+      "2": 1738,
+      "32": 31724,
+      "4": 7641,
+      "64": 11220,
+      "8": 21306
+     },
+     "stream_sha256": "50ba17774b3fbc0da59e3c8cd651b3ff4765032d36bdc7c775669bc84f4e73ca"
+    },
+    "qa": {
+     "dropped_by_rule": 11,
+     "left_tokens_hist": {
+      "16": 180,
+      "2": 1010,
+      "4": 6549,
+      "8": 5030
+     },
+     "pairs": 12769,
+     "right_tokens_hist": {
+      "128": 3567,
+      "16": 806,
+      "2": 15,
+      "256": 1713,
+      "32": 2067,
+      "4": 66,
+      "512": 456,
+      "64": 3856,
+      "8": 223
+     },
+     "stream_sha256": "c80a1fa4396de560eedb2fb527aa07cc1d568b77dae502d3f8ec5f3d69454f7b",
+     "unresolved": 1
+    },
+    "tb": {
+     "dropped_by_rule": 30,
+     "left_tokens_hist": {
+      "16": 424,
+      "2": 2225,
+      "4": 13089,
+      "8": 9954
+     },
+     "pairs": 25692,
+     "right_tokens_hist": {
+      "128": 3142,
+      "16": 4112,
+      "2": 3,
+      "256": 550,
+      "32": 8757,
+      "4": 111,
+      "512": 36,
+      "64": 8101,
+      "8": 880
+     },
+     "stream_sha256": "95dce37b592914cc817568374ff432e7ea397b6954ae6b1d87a3199b2ba01bc1"
+    }
+   },
+   "rows_by_post_type": {
+    "1": 25722,
+    "2": 66722,
+    "3": 14,
+    "4": 528,
+    "5": 528,
+    "6": 13,
+    "7": 4
+   },
+   "rows_scanned": 93531,
+   "site_receipt_sha256": "ff55bea3124fcd32b4c9e63cda00b3e2ef69c34d20fb227721021f5688b77a61",
+   "status": "read"
+  },
+  "outdoors-stackexchange-archive": {
+   "readers": {
+    "cm": {
+     "comment_rows": 44738,
+     "dropped_by_rule": 43,
+     "left_tokens_hist": {
+      "16": 10743,
+      "2": 512,
+      "32": 9140,
+      "4": 2282,
+      "64": 2758,
+      "8": 6466
+     },
+     "pairs": 31901,
+     "right_tokens_hist": {
+      "16": 10645,
+      "2": 528,
+      "32": 9374,
+      "4": 2245,
+      "64": 2950,
+      "8": 6159
+     },
+     "stream_sha256": "bc9df7cdc66c59bbcc6a48f56c3139fda6bd97b6eeeb6f70b6ecd942db38e9ab"
+    },
+    "qa": {
+     "dropped_by_rule": 1,
+     "left_tokens_hist": {
+      "16": 65,
+      "2": 173,
+      "4": 1938,
+      "8": 1667
+     },
+     "pairs": 3843,
+     "right_tokens_hist": {
+      "128": 1221,
+      "16": 158,
+      "2": 3,
+      "256": 576,
+      "32": 580,
+      "4": 17,
+      "512": 156,
+      "64": 1089,
+      "8": 43
+     },
+     "stream_sha256": "5855cf2bd0e0d80222538ff2f2190017e18c226f0d55373b1a9e3bc54e7e0336",
+     "unresolved": 1
+    },
+    "tb": {
+     "dropped_by_rule": 2,
+     "left_tokens_hist": {
+      "16": 105,
+      "2": 297,
+      "4": 2993,
+      "8": 2771
+     },
+     "pairs": 6166,
+     "right_tokens_hist": {
+      "128": 892,
+      "16": 892,
+      "256": 147,
+      "32": 2029,
+      "4": 9,
+      "512": 8,
+      "64": 2072,
+      "8": 117
+     },
+     "stream_sha256": "d4926dd41d1f3ccebe96acd2324900f71ece470b2b32b14ec2f1896ab3396a7c"
+    }
+   },
+   "rows_by_post_type": {
+    "1": 6168,
+    "2": 15078,
+    "4": 573,
+    "5": 573,
+    "6": 5,
+    "7": 2
+   },
+   "rows_scanned": 22399,
+   "site_receipt_sha256": "ff39200e355a77e335904c860f744bb1d6385d8fb5179cc14af42b802a4ebcbb",
+   "status": "read"
+  },
+  "parenting-stackexchange-archive": {
+   "readers": {
+    "cm": {
+     "comment_rows": 52968,
+     "dropped_by_rule": 60,
+     "left_tokens_hist": {
+      "16": 11115,
+      "2": 478,
+      "32": 11769,
+      "4": 2042,
+      "64": 5146,
+      "8": 5976
+     },
+     "pairs": 36526,
+     "right_tokens_hist": {
+      "16": 10895,
+      "2": 505,
+      "32": 11922,
+      "4": 2087,
+      "64": 5282,
+      "8": 5835
+     },
+     "stream_sha256": "e7120f749f66f57c37810bd7bad3f156d01ec2277116f3c2a8ba19fd5317a4c1"
+    },
+    "qa": {
+     "dropped_by_rule": 0,
+     "left_tokens_hist": {
+      "16": 79,
+      "2": 80,
+      "4": 1264,
+      "8": 1592
+     },
+     "pairs": 3015,
+     "right_tokens_hist": {
+      "128": 1066,
+      "16": 52,
+      "256": 712,
+      "32": 273,
+      "4": 2,
+      "512": 190,
+      "64": 709,
+      "8": 11
+     },
+     "stream_sha256": "82de3f228490f65e20ca3c3cc983b2df3066b3052702a154b9fd7f5e1cf260f1",
+     "unresolved": 0
+    },
+    "tb": {
+     "dropped_by_rule": 2,
+     "left_tokens_hist": {
+      "16": 209,
+      "2": 224,
+      "4": 2855,
+      "8": 3582
+     },
+     "pairs": 6870,
+     "right_tokens_hist": {
+      "128": 1782,
+      "16": 473,
+      "256": 710,
+      "32": 1464,
+      "4": 4,
+      "512": 131,
+      "64": 2237,
+      "8": 69
+     },
+     "stream_sha256": "c0f71b15d3334dd7d7040b74110927c960b78ee6396fcdf4afb11e7f6fe36538"
+    }
+   },
+   "rows_by_post_type": {
+    "1": 6872,
+    "2": 22601,
+    "3": 2,
+    "4": 228,
+    "5": 228,
+    "6": 11,
+    "7": 2
+   },
+   "rows_scanned": 29944,
+   "site_receipt_sha256": "2ce57d62359b34188337ebcfa906b27829d78fcd9e830e9f0ec8606d22854a05",
+   "status": "read"
+  },
+  "pets-stackexchange-archive": {
+   "readers": {
+    "cm": {
+     "comment_rows": 26525,
+     "dropped_by_rule": 16,
+     "left_tokens_hist": {
+      "16": 5539,
+      "2": 198,
+      "32": 4764,
+      "4": 1095,
+      "64": 1465,
+      "8": 3114
+     },
+     "pairs": 16175,
+     "right_tokens_hist": {
+      "16": 5440,
+      "2": 223,
+      "32": 4925,
+      "4": 1078,
+      "64": 1530,
+      "8": 2979
+     },
+     "stream_sha256": "e382bf72c68457f5e9cbe047d48dd97371142b05b8c7d044bb5966302254585d"
+    },
+    "qa": {
+     "dropped_by_rule": 0,
+     "left_tokens_hist": {
+      "16": 25,
+      "2": 145,
+      "4": 1630,
+      "8": 1301
+     },
+     "pairs": 3101,
+     "right_tokens_hist": {
+      "128": 1058,
+      "16": 85,
+      "256": 564,
+      "32": 336,
+      "4": 1,
+      "512": 155,
+      "64": 889,
+      "8": 13
+     },
+     "stream_sha256": "f29c7770f9d6fa4f52ceff6556e81c197e645ce3454991668c7d2c6778a5719d",
+     "unresolved": 0
+    },
+    "tb": {
+     "dropped_by_rule": 1,
+     "left_tokens_hist": {
+      "16": 136,
+      "2": 511,
+      "4": 4322,
+      "8": 3390
+     },
+     "pairs": 8359,
+     "right_tokens_hist": {
+      "128": 1669,
+      "16": 917,
+      "2": 3,
+      "256": 509,
+      "32": 2212,
+      "4": 11,
+      "512": 65,
+      "64": 2806,
+      "8": 167
+     },
+     "stream_sha256": "4eb6481947eb1108c6be14badf5f3f6071cb8ed4d1de8b2d37fbb359b36adaa4"
+    }
+   },
+   "rows_by_post_type": {
+    "1": 8360,
+    "2": 12440,
+    "4": 261,
+    "5": 261,
+    "6": 12
+   },
+   "rows_scanned": 21334,
+   "site_receipt_sha256": "51c7d0e7d0f8fd1e278626643e7bfedc783f3f64c622b82f28fb05a329917f8b",
+   "status": "read"
+  },
+  "superuser-archive": {
+   "readers": {
+    "cm": {
+     "comment_rows": 1896416,
+     "dropped_by_rule": 3500,
+     "left_tokens_hist": {
+      "128": 1,
+      "16": 429664,
+      "2": 30988,
+      "32": 265541,
+      "4": 137459,
+      "64": 57859,
+      "8": 326318
+     },
+     "pairs": 1247830,
+     "right_tokens_hist": {
+      "128": 1,
+      "16": 425048,
+      "2": 35458,
+      "32": 271729,
+      "4": 136682,
+      "64": 62054,
+      "8": 316858
+     },
+     "stream_sha256": "d7bc19afc71789a250740558b11b7f318cb566f8473835c7b9c80294fe30bb07"
+    },
+    "qa": {
+     "dropped_by_rule": 866,
+     "left_tokens_hist": {
+      "16": 2575,
+      "2": 9008,
+      "4": 105791,
+      "8": 86938
+     },
+     "pairs": 204312,
+     "right_tokens_hist": {
+      "128": 23673,
+      "16": 39555,
+      "2": 1454,
+      "256": 6203,
+      "32": 60120,
+      "4": 5281,
+      "512": 1077,
+      "64": 50816,
+      "8": 16133
+     },
+     "stream_sha256": "d3b7cd8db7f03a8a042b12507ab5876cdd95eb3ee50649bc1247914e858bfe04",
+     "unresolved": 40
+    },
+    "tb": {
+     "dropped_by_rule": 549,
+     "left_tokens_hist": {
+      "16": 7893,
+      "2": 22479,
+      "4": 257363,
+      "8": 216852
+     },
+     "pairs": 504587,
+     "right_tokens_hist": {
+      "128": 63182,
+      "16": 74017,
+      "2": 104,
+      "256": 10186,
+      "32": 173213,
+      "4": 1244,
+      "512": 833,
+      "64": 168025,
+      "8": 13783
+     },
+     "stream_sha256": "135781dd2928a7a8763235440c8e8395b8b61a6602d21c023881822ed2ab47d0"
+    }
+   },
+   "rows_by_post_type": {
+    "1": 505136,
+    "2": 732567,
+    "3": 12,
+    "4": 3823,
+    "5": 3822,
+    "6": 53,
+    "7": 4,
+    "8": 1
+   },
+   "rows_scanned": 1245418,
+   "site_receipt_sha256": "29e73543a69eccc890a88c04134b85608bb6fc1c85d2fc64737a2a539f06768d",
+   "status": "read"
+  },
+  "travel-stackexchange-archive": {
+   "readers": {
+    "cm": {
+     "comment_rows": 304688,
+     "dropped_by_rule": 422,
+     "left_tokens_hist": {
+      "16": 79093,
+      "2": 3881,
+      "32": 61284,
+      "4": 17221,
+      "64": 15244,
+      "8": 48122
+     },
+     "pairs": 224845,
+     "right_tokens_hist": {
+      "16": 77990,
+      "2": 4016,
+      "32": 62752,
+      "4": 16944,
+      "64": 16216,
+      "8": 46927
+     },
+     "stream_sha256": "41703a9e097d39166b15113aa099651bb465ff256506b3879d5d840ae15408a8"
+    },
+    "qa": {
+     "dropped_by_rule": 5,
+     "left_tokens_hist": {
+      "16": 532,
+      "2": 706,
+      "4": 8173,
+      "8": 9931
+     },
+     "pairs": 19342,
+     "right_tokens_hist": {
+      "128": 5027,
+      "16": 1520,
+      "2": 27,
+      "256": 1610,
+      "32": 4017,
+      "4": 112,
+      "512": 277,
+      "64": 6295,
+      "8": 457
+     },
+     "stream_sha256": "23c758db8827eae589b9a18ec04c818cd93e312853288cbe3cc75cbab1a6717b",
+     "unresolved": 1
+    },
+    "tb": {
+     "dropped_by_rule": 49,
+     "left_tokens_hist": {
+      "16": 1557,
+      "2": 2414,
+      "4": 20369,
+      "8": 24379
+     },
+     "pairs": 48719,
+     "right_tokens_hist": {
+      "128": 4830,
+      "16": 9024,
+      "2": 5,
+      "256": 702,
+      "32": 17412,
+      "4": 97,
+      "512": 53,
+      "64": 15045,
+      "8": 1551
+     },
+     "stream_sha256": "47b8b447e0eb1d2c2c09e518b326808c908f945a75fffb032ee35afb95764e7b"
+    }
+   },
+   "rows_by_post_type": {
+    "1": 48768,
+    "2": 76736,
+    "4": 2230,
+    "5": 2230,
+    "6": 34,
+    "7": 4
+   },
+   "rows_scanned": 130002,
+   "site_receipt_sha256": "5238c0fc8d4fe0e56ba41abcf0acb4c6d39e1637ca190221972a7f4951aad688",
+   "status": "read"
+  }
+ }
+}
