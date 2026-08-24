@@ -93,13 +93,13 @@ git config core.hooksPath .githooks
 
 ## Versioning and the compatibility contract
 
-The project uses semver with the conventions below. The headline: **within a major line, the surface defined in [`docs/api.md`](docs/api.md) and the on-disk format defined by `models.SCHEMA_VERSION` are stable.** Strangers who pin `bettermemory==5.x` get a contract they can rely on. The current major is 5; the same shape held for 1.x through 4.x and will hold for any future major line.
+The project uses semver with the conventions below. The headline: **within a major line, the surface defined in [`docs/api.md`](docs/api.md) and the on-disk format defined by `models.SCHEMA_VERSION` are stable.** Strangers who pin `bettermemory==6.x` get a contract they can rely on. The current major is 6; the same shape held for 1.x through 5.x and will hold for any future major line.
 
-The 2.0 bump itself was a scope-only bump — nine 1.6-plan features shipped in one release. SCHEMA_VERSION stayed at 1, every new wire field was opt-in or absence-as-signal, and no 1.x surface was renamed or removed. The 3.0 bump was the same shape: a soft API break trimming defensive `bettermemory.server` re-exports after verifying zero in-tree consumers, packaged with the post-2.7.3 audit-loop. 4.0 and 5.0 were the first hard breaks: 4.0 removed the embedding lane whole (the `semantic` module, both embedding extras, the `[behavior] semantic_provider` and `semantic_dedup` knobs, and the `"semantic"` search mode), and 5.0 removed the web UI whole (the `web` module, the `bettermemory ui` subcommand, the `[ui]` extra). SCHEMA_VERSION stayed at 1 across all four transitions; treat the rules below as continuous across every boundary — they describe the project's stance on stability, not a one-off cleanup.
+The 2.0 bump itself was a scope-only bump — nine 1.6-plan features shipped in one release. SCHEMA_VERSION stayed at 1, every new wire field was opt-in or absence-as-signal, and no 1.x surface was renamed or removed. The 3.0 bump was the same shape: a soft API break trimming defensive `bettermemory.server` re-exports after verifying zero in-tree consumers, packaged with the post-2.7.3 audit-loop. 4.0 and 5.0 were the first hard breaks: 4.0 removed the embedding lane whole (the `semantic` module, both embedding extras, the `[behavior] semantic_provider` and `semantic_dedup` knobs, and the `"semantic"` search mode), and 5.0 removed the web UI whole (the `web` module, the `bettermemory ui` subcommand, the `[ui]` extra). 6.0 was the same kind of break: it re-removed the embedding lane whole after its 5.5.0 opt-in reentry was revoked by owner doctrine (`CHANGELOG.md`, 6.0.0). SCHEMA_VERSION stayed at 1 across all five transitions; treat the rules below as continuous across every boundary — they describe the project's stance on stability, not a one-off cleanup.
 
 ### Surface (the 27 MCP tools)
 
-Stable within the current major (5.x):
+Stable within the current major (6.x):
 
 - Tool names. `memory_search` will not be renamed to `mem_search`.
 - Required parameter names and positions. `memory_remove(id, reason)` will not flip to `(reason, id)`.
@@ -126,7 +126,7 @@ Forbidden within a major:
 
 ### On-disk format (`models.SCHEMA_VERSION`)
 
-`SCHEMA_VERSION = 1` is the constant in `src/bettermemory/models.py`. Every memory and tombstone written by 1.x through 5.x carries `schema_version: 1` in its frontmatter. Readers default to `1` when the field is missing (the implicit version of memories written before the constant existed). 2.0 added several optional frontmatter fields (the typed `links` list, the parallel `verified_paths` / `verified_commits` / `verified_versions` attestation lists, `origin.worktree_root`) but every one is purely additive: legacy memories load unchanged, and the constant stays at 1. 3.0, 4.0, and 5.0 made no on-disk-format changes — both hard breaks were surface removals, which is why a two-major span still reads one schema version.
+`SCHEMA_VERSION = 1` is the constant in `src/bettermemory/models.py`. Every memory and tombstone written by 1.x through 6.x carries `schema_version: 1` in its frontmatter. Readers default to `1` when the field is missing (the implicit version of memories written before the constant existed). 2.0 added several optional frontmatter fields (the typed `links` list, the parallel `verified_paths` / `verified_commits` / `verified_versions` attestation lists, `origin.worktree_root`) but every one is purely additive: legacy memories load unchanged, and the constant stays at 1. 3.0, 4.0, 5.0, and 6.0 made no on-disk-format changes — all three hard breaks were surface removals, which is why a three-major span still reads one schema version.
 
 Within a major, all changes to the on-disk format are **additive only**: new optional frontmatter fields, never renamed, never removed, never re-defined. A reader from a later minor will load files written by an earlier minor without any migration step. A reader from an earlier minor will load files written by a later minor as long as the later minor only added fields the earlier reader does not recognize (and tolerates), which is the rule above.
 

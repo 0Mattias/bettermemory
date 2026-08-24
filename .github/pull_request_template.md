@@ -23,13 +23,13 @@ for the same thing. -->
 <!-- Tick one: -->
 
 - [ ] Additive — new tool, new optional argument, new config field.
-      Compatible within 5.x.
+      Compatible within the current major.
 - [ ] Behavior fix — existing surface, corrected semantics. Compatible
       with anyone whose code didn't depend on the bug.
-- [ ] Breaking — requires a 6.0 bump. (If you check this, link the
+- [ ] Breaking — requires the next major. (If you check this, link the
       issue or discussion where the rename / removal was agreed. See
       CONTRIBUTING.md's "Versioning and the compatibility contract"
-      for what counts as breaking within the current 5.x line.)
+      for what counts as breaking within the current major line.)
 
 ## Checklist
 
