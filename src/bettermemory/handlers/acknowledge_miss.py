@@ -52,7 +52,7 @@ _MIN_REASON_LENGTH = 8
 # with a multi-megabyte reason. 500 chars covers any reasonable one-liner
 # rationale, and deliberately does NOT follow `_NOTE_MAX_LEN`'s raise to
 # 800 — an ack reason is a triage one-liner over a tiny population, not
-# an evidence-carrying note (bench/rot/T3_NOTE_CAP_DECISION.md); pasting
+# an evidence-carrying note (the T3 note-cap decision); pasting
 # a whole transcript belongs in a memory body, not an ack reason.
 _MAX_REASON_LENGTH = 500
 

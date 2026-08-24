@@ -90,7 +90,7 @@ rescue_expansion = false
 # window are boosted. ON BY DEFAULT: the L1 gate read measured +1.27
 # LongMemEval macro-recall@5 points (+0.93 at @1) with the dev
 # instrument byte-identical and no question type regressed
-# (bench/l/L1_RECORD.md). Queries with no temporal reading are untouched
+# (the L1 record). Queries with no temporal reading are untouched
 # byte for byte. Set false to reproduce the pre-6.1.0 ranking exactly.
 conversational = true
 
@@ -373,8 +373,8 @@ class BehaviorConfig:
     rescue_expansion: bool = False
     # The Lane L conversational repairs: the temporal-scaffold df-floor
     # plus boost-only date-anchor windows (see `search.search`'s
-    # `conversational` parameter; unit contract bench/l/L1_DECLARATION.md,
-    # gate read bench/l/L1_RECORD.md). DEFAULT ON since 6.1.0 — the gate
+    # `conversational` parameter; unit contract the L1 declaration,
+    # gate read the L1 record). DEFAULT ON since 6.1.0 — the gate
     # measured +1.27 LongMemEval macro@5 / +0.93 @1 on the full 500 with
     # the dev instrument byte-identical, no question type regressed, and
     # the untouched holdout half generalizing stronger than the tuning

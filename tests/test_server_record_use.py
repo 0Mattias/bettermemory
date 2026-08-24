@@ -270,7 +270,7 @@ async def test_record_use_rejects_oversized_note(
     model) can't inflate the JSONL event log with multi-megabyte
     notes. (The cap predates 5.0 at 500 chars, matching the
     since-removed web UI's /verify form; raised to 800 in 5.7.0 on
-    the T1 live-store census — bench/rot/T3_NOTE_CAP_DECISION.md.)"""
+    the T1 live-store census — the T3 note-cap decision.)"""
     server, _ = server_with_events
     written = await _call(
         server, "memory_write", content="durable fact", scopes=["tools"]

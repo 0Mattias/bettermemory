@@ -710,7 +710,7 @@ def test_expansion_stats_fetch_covers_kebab_parts_like_the_base_fetch() -> None:
 
 
 # ---------------------------------------------------------------------------
-# The leg-margin cap (round 3, PREREGISTRATION.md addendum 5)
+# The leg-margin cap (round 3, the LongMemEval preregistration addendum 5)
 #
 # RRF fuses by RANK, so an unseparated leg votes exactly as hard as a
 # confident one. The cap is the only place the fusion can tell them

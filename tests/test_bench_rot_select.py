@@ -88,7 +88,7 @@ def test_the_frame_is_protected_from_eol_translation() -> None:
     )
     assert not any("diff=python" in rule for rule in rules), (
         "a Python diff driver would change git's `@@` section headings, "
-        "which bench/rot/README.md's reasoning is written against"
+        "which the rot-bench notes' reasoning is written against"
     )
 
 

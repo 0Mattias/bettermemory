@@ -22,7 +22,7 @@ The model repoints the path with `memory_update`, attests the rest
 with `memory_verify`, and answers from the corrected memory.
 
 The verdict's accuracy is measured, not asserted:
-[bench/rot](../bench/rot/README.md) grades the shipped staleness code
+`bench/rot` grades the shipped staleness code
 against git ground truth on a preregistered 30-repository corpus, with
 the predictions filed before the run and the misses published as
 retractions. The claim-level detector that benchmark validated ships as

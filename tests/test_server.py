@@ -5198,7 +5198,7 @@ async def test_memory_update_content_resets_last_verified_at(server: Any) -> Non
 async def test_memory_verify_rejects_oversized_note(server: Any) -> None:
     """The MCP entry-point caps `note` at 800 chars (500 before
     5.7.0 — raised on the T1 live-store census,
-    bench/rot/T3_NOTE_CAP_DECISION.md). Without this, a hostile
+    the T3 note-cap decision). Without this, a hostile
     client could inflate the JSONL event log with multi-megabyte
     notes."""
     written = await _call(

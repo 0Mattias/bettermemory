@@ -432,7 +432,7 @@ enough to earn its own entry above.
   is the constant function `bench/rot` exists to catch, with the sign
   reversed. Reopening needs a replacement measured first, which is
   "Claims-at-write" above. Write-up in
-  [bench/rot/README.md](../bench/rot/README.md); artifact
+  the rot-bench notes; artifact
   `bench/rot/results/escalation-off-60d-2026-07-31.json`.
 - **A per-memory mutation index for the relevance-label widening
   program.** The `write`/`update` event stream plumbed through both

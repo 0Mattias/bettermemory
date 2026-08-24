@@ -3,8 +3,8 @@
 The mechanism: in the hybrid path, a base leg whose rank-1 candidate
 matched strictly fewer query terms than its peer's is withheld from the
 fusion (weight 0.0); ties return `None` and fuse byte-identically to
-the pre-round-9 engine. Preregistered in
-bench/longmemeval/PREREGISTRATION.md addendum 12; derivation on the
+the pre-round-9 engine. Preregistered in the LongMemEval
+preregistration addendum 12; derivation on the
 constant in search.py.
 
 These tests pin the three properties the preregistration leans on:

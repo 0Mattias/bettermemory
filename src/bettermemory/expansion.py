@@ -1,7 +1,7 @@
 """Committed vocabulary tables for query-time rescue expansion.
 
 The retrieval campaign's Phase-1 lane (see docs/ROADMAP and
-bench/retrieval/README.md): the measured gap between a casual query and
+the retrieval-bench notes): the measured gap between a casual query and
 a stored fact is VOCABULARY — the query says "toggles", the memory says
 "feature flags" — and on the gold set that gap is worth 25 recall@1
 points (60% semantic-arm vs 35% lexical, both corpora). These tables
@@ -24,7 +24,7 @@ tables for ranking — one build site is what keeps query-side and
 test-side views identical.
 
 Measurement provenance for every constant here: the probe grid recorded
-in bench/retrieval/README.md (2026-08-09) — recall@1/@5 as-asked
+in the retrieval-bench notes (2026-08-09) — recall@1/@5 as-asked
 35%/60% -> 50%/90% with requery byte-stable at 80%/100% on the
 technical-prose gold set. The lane ships OPT-IN (`[behavior]
 rescue_expansion`, default off): its preregistered held-out check on
@@ -34,7 +34,7 @@ inverse of a technical corpus where expansion vocabulary is rare and
 discriminating. The kill, the ablation that isolated it to the
 expansion leg, and the experiment that could earn the default back
 (df-gating the EMITTED terms) live in bench/longmemeval/ and the
-bench/retrieval README's 5.1 section.
+retrieval-bench notes' 5.1 section.
 """
 
 from __future__ import annotations

@@ -1,6 +1,6 @@
 """Tests for the Lane L conversational repairs (`search(conversational=...)`).
 
-The mechanism pair, declared in bench/l/L1_DECLARATION.md §3: a
+The mechanism pair, declared in the L1 declaration §3: a
 temporal-SCAFFOLD df-floor through the filler-floor stats seam (L1-S),
 and date-anchor selection inside the fused ranking's near-tie band
 (L1-T), both engaged only when the flag is on AND the query parses as
@@ -216,7 +216,7 @@ def test_default_is_on_and_false_reproduces_the_pre_lane_ranking() -> None:
     import inspect
 
     # The engine default is the product default: ON since the 6.1.0
-    # ship (bench/l/L1_RECORD.md's owner door, taken 2026-08-16).
+    # ship (the L1 record's owner door, taken 2026-08-16).
     assert inspect.signature(search).parameters["conversational"].default is True
 
     mems = _adversarial_store()
@@ -376,7 +376,7 @@ def test_lane_on_is_deterministic() -> None:
 
 # ---------------------------------------------------------------------------
 # L2 — the pricing gate's widening and the keyword-leg repricing
-# (bench/l/L2_DECLARATION.md §3; dark by default, arms via config commits)
+# (the L2 declaration §3; dark by default, arms via config commits)
 # ---------------------------------------------------------------------------
 
 

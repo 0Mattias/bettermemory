@@ -95,7 +95,7 @@ _AMBIENT_LONG_BODY_WORDS = 500
 # can't inflate the JSONL event log with multi-megabyte notes. Raised
 # 500 -> 800 on the T1 live-store census: 11.5% of recorded notes sat
 # within 50 chars of the old cap, and the unconstrained pre-cap tail
-# has its knee at 800 (bench/rot/T3_NOTE_CAP_DECISION.md). Over-cap
+# has its knee at 800 (the T3 note-cap decision). Over-cap
 # notes are refused with a teaching error, never truncated; pasting
 # whole transcripts belongs in a memory body, not in an event note.
 _NOTE_MAX_LEN = 800

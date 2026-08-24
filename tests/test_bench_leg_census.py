@@ -1,6 +1,6 @@
 """Tests for `bench/leg_census.py`, round 3's design instrument.
 
-The threshold in `PREREGISTRATION.md` addendum 5 is read straight off
+The threshold in the LongMemEval preregistration addendum 5 is read straight off
 this census, so a census that rebuilt a DIFFERENT leg than the engine
 scores would move that threshold with nothing noticing. The
 reconstruction is therefore pinned against `search()`'s own observable

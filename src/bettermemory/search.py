@@ -1044,7 +1044,7 @@ def _strip_stopwords(tokens: list[str]) -> list[str]:
 # The rescue is three committed word tables (expansion.py) feeding one
 # extra, down-weighted BM25 leg — engaged only when the base ranking is
 # not confident. Every constant below is measured on the gold set
-# (bench/retrieval/README.md, 2026-08-09 grid), not chosen by taste.
+# (the retrieval-bench notes, 2026-08-09 grid), not chosen by taste.
 
 # Tables built once through the live stemmer so lookups and emitted
 # terms share the rankers' post-stem token space. A stemmer rule change
@@ -1103,7 +1103,7 @@ _RESCUE_LEG_WEIGHT = 0.7
 # spread to shift between corpora: rounds 3 and 4 failed on exactly
 # that, and a count of agreeing terms has no such spread.
 #
-# Preregistered in bench/longmemeval/PREREGISTRATION.md addendum 7
+# Preregistered in the LongMemEval preregistration addendum 7
 # before this code existed.
 _RESCUE_LEG_MIN_EVIDENCE = 2
 
@@ -1200,7 +1200,7 @@ _RESCUE_LEG_EVIDENCE_SCALING = False
 # same sentence with "fewer words than its peer" as the predicate. Ties
 # — 80% of dev probes — return None and fuse byte-identically.
 #
-# Preregistered in bench/longmemeval/PREREGISTRATION.md addendum 12
+# Preregistered in the LongMemEval preregistration addendum 12
 # (round 9) before this code existed. `bench/*/run.py --base-withhold
 # on` drives the mechanism arm.
 _BASE_LEG_TRAILING_WITHHOLD = False
@@ -1272,7 +1272,7 @@ def _merge_corpus_stats(
 
 
 # ---------------------------------------------------------------------------
-# The conversational lane (Lane L unit 1, bench/l/L1_DECLARATION.md)
+# The conversational lane (Lane L unit 1, the L1 declaration)
 # ---------------------------------------------------------------------------
 #
 # Two deterministic repairs for conversation-shaped stores, behind
@@ -1384,7 +1384,7 @@ _CONV_WINDOW_DEMOTE = 0.0
 _CONV_SELECTOR_BOOST = 0.0
 _CONV_SELECTOR_DECAY = 0.7
 
-# L2 (declared in bench/l/L2_DECLARATION.md): the pricing gate's
+# L2 (the L2 declaration): the pricing gate's
 # widening and the keyword leg's scaffold weight. Both ship None —
 # dark: with both None the engine is behaviorally identical to 6.1.0,
 # and only a tuning-read config commit under the declaration's
@@ -1400,7 +1400,7 @@ _CONV_SELECTOR_DECAY = 0.7
 # structural signal. None removes the widening — the pricing gate is
 # L1's temporal reading alone.
 #
-# None is the L2-PARK reversion (bench/l/L2_RECORD.md): the widening
+# None is the L2-PARK reversion (the L2 record): the widening
 # died in tuning — in count asks the bodies' own scaffold (amounts,
 # "total", "this year") is evidence, and the widened floor strips the
 # gold's edge over content lookalikes — and the keyword weight died
@@ -1413,7 +1413,7 @@ _CONV_SCAFFOLD_MIN_STEMS: int | None = None
 # terms alone (see score_memory). None leaves the keyword leg stock:
 # L1 repriced only the BM25 half of the fusion's vote, and this
 # constant is the other half. None is the L2-PARK reversion
-# (bench/l/L2_RECORD.md): the tuning half's weight curve rose
+# (the L2 record): the tuning half's weight curve rose
 # monotonically into the declared cap, and the holdout half inverted
 # it — the gate read moved the untouched half down and the
 # multi-session type below its guard, the exact overfit G1h exists
@@ -3213,8 +3213,8 @@ def search(
       points — inflection variants of common chat verbs are
       promiscuous matchers there, the inverse of the technical corpus
       where expansion vocabulary is rare and discriminating. Kill
-      criterion and ablations: bench/longmemeval/PREREGISTRATION.md
-      addendum 3 and its README. Flipping the default back on is
+      criterion and ablations: the LongMemEval preregistration
+      addendum 3 and the bench README. Flipping the default back on is
       earned by a fresh preregistration on both instruments, not by an
       operator's hunch — but `[behavior] rescue_expansion = true` is a
       supported, documented choice for stores that look like the gold
