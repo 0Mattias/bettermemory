@@ -1024,7 +1024,15 @@ def commit_author_timestamps(cwd: Path | None) -> list[datetime] | None:
     """
     if cwd is None:
         return None
-    raw = _git(cwd, "log", "--format=%aI", "HEAD")
+    # timeout=5.0, not the 1.0 default: the default is calibrated for
+    # write-path origin capture, where origin is nice-to-have and a
+    # hanging git must never stall a memory_write. This log and its two
+    # path-filtered siblings below are READ legs — the drift verdicts
+    # search/show/health surface ride on them, and at 1.0s a cold git
+    # on a slow host (observed: the windows-latest CI runner) times out,
+    # collapsing a real count into the omitted/conservative branch. Same
+    # ceiling `commit_patch_stream` already runs at.
+    raw = _git(cwd, "log", "--format=%aI", "HEAD", timeout=5.0)
     if raw is None:
         return None
     out: list[datetime] = []
@@ -1096,7 +1104,16 @@ def commit_author_timestamps_touching_pathspecs(
         toplevel = repo_toplevel(cwd)
         if toplevel is None:
             return None
-    raw = _git(toplevel, "log", "--format=%aI", "HEAD", "--", *pathspecs, empty_ok=True)
+    raw = _git(
+        toplevel,
+        "log",
+        "--format=%aI",
+        "HEAD",
+        "--",
+        *pathspecs,
+        timeout=5.0,
+        empty_ok=True,
+    )
     if raw is None:
         # Git could not answer (non-zero exit, missing binary, timeout).
         return None
@@ -1156,7 +1173,14 @@ def commit_author_sha_pairs_touching_pathspecs(
         if toplevel is None:
             return None
     raw = _git(
-        toplevel, "log", "--format=%aI %H", "HEAD", "--", *pathspecs, empty_ok=True
+        toplevel,
+        "log",
+        "--format=%aI %H",
+        "HEAD",
+        "--",
+        *pathspecs,
+        timeout=5.0,
+        empty_ok=True,
     )
     if raw is None:
         return None
