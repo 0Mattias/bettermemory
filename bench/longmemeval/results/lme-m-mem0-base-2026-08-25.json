@@ -1,0 +1,105 @@
+{
+  "provenance": {
+    "arm": "mem0-base",
+    "versions": {
+      "mem0ai": "2.0.18",
+      "qdrant-client": "1.19.0",
+      "sentence-transformers": "6.0.0",
+      "fastembed": null,
+      "spacy": null
+    },
+    "embedder": "sentence-transformers/all-MiniLM-L6-v2",
+    "collection": "lme_mem0",
+    "retrieval_depth": 200,
+    "search_threshold": 0.0,
+    "corpus_sha256": "9d79e5524794a2e6900a3aa9cb7d9152c5a3e8319c9a87c25494ba1eacee495f"
+  },
+  "corpus": "longmemeval_m_cleaned.json",
+  "scored": 500,
+  "instances": 500,
+  "ingest": {
+    "rounds_offered": 1233387,
+    "items_written": 1233387,
+    "shortfall": 0.0,
+    "seconds": 12584.3
+  },
+  "gates": {
+    "ready": {
+      "users": 500,
+      "rounds_offered": 1233387,
+      "items_written": 1233387,
+      "mismatches": 0
+    },
+    "iso": {
+      "sampled_users": 50,
+      "leaks": 0
+    }
+  },
+  "notes": [
+    "ingest bypasses mem0's LLM extraction (add(..., infer=False)); their real pipeline extracts facts before storage, so this may UNDERSTATE mem0. See PREREGISTRATION.md addendum 13.",
+    "search runs the public API at the shared retrieval depth with the score cut at its validated floor; the shipped default truncates the result list on stores this size, and publishing that would measure the default, not retrieval. Candidates with negative semantic score remain unreachable; n_ranked carries the boundary per question."
+  ],
+  "results": [
+    {
+      "arm": "mem0-base",
+      "n": 500,
+      "seconds": 3158.7,
+      "empty_result_questions": 0,
+      "macro": {
+        "1": 0.3894,
+        "5": 0.7138,
+        "10": 0.8104
+      },
+      "micro": {
+        "1": 0.3196,
+        "5": 0.6656,
+        "10": 0.7827
+      },
+      "ceiling": {
+        "1": 0.6442,
+        "5": 0.999,
+        "10": 1.0
+      },
+      "by_type": {
+        "knowledge-update": {
+          "1": 0.3782,
+          "5": 0.8333,
+          "10": 0.8974
+        },
+        "multi-session": {
+          "1": 0.2442,
+          "5": 0.6155,
+          "10": 0.7642
+        },
+        "single-session-assistant": {
+          "1": 0.9821,
+          "5": 1.0,
+          "10": 1.0
+        },
+        "single-session-preference": {
+          "1": 0.3,
+          "5": 0.6333,
+          "10": 0.7
+        },
+        "single-session-user": {
+          "1": 0.4714,
+          "5": 0.7571,
+          "10": 0.8286
+        },
+        "temporal-reasoning": {
+          "1": 0.2685,
+          "5": 0.6168,
+          "10": 0.7411
+        }
+      },
+      "type_n": {
+        "single-session-assistant": 56,
+        "single-session-user": 70,
+        "multi-session": 133,
+        "knowledge-update": 78,
+        "temporal-reasoning": 133,
+        "single-session-preference": 30
+      }
+    }
+  ]
+}
