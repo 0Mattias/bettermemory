@@ -65,6 +65,15 @@ Reading the table:
   snapshot's miss columns are not comparable to this one's — same
   discontinuity discipline as the 2026-07-22 cutoff above, named
   before the numbers rather than after.
+- **The `prompt_recall` series widens at 6.2.0.** Delivery gains a
+  second lane: under `[behavior] recall_in_project` (default on) the
+  hook also injects on the project cohort the audit deliberately
+  suppresses (caller inside the top hit's own repo). Delivered events
+  stamp `delivered_reason` (`"miss"` / `"project_cohort"`); recall-rate
+  comparisons across the 6.2.0 boundary must slice on
+  `delivered_reason == "miss"` to stay like-for-like, and the audit's
+  `search_miss` lane is unaffected. Named before the numbers, same
+  discipline as above.
 - **The `silent_miss_rate` figures are a floor, and the low value is
   substantially an artifact of message length.** The v1 verdict fires on
   a coverage fraction whose denominator grows with the user's message,

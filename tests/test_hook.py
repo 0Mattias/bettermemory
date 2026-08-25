@@ -2578,6 +2578,137 @@ def test_stop_audit_reports_ok_after_recall(tmp_path: Path) -> None:
     assert "turn_audited" in kinds
 
 
+def _write_project_memory(mem_dir: Path, repo: str) -> str:
+    """Seed a `projects:`-scoped high-relevance memory whose origin repo
+    matches `repo`, backdated past the creation shield — the shape the
+    project-cohort suppression keys on. Mirrors `_write_miss_memory`."""
+    from bettermemory.origin import Origin
+
+    store = Store(mem_dir)
+    written = store.write(content=_MISS_BODY, scopes=["projects:foo"])
+    backdated = datetime.now(timezone.utc) - timedelta(hours=1)
+    for path, mem in store.iter_active():
+        if mem.id == written.id:
+            store._write_path(
+                path,
+                mem.model_copy(
+                    update={
+                        "created": backdated,
+                        "updated": backdated,
+                        "origin": Origin(
+                            cwd="/tmp/foo", repo=repo, worktree_root="/tmp/foo"
+                        ),
+                    }
+                ),
+            )
+            return written.id
+    raise AssertionError(f"memory {written.id!r} not found in store")
+
+
+def test_run_prompt_recall_delivers_on_project_cohort(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The delivery lane's widening (v6.2.0): a caller standing in the
+    repo the top hit was written from gets the injection even though the
+    AUDIT reports that same turn `ok` (no search was owed). The premise
+    behind the audit's suppression — "the context is in the open source
+    tree" — does not hold for memory-resident facts, and dogfood put
+    ~95% of replayable misses in this cohort. The event stamps
+    `delivered_reason="project_cohort"` so eval can slice the lanes."""
+    from bettermemory.origin import Origin
+
+    repo = "git@github.com:owner/foo.git"
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    memory_id = _write_project_memory(mem_dir, repo)
+    monkeypatch.setattr(
+        "bettermemory.hook.capture_origin",
+        lambda cwd=None: Origin(cwd="/tmp/foo", repo=repo, worktree_root="/tmp/foo"),
+    )
+
+    block = run_prompt_recall(
+        prompt=_MISS_QUERY,
+        session_id="transcript-cohort",
+        config=_miss_config(mem_dir),  # type: ignore[arg-type]
+    )
+    assert block is not None
+    assert memory_id in block
+    recalls = [e for e in iter_events(mem_dir) if e["kind"] == "prompt_recall"]
+    assert len(recalls) == 1
+    assert recalls[0]["delivered_reason"] == "project_cohort"
+
+
+def test_run_prompt_recall_project_cohort_respects_knob_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`[behavior] recall_in_project = false` restores the strict
+    fires-only-where-the-audit-would-flag coupling: the cohort turn
+    gets no injection and the log stays empty."""
+    from bettermemory.config import (
+        BehaviorConfig,
+        Config,
+        StorageConfig,
+        TelemetryConfig,
+    )
+    from bettermemory.origin import Origin
+
+    repo = "git@github.com:owner/foo.git"
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    _write_project_memory(mem_dir, repo)
+    monkeypatch.setattr(
+        "bettermemory.hook.capture_origin",
+        lambda cwd=None: Origin(cwd="/tmp/foo", repo=repo, worktree_root="/tmp/foo"),
+    )
+    cfg = Config(
+        storage=StorageConfig(directory=str(mem_dir)),
+        telemetry=TelemetryConfig(enabled=True),
+        behavior=BehaviorConfig(recall_in_project=False),
+    )
+    block = run_prompt_recall(
+        prompt=_MISS_QUERY, session_id="transcript-cohort-off", config=cfg
+    )
+    assert block is None
+    assert [e for e in iter_events(mem_dir) if e["kind"] == "prompt_recall"] == []
+
+
+def test_stop_audit_reports_ok_after_cohort_delivery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The honesty property holds on the widened lane too: a cohort
+    delivery records a retrieval-kind event, so the Stop hook's audit
+    of the same turn reports `ok` without a `search_miss` — the two
+    lanes stay consistent even though only delivery widened."""
+    from bettermemory.origin import Origin
+
+    repo = "git@github.com:owner/foo.git"
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    _write_project_memory(mem_dir, repo)
+    monkeypatch.setattr(
+        "bettermemory.hook.capture_origin",
+        lambda cwd=None: Origin(cwd="/tmp/foo", repo=repo, worktree_root="/tmp/foo"),
+    )
+    cfg = _miss_config(mem_dir)
+
+    block = run_prompt_recall(
+        prompt=_MISS_QUERY,
+        session_id="transcript-cohort-turn",
+        config=cfg,  # type: ignore[arg-type]
+    )
+    assert block is not None
+
+    result = run_audit(
+        user_message=_MISS_QUERY,
+        assistant_response="using the stored strategy",
+        session_id="transcript-cohort-turn",
+        config=cfg,  # type: ignore[arg-type]
+    )
+    assert result["verdict"] == "ok"
+    kinds = [e["kind"] for e in iter_events(mem_dir)]
+    assert "search_miss" not in kinds
+
+
 def test_run_prompt_recall_respects_knob_off(tmp_path: Path) -> None:
     """`[behavior] prompt_recall = false` restores purely opt-in
     retrieval: no injection, no probe side effects, no event log."""

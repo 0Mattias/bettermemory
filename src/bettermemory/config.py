@@ -147,6 +147,20 @@ corroboration_boost = false
 # retrieval.
 prompt_recall = true
 
+# Deliver recall inside the caller's own project. The silent-miss audit
+# deliberately declines to FLAG a turn whose top hit belongs to the git
+# project the caller is standing in ("update <repo>", "push it" — no
+# memory_search was owed with the source tree open). Delivery answers a
+# different question: memory-resident facts (decisions, run state,
+# rulings) are exactly what the source tree cannot serve, and measured
+# dogfood put ~95% of replayable misses in this cohort. With this on
+# (default), the prompt-recall hook also injects on those turns; the v1
+# "high" bar, the retrieval shield, and the attribution-window anti-spam
+# bound still apply unchanged. The audit lane is unaffected either way.
+# Set false to restore the strict fires-only-where-the-audit-would-flag
+# coupling.
+recall_in_project = true
+
 # Standing tier at session start. When true, the plugin's SessionStart
 # hook appends fresh-verified `ambient` memories — bodies, not pointers —
 # to the scope-counts hint it already prints, newest-verified first under
@@ -411,6 +425,17 @@ class BehaviorConfig:
     # unmeasurable, so the recall path refuses to fire rather than
     # fire off the books. See DEFAULT_CONFIG for prose.
     prompt_recall: bool = True
+    # Deliver prompt recall on the project cohort (`hook.run_prompt_recall`):
+    # when the caller works inside the git project the top hit was written
+    # from, the silent-miss AUDIT deliberately reports "ok" (no search was
+    # owed — the source tree is open), but the audit's premise does not
+    # transfer to DELIVERY: memory-resident facts (decisions, run state,
+    # rulings) are precisely what a source tree cannot serve, and dogfood
+    # measured ~95% of replayable misses in this cohort. Default ON — the
+    # v1 top-1 "high" bar, the retrieval shield, and the attribution-window
+    # anti-spam bound all still gate the injection. Set false to restore
+    # the strict fires-only-where-the-audit-would-flag coupling.
+    recall_in_project: bool = True
     # Standing tier at session start (`cli/session_start_cmd.py`):
     # fresh-verified ambient bodies appended to the SessionStart hint
     # under a whole-memory-truncation byte budget. Default OFF at
@@ -1081,6 +1106,7 @@ def load_config(path: Path | None = None) -> Config:
                 behavior_raw.get("corroboration_boost"), False
             ),
             prompt_recall=_coerce_bool(behavior_raw.get("prompt_recall"), True),
+            recall_in_project=_coerce_bool(behavior_raw.get("recall_in_project"), True),
             standing_tier=_coerce_bool(behavior_raw.get("standing_tier"), False),
             heavily_used_min_applied=_coerce_int(
                 behavior_raw.get("heavily_used_min_applied"),

@@ -773,14 +773,26 @@ def run_prompt_recall(
 
     This is `run_audit`'s verdict computed BEFORE the turn instead of
     after it. Same pool, same ranking inputs, same threshold rule, same
-    four shields (`_probe_message` is shared code, not a parallel
-    implementation), so it fires exactly where the Stop hook would
-    otherwise have flagged a `search_miss` — the machine that already
-    decided "memory was needed this turn" now delivers the answer while
-    it is still actionable instead of filing the failure afterward.
+    shields (`_probe_message` is shared code, not a parallel
+    implementation). It fires on two lanes:
+
+    - the classic would-be `search_miss` (`delivered_reason="miss"`) —
+      exactly where the Stop hook would otherwise have flagged; and
+    - under `[behavior] recall_in_project` (default on), the
+      project-cohort turns the audit deliberately declines to flag
+      (`delivered_reason="project_cohort"`): the caller stands in the
+      repo the top hit was written from, so no memory_search was
+      *owed* — but the memory itself (decisions, run state, rulings)
+      is not in the source tree, and dogfood measured ~95% of
+      replayable misses in this cohort. The audit's suppression stays;
+      only delivery widens.
+
     The founding don't-pollute-generic-answers stance is carried by the
-    bar (v1 top-1 "high" plus the shields, ~2% of audited turns —
-    docs/eval-results.md), not by opt-in.
+    bar (v1 top-1 "high" plus the retrieval/creation/ack shields), not
+    by opt-in; the historical miss-lane-only firing rate was ~2% of
+    audited turns (docs/eval-results.md), and the project-cohort lane's
+    rate is measured per-store from the `delivered_reason` slice of
+    `prompt_recall` events.
 
     On a miss this records a `prompt_recall` event BEFORE returning the
     block. The event is load-bearing twice over: it is a member of
@@ -832,7 +844,11 @@ def run_prompt_recall(
         excluded_scopes=excluded_scopes,
         recent=recent,
     )
-    if not report.is_miss:
+    if report.is_miss:
+        delivered_reason = "miss"
+    elif cfg.behavior.recall_in_project and report.suppressed_by == "project_cohort":
+        delivered_reason = "project_cohort"
+    else:
         return None
     block = _render_recall_block(report)
     recorder = Recorder(
@@ -850,6 +866,7 @@ def run_prompt_recall(
             session_id=session_id,
             probe_mode=cfg.behavior.search_mode or "hybrid",
             injected_chars=len(block),
+            delivered_reason=delivered_reason,
         ),
     )
     return block

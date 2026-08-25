@@ -7,6 +7,41 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 6.2.0 - 2026-08-25
+
+### Added — prompt recall delivers inside the caller's own project
+
+The score-gated UserPromptSubmit recall hook fires on a second lane:
+the project cohort. Until now the delivery predicate was identical to
+the silent-miss audit's, and the audit deliberately suppresses turns
+whose top hit belongs to the git project the caller is standing in
+("update <repo>", "push it" — no `memory_search` was *owed* with the
+source tree open). That suppression is correct for the audit's
+question and wrong for delivery's: memory-resident facts — decisions,
+run state, rulings — are exactly what an open source tree cannot
+serve, and dogfood measured ~95% of replayable misses in this cohort.
+For a store whose memories concentrate in the repos the user actually
+works in (the normal shape for a coding-agent memory), the old
+coupling made proactive recall structurally near-dead precisely where
+it mattered most.
+
+- `[behavior] recall_in_project` (default **on**) gates the new lane;
+  `false` restores the strict fires-only-where-the-audit-would-flag
+  coupling. The v1 top-1 "high" bar, the retrieval shield, the
+  creation shield, the ack/min-token gates, and the
+  attribution-window anti-spam bound all still apply unchanged.
+- The silent-miss **audit lane is unchanged** — the project cohort
+  still reports `ok`, and a delivered recall still shields the same
+  turn's audit through `_RETRIEVAL_EVENT_KINDS`.
+- `MissReport` gains `suppressed_by` (additive: `"retrieval"` /
+  `"project_cohort"` / `None`) naming which shield downgraded a
+  threshold-clearing hit; `prompt_recall` events gain
+  `delivered_reason` (`"miss"` / `"project_cohort"`) so eval slices
+  the lanes separately. Recall-rate comparisons across this boundary
+  must slice on `delivered_reason == "miss"` to stay like-for-like —
+  discontinuity named in docs/eval-results.md before the numbers, as
+  usual.
+
 ## 6.1.0 - 2026-08-16
 
 ### Changed — the conversational lane ships default-on

@@ -392,6 +392,21 @@ class MissReport:
     and replay must keep reading them. ``None`` from every current
     branch (empty store / empty query / no hits), so existing
     consumers see an unchanged shape.
+
+    `suppressed_by` (optional, additive) names which shield turned a
+    threshold-clearing top hit into an ``"ok"`` verdict:
+    ``"retrieval"`` (a retrieval event already fired in the lookback
+    window) or ``"project_cohort"`` (the caller works inside the same
+    git project the top hit was written from — see
+    `_caller_in_top_hit_project`). ``None`` on every other branch,
+    including genuine misses and below-threshold oks. The field exists
+    so verdict CONSUMERS can differ where their questions differ: the
+    silent-miss audit keeps treating the project cohort as
+    not-a-contract-slip (no search was owed), while the prompt-recall
+    delivery lane may still deliver there — the suppression's "the
+    context is reachable in the source tree" premise is an audit
+    argument, not a delivery argument, and memory-resident facts are
+    exactly the ones a source tree cannot serve.
     """
 
     verdict: Verdict
@@ -411,6 +426,7 @@ class MissReport:
     # nothing, distinct from "we never asked it."
     probe_query: str | None = None
     no_signal_reason: str | None = None
+    suppressed_by: str | None = None
 
     @property
     def is_miss(self) -> bool:
@@ -427,6 +443,7 @@ class MissReport:
             "top_hits": [h.to_dict() for h in self.top_hits],
             "probe_query": self.probe_query,
             "no_signal_reason": self.no_signal_reason,
+            "suppressed_by": self.suppressed_by,
         }
 
 
@@ -567,6 +584,7 @@ def prompt_recall_fields(
     probe_mode: str,
     injected_chars: int,
     triggered_from: str = "prompt_hook",
+    delivered_reason: str = "miss",
 ) -> dict[str, Any]:
     """Canonical field set for a ``prompt_recall`` event — the
     UserPromptSubmit hook's record that it injected a stored memory's
@@ -592,6 +610,14 @@ def prompt_recall_fields(
       is no budget test for per-turn injected context (the resident
       footprint suite measures the tool surface, not hook stdout), so
       the log carries the number that would let one be written.
+
+    ``delivered_reason`` (additive, default ``"miss"``) records which
+    predicate branch fired the delivery: ``"miss"`` (the classic
+    would-be silent miss) or ``"project_cohort"`` (the caller-in-repo
+    cohort the audit suppresses but the delivery lane serves under
+    ``[behavior] recall_in_project`` — see `hook.run_prompt_recall`).
+    Eval slices the two lanes separately; replay under a future rule
+    reads the hit shapes either way.
     """
     if triggered_from not in _VALID_TRIGGERED_FROM:
         raise ValueError(
@@ -609,6 +635,7 @@ def prompt_recall_fields(
         "probe_mode": probe_mode,
         "injected_chars": injected_chars,
         "triggered_from": triggered_from,
+        "delivered_reason": delivered_reason,
     }
 
 
@@ -992,10 +1019,14 @@ def probe_for_miss(
         worktree_root=worktree_filter,
     )
 
+    # `suppressed_by` names the shield that downgraded a
+    # threshold-clearing hit; None everywhere else (see MissReport).
+    suppressed_by: str | None = None
     if not clears_threshold:
         verdict: Verdict = "ok"
     elif recent_retrieval_count > 0:
         verdict = "ok"
+        suppressed_by = "retrieval"
     elif _caller_in_top_hit_project(top_hits[:1], memories, caller_origin):
         # Caller is working inside the same git project the
         # threshold-deciding top hit was written from. The model already
@@ -1011,6 +1042,7 @@ def probe_for_miss(
         # memory AS the top hit — so restricting to top-1 preserves the
         # designed suppression.
         verdict = "ok"
+        suppressed_by = "project_cohort"
     else:
         verdict = "miss"
 
@@ -1023,6 +1055,7 @@ def probe_for_miss(
         threshold_rule=THRESHOLD_RULE_V1,
         top_hits=top_hits,
         probe_query=user_message,
+        suppressed_by=suppressed_by,
     )
 
 

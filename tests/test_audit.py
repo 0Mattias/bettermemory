@@ -780,6 +780,81 @@ def test_caller_in_project_suppresses_high_relevance_miss() -> None:
     assert report.recent_retrieval_count == 0
     # Suppression fires: caller is in foo's repo, top hit is project:foo.
     assert report.verdict == "ok"
+    # And the report names WHICH shield spoke — the delivery lane
+    # (`hook.run_prompt_recall` under `recall_in_project`) branches on
+    # this to serve the cohort the audit deliberately declines to flag.
+    assert report.suppressed_by == "project_cohort"
+
+
+def test_suppressed_by_stamps_retrieval_shield_and_stays_none_elsewhere() -> None:
+    """`suppressed_by` is the shield-attribution field: "retrieval" when
+    an in-window retrieval event downgraded a clearing hit, and None on
+    both a genuine miss and a below-threshold ok — the delivery lane
+    must never mistake "nothing relevant" for "suppressed"."""
+    m = _memory("backup strategy uses triangular restic replication")
+    now = _utc(2026, 5, 1)
+    shielded = probe_for_miss(
+        [m],
+        "backup strategy",
+        recent_events=[
+            _search_event(
+                session="sess_x",
+                ts=now - timedelta(seconds=30),
+                returned=[m.id],
+            )
+        ],
+        session_id="sess_x",
+        now=now,
+        lookback_seconds=60,
+    )
+    assert shielded.verdict == "ok"
+    assert shielded.suppressed_by == "retrieval"
+
+    miss = probe_for_miss(
+        [m],
+        "backup strategy",
+        recent_events=[],
+        session_id="sess_x",
+        now=now,
+    )
+    assert miss.verdict == "miss"
+    assert miss.suppressed_by is None
+
+    below_bar = probe_for_miss(
+        [m],
+        "kubernetes ingress annotations for the mail relay",
+        recent_events=[],
+        session_id="sess_x",
+        now=now,
+    )
+    assert below_bar.verdict in ("ok", "no_signal")
+    assert below_bar.suppressed_by is None
+
+
+def test_prompt_recall_fields_carries_delivered_reason() -> None:
+    """The recall event stamps which predicate lane fired: default
+    "miss" keeps old call sites and replay readers unchanged; the
+    cohort lane passes "project_cohort" explicitly."""
+    m = _memory("backup strategy uses triangular restic replication")
+    report = probe_for_miss(
+        [m],
+        "backup strategy",
+        recent_events=[],
+        session_id="sess_x",
+        now=_utc(2026, 5, 1),
+    )
+    default_fields = prompt_recall_fields(
+        report, session_id="sess_x", probe_mode="hybrid", injected_chars=100
+    )
+    assert default_fields["delivered_reason"] == "miss"
+    cohort_fields = prompt_recall_fields(
+        report,
+        session_id="sess_x",
+        probe_mode="hybrid",
+        injected_chars=100,
+        delivered_reason="project_cohort",
+    )
+    assert cohort_fields["delivered_reason"] == "project_cohort"
 
 
 def test_global_memory_top_hit_does_not_suppress() -> None:

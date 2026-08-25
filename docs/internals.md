@@ -31,17 +31,27 @@ declared claims on `memory_write` / `memory_verify` (3.40.0).
 - Retrieval is opt-in at the tool surface. `memory_search` is a
   deliberate tool call; two deliveries bypass it. The score-gated
   prompt-recall hook (3.41.0) injects a single id + snippet pointer
-  on the ~2% of prompts the silent-miss probe flags — the same
-  predicate, threshold, and shields as the Stop-hook audit, so it
-  fires exactly where the audit would have logged a `search_miss`
-  after the fact. The recall hook injects no bodies; the
-  verify-before-relying read path stays on `memory_show`.
-  `[behavior] prompt_recall = false` restores purely opt-in retrieval.
+  where the silent-miss probe's bar clears — the same predicate,
+  threshold, and shields as the Stop-hook audit. It fires on two
+  lanes (6.2.0): the classic would-be `search_miss` (a rare event by
+  design; the measured firing rate lives in docs/eval-results.md),
+  and — under `[behavior] recall_in_project`, default on — the
+  project cohort the audit deliberately declines to flag: the caller
+  stands inside the repo the top hit was written from, so no search
+  was *owed*, but memory-resident facts (decisions, run state,
+  rulings) are not in the source tree, and the dogfood replay ledger
+  put the bulk of replayable misses in exactly this cohort. The
+  audit lane is unchanged; delivered recalls stamp
+  `delivered_reason` so eval slices the lanes separately. The recall
+  hook injects no bodies; the verify-before-relying read path stays
+  on `memory_show`. `[behavior] prompt_recall = false` restores
+  purely opt-in retrieval.
   The session-start standing tier (3.42.0, `[behavior] standing_tier`,
   default off) is the unconditional one: the SessionStart hint appends
   the caller-scoped `ambient` memories whose staleness verdict
-  computes fresh — whole bodies, newest-verified first, capped at
-  ~1 KB, truncating only at memory boundaries — because opt-in
+  computes fresh — whole bodies, newest-verified first, under a small
+  fixed byte budget (the constant lives beside `standing_tier` in
+  config.py), truncating only at memory boundaries — because opt-in
   retrieval cannot serve knowledge whose trigger condition is not
   knowing you need it. Admission runs the same verdict chain
   `memory_show` computes (calendar leg, claim-anchored path drift,

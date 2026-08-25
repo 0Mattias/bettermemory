@@ -409,7 +409,8 @@ def test_load_config_coerces_behavior_bool_fields(tmp_path: Path) -> None:
     config_path = tmp_path / "config.toml"
     config_path.write_text(
         "[behavior]\nrequire_write_confirmation = true\n"
-        "prompt_recall = false\nstanding_tier = true\n",
+        "prompt_recall = false\nstanding_tier = true\n"
+        "recall_in_project = false\n",
         encoding="utf-8",
     )
     cfg = load_config(config_path)
@@ -418,6 +419,9 @@ def test_load_config_coerces_behavior_bool_fields(tmp_path: Path) -> None:
     # `standing_tier` is default-FALSE, so explicit-true is the direction
     # that proves ITS override reaches the loader.
     assert cfg.behavior.standing_tier is True
+    # `recall_in_project` is default-TRUE like prompt_recall; explicit
+    # false proves the override reaches the loader.
+    assert cfg.behavior.recall_in_project is False
 
 
 def test_load_config_reads_scopes_allowed(tmp_path: Path) -> None:
