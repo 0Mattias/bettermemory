@@ -746,7 +746,7 @@ def _render_recall_block(report: MissReport) -> str:
     snippet = " ".join(hit.snippet.split())
     frame = (
         "bettermemory recall (score-gated: a stored memory ranks high for "
-        "this prompt; this fires on ~2% of turns):\n"
+        "this prompt; most turns get no injection):\n"
         f"- {hit.id} [{scopes}]\n"
         '  "{snippet}"\n'
         "Verify before relying: memory_show(id) carries the full body and "
