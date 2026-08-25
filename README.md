@@ -7,6 +7,7 @@
   <a href="https://github.com/0Mattias/bettermemory/actions/workflows/ci.yml"><img src="https://github.com/0Mattias/bettermemory/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.11%E2%80%933.14-blue.svg" alt="Python 3.11-3.14"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="MIT"></a>
+  <a href="https://glama.ai/mcp/servers/0Mattias/bettermemory"><img src="https://glama.ai/mcp/servers/0Mattias/bettermemory/badges/score.svg" alt="bettermemory MCP server"></a>
 </p>
 
 <!-- mcp-name: io.github.0Mattias/bettermemory -->
