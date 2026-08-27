@@ -1,0 +1,224 @@
+{
+ "arm": "w2-rr",
+ "half": "even",
+ "n": 250,
+ "baseline_macro": {
+  "1": 0.3941,
+  "5": 0.7231,
+  "10": 0.8039
+ },
+ "baseline_by_type": {
+  "single-session-assistant": {
+   "1": 0.8929,
+   "5": 1.0,
+   "10": 1.0
+  },
+  "single-session-user": {
+   "1": 0.4857,
+   "5": 0.7429,
+   "10": 0.8571
+  },
+  "multi-session": {
+   "1": 0.2704,
+   "5": 0.657,
+   "10": 0.7853
+  },
+  "knowledge-update": {
+   "1": 0.4359,
+   "5": 0.9103,
+   "10": 0.9615
+  },
+  "temporal-reasoning": {
+   "1": 0.2939,
+   "5": 0.6556,
+   "10": 0.7253
+  },
+  "single-session-preference": {
+   "1": 0.1333,
+   "5": 0.2667,
+   "10": 0.3333
+  }
+ },
+ "type_n": {
+  "single-session-assistant": 28,
+  "single-session-user": 35,
+  "multi-session": 67,
+  "knowledge-update": 39,
+  "temporal-reasoning": 66,
+  "single-session-preference": 15
+ },
+ "grid": [
+  {
+   "K": 25,
+   "w": 0.5,
+   "macro": {
+    "1": 0.3499,
+    "5": 0.7159,
+    "10": 0.8146
+   },
+   "by_type": {
+    "single-session-assistant": {
+     "1": 0.8929,
+     "5": 1.0,
+     "10": 1.0
+    },
+    "single-session-user": {
+     "1": 0.3429,
+     "5": 0.7429,
+     "10": 0.8286
+    },
+    "multi-session": {
+     "1": 0.2729,
+     "5": 0.6557,
+     "10": 0.7923
+    },
+    "knowledge-update": {
+     "1": 0.3333,
+     "5": 0.8718,
+     "10": 0.9487
+    },
+    "temporal-reasoning": {
+     "1": 0.2604,
+     "5": 0.6371,
+     "10": 0.751
+    },
+    "single-session-preference": {
+     "1": 0.1333,
+     "5": 0.3333,
+     "10": 0.4667
+    }
+   },
+   "delta_macro5": -0.0072
+  },
+  {
+   "K": 25,
+   "w": 1.0,
+   "macro": {
+    "1": 0.3171,
+    "5": 0.6793,
+    "10": 0.8115
+   },
+   "by_type": {
+    "single-session-assistant": {
+     "1": 0.8571,
+     "5": 1.0,
+     "10": 1.0
+    },
+    "single-session-user": {
+     "1": 0.2571,
+     "5": 0.6571,
+     "10": 0.8286
+    },
+    "multi-session": {
+     "1": 0.2512,
+     "5": 0.6724,
+     "10": 0.7878
+    },
+    "knowledge-update": {
+     "1": 0.2692,
+     "5": 0.7564,
+     "10": 0.9231
+    },
+    "temporal-reasoning": {
+     "1": 0.2414,
+     "5": 0.6101,
+     "10": 0.7591
+    },
+    "single-session-preference": {
+     "1": 0.2,
+     "5": 0.2667,
+     "10": 0.4667
+    }
+   },
+   "delta_macro5": -0.0438
+  },
+  {
+   "K": 50,
+   "w": 0.5,
+   "macro": {
+    "1": 0.3357,
+    "5": 0.6894,
+    "10": 0.8124
+   },
+   "by_type": {
+    "single-session-assistant": {
+     "1": 0.8571,
+     "5": 1.0,
+     "10": 1.0
+    },
+    "single-session-user": {
+     "1": 0.3143,
+     "5": 0.6857,
+     "10": 0.8286
+    },
+    "multi-session": {
+     "1": 0.2687,
+     "5": 0.655,
+     "10": 0.7866
+    },
+    "knowledge-update": {
+     "1": 0.3077,
+     "5": 0.7949,
+     "10": 0.9487
+    },
+    "temporal-reasoning": {
+     "1": 0.2414,
+     "5": 0.6283,
+     "10": 0.7485
+    },
+    "single-session-preference": {
+     "1": 0.2,
+     "5": 0.2667,
+     "10": 0.4667
+    }
+   },
+   "delta_macro5": -0.0337
+  },
+  {
+   "K": 50,
+   "w": 1.0,
+   "macro": {
+    "1": 0.3044,
+    "5": 0.6286,
+    "10": 0.7676
+   },
+   "by_type": {
+    "single-session-assistant": {
+     "1": 0.8571,
+     "5": 0.9643,
+     "10": 1.0
+    },
+    "single-session-user": {
+     "1": 0.2286,
+     "5": 0.5714,
+     "10": 0.7143
+    },
+    "multi-session": {
+     "1": 0.2463,
+     "5": 0.65,
+     "10": 0.7542
+    },
+    "knowledge-update": {
+     "1": 0.2564,
+     "5": 0.6795,
+     "10": 0.8333
+    },
+    "temporal-reasoning": {
+     "1": 0.2212,
+     "5": 0.5318,
+     "10": 0.7101
+    },
+    "single-session-preference": {
+     "1": 0.2,
+     "5": 0.3333,
+     "10": 0.6
+    }
+   },
+   "delta_macro5": -0.0945
+  }
+ ],
+ "notes": [
+  "half-corpus read; not publishable as a full-corpus figure",
+  "baseline recomputed from the same cache; deltas are paired"
+ ]
+}
