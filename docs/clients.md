@@ -31,6 +31,8 @@ Project-scope wins when both are present — usually what you want for a project
 
 The manual path doesn't include the system-prompt skill the plugin ships. For the long-form policy with a manual install, paste [`system_prompt.md`](system_prompt.md) into your `CLAUDE.md`, or `bettermemory init --with-addendum` to print it.
 
+The manual path also skips the plugin's **hooks**, and those carry real behavior on Claude Code: the Stop hook (`bettermemory audit-turn`) settles retrievals at turn end and runs the silent-miss audit, the UserPromptSubmit hook (`bettermemory prompt-recall`) delivers score-gated proactive recall, and the SessionStart hook prints the per-scope hint. Without the Stop hook the usage telemetry is one-sided — `memory_health` suppresses its dead-weight and cold-endorsement verdicts rather than misreading the silence (the honesty gate), and `bettermemory doctor` reports the store as MCP-audited rather than hook-wired. Wire them from the plugin's `hooks/hooks.json` shapes if you want the full loop on a manual install; on other hosts there is no hook surface, and the in-process settlement plus the honesty gate are the designed degradation.
+
 ## Claude Desktop
 
 ```sh
@@ -116,6 +118,8 @@ bettermemory doctor
 The `mcp_client_configs` check scans every known client's config and cross-checks the registered binary path against what `find_binary()` resolves to now. A mismatch (typically: reinstalled bettermemory into a different venv) is flagged with a one-line fix hint.
 
 In the host itself, ask the model *"what memory tools do you have?"*. If the tools aren't listed, the server failed to start — `bettermemory doctor` will tell you why.
+
+After a few sessions, `doctor`'s `audit_turn_cadence` check says which kind of store you're running: hook-wired (Stop-hook audits landing), MCP-audited (the model calls `memory_audit_turn` in-process — real telemetry, but the automatic end-of-turn lane is missing), or silent (nothing audits; the warn carries the wiring hint).
 
 ## Snippet shape
 

@@ -62,10 +62,11 @@ Offline, throwaway store.
   curation tools surface what drifted, what went cold, and what
   contradicts what.
 - Receipts, not adjectives. The claims above are measured by
-  preregistered benchmarks with published artifacts — misses included
-  — in [bench/][bench], and `bettermemory eval` scores whether memory
-  actually helped against your own log ([ours is
-  published][eval-results]).
+  preregistered benchmarks whose frozen result artifacts — misses
+  included — live in [bench/][bench] (`results/*.json`, each carrying
+  the declared terms it was scored under), and `bettermemory eval`
+  scores whether memory actually helped against your own log ([ours
+  is published][eval-results]).
 
 ## For agents
 

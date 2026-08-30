@@ -7,6 +7,88 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 6.3.0 - 2026-08-30
+
+A minor by the [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract):
+additive report fields, a recalibrated health constant, split doctor
+messaging, and a widened honesty gate — no schema change, no removals,
+no resident-description changes.
+
+### Added — cross-repo drift: the estate check
+
+Every commit-drift surface is gated on the caller standing inside the
+memory's origin repo, so records anchored in other projects rot
+invisibly from wherever health runs. `memory_health` now carries
+`cross_repo_drift`: foreign candidates grouped by recorded origin +
+`worktree_root`, each directory re-identified as a checkout of the
+recorded repo before being trusted (a moved or reused directory is
+skipped with its reason, never misread), and the same claim-anchored
+legs run there read-only through one shared row helper, so the
+caller-repo and estate rollups cannot compute different policies for
+the same memory. Bounds are explicit: a per-run cap on roots walked
+(over-cap groups listed as skipped, never dropped), `None` when no
+foreign claim-anchored verified candidate exists, and a walked clean
+group emitted with zero rows — "checked, clean" and "didn't check"
+must not read the same. Deep-report only: session-start's
+`curation_pending` stays caller-repo cheap.
+
+### Changed — the cold-endorsement floor earns its number, gated
+
+`_COLD_ENDORSEMENT_MIN_RETRIEVALS` rises 5 → 30, calibrated against
+the dogfood event log: at the measured explicit-endorse rate
+(p ≈ 0.130 per retrieval) a healthy memory showed zero explicit
+applies at the old floor with probability 0.50 — the bucket flagged
+coin flips, and the store's one standing recommendation was to
+acknowledge-debt demonstrably active memories. Thirty puts
+P(zero | healthy) at or under 0.05 for both same-week rate estimates;
+the derivation lives at the constant. The endorsement leg also joins
+the dead-weight honesty gate on both surfaces (`memory_health` and
+the `curation_pending` rollup zero together; `telemetry_coverage`
+grows `cold_endorsement_suppressed`): explicit applies are exactly
+the counts an unwired hook cannot produce, so on a hookless store the
+zero is uninformative and the curation hint's pressure sum corrects
+itself for free.
+
+### Changed — verification debt splits by checkability
+
+A large minority of a real store's debt is judgment records —
+preferences, directives, lessons — with nothing a verify pass can
+mechanically check, so an undivided `never_verified` total reads as
+backlog a curate loop can never drain. `verification_debt` gains
+`never_verified_checkable` / `stale_checkable` (a row is checkable
+when it declares claims or carries drift anchors — body-cited paths
+plus attested `verified_paths`, the notion every drift surface
+already reads), and both capped row lists sort checkable-first so the
+display window leads with drainable work.
+
+### Changed — doctor tells hook-wired from MCP-audited
+
+The `audit_turn_cadence` census splits `turn_audited` on the shared
+coverage predicate instead of counting every row as hook evidence —
+an in-process `memory_audit_turn` stamps `triggered_from="mcp_tool"`,
+and counting it was the conflation this census kept after every other
+surface dropped it. An MCP-only store still warns (the hook genuinely
+is not wired), but the message names what the store is instead of
+claiming silence; `hook_turn_audited` / `mcp_turn_audited` join the
+published info keys.
+
+### Changed — the small trio's remaining pair
+
+The transient-reject hint routes run-state: it now names
+`episode_write` as the tier built for exactly the content it rejects
+(a runtime payload — nothing landed on the resident budget). And the
+system-prompt addendum's episode section catches up to the plugin
+skill's framing — the routing rule, the write-every-iteration minting
+moment, the cheap takeaway-only scan — net-neutral at 9,144 → 9,181
+bytes, both byte-equal surfaces moving together.
+
+### Fixed — the injected block drops its stale firing-rate claim
+
+`c7b371c`, shipped unreleased since the 6.2.0 tag: the prompt-recall
+injection block quoted the pre-6.2.0 firing-rate figure after the
+project-cohort lane changed what fires; the block now teaches its
+handling without the stale number.
+
 ## 6.2.0 - 2026-08-25
 
 ### Added — prompt recall delivers inside the caller's own project
