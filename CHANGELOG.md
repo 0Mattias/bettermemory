@@ -42,6 +42,15 @@ it mattered most.
   discontinuity named in docs/eval-results.md before the numbers, as
   usual.
 
+Release erratum (2026-08-30): the tagged release also carries one fix
+the entry did not name — `a5881abfd` gave the three drift-read log
+legs in `origin.py` the patch stream's 5.0s ceiling instead of the
+write path's inherited 1.0s, which on a slow host timed them out and
+collapsed real commit drift into the conservative no-report branch
+(observed on the windows-latest runner). The write-path default is
+untouched. Caught by the entry-coverage test on a full checkout; the
+shallow-checkout skip is why the CI matrix never flagged it.
+
 ## 6.1.0 - 2026-08-16
 
 ### Changed — the conversational lane ships default-on
