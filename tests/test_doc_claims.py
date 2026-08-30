@@ -1125,6 +1125,44 @@ def _is_placeholder(token: str) -> bool:
     return stem.lower() in _PLACEHOLDER_STEMS
 
 
+@lru_cache(maxsize=None)
+def _is_git_ignored(rel: str) -> bool:
+    """True when git says ``rel`` is ignored.
+
+    A cited path that exists on THIS disk but is ignored is local
+    state, not the repo: a clean checkout — CI's view — does not have
+    it, so prose citing it claims a file the repo does not ship.
+    Surfaced 2026-08-30 the expensive way: a bench docstring cited its
+    gitignored corpus manifest, the claim passed every local run (the
+    file exists here) and failed all six CI test legs at once — the
+    one divergence the existence check structurally cannot see from a
+    dirty tree. False when git is unavailable or errors: the plain
+    existence check then carries the verdict alone, the same
+    degradation the tracked-files corpus discipline uses.
+
+    One git refusal IS an answer: "pathspec ... is beyond a symbolic
+    link" (exit 128). Content past a symlink is never repo content —
+    git tracks the link, not what it points into — so a path that
+    exists only through one is local state by construction. This is
+    the actual local shape of the motivating case: ``bench/w/corpus``
+    is a symlink into the external training-data store on this
+    machine and a plain ignore rule on a clean checkout, and both
+    spellings must read the same.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "check-ignore", "-q", "--", rel],
+            cwd=_REPO_ROOT,
+            capture_output=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if proc.returncode == 0:
+        return True
+    return b"beyond a symbolic link" in proc.stderr
+
+
 def check_paths(source: str, text: str, line_offset: int = 0) -> list[Failure]:
     """Anchored repo-relative path tokens must exist on disk.
 
@@ -1158,14 +1196,20 @@ def check_paths(source: str, text: str, line_offset: int = 0) -> list[Failure]:
                 continue
             if _ILLUSTRATIVE_CUE.search(line[: match.start()]):
                 continue
-            if (_REPO_ROOT / token).exists():
+            target_exists = (_REPO_ROOT / token).exists()
+            if target_exists and not _is_git_ignored(token):
                 continue
             if _quoted_as_nonresolving(
                 text, line_start + match.start(), line_start + match.end()
             ):
                 continue
             claim = Claim(source, index + line_offset, "path", token)
-            out.append(Failure(claim, "no such file in the repo"))
+            reason = (
+                "exists locally but is git-ignored — a clean checkout does not have it"
+                if target_exists
+                else "no such file in the repo"
+            )
+            out.append(Failure(claim, reason))
     return out
 
 
@@ -1640,6 +1684,55 @@ def test_no_allowlist_entry_covers_a_python_source() -> None:
 # merely satisfied today is indistinguishable from a rule that does nothing.
 # They assert against real repo files, so they stay honest as the repo moves.
 # --------------------------------------------------------------------------
+def test_a_present_but_gitignored_path_is_still_a_false_claim() -> None:
+    """The local-vs-CI blind spot, closed and pinned. The fixture
+    creates a real file under the repo's own ignored corpus tree, so
+    on this machine the claim is exists-but-ignored while on a clean
+    checkout the same path is plain-missing — the verdict must be a
+    false claim in both environments, through whichever branch. The
+    reason string differs on purpose: an author staring at a file
+    that visibly exists deserves to be told the repo does not ship
+    it."""
+    rel = "bench/longmemeval/data/doc-claims-selftest.json"
+    target = _REPO_ROOT / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("{}", encoding="utf-8")
+    try:
+        assert _is_git_ignored(rel), (
+            "fixture premise broken: bench/longmemeval/data/ is expected "
+            "to be gitignored (the .gitignore corpus-bytes rule)"
+        )
+        fails = check_paths("docs/fake.md", f"Pinned in `{rel}` today.")
+        assert [f.claim.subject for f in fails] == [rel]
+        assert "git-ignored" in fails[0].detail
+    finally:
+        target.unlink()
+
+
+def test_a_path_beyond_a_symlink_reads_as_local_state() -> None:
+    """The symlink spelling of the same blind spot: on this machine the
+    corpus tree is a symlink into the external store, so `git
+    check-ignore` refuses the pathspec rather than answering — and that
+    refusal is an answer, because content past a symlink is never repo
+    content. Skipped where the local layout doesn't have the symlink
+    (CI checks out the ignore-rule spelling instead, which the
+    sibling test covers)."""
+    root = _REPO_ROOT / "bench" / "w" / "corpus"
+    if not root.is_symlink():
+        pytest.skip("bench/w/corpus is not a symlink in this checkout")
+    probe = root / "gutenberg" / "manifest.json"
+    if not probe.exists():
+        pytest.skip("external corpus store not mounted")
+    assert _is_git_ignored("bench/w/corpus/gutenberg/manifest.json")
+    fails = check_paths(
+        "docs/fake.md",
+        "Pinned in `bench/w/corpus/gutenberg/manifest.json` today.",
+    )
+    assert [f.claim.subject for f in fails] == [
+        "bench/w/corpus/gutenberg/manifest.json"
+    ]
+
+
 def test_detects_missing_path() -> None:
     fails = check_paths("docs/fake.md", "See `src/bettermemory/nope_xyz.py` for it.")
     assert [f.claim.subject for f in fails] == ["src/bettermemory/nope_xyz.py"]

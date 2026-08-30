@@ -19,11 +19,11 @@ bytes:
 
 Rejections are recorded beside admissions in the manifest so the
 register can carry ``admitted=false`` entries with their reason — the
-program register's own rule. The manifest
-(``bench/w/corpus/gutenberg/manifest.json``) records, per admitted
-item: id, expected and actual title, URL, byte count, sha256 over the
-exact fetched bytes, and the matched license line. The corpus bytes
-stay out of git (``bench/w/corpus/`` is ignored); the register commits
+program register's own rule. The manifest (``manifest.json``, written
+beside the fetched bytes under the gitignored ``bench/w/corpus/``
+tree) records, per admitted item: id, expected and actual title, URL,
+byte count, sha256 over the exact fetched bytes, and the matched
+license line. The corpus bytes stay out of git; the register commits
 the pins.
 
 Politeness: one request at a time, a fixed delay between requests, an
