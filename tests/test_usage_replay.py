@@ -195,7 +195,7 @@ class TestSearchToggleCapture:
                     pool,
                     query,
                     now=_NOW,
-                    mode=mode,  # type: ignore[arg-type]
+                    mode=mode,
                     applied_by_id=applied,
                     negative_by_id=negatives,
                     corroboration_boost=True,
@@ -208,7 +208,7 @@ class TestSearchToggleCapture:
                         pool,
                         query,
                         now=_NOW,
-                        mode=mode,  # type: ignore[arg-type]
+                        mode=mode,
                         applied_by_id=(
                             None if flag == "endorsement_boost" else applied
                         ),
@@ -219,9 +219,7 @@ class TestSearchToggleCapture:
                     )
                     toggle = capture["toggles"].get(flag)
                     expected = (
-                        toggle["top1"]["id"]
-                        if toggle is not None
-                        else on_hits[0].id
+                        toggle["top1"]["id"] if toggle is not None else on_hits[0].id
                     )
                     assert off_hits[0].id == expected, (query, mode, flag)
 
@@ -524,11 +522,7 @@ class TestComputeUsageReplay:
             ),
             _ev("use", aged, outcome="applied", auto=False, ids=["Ma"]),
         ]
-        report = compute_usage_replay(
-            events, since=timedelta(days=30), now=_NOW
-        )
+        report = compute_usage_replay(events, since=timedelta(days=30), now=_NOW)
         assert report.replayable_turns == 0
         assert report.endorsed_distinct_in_window == 0
-        assert {f.flag: f for f in report.flags}[
-            "endorsement_boost"
-        ].changed_turns == 0
+        assert {f.flag: f for f in report.flags}["endorsement_boost"].changed_turns == 0

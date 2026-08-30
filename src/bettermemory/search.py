@@ -3235,22 +3235,17 @@ def _compute_usage_toggles(
             variant_legs.append(variant)
         if mode == "hybrid":
             base_pair = variant_legs[:2]
-            base_weights = (
-                None if stopword_fallback else _base_leg_weights(base_pair)
-            )
+            base_weights = None if stopword_fallback else _base_leg_weights(base_pair)
+            weights: list[float] | None
             if len(variant_legs) > 2:
                 exp_leg = variant_legs[2]
                 leg_weight = (
-                    _leg_evidence_weight(_leg_top_evidence(exp_leg))
-                    if exp_leg
-                    else 0.0
+                    _leg_evidence_weight(_leg_top_evidence(exp_leg)) if exp_leg else 0.0
                 )
                 weights = [*(base_weights or (1.0, 1.0)), leg_weight]
             else:
                 weights = base_weights
-            variant_scored = _hybrid_fuse(
-                variant_legs, rrf_k=rrf_k, weights=weights
-            )
+            variant_scored = _hybrid_fuse(variant_legs, rrf_k=rrf_k, weights=weights)
             if conv_reading is not None:
                 variant_scored = _conversational_rerank(
                     variant_scored, reading=conv_reading

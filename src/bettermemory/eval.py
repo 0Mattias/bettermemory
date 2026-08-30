@@ -2626,9 +2626,7 @@ def compute_usage_replay(
             else []
         )
         usage_toggles_raw = ev.get("usage_toggles")
-        usage_toggles = (
-            usage_toggles_raw if isinstance(usage_toggles_raw, dict) else {}
-        )
+        usage_toggles = usage_toggles_raw if isinstance(usage_toggles_raw, dict) else {}
         if usage_active or usage_toggles:
             ts_str = str(ev.get("ts"))
             if first_capture_ts is None or ts_str < first_capture_ts:
@@ -2716,9 +2714,7 @@ def compute_usage_replay(
                 worsening=worsening,
                 neutral=neutral,
                 miss_labeled_worsening=sum(
-                    1
-                    for c in changes
-                    if c.judgment == "worsening" and c.miss_labeled
+                    1 for c in changes if c.judgment == "worsening" and c.miss_labeled
                 ),
                 changes=changes,
                 invariant_rule=invariant_rule,
@@ -2821,9 +2817,7 @@ def render_usage_replay_text(report: UsageReplayReport) -> str:
         if row.invariant_rule is not None:
             lines.append(f"  invariant ({row.invariant_rule})")
             if row.invariant_violations:
-                lines.append(
-                    f"    VIOLATIONS: {len(row.invariant_violations)}"
-                )
+                lines.append(f"    VIOLATIONS: {len(row.invariant_violations)}")
                 for v in row.invariant_violations:
                     lines.append(
                         f"      {v['memory_id'][:10]}… suppressed "
@@ -2833,13 +2827,9 @@ def render_usage_replay_text(report: UsageReplayReport) -> str:
             else:
                 lines.append("    violations: 0")
     lines.append("")
+    lines.append("Read these numbers against the declared flip bars in docs/ROADMAP.md")
     lines.append(
-        "Read these numbers against the declared flip bars in "
-        "docs/ROADMAP.md"
-    )
-    lines.append(
-        "(the usage-signal flags entry). This surface measures; it "
-        "never flips."
+        "(the usage-signal flags entry). This surface measures; it never flips."
     )
     return "\n".join(lines) + "\n"
 
