@@ -5,6 +5,44 @@ Planned work, in rough priority order. Plans change; the
 
 ## Planned
 
+- **The usage-signal flags: flip bars declared, read 2026-09-09.** Four
+  ranking/delivery flags are built, tested and OFF with no measured
+  bar: `endorsement_boost`, `outcome_demotion`, `corroboration_boost`
+  (`config.py`, all default false) and `standing_tier` (shipped
+  3.42.0, "flip only with dogfood evidence"). Declared now, read once
+  at the recall-stack soak checkpoint — **2026-09-09**, ~2 weeks of
+  6.2.0's `delivered_reason` telemetry — alongside a fresh
+  `eval --report` snapshot (the published one is 3.38.0, measured
+  2026-08-04; the cohort lane's first trend point). An unread bar is a
+  hold, not a pass. Preconditions measured 2026-08-30 on the dogfood
+  log, so the bars guard signal liveness rather than ambition:
+  1. `endorsement_boost` — 96 distinct memories carried an explicit
+     endorse in the trailing 30 days (signal live). Flip if that
+     density holds ≥40 at the read AND an offline replay of the
+     window's audited turns (per-turn `top_hits`, flag toggled, no
+     store mutation) shows at least two-thirds of changed top-1s
+     improving and no miss-labeled turn worsening, on n ≥ 10 changed
+     turns; fewer changed turns is a hold for blast-radius evidence.
+  2. `outcome_demotion` — 57 distinct negative-outcome memories in 30
+     days. Same replay protocol at ≥20 density, plus one invariant:
+     zero demoted memories that were a later turn's explicitly-applied
+     top-1 inside the window.
+  3. `corroboration_boost` — ZERO corroborated memories exist
+     (2026-08-30: 0 of 320 carry `corroborations > 0`), so the
+     cheapest flip is the least ready: the signal it ranks on has
+     never fired live. Liveness gate before any replay: ≥10 memories
+     with ≥1 corroboration and ≥3 with ≥2. Expected verdict at this
+     read: HOLD — recorded now so the hold is a verdict, not a shrug.
+  4. `standing_tier` — two-stage. Dogfood-config flip (never the
+     shipped default) when ≥2 receipts exist of standing content going
+     unserved by retrieval in 30 days — receipt #1 is the 2026-07-26
+     STOP-SURFACING directive, retrieved once while applied daily
+     out-of-band, recategorized `ambient` 2026-08-30, which makes it
+     deliverable the moment the flag flips. Shipped-default flip only
+     after ≥2 weeks of dogfood soak: no misdelivery, the 1024-byte
+     budget holding.
+  If the replay harness does not exist by the read, the read holds and
+  the harness becomes the next unit — the bars stay as declared.
 - **Score-gated recall at prompt time — SHIPPED 2026-08-05 (3.41.0).**
   Never a Planned entry; it arrived from the 2026-08-03 altitude
   review, which found the machine already built: the Stop hook ran
@@ -358,37 +396,39 @@ Planned work, in rough priority order. Plans change; the
 Each of these is scoped and has a known landing site; none is large
 enough to earn its own entry above.
 
-- **The transient-reject hint never names `episode_write`.** The hint in
-  `handlers/write.py` offers two remedies — rephrase to the durable form,
-  or `acknowledge_transient=True` — and does not mention the tier that
-  exists to hold exactly that content. The reverse direction is already
-  covered in `handlers/episode_write.py`, so the gap is one-way. No test
-  pins the string and reject hints are runtime payloads, so this costs
-  nothing against the resident budget.
-- **`SYSTEM_PROMPT_ADDENDUM` predates the episodes-as-state-channel
-  rewrite.** The block in `prompts.py` is mirrored byte-for-byte in
-  `docs/system_prompt.md` and pinned equal by `tests/test_prompts.py`. It
-  still describes episodes as a place you *may* use, and its loop-iteration
-  pattern predates both the cheap-scan parameters and the minting moment
-  that `plugin/skills/bettermemory/SKILL.md` now leads with. Target
-  net-neutral, not net-add: `docs/system_prompt.md` warns that Claude Code
-  truncates the paste at ~1.8 KB.
-- **`cold_endorsement_memories` is not gated by the telemetry-coverage
-  predicate, and that is a decision, not an implementation.** Only
-  `dead_weight` is gated in `health.py`. On a hookless store the
-  cold-endorsement leg over-fires exactly where the gate exists to stop
-  over-firing, and it reaches the model through the curation hint's
-  pressure sum — the one curation surface delivered without asking. Two
-  viable shapes: widen the coverage gate to cover the leg, or drop the leg
-  from the pressure sum when coverage is absent. Hard constraint: the
-  `curation_pending` key set is pinned by set-equality, dict-equality and a
-  DESC-prose regex, so the fix must not add a key.
-- **`doctor`'s `turn_audited` count does not check `triggered_from`.** An
-  in-process `memory_audit_turn` stamps `triggered_from="mcp_tool"`, so an
-  MCP-only store reads as "hook is wired" — the conflation fixed everywhere
-  else. Three verdict branches and a published info key read the counter,
-  so tightening it changes what `doctor` says on stores that are genuinely
-  fine but MCP-driven.
+- ~~**The transient-reject hint never names `episode_write`.**~~
+  **SHIPPED 2026-08-30 (6.3.0).** The hint offers three remedies now —
+  rephrase to the durable form, route run-state to `episode_write`, or
+  acknowledge — and stayed a runtime payload: nothing landed on the
+  resident budget, exactly as this entry priced it.
+- ~~**`SYSTEM_PROMPT_ADDENDUM` predates the episodes-as-state-channel
+  rewrite.**~~ **SHIPPED 2026-08-30 (6.3.0).** The episode section now
+  carries the routing rule, the write-every-iteration minting moment,
+  and the cheap takeaway-only scan, matching the plugin skill's lead;
+  both byte-equal surfaces moved together under `tests/test_prompts.py`
+  and the block went 9,144 → 9,181 bytes — net-neutral as targeted.
+- ~~**`cold_endorsement_memories` is not gated by the telemetry-coverage
+  predicate, and that is a decision, not an implementation.**~~
+  **SHIPPED 2026-08-30 (6.3.0).** The decision went to widening the
+  gate, not dropping the leg from the pressure sum — gating only the
+  hint would have left the published `scope_overview` count misleading
+  on the one surface the model does not have to ask for, while gating
+  the count corrects the sum for free and keeps the compute_health
+  agreement. No `curation_pending` key was added; the explanation rides
+  `telemetry_coverage.cold_endorsement_suppressed`. The same commit
+  recalibrated the floor 5 → 30 from the measured explicit-endorse base
+  rate (P(zero | healthy) was 0.50 at the old floor — it flagged coin
+  flips, and the store's one standing recommendation was to
+  acknowledge-debt demonstrably active memories).
+- ~~**`doctor`'s `turn_audited` count does not check `triggered_from`.**~~
+  **SHIPPED 2026-08-30 (6.3.0).** The census splits on the shared
+  coverage predicate (`health.is_hook_telemetry_event`) rather than
+  re-spelling the axis. An MCP-only store still warns — the hook
+  genuinely is not wired — but the message names what the store is
+  ("MCP-audited, the automatic end-of-turn lane is missing") instead of
+  claiming silence; `hook_turn_audited` / `mcp_turn_audited` joined the
+  published info keys and the ok verdict counts hook-sourced events
+  only.
 - ~~**`bench/retrieval/README.md`'s "What this does not measure" is short
   two structural caveats.**~~ **SHIPPED 2026-08-14**, in the cleanup that
   rewrote the bench READMEs as current-state documents: the recency-knob
@@ -477,8 +517,9 @@ enough to earn its own entry above.
   [examples/programmatic_client.py](../examples/programmatic_client.py).
 - **Removing `verified_commits` / `verified_versions` within a major.**
   The compatibility contract forbids removing a parameter within a
-  major; they are documented as audit-trail-only. 4.0 and 5.0 both
-  shipped without taking them, so this is a 6.0 question at most.
+  major; they are documented as audit-trail-only. 4.0, 5.0 and 6.0 all
+  shipped without taking them — 6.0 spent its breaking budget elsewhere
+  — so this is a 7.0 question at most.
 - **Gating the low-use episode tools out of the lean surface.**
   Evaluated against the event log; not available — the shipped plugin
   skill, the system-prompt addendum, and the swarm fan-in path depend
@@ -510,9 +551,10 @@ enough to earn its own entry above.
   The compatibility contract forbids removing a tool within a major,
   and the economics are backwards without the removal: a merged
   replacement can only be *added* in a minor, so inside the line it
-  would grow the description budget rather than shrink it. 4.0 and 5.0
-  both passed on it, so it is a 6.0 question — deprecation cycle
-  first, removal at the major with migration notes.
+  would grow the description budget rather than shrink it. 4.0, 5.0
+  and 6.0 all passed on it — 6.0 spent its breaking budget elsewhere —
+  so it is a 7.0 question: deprecation cycle first, removal at the
+  major with migration notes.
 
 ## Contributing
 
