@@ -4058,3 +4058,233 @@ def test_render_text_distinguishes_no_signal_only_from_never_audited() -> None:
     never_audited = render_text(compute_health([], [], now=_utc(2026, 5, 1)))
     assert "Silent misses" not in never_audited
     assert text != never_audited
+
+
+# ---------------------------------------------------------------------------
+# Cross-repo drift — the estate check
+# ---------------------------------------------------------------------------
+#
+# Local git fixtures mirror tests/test_server_commit_drift.py's idiom:
+# a real `git init` with a named remote, commits with pinned author
+# dates, and file-touching commits (the claim-anchored policy makes
+# --allow-empty commits invisible to the drift filter).
+
+
+def _init_estate_repo(path: Path, remote: str) -> None:
+    import subprocess
+
+    subprocess.run(
+        ["git", "init", "--initial-branch=main"],
+        cwd=path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "remote", "add", "origin", remote],
+        cwd=path,
+        check=True,
+        capture_output=True,
+    )
+
+
+def _estate_commit_touching(
+    path: Path, message: str, *, when: datetime, filename: str
+) -> None:
+    import os
+    import subprocess
+
+    target = path / filename
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("a") as fh:
+        fh.write(f"{message}\n")
+    subprocess.run(["git", "add", filename], cwd=path, check=True, capture_output=True)
+    iso = when.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    env = os.environ.copy()
+    env["GIT_AUTHOR_DATE"] = iso
+    env["GIT_COMMITTER_DATE"] = iso
+    env["GIT_AUTHOR_NAME"] = "Test"
+    env["GIT_AUTHOR_EMAIL"] = "test@example.com"
+    env["GIT_COMMITTER_NAME"] = "Test"
+    env["GIT_COMMITTER_EMAIL"] = "test@example.com"
+    subprocess.run(
+        ["git", "commit", "-m", message],
+        cwd=path,
+        check=True,
+        capture_output=True,
+        env=env,
+    )
+
+
+def _with_origin(m: Memory, *, cwd: str, repo: str, worktree: str) -> Memory:
+    from bettermemory.origin import Origin
+
+    return m.model_copy(
+        update={"origin": Origin(cwd=cwd, repo=repo, worktree_root=worktree)}
+    )
+
+
+def test_cross_repo_drift_finds_rot_the_caller_gate_hides(tmp_path: Path) -> None:
+    """A verified, claim-anchored memory whose origin is another repo on
+    disk: every caller-gated surface is structurally blind to it, and
+    the estate check walks the recorded worktree and reports the drift
+    — the motivating shape was a foreign record pinning a HEAD many
+    commits gone that read fresh for days."""
+    from bettermemory.origin import Origin
+
+    foreign = tmp_path / "foreign"
+    foreign.mkdir()
+    _init_estate_repo(foreign, "https://github.com/example/foreign.git")
+    _estate_commit_touching(foreign, "c1", when=_utc(2026, 1, 1), filename="src/app.py")
+    m = _memory(
+        body="the handler lives in `src/app.py`",
+        created=_utc(2026, 1, 2),
+        last_verified_at=_utc(2026, 2, 1),
+    )
+    m = _with_origin(
+        m,
+        cwd=str(foreign),
+        repo="https://github.com/example/foreign.git",
+        worktree=str(foreign),
+    )
+    # Drift lands AFTER the verify, touching the cited path.
+    _estate_commit_touching(foreign, "c2", when=_utc(2026, 3, 1), filename="src/app.py")
+    caller = Origin(
+        cwd=str(tmp_path),
+        repo="https://github.com/example/caller.git",
+        worktree_root=str(tmp_path),
+    )
+    report = compute_health([m], [], caller_origin=caller, now=_utc(2026, 4, 1))
+    xr = report.cross_repo_drift
+    assert xr is not None
+    assert xr.skipped == []
+    assert xr.total_drifted == 1
+    assert len(xr.groups) == 1
+    group = xr.groups[0]
+    assert group.repo == "https://github.com/example/foreign.git"
+    assert group.worktree_root == str(foreign)
+    assert group.candidates == 1
+    assert [r.id for r in group.rows] == [m.id]
+    assert group.rows[0].commits_since_verify == 1
+    # And the rendering carries the section.
+    text = render_text(report)
+    assert "Cross-repo drift" in text
+    assert "example/foreign.git" in text
+
+
+def test_cross_repo_drift_clean_group_is_emitted(tmp_path: Path) -> None:
+    """A walked foreign checkout with nothing drifted still appears —
+    "checked N, clean" and "didn't check" must not read the same."""
+    from bettermemory.origin import Origin
+
+    foreign = tmp_path / "foreign"
+    foreign.mkdir()
+    _init_estate_repo(foreign, "https://github.com/example/foreign.git")
+    _estate_commit_touching(foreign, "c1", when=_utc(2026, 1, 1), filename="src/app.py")
+    m = _memory(
+        body="the handler lives in `src/app.py`",
+        created=_utc(2026, 1, 2),
+        last_verified_at=_utc(2026, 2, 1),  # after the only commit
+    )
+    m = _with_origin(
+        m,
+        cwd=str(foreign),
+        repo="https://github.com/example/foreign.git",
+        worktree=str(foreign),
+    )
+    caller = Origin(
+        cwd=str(tmp_path),
+        repo="https://github.com/example/caller.git",
+        worktree_root=str(tmp_path),
+    )
+    report = compute_health([m], [], caller_origin=caller, now=_utc(2026, 4, 1))
+    xr = report.cross_repo_drift
+    assert xr is not None
+    assert xr.total_drifted == 0
+    assert len(xr.groups) == 1
+    assert xr.groups[0].candidates == 1
+    assert xr.groups[0].rows == []
+
+
+def test_cross_repo_drift_skips_missing_and_moved_worktrees(tmp_path: Path) -> None:
+    """A recorded worktree that is gone, or whose directory now holds a
+    different repo, is skipped with its reason — never misread as the
+    recorded project."""
+    from bettermemory.origin import Origin
+
+    gone = tmp_path / "gone"  # never created
+    reused = tmp_path / "reused"
+    reused.mkdir()
+    _init_estate_repo(reused, "https://github.com/example/other.git")
+    _estate_commit_touching(reused, "c1", when=_utc(2026, 1, 1), filename="src/app.py")
+
+    m_gone = _memory(
+        body="cites `src/app.py`",
+        created=_utc(2026, 1, 2),
+        last_verified_at=_utc(2026, 2, 1),
+    )
+    m_gone = _with_origin(
+        m_gone,
+        cwd=str(gone),
+        repo="https://github.com/example/gone.git",
+        worktree=str(gone),
+    )
+    m_moved = _memory(
+        body="cites `src/app.py` too",
+        created=_utc(2026, 1, 2),
+        last_verified_at=_utc(2026, 2, 1),
+    )
+    m_moved = _with_origin(
+        m_moved,
+        cwd=str(reused),
+        repo="https://github.com/example/expected.git",
+        worktree=str(reused),
+    )
+    caller = Origin(
+        cwd=str(tmp_path),
+        repo="https://github.com/example/caller.git",
+        worktree_root=str(tmp_path),
+    )
+    report = compute_health(
+        [m_gone, m_moved], [], caller_origin=caller, now=_utc(2026, 4, 1)
+    )
+    xr = report.cross_repo_drift
+    assert xr is not None
+    assert xr.groups == []
+    assert xr.total_drifted == 0
+    reasons = {s["repo"]: s["reason"] for s in xr.skipped}
+    assert reasons["https://github.com/example/gone.git"] == "worktree missing on disk"
+    assert (
+        reasons["https://github.com/example/expected.git"]
+        == "directory is no longer a checkout of the recorded repo"
+    )
+
+
+def test_cross_repo_drift_excludes_the_callers_own_repo(tmp_path: Path) -> None:
+    """Memories anchored in the caller's own repo belong to
+    `commit_drift_debt`; the estate check owns only the rest. With no
+    foreign candidate at all the rollup is None — same silence
+    philosophy as the caller-repo bucket."""
+    from bettermemory.origin import Origin
+
+    here = tmp_path / "here"
+    here.mkdir()
+    _init_estate_repo(here, "https://github.com/example/caller.git")
+    _estate_commit_touching(here, "c1", when=_utc(2026, 1, 1), filename="src/app.py")
+    m = _memory(
+        body="cites `src/app.py`",
+        created=_utc(2026, 1, 2),
+        last_verified_at=_utc(2026, 2, 1),
+    )
+    m = _with_origin(
+        m,
+        cwd=str(here),
+        repo="https://github.com/example/caller.git",
+        worktree=str(here),
+    )
+    caller = Origin(
+        cwd=str(here),
+        repo="https://github.com/example/caller.git",
+        worktree_root=str(here),
+    )
+    report = compute_health([m], [], caller_origin=caller, now=_utc(2026, 4, 1))
+    assert report.cross_repo_drift is None

@@ -50,6 +50,7 @@ from .events import _event_id_list, iter_all_events
 from .models import Category, Memory, first_summary_line
 from .origin import (
     Origin,
+    capture,
     commit_author_timestamps,
     repo_toplevel,
     repos_match,
@@ -805,6 +806,65 @@ class CommitDriftDebt:
         }
 
 
+# Cap on distinct foreign worktrees a single health run walks git in.
+# Each walked root costs one full `git log --format=%aI` plus the
+# per-drifting-row narrowing calls, all under the drift legs' 5s
+# ceiling — an unbounded estate would turn the deep report into a
+# multi-second git crawl. Cheap skips (missing directory, moved repo)
+# never consume the cap; groups past it are listed as skipped rather
+# than silently dropped, so "covered everything" is never implied.
+_CROSS_REPO_MAX_ROOTS = 8
+
+
+@dataclass
+class CrossRepoDriftGroup:
+    """One foreign origin's drift rollup — `CommitDriftDebt`'s shape,
+    anchored to the memory's recorded worktree instead of the caller's
+    cwd. `candidates` counts the claim-anchored, verified memories the
+    group was judged over, so "clean" is legible as "checked N, none
+    drifted" rather than "nothing to check"."""
+
+    repo: str
+    worktree_root: str
+    rows: list[CommitDriftRow] = field(default_factory=list)
+    total_drifted: int = 0
+    candidates: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "repo": self.repo,
+            "worktree_root": self.worktree_root,
+            "total_drifted": self.total_drifted,
+            "candidates": self.candidates,
+            "rows": [r.to_dict() for r in self.rows],
+        }
+
+
+@dataclass
+class CrossRepoDrift:
+    """Commit drift for memories whose origin is NOT the caller's repo.
+
+    Every other commit-drift surface is gated on the caller standing
+    inside the memory's origin repo, so records anchored in other
+    projects rot invisibly from here. This rollup resolves each foreign
+    group's recorded `origin.worktree_root` on disk and runs the same
+    claim-anchored legs there — see `_compute_cross_repo_drift` for the
+    checks and the cap. Deep-report only by design: session-start's
+    `curation_pending` stays caller-repo cheap.
+    """
+
+    groups: list[CrossRepoDriftGroup] = field(default_factory=list)
+    skipped: list[dict[str, str]] = field(default_factory=list)
+    total_drifted: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "total_drifted": self.total_drifted,
+            "groups": [g.to_dict() for g in self.groups],
+            "skipped": list(self.skipped),
+        }
+
+
 _COMMIT_DRIFT_DEBT_CAP = 20
 
 
@@ -1101,6 +1161,7 @@ class HealthReport:
     # while still landing in `verification_debt.fresh_count` because the
     # calendar window hasn't elapsed.
     commit_drift_debt: CommitDriftDebt | None = None
+    cross_repo_drift: CrossRepoDrift | None = None
     # Silent-miss telemetry — the false-negative half of opt-in
     # retrieval. `audited_total` and `miss_total` come from the
     # `turn_audited` and `search_miss` event kinds emitted by
@@ -1196,6 +1257,11 @@ class HealthReport:
             "rare_scopes": list(self.rare_scopes),
             "orphan_use_events": self.orphan_use_events,
             "verification_debt": self.verification_debt.to_dict(),
+            "cross_repo_drift": (
+                self.cross_repo_drift.to_dict()
+                if self.cross_repo_drift is not None
+                else None
+            ),
             "commit_drift_debt": (
                 self.commit_drift_debt.to_dict()
                 if self.commit_drift_debt is not None
@@ -1819,6 +1885,7 @@ def compute_health(
     # memory_search (see _compute_commit_drift_debt).
     origin_repo_by_id: dict[str, str | None] = {}
     anchor_paths_by_id: dict[str, tuple[str, ...]] = {}
+    origin_worktree_by_id: dict[str, str | None] = {}
     claims_by_id: dict[str, tuple[str, ...]] = {}
     for m in memories:
         by_id[m.id] = MemoryStats(
@@ -1832,6 +1899,7 @@ def compute_health(
             category=m.category,
         )
         origin_repo_by_id[m.id] = m.origin.repo if m.origin else None
+        origin_worktree_by_id[m.id] = m.origin.worktree_root if m.origin else None
         anchor_paths_by_id[m.id] = commit_drift_anchor_paths(m.body, m.verified_paths)
         claims_by_id[m.id] = tuple(m.claims)
 
@@ -2070,6 +2138,15 @@ def compute_health(
         caller_origin=caller_origin,
     )
 
+    cross_repo_drift = _compute_cross_repo_drift(
+        by_id=by_id,
+        origin_repo_by_id=origin_repo_by_id,
+        origin_worktree_by_id=origin_worktree_by_id,
+        anchor_paths_by_id=anchor_paths_by_id,
+        claims_by_id=claims_by_id,
+        caller_origin=caller_origin,
+    )
+
     # Cold-endorsement memories — distinct memories the ranker keeps
     # surfacing (retrieval crossed the floor) that the model has never
     # explicitly endorsed (zero `explicit_applied_count`). Ambient
@@ -2136,6 +2213,7 @@ def compute_health(
         orphan_use_events=orphan_use_events,
         verification_debt=verification_debt,
         commit_drift_debt=commit_drift_debt,
+        cross_repo_drift=cross_repo_drift,
         silent_misses=_silent_miss_stats(
             audited=silent_miss_audited,
             miss_events=silent_miss_events,
@@ -2292,6 +2370,198 @@ def _compute_recommendations(report: "HealthReport") -> list["Recommendation"]:
     return out
 
 
+def _drift_rows_for_candidates(
+    candidates: list[MemoryStats],
+    *,
+    root: Path,
+    timestamps: list[datetime],
+    toplevel: Path | None,
+    anchor_paths_by_id: dict[str, tuple[str, ...]],
+    claims_by_id: dict[str, tuple[str, ...]] | None,
+) -> list[CommitDriftRow]:
+    """The per-candidate bisect-and-narrow loop, shared between the
+    caller-repo rollup and the cross-repo estate check — one loop so
+    the two cannot compute different drift policies for the same
+    memory. Returns drifting rows sorted heaviest-first; the caller
+    owns capping and the empty-vs-None distinction.
+    """
+    rows: list[CommitDriftRow] = []
+    for stats in candidates:
+        since = stats.last_verified_at
+        assert since is not None  # callers filter on this
+        if since.tzinfo is None:
+            since = since.replace(tzinfo=timezone.utc)
+        # bisect_right gives us the first index strictly greater than
+        # `since`; len - idx is then the count of timestamps after that
+        # cut. Equal timestamps fall before the cut on bisect_right
+        # semantics, which is what we want — a verify call that lands
+        # at the same instant as a commit doesn't count as drift.
+        idx = bisect.bisect_right(timestamps, since)
+        count = len(timestamps) - idx
+        # Narrow to commits that actually touched the memory's claim
+        # anchors — mirrors memory_show and the memory_search top-hit
+        # surface (_response.py). Without this the rollup nagged on
+        # memories the user deliberately attested as stable and disagreed
+        # with the per-hit verdict. None means every anchor escapes this
+        # repo: the claims live elsewhere, drift is not applicable, drop
+        # the row. Falls back to the unfiltered count only when git can't
+        # answer the filtered query. Guarded on count > 0 so a caught-up
+        # memory never pays the extra git call.
+        if count > 0:
+            stored_claims = claims_by_id.get(stats.id, ()) if claims_by_id else ()
+            resolved = resolve_commit_drift_count(
+                cwd=root,
+                since=since,
+                unfiltered=count,
+                anchors=anchor_paths_by_id.get(stats.id, ()),
+                claims=load_claims(list(stored_claims)) if stored_claims else (),
+                toplevel=toplevel,
+            )
+            if resolved is None:
+                continue
+            count = resolved
+        if count > 0:
+            rows.append(
+                CommitDriftRow(
+                    id=stats.id,
+                    scopes=list(stats.scopes),
+                    summary=stats.summary,
+                    last_verified_at=stats.last_verified_at,
+                    commits_since_verify=count,
+                )
+            )
+    rows.sort(key=lambda r: r.commits_since_verify, reverse=True)
+    return rows
+
+
+def _compute_cross_repo_drift(
+    *,
+    by_id: dict[str, MemoryStats],
+    origin_repo_by_id: dict[str, str | None],
+    origin_worktree_by_id: dict[str, str | None],
+    anchor_paths_by_id: dict[str, tuple[str, ...]],
+    claims_by_id: dict[str, tuple[str, ...]] | None,
+    caller_origin: Origin | None,
+) -> CrossRepoDrift | None:
+    """The estate check: drift for memories anchored in repos the
+    caller is NOT standing in.
+
+    The blind spot this closes (2026-08-30): every commit-drift
+    surface — show, search, `commit_drift_debt`, the curation counts —
+    is gated on the caller being inside the memory's origin repo, so
+    records anchored in other projects rot invisibly for as long as
+    health runs from here; the motivating find was a foreign record
+    pinning a HEAD twenty commits gone, on a branch that no longer
+    existed, reading fresh for days. Candidates are grouped by
+    (recorded repo, recorded `origin.worktree_root`); each group's
+    directory is resolved on disk — read-only, never a checkout or
+    fetch — re-identified as a checkout of the recorded repo
+    (`origin.capture` + `repos_match`, so a moved or reused directory
+    is skipped with its reason rather than misread), and judged by the
+    same claim-anchored legs through `_drift_rows_for_candidates`.
+
+    Bounds and silences: `_CROSS_REPO_MAX_ROOTS` caps the roots git is
+    walked in per run (cheap skips don't consume it; over-cap groups
+    are listed as skipped, never dropped). `None` when no foreign
+    claim-anchored verified candidate exists at all — the same
+    philosophy as `commit_drift_debt`'s None. A walked clean group IS
+    emitted, with zero rows: "checked N, clean" and "didn't check"
+    must not read the same.
+    """
+    groups: dict[tuple[str, str], list[MemoryStats]] = {}
+    for stats in by_id.values():
+        origin_repo = origin_repo_by_id.get(stats.id)
+        worktree = origin_worktree_by_id.get(stats.id)
+        if not origin_repo or not worktree:
+            continue
+        if (
+            caller_origin is not None
+            and caller_origin.repo
+            and repos_match(origin_repo, caller_origin.repo)
+        ):
+            # The caller-repo rollup owns these.
+            continue
+        if stats.last_verified_at is None:
+            continue
+        if not anchor_paths_by_id.get(stats.id) and not (
+            claims_by_id and claims_by_id.get(stats.id)
+        ):
+            continue
+        groups.setdefault((origin_repo, worktree), []).append(stats)
+    if not groups:
+        return None
+
+    ordered = sorted(groups.items(), key=lambda kv: len(kv[1]), reverse=True)
+    out_groups: list[CrossRepoDriftGroup] = []
+    skipped: list[dict[str, str]] = []
+    walked = 0
+    for (repo, worktree), candidates in ordered:
+        if walked >= _CROSS_REPO_MAX_ROOTS:
+            skipped.append(
+                {
+                    "repo": repo,
+                    "worktree_root": worktree,
+                    "reason": "past the per-run root cap",
+                }
+            )
+            continue
+        root = Path(worktree)
+        if not root.exists():
+            skipped.append(
+                {
+                    "repo": repo,
+                    "worktree_root": worktree,
+                    "reason": "worktree missing on disk",
+                }
+            )
+            continue
+        live = capture(root)
+        if live.repo is None or not repos_match(repo, live.repo):
+            skipped.append(
+                {
+                    "repo": repo,
+                    "worktree_root": worktree,
+                    "reason": "directory is no longer a checkout of the recorded repo",
+                }
+            )
+            continue
+        walked += 1
+        timestamps = commit_author_timestamps(root)
+        if timestamps is None:
+            skipped.append(
+                {
+                    "repo": repo,
+                    "worktree_root": worktree,
+                    "reason": "git unreachable in the recorded worktree",
+                }
+            )
+            continue
+        rows = _drift_rows_for_candidates(
+            candidates,
+            root=root,
+            timestamps=timestamps,
+            toplevel=repo_toplevel(root),
+            anchor_paths_by_id=anchor_paths_by_id,
+            claims_by_id=claims_by_id,
+        )
+        out_groups.append(
+            CrossRepoDriftGroup(
+                repo=repo,
+                worktree_root=worktree,
+                rows=rows[:_COMMIT_DRIFT_DEBT_CAP],
+                total_drifted=len(rows),
+                candidates=len(candidates),
+            )
+        )
+    if not out_groups and not skipped:
+        return None
+    return CrossRepoDrift(
+        groups=out_groups,
+        skipped=skipped,
+        total_drifted=sum(g.total_drifted for g in out_groups),
+    )
+
+
 def _compute_commit_drift_debt(
     *,
     by_id: dict[str, MemoryStats],
@@ -2358,51 +2628,14 @@ def _compute_commit_drift_debt(
     if not candidates:
         return None
 
-    rows: list[CommitDriftRow] = []
-    for stats in candidates:
-        since = stats.last_verified_at
-        assert since is not None  # filtered above
-        if since.tzinfo is None:
-            since = since.replace(tzinfo=timezone.utc)
-        # bisect_right gives us the first index strictly greater than
-        # `since`; len - idx is then the count of timestamps after that
-        # cut. Equal timestamps fall before the cut on bisect_right
-        # semantics, which is what we want — a verify call that lands
-        # at the same instant as a commit doesn't count as drift.
-        idx = bisect.bisect_right(timestamps, since)
-        count = len(timestamps) - idx
-        # Narrow to commits that actually touched the memory's claim
-        # anchors — mirrors memory_show and the memory_search top-hit
-        # surface (_response.py). Without this the rollup nagged on
-        # memories the user deliberately attested as stable and disagreed
-        # with the per-hit verdict. None means every anchor escapes this
-        # repo: the claims live elsewhere, drift is not applicable, drop
-        # the row. Falls back to the unfiltered count only when git can't
-        # answer the filtered query. Guarded on count > 0 so a caught-up
-        # memory never pays the extra git call.
-        if count > 0:
-            stored_claims = claims_by_id.get(stats.id, ()) if claims_by_id else ()
-            resolved = resolve_commit_drift_count(
-                cwd=cwd_path,
-                since=since,
-                unfiltered=count,
-                anchors=anchor_paths_by_id.get(stats.id, ()),
-                claims=load_claims(list(stored_claims)) if stored_claims else (),
-                toplevel=toplevel,
-            )
-            if resolved is None:
-                continue
-            count = resolved
-        if count > 0:
-            rows.append(
-                CommitDriftRow(
-                    id=stats.id,
-                    scopes=list(stats.scopes),
-                    summary=stats.summary,
-                    last_verified_at=stats.last_verified_at,
-                    commits_since_verify=count,
-                )
-            )
+    rows = _drift_rows_for_candidates(
+        candidates,
+        root=cwd_path,
+        timestamps=timestamps,
+        toplevel=toplevel,
+        anchor_paths_by_id=anchor_paths_by_id,
+        claims_by_id=claims_by_id,
+    )
 
     if not rows:
         # All matching memories are caught up — emit the bucket with an
@@ -2415,7 +2648,6 @@ def _compute_commit_drift_debt(
             total_drifted=0,
         )
 
-    rows.sort(key=lambda r: r.commits_since_verify, reverse=True)
     return CommitDriftDebt(
         current_repo=caller_origin.repo,
         current_cwd=caller_origin.cwd,
@@ -2667,6 +2899,38 @@ def render_text(report: HealthReport) -> str:
                 )
             if cd.total_drifted > len(cd.rows):
                 lines.append(f"    ... and {cd.total_drifted - len(cd.rows)} more")
+
+    if report.cross_repo_drift is not None:
+        xr = report.cross_repo_drift
+        lines.append("")
+        header = (
+            f"Cross-repo drift — {xr.total_drifted} drifted across "
+            f"{len(xr.groups)} checked foreign checkout(s)"
+        )
+        if xr.skipped:
+            header += f", {len(xr.skipped)} skipped"
+        lines.append(header + ":")
+        for group in xr.groups:
+            state = f"{group.total_drifted} drifted" if group.total_drifted else "clean"
+            lines.append(
+                f"  {group.repo} [{group.worktree_root}]: {state} of "
+                f"{group.candidates} candidate(s)"
+            )
+            for row in group.rows:
+                verified = _iso(row.last_verified_at) or "?"
+                lines.append(
+                    f"    {row.id} [+{row.commits_since_verify} commits, "
+                    f"verified={verified}] {','.join(row.scopes)}: {row.summary}"
+                )
+            if group.total_drifted > len(group.rows):
+                lines.append(
+                    f"    ... and {group.total_drifted - len(group.rows)} more"
+                )
+        for skip in xr.skipped:
+            lines.append(
+                f"  (skipped {skip['repo']} [{skip['worktree_root']}]: "
+                f"{skip['reason']})"
+            )
 
     return "\n".join(lines) + "\n"
 
