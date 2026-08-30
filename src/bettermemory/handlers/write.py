@@ -322,10 +322,13 @@ class TransientGate(WriteGate):
                 ],
                 "hint": (
                     "The body contains transient-state markers that won't "
-                    "be true in a week. Either rephrase to the durable "
-                    "level-up version (extract the architectural decision, "
-                    "the why, what-was-built — discard the timestamp/state) "
-                    "or pass acknowledge_transient=True if the marker is "
+                    "be true in a week. Three remedies: rephrase to the "
+                    "durable level-up version (extract the architectural "
+                    "decision, the why, what-was-built — discard the "
+                    "timestamp/state); route genuine run-state to "
+                    "episode_write, the journal tier built for exactly "
+                    "this content (no durability gate there); or pass "
+                    "acknowledge_transient=True if the marker is "
                     "genuinely durable in context."
                 ),
             },

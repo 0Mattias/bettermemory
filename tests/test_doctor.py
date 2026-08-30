@@ -1152,17 +1152,71 @@ def test_audit_turn_cadence_empty_dir_is_ok(tmp_path: Path) -> None:
 
 
 def test_audit_turn_cadence_recent_audits_pass(tmp_path: Path) -> None:
-    """Several recent `turn_audited` events across multiple sessions:
-    the hook is firing, nothing to warn about."""
+    """Several recent hook-sourced `turn_audited` events across
+    multiple sessions: the hook is firing, nothing to warn about. The
+    events carry `triggered_from="stop_hook"` because that is what
+    `hook.run_audit` stamps — the census keys on the stamp via the
+    shared coverage predicate."""
     from datetime import datetime, timezone
 
     now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     _write_event(tmp_path, "search", ts=now_iso, session="s1")
-    _write_event(tmp_path, "turn_audited", ts=now_iso, session="s1")
-    _write_event(tmp_path, "turn_audited", ts=now_iso, session="s2")
+    _write_event(
+        tmp_path,
+        "turn_audited",
+        ts=now_iso,
+        session="s1",
+        triggered_from="stop_hook",
+    )
+    _write_event(
+        tmp_path,
+        "turn_audited",
+        ts=now_iso,
+        session="s2",
+        triggered_from="stop_hook",
+    )
     diag = _check_audit_turn_cadence(tmp_path)
     assert diag.status == "ok"
     assert diag.details["turn_audited_events"] == 2
+    assert diag.details["hook_turn_audited"] == 2
+    assert diag.details["mcp_turn_audited"] == 0
+
+
+def test_audit_turn_cadence_mcp_only_store_warns_with_its_own_story(
+    tmp_path: Path,
+) -> None:
+    """An in-process `memory_audit_turn` stamps
+    `triggered_from="mcp_tool"` — real telemetry, but not evidence the
+    Stop hook is wired. The old census counted it as if it were, so an
+    MCP-only store read as hook-wired: the conflation fixed everywhere
+    else. Such a store still warns (the hook genuinely is not wired),
+    and the message names what the store actually is instead of
+    claiming silence."""
+    from datetime import datetime, timezone
+
+    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    _write_event(
+        tmp_path,
+        "turn_audited",
+        ts=now_iso,
+        session="s1",
+        triggered_from="mcp_tool",
+    )
+    _write_event(
+        tmp_path,
+        "turn_audited",
+        ts=now_iso,
+        session="s2",
+        triggered_from="mcp_tool",
+    )
+    diag = _check_audit_turn_cadence(tmp_path)
+    assert diag.status == "warn"
+    assert "memory_audit_turn" in diag.message
+    assert "not wired" in diag.message
+    assert "no-opping" not in diag.message
+    assert diag.details["turn_audited_events"] == 2
+    assert diag.details["hook_turn_audited"] == 0
+    assert diag.details["mcp_turn_audited"] == 2
 
 
 def test_audit_turn_cadence_silent_hook_warns(tmp_path: Path) -> None:

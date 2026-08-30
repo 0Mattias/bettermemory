@@ -55,6 +55,7 @@ from . import search
 from .config import Config, TelemetryConfig, load_config
 from .eval import is_admin_recorded_event
 from .events import EVENT_LOG_FILENAME, iter_all_events
+from .health import is_hook_telemetry_event
 from .init import KNOWN_CLIENTS, command_launches_bettermemory, find_binary
 from .models import Memory, looks_truncated
 from .store import (
@@ -1340,7 +1341,15 @@ def _check_audit_turn_cadence(directory: Path) -> Diagnosis:
     `turn_audited` is silent.
 
     Heuristic: over the last 7 days, if the event log shows at least
-    two distinct sessions with zero `turn_audited` events, warn. Soft
+    two distinct sessions with zero HOOK-SOURCED `turn_audited` events,
+    warn. The hook/mcp split rides the shared coverage predicate
+    (`health.is_hook_telemetry_event`): an in-process
+    `memory_audit_turn` stamps `triggered_from="mcp_tool"`, and
+    counting it as hook evidence was the conflation this census kept
+    after every other surface dropped it — an MCP-only store read as
+    "hook is wired". Such a store still warns (the hook genuinely is
+    not wired), but the message says which kind of store it is instead
+    of claiming silence. Soft
     warning, not a fatal error — a user who deliberately doesn't run
     the hook (CI run, a one-off bulk-ingest session, a probe via the
     programmatic client) has the same shape and we don't want to
@@ -1370,6 +1379,7 @@ def _check_audit_turn_cadence(directory: Path) -> Diagnosis:
     cutoff = datetime.now(timezone.utc) - timedelta(days=7)
     sessions: set[str] = set()
     turn_audited = 0
+    hook_audited = 0
     total_events = 0
     try:
         for event in iter_all_events(directory):
@@ -1398,6 +1408,8 @@ def _check_audit_turn_cadence(directory: Path) -> Diagnosis:
                 sessions.add(session)
             if event.get("kind") == "turn_audited":
                 turn_audited += 1
+                if is_hook_telemetry_event(event):
+                    hook_audited += 1
     except OSError as exc:
         return Diagnosis(
             name="audit_turn_cadence",
@@ -1406,10 +1418,13 @@ def _check_audit_turn_cadence(directory: Path) -> Diagnosis:
         )
 
     n_sessions = len(sessions)
+    mcp_audited = turn_audited - hook_audited
     info: dict[str, Any] = {
         "window_days": 7,
         "sessions": n_sessions,
         "turn_audited_events": turn_audited,
+        "hook_turn_audited": hook_audited,
+        "mcp_turn_audited": mcp_audited,
         "total_events": total_events,
     }
 
@@ -1420,20 +1435,37 @@ def _check_audit_turn_cadence(directory: Path) -> Diagnosis:
             message="No events in the last 7 days — nothing to check.",
             details=info,
         )
-    if turn_audited == 0 and n_sessions >= 2:
+    if hook_audited == 0 and n_sessions >= 2:
         # Don't pretend we know the exact expected count — the cadence
         # depends on how often the user invokes Claude Code. "At least
         # N" is a useful order-of-magnitude where N is the session
         # count (a turn produces one Stop event, but a session
-        # produces many turns — N is a lower bound).
+        # produces many turns — N is a lower bound). Two distinct
+        # stores land here and the message tells them apart: a silent
+        # one (nothing audits at all) and an MCP-audited one (the
+        # model calls `memory_audit_turn` in-process — real telemetry,
+        # but not the automatic end-of-turn lane).
+        if mcp_audited:
+            message = (
+                f"No Stop-hook audit event in the last 7 days across "
+                f"{n_sessions} session(s) — the hook is not wired. The "
+                f"{mcp_audited} `turn_audited` event(s) present came "
+                f"from in-process `memory_audit_turn` calls: an "
+                f"MCP-audited store, not a hook-wired one. The "
+                f"telemetry is real, but the automatic end-of-turn "
+                f"audit lane is missing."
+            )
+        else:
+            message = (
+                f"Your Stop hook may be silently no-opping — expected "
+                f"at least {n_sessions} hook-sourced audit-turn events "
+                f"given {n_sessions} session(s) in the last 7 days, "
+                f"found 0."
+            )
         return Diagnosis(
             name="audit_turn_cadence",
             status="warn",
-            message=(
-                f"Your Stop hook may be silently no-opping — expected at "
-                f"least {n_sessions} audit-turn events given "
-                f"{n_sessions} session(s) in the last 7 days, found 0."
-            ),
+            message=message,
             fix_hint=(
                 "Check `~/.claude/settings.json` (or your hooks config) "
                 "for a Stop binding to `bettermemory audit-turn`. The "
@@ -1443,7 +1475,7 @@ def _check_audit_turn_cadence(directory: Path) -> Diagnosis:
             ),
             details=info,
         )
-    if turn_audited == 0 and n_sessions == 1:
+    if hook_audited == 0 and n_sessions == 1:
         # Exactly one session in the window: either the user is a
         # low-cadence Claude Code user (weekly-or-less) and the next
         # session simply hasn't happened yet, or this IS the broken
@@ -1461,12 +1493,17 @@ def _check_audit_turn_cadence(directory: Path) -> Diagnosis:
             ),
             details=info,
         )
+    suffix = (
+        f" ({mcp_audited} more from in-process `memory_audit_turn` calls.)"
+        if mcp_audited
+        else ""
+    )
     return Diagnosis(
         name="audit_turn_cadence",
         status="ok",
         message=(
-            f"{turn_audited} `turn_audited` event(s) across {n_sessions} "
-            f"session(s) in the last 7 days."
+            f"{hook_audited} Stop-hook `turn_audited` event(s) across "
+            f"{n_sessions} session(s) in the last 7 days.{suffix}"
         ),
         details=info,
     )

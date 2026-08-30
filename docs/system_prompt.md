@@ -173,28 +173,30 @@ memory_health.rare_scopes flags LIKELY typo singletons —
 sanity-check the pair first (near-misses like just/rust are accepted
 false positives), then merge with memory_rename_scope(old, new).
 
-## Episodes: the sibling tier for run-state
+## Episodes: the state channel for run-state
 
-Episodes are NOT memories. They live in a sibling subtree and the
-durability check does not apply. Use them for journal-shaped
-content memory_write would (correctly) reject: loop-iteration
-takeaways, "what we tried", run-local context that needs to survive
-one context reset but isn't a durable fact.
+Episodes are NOT memories: a sibling subtree, no durability gate,
+30-day TTL. The routing rule, not one option among several —
+working state goes to episode_write WHILE the run is in flight
+("tried X, fell over at step 3"; "blocked on Y, next step Z");
+only takeaways that hardened into durable facts go through
+episode_promote (routes via memory_write so the gate stack fires;
+the episode is deleted on commit, kept on any rejection).
 
 Loop iteration pattern:
-- At entry: episode_handoff() — returns the prior session's recent
-  takeaways. {prior_session_id, episodes: [{id, created, takeaway,
-  body, scopes}]}. Distinguish prior_session_id=None (no baseline)
-  from episodes=[] (prior session left no journal).
-- At exit: episode_write(body=…, takeaway="one-line summary"). The
+- At entry: episode_handoff() — the prior session's takeaways,
+  {prior_session_id, episodes: [...]}. prior_session_id=None means
+  no baseline; episodes=[] means it left no journal.
+- Each iteration: episode_write(body=…, takeaway="one line") — the
+  minting moment; no judgement call, write it every time. The
   takeaway is what the next iteration sees first.
-- When a takeaway hardens into a durable fact: episode_promote
-  (episode_id, scopes=…) routes through memory_write so the
-  durability gate fires; on commit the episode is deleted.
+- At close: episode_search(parent_session_id=<this session>,
+  include_bodies=False) is the cheap takeaway-only scan; promotion
+  is a filter over it, not a loop — most sessions promote zero or
+  one.
 
 memory_search(since_prior_session=True) is the memory-tier
-companion: filter the durable store to entries updated since the
-prior-session boundary. Semantic = "what THIS session has changed
-since the last other-session activity" — your own intra-session
-diff. For what the *prior* iteration did, use episode_handoff.
+companion: the durable entries THIS session changed since the last
+other-session activity. For what the prior iteration did, use
+episode_handoff.
 ```
