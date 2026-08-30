@@ -3103,6 +3103,178 @@ def _hybrid_fuse(
     return [(by_id[mid], fused[mid], sorted(matched_by_id[mid])) for mid in ordered_ids]
 
 
+# Closed set of usage-aware ranking flags the toggle capture can report on.
+# Order is presentation order; the names are the `[behavior]` keys verbatim
+# so the offline reader (`eval.compute_usage_replay`) and the ROADMAP's
+# declared flip bars talk about the same identifiers.
+USAGE_FLAG_NAMES: tuple[str, ...] = (
+    "endorsement_boost",
+    "outcome_demotion",
+    "corroboration_boost",
+)
+
+
+def _usage_factor_components(
+    memory: Memory,
+    applied_by_id: dict[str, int] | None,
+    negative_by_id: dict[str, tuple[int, int]] | None,
+    corroboration_boost: bool,
+) -> dict[str, float]:
+    """The three per-memory usage factors exactly as the scorers apply them.
+
+    Keyed by `USAGE_FLAG_NAMES`. A flag whose input is absent (or whose
+    signal is neutral for this memory) contributes exactly 1.0, mirroring
+    the `if applied_by_id:` / `if negative_by_id:` / `if
+    corroboration_boost and memory.corroborations:` guards in
+    `_score_keyword` / `_score_bm25` — the capture must divide out
+    precisely what the scorer multiplied in, nothing else.
+    """
+    endorsement = (
+        _endorsement_factor(applied_by_id.get(memory.id, 0)) if applied_by_id else 1.0
+    )
+    if negative_by_id:
+        ig, ct = negative_by_id.get(memory.id, (0, 0))
+        demotion = _demotion_factor(ig, ct)
+    else:
+        demotion = 1.0
+    corroboration = (
+        _corroboration_factor(memory.corroborations)
+        if corroboration_boost and memory.corroborations
+        else 1.0
+    )
+    return {
+        "endorsement_boost": endorsement,
+        "outcome_demotion": demotion,
+        "corroboration_boost": corroboration,
+    }
+
+
+def _compute_usage_toggles(
+    scored: list[tuple[Memory, float, list[str]]],
+    *,
+    mode: SearchMode,
+    legs: list[list[tuple[Memory, float, list[str]]]],
+    rrf_k: int,
+    stopword_fallback: bool,
+    conv_reading: "_TemporalReading | None",
+    query_tokens: list[str],
+    query_unique: int,
+    applied_by_id: dict[str, int] | None,
+    negative_by_id: dict[str, tuple[int, int]] | None,
+    corroboration_boost: bool,
+) -> dict[str, Any] | None:
+    """Per-flag counterfactual top-1s for the usage-aware ranking flags.
+
+    For each usage flag with live signal on this call, compute the
+    ranking that THIS call would have produced with that one flag
+    toggled off, by dividing the flag's per-memory factor back out of
+    every leg score, re-sorting each leg with the production sort key,
+    re-fusing with freshly recomputed weights, and re-applying the Lane
+    L conversational rerank. The factors are per-memory multiplicative
+    constants applied identically in every leg (`_score_keyword` /
+    `_score_bm25`), so the division reconstructs the untoggled leg
+    scores exactly; and since every factor is bounded inside
+    (0.85, 1.1], it can never zero a score, so leg MEMBERSHIP is
+    invariant under the toggle and the reconstruction is complete.
+
+    One pinned protocol choice: leg COMPOSITION is held fixed. The
+    rescue-expansion leg joins production's fusion behind a coverage
+    gate read off the factored base ranking, so a toggle could in
+    principle change whether the leg engages at all; the counterfactual
+    keeps whatever legs production fused and re-weighs them
+    (`_base_leg_weights` / `_leg_evidence_weight` recomputed on the
+    toggled orderings). "Same evidence, factor removed" is the question
+    the flip bars ask; re-litigating leg engagement would be a
+    different experiment.
+
+    Returns None when no flag has live signal. "Live signal" means a
+    non-neutral factor on at least one SCORED candidate — an endorsed
+    or demoted memory that didn't match this query contributes nothing
+    to any leg, so its flag was inert on this ranking and inflating
+    the per-flag denominator with such turns would be dishonest. The
+    same rule covers all three flags symmetrically. Otherwise a dict:
+    `{"active": [flag, ...], "toggles": {flag: {"top1": {...}}}}` where
+    `toggles` carries ONLY the flags whose toggle CHANGES the top-1
+    memory, and `top1` is the counterfactual winner's raw coverage
+    features (the same formula-agnostic pair `MissHit` records) plus
+    its fused score under the toggle. An empty `toggles` dict with a
+    non-empty `active` list is the common case: signal present, no
+    near-tie flipped.
+    """
+    if not scored:
+        return None
+    if not applied_by_id and not negative_by_id and not corroboration_boost:
+        return None
+
+    factors_by_id: dict[str, dict[str, float]] = {}
+    for leg in legs:
+        for memory, _, _ in leg:
+            if memory.id not in factors_by_id:
+                factors_by_id[memory.id] = _usage_factor_components(
+                    memory, applied_by_id, negative_by_id, corroboration_boost
+                )
+    active = [
+        flag
+        for flag in USAGE_FLAG_NAMES
+        if any(comp[flag] != 1.0 for comp in factors_by_id.values())
+    ]
+    if not active:
+        return None
+
+    production_top1 = scored[0][0].id
+    qset = set(query_tokens)
+    toggles: dict[str, Any] = {}
+    for flag in active:
+        variant_legs: list[list[tuple[Memory, float, list[str]]]] = []
+        for leg in legs:
+            variant = [
+                (memory, score / factors_by_id[memory.id][flag], matched)
+                for memory, score, matched in leg
+            ]
+            variant.sort(key=lambda x: (x[1], x[0].created, x[0].id), reverse=True)
+            variant_legs.append(variant)
+        if mode == "hybrid":
+            base_pair = variant_legs[:2]
+            base_weights = (
+                None if stopword_fallback else _base_leg_weights(base_pair)
+            )
+            if len(variant_legs) > 2:
+                exp_leg = variant_legs[2]
+                leg_weight = (
+                    _leg_evidence_weight(_leg_top_evidence(exp_leg))
+                    if exp_leg
+                    else 0.0
+                )
+                weights = [*(base_weights or (1.0, 1.0)), leg_weight]
+            else:
+                weights = base_weights
+            variant_scored = _hybrid_fuse(
+                variant_legs, rrf_k=rrf_k, weights=weights
+            )
+            if conv_reading is not None:
+                variant_scored = _conversational_rerank(
+                    variant_scored, reading=conv_reading
+                )
+        else:
+            variant_scored = variant_legs[0]
+        if not variant_scored:
+            continue
+        top_memory, top_score, top_matched = variant_scored[0]
+        if top_memory.id == production_top1:
+            continue
+        matched_unique = len({t for t in top_matched if t in qset})
+        toggles[flag] = {
+            "top1": {
+                "id": top_memory.id,
+                "score": top_score,
+                "matched_unique": matched_unique,
+                "query_unique": query_unique,
+                "relevance_v2": _relevance_label_v2(matched_unique, query_unique),
+            }
+        }
+    return {"active": active, "toggles": toggles}
+
+
 def search(
     memories: list[Memory],
     query: str,
@@ -3124,6 +3296,7 @@ def search(
     matched_leg_out: dict[str, str] | None = None,
     rescue_expansion: bool = False,
     conversational: bool = True,
+    usage_toggles_out: dict[str, Any] | None = None,
 ) -> list[MemoryHit]:
     """Rank `memories` against `query` and return up to `max_results` hits.
 
@@ -3190,6 +3363,17 @@ def search(
       bookkeeping entirely, so every existing caller is byte-stable in
       both output and cost. Browse-mode hits get no entry — nothing
       ranked them.
+    - `usage_toggles_out`: optional dict the function fills with the
+      per-flag counterfactual top-1s for the usage-aware ranking flags
+      — see `_compute_usage_toggles` for the shape and the pinned
+      protocol. Like `matched_leg_out`, an out-parameter because the
+      toggle is a property of THIS CALL's ranker inputs, not of any
+      memory. The silent-miss probe (`audit.probe_for_miss`) is the
+      consumer: the capture lands on `turn_audited` / `prompt_recall`
+      events so the usage-signal flip bars (docs/ROADMAP.md) can be
+      read from the log alone. `None` (the default) skips the capture
+      entirely — byte-stable in both output and cost — and the dict
+      stays empty when no usage input carries live signal.
     - `rescue_expansion`: hybrid-mode only, DEFAULT OFF. When True,
       two query-time repairs from the retrieval campaign run:
       (a) listed discourse-filler words (`expansion.QUERY_FILLER_WORDS`)
@@ -3338,6 +3522,13 @@ def search(
     lexical_ids: set[str] = set()
     expansion_ids: set[str] = set()
 
+    # The leg lists the final ranking was built from, for the usage-toggle
+    # capture. Each terminal branch below assigns the exact lists it
+    # ranked/fused — including the rescue leg when it joined — so the
+    # counterfactual divides factors out of precisely what production
+    # multiplied them into. Stays empty when `usage_toggles_out` is None.
+    capture_legs: list[list[tuple[Memory, float, list[str]]]] = []
+
     # Tokenize each candidate exactly once per call and thread the streams
     # through every consumer below — the keyword scorer, compute_idf, BM25,
     # blocks otherwise re-tokenize the same
@@ -3407,6 +3598,8 @@ def search(
         # clock. ULID-shaped ids are lexically time-ordered, so the final
         # tiebreaker also gives "newer wins" semantics.
         scored.sort(key=lambda x: (x[1], x[0].created, x[0].id), reverse=True)
+        if usage_toggles_out is not None:
+            capture_legs = [scored]
         if matched_leg_out is not None:
             lexical_ids = {memory.id for memory, _, _ in scored}
     elif mode == "bm25":
@@ -3423,6 +3616,8 @@ def search(
             corpus_stats=corpus_stats,
         )
         scored.sort(key=lambda x: (x[1], x[0].created, x[0].id), reverse=True)
+        if usage_toggles_out is not None:
+            capture_legs = [scored]
         if matched_leg_out is not None:
             lexical_ids = {memory.id for memory, _, _ in scored}
     else:  # mode == "hybrid"
@@ -3497,6 +3692,8 @@ def search(
         # byte-identically.
         base_weights = None if stopword_fallback else _base_leg_weights(rankings)
         scored = _hybrid_fuse(rankings, rrf_k=rrf_k, weights=base_weights)
+        if usage_toggles_out is not None:
+            capture_legs = list(rankings)
 
         # Rescue expansion: one extra, down-weighted BM25 leg over
         # synthesized vocabulary, engaged only when the base fusion is
@@ -3582,6 +3779,8 @@ def search(
                             rrf_k=rrf_k,
                             weights=[*(base_weights or (1.0, 1.0)), leg_weight],
                         )
+                        if usage_toggles_out is not None:
+                            capture_legs = [*rankings, exp_leg]
                         # `match_terms` stays a subset of the CALLER's
                         # tokens — synthesized terms explain the leg,
                         # not the caller's query, and letting them into
@@ -3602,6 +3801,23 @@ def search(
     # ranking the caller would otherwise have received, before the trim.
     if conv_reading is not None:
         scored = _conversational_rerank(scored, reading=conv_reading)
+
+    if usage_toggles_out is not None and capture_legs:
+        toggle_capture = _compute_usage_toggles(
+            scored,
+            mode=mode,
+            legs=capture_legs,
+            rrf_k=rrf_k,
+            stopword_fallback=stopword_fallback,
+            conv_reading=conv_reading,
+            query_tokens=query_tokens,
+            query_unique=query_unique,
+            applied_by_id=applied_by_id,
+            negative_by_id=negative_by_id,
+            corroboration_boost=corroboration_boost,
+        )
+        if toggle_capture is not None:
+            usage_toggles_out.update(toggle_capture)
 
     trimmed = scored[:max_results]
     if matched_leg_out is not None:

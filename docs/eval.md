@@ -176,7 +176,7 @@ transcript — absent on pre-3.14 events) and shows how many repeat
 audits the re-audit dedup absorbed (`repeat_audits`, excluded from
 every denominator).
 
-Four additional modes:
+Five additional modes:
 
 - `--report`: renders the telemetry as one publishable, self-contained
   markdown document — the rate trio over the `--since` window and all
@@ -234,6 +234,34 @@ Four additional modes:
   The flip decision on `relevance_v2` reads this lane, not the counts.
   Both lanes share one event-filter pipeline (`_collect_replayable_
   audits`), so the counts and the listed turns can never disagree.
+- `--usage-replay`: the measurement surface for the usage-signal
+  ranking flags' declared flip bars (the top Planned entry in
+  docs/ROADMAP.md). On a store running any of `endorsement_boost` /
+  `outcome_demotion` / `corroboration_boost`, every probe records —
+  additively, on `turn_audited` and `prompt_recall` events — which
+  flags had live signal (`usage_active`: a non-neutral factor on at
+  least one scored candidate) and, per flag whose single-flag toggle
+  would have changed the top-1, the counterfactual winner's raw
+  coverage features (`usage_toggles`). The counterfactual is computed
+  INSIDE the production ranker at probe time (per-leg factors divided
+  out, legs re-sorted, fusion re-run with recomputed weights, the
+  temporal rerank re-applied; leg composition held fixed) because the
+  factors multiply per-leg scores before RRF rank fusion — no
+  arithmetic on a logged fused score can reproduce the toggle, which
+  is also why turns logged before the capture shipped are counted as
+  not-replayable rather than approximated. This mode aggregates the
+  captures over the window: changed top-1s judged under the pinned
+  rule (`v1_relevance_v2_tier_then_matched_unique` — shadow-label
+  tier, then matched-token count, else neutral, with "improving"
+  always meaning the flag's pick was better), the miss-labeled
+  worsening count (a `prompt_recall` delivery is miss-labeled by
+  definition — its top-1 is what got injected), the
+  `outcome_demotion` invariant
+  (`v1_later_top1_explicit_apply_within_600s`), and the density
+  preconditions (distinct explicitly-endorsed and negative-outcome
+  memories in the window; corroborated-memory liveness from the store
+  rollup). Measurements only: the declared thresholds stay in
+  docs/ROADMAP.md, and an unread bar is a hold.
 
 All honor `--since`; all but `--report` honor `--json` (the report is
 markdown by construction). Rules live in `eval.THRESHOLD_RULES` /

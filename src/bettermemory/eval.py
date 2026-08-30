@@ -72,7 +72,7 @@ from typing import Any, Iterable
 
 from .health import applied_tier as _applied_tier
 from .models import Memory, first_summary_line
-from .time_utils import parse_event_ts
+from .time_utils import isoformat_utc, parse_event_ts
 
 
 # ---------------------------------------------------------------------------
@@ -2354,6 +2354,493 @@ def render_widening_detail_text(report: WideningDetailReport) -> str:
     lines.append("helped this message? Concentration on one memory means a")
     lines.append("ranking problem, not a label problem — fix the memory or")
     lines.append("the rule, not the formula.")
+    return "\n".join(lines) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# Usage replay — the usage-signal flip bars' measurement surface
+# ---------------------------------------------------------------------------
+#
+# The usage-aware ranking flags (`search.USAGE_FLAG_NAMES`) ship default-
+# off with declared flip bars in docs/ROADMAP.md. The bars' replay clause
+# reads exact per-turn toggle captures: `probe_for_miss` computes, inside
+# the production ranker, what each flag-enabled probe's top-1 would have
+# been with that one flag toggled off, and the capture lands additively
+# on `turn_audited` / `prompt_recall` events (`usage_active` +
+# `usage_toggles`). This section AGGREGATES those captures over a window
+# and judges each changed top-1 under a pinned rule. It measures; it
+# never decides — the bars are read against docs/ROADMAP.md by a human
+# (or a session acting for one), and an unread bar is a hold.
+#
+# Why aggregation-only, and why no reconstruction lane for pre-capture
+# history: the factors multiply per-LEG scores before RRF rank fusion,
+# so no arithmetic on a logged fused score can reproduce the toggle —
+# an "approximate" lane would put a number the mechanism can't back in
+# front of a flip decision. Turns logged before the capture shipped are
+# counted and labeled not-replayable instead.
+
+# Pinned judgment rule for a changed top-1, versioned like the
+# threshold rules so a future rule can be swept against the same log.
+# v1: compare the shadow relevance labels (`relevance_v2`) of the
+# production top-1 (flag ON) and the counterfactual top-1 (flag OFF)
+# by tier; on a tier tie, more matched query tokens wins; still tied
+# is "neutral". "improving" always means THE FLAG's pick is better.
+USAGE_IMPROVEMENT_RULE = "v1_relevance_v2_tier_then_matched_unique"
+
+# Pinned operationalization of the outcome_demotion bar's invariant
+# ("zero demoted memories that were a later turn's explicitly-applied
+# top-1"): a violation is a changed-turn's suppressed memory (the
+# toggle-off winner the demotion kept out of the top slot) that shows
+# up as a LATER replayable turn's production top-1 with an explicit
+# non-auto `applied` use event for it within the attribution horizon
+# (`audit.ATTRIBUTION_LOOKBACK_SECONDS`) either side of that later
+# turn.
+USAGE_DEMOTION_INVARIANT_RULE = "v1_later_top1_explicit_apply_within_600s"
+
+_USAGE_V2_TIER = {"low": 0, "medium": 1, "high": 2}
+
+
+def _judge_usage_change(
+    on_v2: str,
+    on_matched: int,
+    off_v2: str,
+    off_matched: int,
+) -> str:
+    """Apply `USAGE_IMPROVEMENT_RULE` to one changed top-1."""
+    tier_delta = _USAGE_V2_TIER.get(on_v2, 0) - _USAGE_V2_TIER.get(off_v2, 0)
+    if tier_delta > 0:
+        return "improving"
+    if tier_delta < 0:
+        return "worsening"
+    if on_matched > off_matched:
+        return "improving"
+    if on_matched < off_matched:
+        return "worsening"
+    return "neutral"
+
+
+@dataclass
+class UsageToggleChange:
+    """One turn where a single-flag toggle changed the probe's top-1."""
+
+    ts: str
+    event_kind: str  # "turn_audited" | "prompt_recall"
+    miss_labeled: bool
+    on_top1_id: str
+    on_relevance_v2: str
+    on_matched_unique: int
+    off_top1_id: str
+    off_relevance_v2: str
+    off_matched_unique: int
+    query_unique: int
+    judgment: str  # improving | worsening | neutral
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "ts": self.ts,
+            "event_kind": self.event_kind,
+            "miss_labeled": self.miss_labeled,
+            "on_top1_id": self.on_top1_id,
+            "on_relevance_v2": self.on_relevance_v2,
+            "on_matched_unique": self.on_matched_unique,
+            "off_top1_id": self.off_top1_id,
+            "off_relevance_v2": self.off_relevance_v2,
+            "off_matched_unique": self.off_matched_unique,
+            "query_unique": self.query_unique,
+            "judgment": self.judgment,
+        }
+
+
+@dataclass
+class UsageFlagReplay:
+    """Replay rollup for one usage flag over the window."""
+
+    flag: str
+    active_turns: int
+    changed_turns: int
+    improving: int
+    worsening: int
+    neutral: int
+    miss_labeled_worsening: int
+    changes: list[UsageToggleChange] = field(default_factory=list)
+    # outcome_demotion only; None on the other flags.
+    invariant_rule: str | None = None
+    invariant_violations: list[dict[str, str]] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "flag": self.flag,
+            "active_turns": self.active_turns,
+            "changed_turns": self.changed_turns,
+            "improving": self.improving,
+            "worsening": self.worsening,
+            "neutral": self.neutral,
+            "miss_labeled_worsening": self.miss_labeled_worsening,
+            "changes": [c.to_dict() for c in self.changes],
+        }
+        if self.invariant_rule is not None:
+            out["invariant_rule"] = self.invariant_rule
+            out["invariant_violations"] = list(self.invariant_violations)
+        return out
+
+
+@dataclass
+class UsageReplayReport:
+    """Everything the usage-signal flip-bar read consumes, in one shape.
+
+    Measurements only — the declared thresholds live in docs/ROADMAP.md
+    and are deliberately NOT duplicated here, so the read compares one
+    measured report against one declared entry and nothing in between
+    can drift. `turns_without_capture` folds together pre-capture
+    producers and no-live-signal turns (the event shape cannot split
+    them — absence is absence); `first_capture_ts` bounds the ambiguity
+    by naming when captures started appearing in this window.
+    """
+
+    generated_at: datetime
+    window_seconds: int | None
+    events_in_window: int
+    replayable_turns: int
+    turn_audited_turns: int
+    prompt_recall_turns: int
+    repeat_audits_skipped: int
+    turns_without_capture: int
+    first_capture_ts: str | None
+    endorsed_distinct_in_window: int
+    negative_distinct_in_window: int
+    corroborated_memories: int
+    corroborated_twice_memories: int
+    improvement_rule: str = USAGE_IMPROVEMENT_RULE
+    flags: list[UsageFlagReplay] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "generated_at": self.generated_at.isoformat(),
+            "window_seconds": self.window_seconds,
+            "events_in_window": self.events_in_window,
+            "replayable_turns": self.replayable_turns,
+            "turn_audited_turns": self.turn_audited_turns,
+            "prompt_recall_turns": self.prompt_recall_turns,
+            "repeat_audits_skipped": self.repeat_audits_skipped,
+            "turns_without_capture": self.turns_without_capture,
+            "first_capture_ts": self.first_capture_ts,
+            "endorsed_distinct_in_window": self.endorsed_distinct_in_window,
+            "negative_distinct_in_window": self.negative_distinct_in_window,
+            "corroborated_memories": self.corroborated_memories,
+            "corroborated_twice_memories": self.corroborated_twice_memories,
+            "improvement_rule": self.improvement_rule,
+            "flags": [f.to_dict() for f in self.flags],
+        }
+
+
+def compute_usage_replay(
+    events: Iterable[dict[str, Any]],
+    *,
+    memories: Iterable[Memory] = (),
+    since: timedelta | None = None,
+    now: datetime | None = None,
+) -> UsageReplayReport:
+    """Aggregate the usage-toggle captures over the window.
+
+    Walks non-repeat, miss-capable `turn_audited` events and
+    `prompt_recall` events (a delivery IS a miss verdict, computed
+    before the turn) that carry a well-formed `top_hits` payload —
+    the same guards `_collect_replayable_audits` applies, extended to
+    the delivery lane. The same single pass tallies the density
+    preconditions the bars declare: distinct memories with explicit
+    non-auto `applied` use events, and distinct memories with negative
+    (`ignored` / `contradicted`) use events, both inside the window.
+    `memories` feeds the corroboration-liveness counts (the persisted
+    rollup is the signal `corroboration_boost` ranks on; the event log
+    has nothing to say about it).
+    """
+    from .audit import ATTRIBUTION_LOOKBACK_SECONDS
+    from .events import _event_id_list
+    from .search import USAGE_FLAG_NAMES
+
+    now = now or datetime.now(timezone.utc)
+    cutoff: datetime | None = (now - since) if since is not None else None
+
+    events_in_window = 0
+    turn_audited_turns = 0
+    prompt_recall_turns = 0
+    repeats_skipped = 0
+    turns_without_capture = 0
+    first_capture_ts: str | None = None
+
+    # One row per replayable turn, in stream order:
+    # (ts, kind, miss_labeled, top1_dict, usage_active, usage_toggles)
+    rows: list[
+        tuple[datetime, str, bool, dict[str, Any], list[str], dict[str, Any]]
+    ] = []
+    # Explicit non-auto applied use events, for the invariant check and
+    # the endorsement density: (ts, ids).
+    explicit_applies: list[tuple[datetime, list[str]]] = []
+    negative_ids: set[str] = set()
+    endorsed_ids: set[str] = set()
+
+    for ev in events:
+        if not isinstance(ev, dict):
+            continue
+        ts = _parse_ts(ev.get("ts"))
+        in_window = cutoff is None or (ts is not None and ts >= cutoff)
+        if in_window:
+            events_in_window += 1
+        if not in_window or ts is None:
+            continue
+        kind = ev.get("kind")
+        if kind == "use":
+            outcome = ev.get("outcome")
+            ids = _event_id_list(ev.get("ids") or ev.get("memory_ids"))
+            if outcome == "applied" and ev.get("auto") is not True:
+                explicit_applies.append((ts, ids))
+                endorsed_ids.update(ids)
+            elif outcome in ("ignored", "contradicted"):
+                negative_ids.update(ids)
+            continue
+        if kind not in ("turn_audited", "prompt_recall"):
+            continue
+        if kind == "turn_audited":
+            if ev.get("repeat"):
+                repeats_skipped += 1
+                continue
+            if ev.get("verdict") == "no_signal":
+                continue
+        top_hits = ev.get("top_hits")
+        if (
+            not isinstance(top_hits, list)
+            or not top_hits
+            or not isinstance(top_hits[0], dict)
+        ):
+            continue
+        if kind == "turn_audited":
+            turn_audited_turns += 1
+            miss_labeled = ev.get("verdict") == "miss"
+        else:
+            prompt_recall_turns += 1
+            miss_labeled = True
+        usage_active_raw = ev.get("usage_active")
+        usage_active = (
+            [f for f in usage_active_raw if isinstance(f, str)]
+            if isinstance(usage_active_raw, list)
+            else []
+        )
+        usage_toggles_raw = ev.get("usage_toggles")
+        usage_toggles = (
+            usage_toggles_raw if isinstance(usage_toggles_raw, dict) else {}
+        )
+        if usage_active or usage_toggles:
+            ts_str = str(ev.get("ts"))
+            if first_capture_ts is None or ts_str < first_capture_ts:
+                first_capture_ts = ts_str
+        else:
+            turns_without_capture += 1
+        rows.append(
+            (ts, str(kind), miss_labeled, top_hits[0], usage_active, usage_toggles)
+        )
+
+    flags: list[UsageFlagReplay] = []
+    for flag in USAGE_FLAG_NAMES:
+        active_turns = 0
+        changes: list[UsageToggleChange] = []
+        suppressed: list[tuple[datetime, str]] = []
+        for ts, kind, miss_labeled, top1, usage_active, usage_toggles in rows:
+            if flag in usage_active:
+                active_turns += 1
+            toggle = usage_toggles.get(flag)
+            if not isinstance(toggle, dict):
+                continue
+            off = toggle.get("top1")
+            if not isinstance(off, dict):
+                continue
+            on_v2 = str(top1.get("relevance_v2") or "low")
+            on_matched = int(top1.get("matched_unique") or 0)
+            off_v2 = str(off.get("relevance_v2") or "low")
+            off_matched = int(off.get("matched_unique") or 0)
+            judgment = _judge_usage_change(on_v2, on_matched, off_v2, off_matched)
+            changes.append(
+                UsageToggleChange(
+                    ts=isoformat_utc(ts),
+                    event_kind=kind,
+                    miss_labeled=miss_labeled,
+                    on_top1_id=str(top1.get("id") or ""),
+                    on_relevance_v2=on_v2,
+                    on_matched_unique=on_matched,
+                    off_top1_id=str(off.get("id") or ""),
+                    off_relevance_v2=off_v2,
+                    off_matched_unique=off_matched,
+                    query_unique=int(
+                        off.get("query_unique") or top1.get("query_unique") or 0
+                    ),
+                    judgment=judgment,
+                )
+            )
+            if flag == "outcome_demotion":
+                off_id = str(off.get("id") or "")
+                if off_id:
+                    suppressed.append((ts, off_id))
+
+        invariant_rule: str | None = None
+        violations: list[dict[str, str]] = []
+        if flag == "outcome_demotion":
+            invariant_rule = USAGE_DEMOTION_INVARIANT_RULE
+            horizon = float(ATTRIBUTION_LOOKBACK_SECONDS)
+            for supp_ts, supp_id in suppressed:
+                for ts, _kind, _miss, top1, _active, _toggles in rows:
+                    if ts <= supp_ts or str(top1.get("id") or "") != supp_id:
+                        continue
+                    applied_nearby = any(
+                        supp_id in ids
+                        and abs((apply_ts - ts).total_seconds()) <= horizon
+                        for apply_ts, ids in explicit_applies
+                    )
+                    if applied_nearby:
+                        violations.append(
+                            {
+                                "memory_id": supp_id,
+                                "suppressed_at": isoformat_utc(supp_ts),
+                                "applied_top1_at": isoformat_utc(ts),
+                            }
+                        )
+                        break
+
+        improving = sum(1 for c in changes if c.judgment == "improving")
+        worsening = sum(1 for c in changes if c.judgment == "worsening")
+        neutral = sum(1 for c in changes if c.judgment == "neutral")
+        flags.append(
+            UsageFlagReplay(
+                flag=flag,
+                active_turns=active_turns,
+                changed_turns=len(changes),
+                improving=improving,
+                worsening=worsening,
+                neutral=neutral,
+                miss_labeled_worsening=sum(
+                    1
+                    for c in changes
+                    if c.judgment == "worsening" and c.miss_labeled
+                ),
+                changes=changes,
+                invariant_rule=invariant_rule,
+                invariant_violations=violations,
+            )
+        )
+
+    corroborated = 0
+    corroborated_twice = 0
+    for memory in memories:
+        count = getattr(memory, "corroborations", 0) or 0
+        if count >= 1:
+            corroborated += 1
+        if count >= 2:
+            corroborated_twice += 1
+
+    return UsageReplayReport(
+        generated_at=now,
+        window_seconds=int(since.total_seconds()) if since is not None else None,
+        events_in_window=events_in_window,
+        replayable_turns=len(rows),
+        turn_audited_turns=turn_audited_turns,
+        prompt_recall_turns=prompt_recall_turns,
+        repeat_audits_skipped=repeats_skipped,
+        turns_without_capture=turns_without_capture,
+        first_capture_ts=first_capture_ts,
+        endorsed_distinct_in_window=len(endorsed_ids),
+        negative_distinct_in_window=len(negative_ids),
+        corroborated_memories=corroborated,
+        corroborated_twice_memories=corroborated_twice,
+        flags=flags,
+    )
+
+
+def render_usage_replay_text(report: UsageReplayReport) -> str:
+    """Plain-text rendering, mirroring the widening surfaces' shape."""
+    lines: list[str] = []
+    window = (
+        "all time"
+        if report.window_seconds is None
+        else _humanize_seconds(report.window_seconds)
+    )
+    lines.append(f"bettermemory eval --usage-replay — last {window}")
+    lines.append("─" * 60)
+    lines.append(f"Events scanned              {report.events_in_window:>5d}")
+    lines.append(f"Replayable turns            {report.replayable_turns:>5d}")
+    lines.append(
+        f"  ({report.turn_audited_turns} audited, "
+        f"{report.prompt_recall_turns} delivered recalls)"
+    )
+    if report.repeat_audits_skipped:
+        lines.append(
+            f"  (skipped {report.repeat_audits_skipped} repeat audits — "
+            "multi-stop re-probes of the same message)"
+        )
+    if report.turns_without_capture:
+        lines.append(
+            f"  ({report.turns_without_capture} turns carry no usage capture — "
+            "pre-capture producer or no live signal)"
+        )
+    if report.first_capture_ts:
+        lines.append(f"  (first capture in window: {report.first_capture_ts})")
+    lines.append("")
+    lines.append("Density preconditions (this window)")
+    lines.append(
+        f"  explicit-endorsed distinct memories   "
+        f"{report.endorsed_distinct_in_window:>5d}"
+    )
+    lines.append(
+        f"  negative-outcome distinct memories    "
+        f"{report.negative_distinct_in_window:>5d}"
+    )
+    lines.append(
+        f"  corroborated memories (≥1 / ≥2)       "
+        f"{report.corroborated_memories:>5d} / {report.corroborated_twice_memories}"
+    )
+    lines.append("")
+    lines.append(f"Judgment rule: {report.improvement_rule}")
+    for row in report.flags:
+        lines.append("")
+        lines.append(f"{row.flag}")
+        lines.append(f"  turns with live signal      {row.active_turns:>5d}")
+        lines.append(f"  changed top-1s              {row.changed_turns:>5d}")
+        if row.changed_turns:
+            lines.append(
+                f"    improving / worsening / neutral   "
+                f"{row.improving} / {row.worsening} / {row.neutral}"
+            )
+            lines.append(
+                f"    miss-labeled worsening            {row.miss_labeled_worsening}"
+            )
+            for change in row.changes[-10:]:
+                lines.append(
+                    f"    {change.ts}  {change.judgment:<9s} "
+                    f"on={change.on_top1_id[:10]}…({change.on_relevance_v2}) "
+                    f"off={change.off_top1_id[:10]}…({change.off_relevance_v2})"
+                )
+            if len(row.changes) > 10:
+                lines.append(f"    … and {len(row.changes) - 10} earlier changes")
+        if row.invariant_rule is not None:
+            lines.append(f"  invariant ({row.invariant_rule})")
+            if row.invariant_violations:
+                lines.append(
+                    f"    VIOLATIONS: {len(row.invariant_violations)}"
+                )
+                for v in row.invariant_violations:
+                    lines.append(
+                        f"      {v['memory_id'][:10]}… suppressed "
+                        f"{v['suppressed_at']} → applied top-1 "
+                        f"{v['applied_top1_at']}"
+                    )
+            else:
+                lines.append("    violations: 0")
+    lines.append("")
+    lines.append(
+        "Read these numbers against the declared flip bars in "
+        "docs/ROADMAP.md"
+    )
+    lines.append(
+        "(the usage-signal flags entry). This surface measures; it "
+        "never flips."
+    )
     return "\n".join(lines) + "\n"
 
 

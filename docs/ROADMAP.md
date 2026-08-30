@@ -43,6 +43,12 @@ Planned work, in rough priority order. Plans change; the
      budget holding.
   If the replay harness does not exist by the read, the read holds and
   the harness becomes the next unit — the bars stay as declared.
+  *Harness shipped 2026-08-30* (`bettermemory eval --usage-replay`;
+  methodology in docs/eval.md): exact per-turn toggle capture recorded
+  by the production ranker from 2026-08-30 onward — turns logged
+  before that are counted as not-replayable, never approximated, so
+  the replay clauses read only exact evidence and "fewer changed
+  turns" resolves as the declared hold.
 - **Score-gated recall at prompt time — SHIPPED 2026-08-05 (3.41.0).**
   Never a Planned entry; it arrived from the 2026-08-03 altitude
   review, which found the machine already built: the Stop hook ran

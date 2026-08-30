@@ -427,6 +427,17 @@ class MissReport:
     probe_query: str | None = None
     no_signal_reason: str | None = None
     suppressed_by: str | None = None
+    # Usage-toggle capture (additive, empty/None when the probe ranked
+    # with no live usage-aware inputs — every default-config store).
+    # `usage_active` lists which of `search.USAGE_FLAG_NAMES` carried
+    # live signal on this probe's ranking; `usage_toggles` maps the
+    # subset whose single-flag toggle CHANGES the top-1 memory to the
+    # counterfactual winner's raw coverage features (see
+    # `search._compute_usage_toggles`). Recorded so the usage-signal
+    # flip bars (docs/ROADMAP.md) are readable from the event log
+    # alone — `eval.compute_usage_replay` is the consumer.
+    usage_active: tuple[str, ...] = ()
+    usage_toggles: dict[str, Any] | None = None
 
     @property
     def is_miss(self) -> bool:
@@ -444,6 +455,8 @@ class MissReport:
             "probe_query": self.probe_query,
             "no_signal_reason": self.no_signal_reason,
             "suppressed_by": self.suppressed_by,
+            "usage_active": list(self.usage_active),
+            "usage_toggles": self.usage_toggles,
         }
 
 
@@ -528,6 +541,17 @@ def turn_audited_fields(
         fields["repeat"] = True
     if client_model is not None:
         fields["client_model"] = client_model
+    # Usage-toggle capture (additive, omitted when absent — every
+    # default-config turn keeps its exact prior shape). `usage_active`
+    # is the per-flag denominator ("the flag had live signal on this
+    # turn"); `usage_toggles` carries only the flags whose toggle
+    # changed the top-1, with the counterfactual winner's raw features.
+    # Together they make the usage-signal flip bars (docs/ROADMAP.md)
+    # readable from the log alone via `eval.compute_usage_replay`.
+    if report.usage_active:
+        fields["usage_active"] = list(report.usage_active)
+    if report.usage_toggles:
+        fields["usage_toggles"] = report.usage_toggles
     return fields
 
 
@@ -624,7 +648,7 @@ def prompt_recall_fields(
             f"triggered_from must be one of "
             f"{sorted(_VALID_TRIGGERED_FROM)!r}, got {triggered_from!r}"
         )
-    return {
+    fields = {
         "event_id": generate_ulid(),
         "session_id": session_id,
         "threshold_rule": report.threshold_rule,
@@ -637,6 +661,16 @@ def prompt_recall_fields(
         "triggered_from": triggered_from,
         "delivered_reason": delivered_reason,
     }
+    # Same additive usage-toggle capture `turn_audited_fields` carries,
+    # and higher-stakes here: a delivery's top-1 IS what got injected,
+    # so a changed toggle on a `prompt_recall` event records that the
+    # flag changed WHAT THE MODEL WAS SHOWN — the exact evidence the
+    # flip bars' "no miss-labeled turn worsening" clause reads.
+    if report.usage_active:
+        fields["usage_active"] = list(report.usage_active)
+    if report.usage_toggles:
+        fields["usage_toggles"] = report.usage_toggles
+    return fields
 
 
 def is_duplicate_audit(
@@ -949,6 +983,14 @@ def probe_for_miss(
         raise ValueError(
             f"unknown audit probe mode {mode!r}; must be one of: keyword, bm25, hybrid"
         )
+    # Usage-toggle capture rides every probe unconditionally: it costs
+    # nothing when no usage-aware input is live (the common default-
+    # config case leaves the dict empty), and when one IS live the
+    # counterfactual is computed by the production ranker itself at the
+    # only moment it is exactly computable — offline reconstruction
+    # from the fused RRF scores cannot reproduce a per-leg factor
+    # toggle. See `search._compute_usage_toggles`.
+    usage_capture: dict[str, Any] = {}
     hits: list[MemoryHit] = run_search(
         memories,
         user_message,
@@ -965,7 +1007,10 @@ def probe_for_miss(
         corpus_stats_provider=corpus_stats_provider,
         rescue_expansion=rescue_expansion,
         conversational=conversational,
+        usage_toggles_out=usage_capture,
     )
+    usage_active = tuple(usage_capture.get("active") or ())
+    usage_toggles = usage_capture.get("toggles") or None
     if not hits:
         return MissReport(
             verdict="no_signal",
@@ -1056,6 +1101,8 @@ def probe_for_miss(
         top_hits=top_hits,
         probe_query=user_message,
         suppressed_by=suppressed_by,
+        usage_active=usage_active,
+        usage_toggles=usage_toggles,
     )
 
 
