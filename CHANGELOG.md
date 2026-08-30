@@ -7,6 +7,49 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 6.4.0 - 2026-08-30
+
+A minor by the [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract):
+additive event fields, an additive out-parameter on `search()`, and a
+new `eval` mode — no schema change, no removals, no
+resident-description changes.
+
+### Added — usage-toggle capture + `eval --usage-replay`: the flip bars' measurement surface
+
+The usage-signal ranking flags (`endorsement_boost`,
+`outcome_demotion`, `corroboration_boost`) have declared flip bars in
+the ROADMAP whose replay clause needs per-turn counterfactuals, and
+those are only exactly computable where the factors live: the factors
+multiply per-leg scores *before* RRF rank fusion, so no offline
+arithmetic on a logged fused score can reproduce a toggle. The
+silent-miss probe now computes it in place — `search()` gains a
+`usage_toggles_out` out-parameter (the `matched_leg_out` pattern)
+that, when any usage input carries live signal, divides each flag's
+per-memory factor back out of the exact leg lists production fused,
+re-sorts, re-fuses with recomputed weights, re-applies the temporal
+rerank, and reports each flag whose single-flag toggle would have
+changed the top-1, with the counterfactual winner's raw coverage
+features. Leg composition is held fixed (pinned protocol); live
+signal means a non-neutral factor on at least one scored candidate.
+`turn_audited` and `prompt_recall` events carry the capture
+additively (`usage_active` / `usage_toggles` — absent on every
+default-config turn, so those events keep their exact prior shape),
+and a delivery's capture records that the flag changed what got
+injected.
+
+`bettermemory eval --usage-replay` is the offline half: it aggregates
+the captures over the window, judges each changed top-1 under the
+pinned rule `v1_relevance_v2_tier_then_matched_unique`, counts
+miss-labeled worsenings, checks the `outcome_demotion` invariant
+(`v1_later_top1_explicit_apply_within_600s`), and prints the density
+preconditions (distinct explicit endorsements, distinct negative
+outcomes, corroboration liveness) next to a pointer at the declared
+bars. Measurements only — thresholds stay in the ROADMAP, an unread
+bar is a hold, and pre-capture turns are counted as not-replayable,
+never approximated. Ground truth is tested directly: the captured
+counterfactual must equal a real `search()` run with that one flag's
+input removed, per flag, per mode.
+
 ## 6.3.0 - 2026-08-30
 
 A minor by the [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract):
