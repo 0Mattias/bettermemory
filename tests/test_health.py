@@ -2798,9 +2798,10 @@ def test_hook_attributed_applies_still_feed_the_published_endorsement_signals() 
 
 
 def test_cold_endorsement_picks_up_heavy_retrieval_with_zero_explicit() -> None:
-    """The flagship case: a memory retrieved 5+ times, every applied
-    event was auto, never explicitly endorsed → counts as one
-    cold-endorsement memory.
+    """The flagship case: a memory retrieved past the floor, every
+    applied event auto, never explicitly endorsed → counts as one
+    cold-endorsement memory. The floor is passed inline (the shipped
+    default is a calibration judgment, not what this test pins).
 
     Per-memory semantic: the rollup counts MEMORIES, not turns. One
     memory retrieved 5 times here contributes 1 to total — not 5."""
@@ -2810,7 +2811,11 @@ def test_cold_endorsement_picks_up_heavy_retrieval_with_zero_explicit() -> None:
         events.append(_event("search", returned=[m.id]))
         events.append(_event("use", ids=[m.id], outcome="applied", auto=True))
     report = compute_health(
-        [m], events, heavily_used_min_applied=1, now=_utc(2026, 5, 1)
+        [m],
+        events,
+        heavily_used_min_applied=1,
+        cold_endorsement_min_retrievals=5,
+        now=_utc(2026, 5, 1),
     )
     assert report.cold_endorsement_memories.total == 1
     assert report.cold_endorsement_memories.rows[0].id == m.id
@@ -2829,25 +2834,41 @@ def test_cold_endorsement_counts_memories_not_turns() -> None:
         events.append(_event("search", returned=[m.id]))
         events.append(_event("use", ids=[m.id], outcome="applied", auto=True))
     report = compute_health(
-        [m], events, heavily_used_min_applied=1, now=_utc(2026, 5, 1)
+        [m],
+        events,
+        heavily_used_min_applied=1,
+        cold_endorsement_min_retrievals=5,
+        now=_utc(2026, 5, 1),
     )
     # ONE memory, regardless of how many turns hit it.
     assert report.cold_endorsement_memories.total == 1
     # The same value surfaces through curation_counts.
-    counts = curation_counts([m], events, window_days=30, now=_utc(2026, 5, 1))
+    counts = curation_counts(
+        [m],
+        events,
+        window_days=30,
+        cold_endorsement_min_retrievals=5,
+        now=_utc(2026, 5, 1),
+    )
     assert counts["cold_endorsement_memories"] == 1
 
 
 def test_cold_endorsement_respects_min_retrievals_floor() -> None:
-    """Below the floor (4 retrievals), the memory doesn't qualify —
-    not enough traffic to call a pattern."""
+    """One below the inline floor (4 retrievals against 5), the memory
+    doesn't qualify — not enough traffic to call a pattern. The sharp
+    boundary is the point, so the floor is pinned inline rather than
+    riding the shipped default."""
     m = _memory()
     events = []
     for _ in range(4):
         events.append(_event("search", returned=[m.id]))
         events.append(_event("use", ids=[m.id], outcome="applied", auto=True))
     report = compute_health(
-        [m], events, heavily_used_min_applied=1, now=_utc(2026, 5, 1)
+        [m],
+        events,
+        heavily_used_min_applied=1,
+        cold_endorsement_min_retrievals=5,
+        now=_utc(2026, 5, 1),
     )
     assert report.cold_endorsement_memories.total == 0
 
@@ -2902,6 +2923,7 @@ def test_cold_endorsement_sorted_by_retrieval_count_desc() -> None:
         [light, medium, heavy],
         events,
         heavily_used_min_applied=1,
+        cold_endorsement_min_retrievals=5,
         now=_utc(2026, 5, 1),
     )
     assert [r.id for r in report.cold_endorsement_memories.rows] == [
@@ -2909,6 +2931,78 @@ def test_cold_endorsement_sorted_by_retrieval_count_desc() -> None:
         medium.id,
         light.id,
     ]
+
+
+def test_hookless_store_suppresses_cold_endorsement_with_dead_weight() -> None:
+    """Armed gate + zero hook telemetry → the endorsement bucket is
+    empty BY CONSTRUCTION, `telemetry_coverage` names both suppressed
+    legs, and `curation_counts` falls to zero with it (the numerical
+    contract). The fixture would flag without the gate: retrievals over
+    the inline floor, every apply the auto settlement an unwired hook
+    still performs, zero explicit."""
+    m = _memory()
+    events = []
+    for _ in range(6):
+        events.append(_event("search", returned=[m.id]))
+        events.append(_event("use", ids=[m.id], outcome="applied", auto=True))
+    report = compute_health(
+        [m],
+        events,
+        cold_endorsement_min_retrievals=5,
+        hook_telemetry_events=0,
+        now=_utc(2026, 5, 1),
+    )
+    assert report.cold_endorsement_memories.total == 0
+    assert report.cold_endorsement_memories.rows == []
+    coverage = report.telemetry_coverage
+    assert coverage is not None
+    assert coverage.cold_endorsement_suppressed is True
+    assert coverage.dead_weight_suppressed is True
+    assert coverage.to_dict()["cold_endorsement_suppressed"] is True, (
+        "the published rendering must carry the new leg"
+    )
+    counts = curation_counts(
+        [m],
+        events,
+        window_days=30,
+        cold_endorsement_min_retrievals=5,
+        hook_telemetry_events=0,
+        now=_utc(2026, 5, 1),
+    )
+    assert counts["cold_endorsement_memories"] == 0
+
+
+def test_hook_telemetry_restores_cold_endorsement_bucket() -> None:
+    """Positive control: the same fixture plus one Stop-hook audit
+    event (pure coverage — a `turn_audited` carries no endorsement
+    side effect) flips coverage on, and the memory flags again on both
+    surfaces."""
+    m = _memory()
+    events = []
+    for _ in range(6):
+        events.append(_event("search", returned=[m.id]))
+        events.append(_event("use", ids=[m.id], outcome="applied", auto=True))
+    events.append(_event("turn_audited", triggered_from="stop_hook"))
+    report = compute_health(
+        [m],
+        events,
+        cold_endorsement_min_retrievals=5,
+        hook_telemetry_events=0,
+        now=_utc(2026, 5, 1),
+    )
+    assert report.cold_endorsement_memories.total == 1
+    coverage = report.telemetry_coverage
+    assert coverage is not None
+    assert coverage.cold_endorsement_suppressed is False
+    counts = curation_counts(
+        [m],
+        events,
+        window_days=30,
+        cold_endorsement_min_retrievals=5,
+        hook_telemetry_events=0,
+        now=_utc(2026, 5, 1),
+    )
+    assert counts["cold_endorsement_memories"] == 1
 
 
 def test_cold_endorsement_threshold_overridable() -> None:
@@ -3313,6 +3407,7 @@ def test_cold_endorsement_ratio_threshold_surfaces_lopsided_memory() -> None:
         [m],
         events,
         window_days=30,
+        cold_endorsement_min_retrievals=5,
         cold_endorsement_ratio_threshold=0.2,
         now=_utc(2026, 5, 1),
     )

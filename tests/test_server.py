@@ -5813,7 +5813,8 @@ async def test_cold_endorsement_ratio_threshold_threaded_to_all_callsites(
     `cold_endorsement_ratio_threshold=0.5` saw the loosened bucket on
     `memory_health` but the strict bucket on every session-start hint.
 
-    We seed a memory with 5 retrievals and 4 applieds where exactly 1
+    We seed a memory with 30 retrievals (the shipped floor) and 4
+    applieds where exactly 1
     is explicit (ratio 1/4 = 0.25). At the configured 0.5 threshold the
     memory IS a cold-endorsement memory (count = 1); at the strict 0.0
     default it is NOT (count = 0). Both `memory_scope_overview` and the
@@ -5850,14 +5851,14 @@ async def test_cold_endorsement_ratio_threshold_threaded_to_all_callsites(
     mem_id = written["id"]
 
     # Seed events directly into the active log so the retrieval /
-    # applied counts cross the cold-endorsement floor (5 retrievals).
+    # applied counts cross the cold-endorsement floor (30 retrievals).
     # We bypass the recorder here because the recorder timestamps with
     # `_utcnow_iso()` and we want determinism; the on-disk format is
     # one JSON object per line, so a direct append matches what
     # `iter_all_events` consumes.
     events_path = memory_dir / ".events.jsonl"
     extra_lines: list[str] = []
-    for i in range(5):
+    for i in range(30):
         extra_lines.append(
             json.dumps(
                 {
@@ -5891,6 +5892,21 @@ async def test_cold_endorsement_ratio_threshold_threaded_to_all_callsites(
                 "kind": "use",
                 "ids": [mem_id],
                 "outcome": "applied",
+            }
+        )
+    )
+    # One Stop-hook audit so the telemetry gate reads covered — the
+    # endorsement leg is gated alongside dead_weight (2026-08-30), and
+    # a hookless fixture would suppress the very bucket this test
+    # measures. `turn_audited` is pure coverage: no endorsement side
+    # effect on the seeded memory.
+    extra_lines.append(
+        json.dumps(
+            {
+                "ts": "2026-04-16T00:00:00Z",
+                "session": "sess_seed",
+                "kind": "turn_audited",
+                "triggered_from": "stop_hook",
             }
         )
     )
@@ -5952,7 +5968,7 @@ async def test_cold_endorsement_ratio_threshold_default_still_strict(
 
     events_path = memory_dir / ".events.jsonl"
     extra_lines: list[str] = []
-    for i in range(5):
+    for i in range(30):
         extra_lines.append(
             json.dumps(
                 {
@@ -5984,6 +6000,21 @@ async def test_cold_endorsement_ratio_threshold_default_still_strict(
                 "kind": "use",
                 "ids": [mem_id],
                 "outcome": "applied",
+            }
+        )
+    )
+    # One Stop-hook audit so the telemetry gate reads covered — the
+    # endorsement leg is gated alongside dead_weight (2026-08-30), and
+    # a hookless fixture would suppress the very bucket this test
+    # measures. `turn_audited` is pure coverage: no endorsement side
+    # effect on the seeded memory.
+    extra_lines.append(
+        json.dumps(
+            {
+                "ts": "2026-04-16T00:00:00Z",
+                "session": "sess_seed",
+                "kind": "turn_audited",
+                "triggered_from": "stop_hook",
             }
         )
     )

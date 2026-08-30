@@ -307,12 +307,16 @@ class TelemetryCoverage:
     `dead_weight_suppressed` is the actionable bit: when it is True the
     `dead_weight` bucket is EMPTY BY CONSTRUCTION rather than because
     the store is clean, and `reason` says so in one line the model can
-    surface verbatim.
+    surface verbatim. `cold_endorsement_suppressed` is the same
+    statement about the `cold_endorsement_memories` bucket — both key
+    on settlement counts an unwired hook cannot produce, so they gate
+    together (the gate widened to the endorsement leg 2026-08-30).
     """
 
     hook_telemetry_events: int
     covered: bool
     dead_weight_suppressed: bool
+    cold_endorsement_suppressed: bool = False
     reason: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -320,6 +324,7 @@ class TelemetryCoverage:
             "hook_telemetry_events": self.hook_telemetry_events,
             "covered": self.covered,
             "dead_weight_suppressed": self.dead_weight_suppressed,
+            "cold_endorsement_suppressed": self.cold_endorsement_suppressed,
             "reason": self.reason,
         }
 
@@ -340,8 +345,9 @@ class TelemetryCoverage:
 _HOOKLESS_REASON = (
     "no Stop-hook settlement telemetry in the event log — the only "
     "settlement left is the in-process auto-commit, which cannot settle "
-    "a retrieval the session never returns to, so applied_count == 0 "
-    "does not distinguish an unhelpful memory from an unwired hook. Run "
+    "a retrieval the session never returns to, so zero applied and zero "
+    "explicit-applied counts do not distinguish an unhelpful memory "
+    "from an unwired hook. Run "
     "`bettermemory doctor` to wire the Stop hook, then re-check."
 )
 
@@ -652,12 +658,23 @@ _VERIFICATION_DEBT_CAP = 20
 # Minimum `retrieval_count` for a memory to be eligible for the
 # `cold_endorsement_memories` bucket. Below this floor we treat the
 # absence of explicit endorsement as "not enough traffic to judge"
-# rather than a real signal. Five mirrors the same intuition behind
-# `heavily_used_min_applied=3`: a handful of retrievals is enough to
-# call a pattern, fewer is single-incident noise. Tunable inline on
-# the compute_health call so tests can lower the floor without forcing
-# a config bump for the common case.
-_COLD_ENDORSEMENT_MIN_RETRIEVALS = 5
+# rather than a real signal.
+#
+# Calibrated 2026-08-30 against the dogfood event log rather than by
+# intuition. The pooled explicit-endorse rate there is p ≈ 0.130 (406
+# non-auto applies over 3,119 search deliveries), so a perfectly
+# healthy memory shows zero explicit applies after five retrievals
+# with probability (1-p)^5 ≈ 0.50 — the previous floor of 5 flagged
+# coin flips, and on the day it was measured every row the bucket held
+# was demonstrably in active use. Thirty puts P(zero | healthy) at or
+# under 0.05 for both that estimate (0.015) and the more conservative
+# p ≈ 0.095 a same-week pass measured (0.048). The formula is the
+# durable part — (1-p)^N against the store's own event log — and the
+# constant is its snapshot; re-derive p before trusting the number on
+# a store with a different settlement mix. Tunable inline on the
+# compute_health call so tests can exercise the mechanics without
+# forcing a config bump for the common case.
+_COLD_ENDORSEMENT_MIN_RETRIEVALS = 30
 
 # Cap the inline row list. Same shape as the verification_debt and
 # commit_drift_debt rollups — uncapped `total` for the bucket size,
@@ -1872,6 +1889,7 @@ def compute_health(
             hook_telemetry_events=total_hook_telemetry,
             covered=telemetry_covered,
             dead_weight_suppressed=not telemetry_covered,
+            cold_endorsement_suppressed=not telemetry_covered,
             reason=None if telemetry_covered else _HOOKLESS_REASON,
         )
     dead_weight: list[MemoryStats] = []
@@ -2040,13 +2058,23 @@ def compute_health(
     # case the binary check misses. Default 0.0 preserves the
     # pre-existing behaviour exactly (the ratio branch never fires).
     ratio_threshold = max(0.0, float(cold_endorsement_ratio_threshold))
-    endorsement_candidates = [
-        s
-        for s in by_id.values()
-        if s.category != Category.AMBIENT
-        and s.retrieval_count >= endorsement_floor
-        and _is_weakly_endorsed(s, ratio_threshold)
-    ]
+    # Rides the same honesty gate as dead_weight, and skipped the same
+    # way — not filtered afterwards: `explicit_applied_count` is
+    # produced by the Stop hook's containment matcher and deliberate
+    # model calls, so on a store with no settlement telemetry the zero
+    # is uninformative for every row at once. The empty bucket is
+    # explained by `telemetry_coverage.cold_endorsement_suppressed`.
+    endorsement_candidates = (
+        [
+            s
+            for s in by_id.values()
+            if s.category != Category.AMBIENT
+            and s.retrieval_count >= endorsement_floor
+            and _is_weakly_endorsed(s, ratio_threshold)
+        ]
+        if telemetry_covered
+        else []
+    )
     endorsement_candidates.sort(
         key=lambda s: (
             s.retrieval_count,
@@ -2951,26 +2979,29 @@ def curation_counts(
     created after `since`, so an older row that drifted in the prior
     session won't double-surface in the next session's delta.
 
-    `hook_telemetry_events` arms the same dead-weight honesty gate
+    `hook_telemetry_events` arms the same honesty gate
     `compute_health` carries, with identical semantics (`None` = caller
     did not measure, assume covered; an int = gate on, OR-ed with this
-    walk's own observation). Only the `dead` count is gated — the two
-    surfaces must agree, and `dead` is the one this rollup shares with
-    `compute_health`'s `dead_weight`.
+    walk's own observation). The `dead` AND `cold_endorsement_memories`
+    counts are both gated — each shares its bucket with
+    `compute_health`, and the numerical contract forces the two
+    surfaces to zero together.
 
-    FOLLOW-UP, deliberately not done here: `dead` is not the only
-    hook-dependent count in this rollup. `cold_endorsement_memories`
-    keys on `explicit_applied_count == 0`, which is if anything MORE
-    hook-dependent — the Stop hook's containment matcher is the dominant
-    producer of explicit applies — and the curation hint's pressure
-    formula (`handlers/_shared._maybe_attach_curation_hint`) sums
+    The endorsement leg joined the gate 2026-08-30 (this paragraph
+    used to defer it as a follow-up). `cold_endorsement_memories` keys
+    on `explicit_applied_count == 0`, which is if anything MORE
+    hook-dependent than `dead` — the Stop hook's containment matcher
+    is the dominant producer of explicit applies — and the curation
+    hint's pressure formula
+    (`handlers/_shared._maybe_attach_curation_hint`) sums
     `dead + drifted + cold_endorsement_memories`, so a hookless store
-    still gets nagged, through a leg that is misleading for exactly the
-    reason this gate exists. Widening the gate to cover it (or dropping
-    that leg from the hint's pressure sum when coverage is absent)
-    changes what a published rollup means on the one surface the model
-    does not have to ask for, so it wants its own decision rather than
-    riding along with this one.
+    was nagged through a leg that was misleading for exactly the
+    reason the gate exists. Of the two recorded shapes, the gate was
+    widened rather than the leg dropped from the pressure sum alone:
+    gating only the hint would have left this published count
+    misleading on the one surface the model does not have to ask for,
+    while gating the count corrects the hint's sum for free and keeps
+    the compute_health agreement intact.
 
     The returned key set is deliberately UNCHANGED: it flows into
     `memory_scope_overview`'s `curation_pending` block, whose key set is
@@ -3183,8 +3214,17 @@ def curation_counts(
         # here because the retrieval floor itself is the "has had
         # time to accumulate signal" guard. Per-memory count: one
         # memory contributes one to the total even if hit hundreds
-        # of times by the ranker.
-        if not is_ambient and retrieval_counts.get(m.id, 0) >= endorsement_floor:
+        # of times by the ranker. The telemetry gate rides in the same
+        # condition for the same reason as `dead` above: explicit
+        # applies come from the hook matcher and deliberate model
+        # calls, so on a hookless store the zero is uninformative,
+        # `compute_health` empties its bucket, and this count must
+        # fall to zero with it or the two surfaces disagree.
+        if (
+            telemetry_covered
+            and not is_ambient
+            and retrieval_counts.get(m.id, 0) >= endorsement_floor
+        ):
             explicit = explicit_applied_counts.get(m.id, 0)
             total_applied = applied_counts.get(m.id, 0)
             ratio_threshold = max(0.0, float(cold_endorsement_ratio_threshold))

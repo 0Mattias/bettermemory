@@ -1971,7 +1971,7 @@ def test_acknowledge_debt_does_not_count_auto_applied_as_endorsement(
     NOT block the acknowledgement."""
     m = store.write(content="auto-applied body", scopes=["tools"])
     recorder = Recorder(root=store.root, session_id="seed")
-    _seed_search_events(recorder, m.id, count=6)
+    _seed_search_events(recorder, m.id, count=30)
     # Plenty of auto-applies — still debt, because none are explicit.
     for _ in range(3):
         recorder.record(
@@ -2064,8 +2064,8 @@ def test_acknowledge_debt_json_output_carries_acknowledged_ids(
     m1 = store.write(content="alpha", scopes=["tools"])
     m2 = store.write(content="beta", scopes=["tools"])
     recorder = Recorder(root=store.root, session_id="seed")
-    _seed_search_events(recorder, m1.id, count=6)
-    _seed_search_events(recorder, m2.id, count=6)
+    _seed_search_events(recorder, m1.id, count=30)
+    _seed_search_events(recorder, m2.id, count=30)
     # Genuine cold-endorsement: each has >=1 auto-apply (applied_count > 0)
     # but zero explicit applies — the auto-fallback is doing all the work.
     # Pure-dead-weight (zero applies) is a DIFFERENT bucket (removal) and is
@@ -2086,7 +2086,7 @@ def test_acknowledge_debt_json_output_carries_acknowledged_ids(
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["acknowledged"] == 2
-    assert payload["floor"] == 5
+    assert payload["floor"] == 30
     assert set(payload["ids"]) == {m1.id, m2.id}
 
 
