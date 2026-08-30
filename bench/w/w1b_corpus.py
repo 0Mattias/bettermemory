@@ -1,6 +1,6 @@
 """Deterministic corpus slice for the W1b retrain.
 
-The read side of `bench/w/W1B_DECLARATION.md` §3: the per-source token
+The read side of the W1b declaration §3: the per-source token
 budgets, the concatenation order, the Stack Exchange Posts reader, and
 the derived token cache. Everything streams from the pinned register
 bytes (`bench/w/corpora.json`); nothing here touches the network. The

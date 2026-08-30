@@ -1,6 +1,6 @@
 """Run an instrument with the W2 reranker over the engine's candidate window.
 
-The harness `bench/w/W2_DECLARATION.md` §4 constrains: no `src/`
+The harness the W2 declaration §4 constrains: no `src/`
 change, the instruments' committed entry points driven as they stand,
 the rerank stage applied bench-side. The seam is the same one
 `w1_measure.py` established — the runner modules bind

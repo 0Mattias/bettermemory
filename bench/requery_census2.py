@@ -1,6 +1,6 @@
 """Requery census 2: the frozen family, on the instrument that can see it.
 
-`bench/REQUERY_CENSUS_2_DECLARATION.md` fixes everything this script
+The requery-census-2 declaration fixes everything this script
 computes and was committed before this file existed. The mechanism is
 the parent census's, byte-frozen by IMPORT from its mechanical half
 (`bench/requery_census.py`) — the two passes, the engagement gate at

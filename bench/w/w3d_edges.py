@@ -1,6 +1,6 @@
 """W3-D reader: definitional edge extraction and the Stage-0 census.
 
-Implements `bench/w/W3D_DECLARATION.md` §3 and §4 over the two admitted
+Implements the W3-D declaration §3 and §4 over the two admitted
 register entries: the eight enwiktionary part files and the single
 simplewiki multistream dump. One streaming pass, each file's pinned
 sha256 re-verified over the exact bytes before its first page is read.

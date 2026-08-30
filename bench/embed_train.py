@@ -36,7 +36,7 @@ which is what makes a pure-Python trainer finish at all.
 
 The vectors are NOT committed. They are a derived intermediate of a
 committed deterministic script over committed inputs, which is the
-reproducibility bar `bench/THIRD_INSTRUMENT.md` states; committing a
+reproducibility bar the third-instrument note states; committing a
 multi-megabyte float dump would break the repository's 500 kB
 added-file cap to store something the script reproduces exactly.
 

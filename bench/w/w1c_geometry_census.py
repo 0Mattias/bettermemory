@@ -1,6 +1,6 @@
 """The W1C geometry census: the expanded cross-form family, both windows.
 
-`bench/w/W1C_DECLARATION.md` §2 fixes everything this script computes
+The W1c declaration §2 fixes everything this script computes
 and was committed before any window-15 vector existed. The probe
 machinery is imported from the committed `w1b_geometry_probe.py`,
 unchanged; the three frozen families are carried byte for byte; and the

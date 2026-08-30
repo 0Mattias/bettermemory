@@ -16,7 +16,7 @@ usual way a retrieval benchmark flatters itself is that whoever wrote the
 questions had the documents in front of them, so the questions
 accidentally quote the documents and every ranker looks good. Here that
 leak is closed structurally, not promised. Provenance and the exact
-prompts are in `bench/retrieval/README.md`.
+prompts are in the retrieval-bench notes.
 
 THE ARMS. Two of them mirror what a real user actually gets, rather than
 artificial mode flags:

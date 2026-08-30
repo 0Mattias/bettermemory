@@ -1,7 +1,7 @@
 """MSC (Multi-Session Chat) — loader and store construction, data not
 committed.
 
-MSC is the conversational corpus `bench/THIRD_INSTRUMENT.md` names as
+MSC is the conversational corpus the third-instrument note names as
 the right shape for a third instrument and for the store-scale
 question: multi-session dialogues between recurring speaker pairs,
 personal facts, casual register, with recorded time gaps between

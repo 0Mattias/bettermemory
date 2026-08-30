@@ -1,6 +1,6 @@
 """Requery census: two-pass feedback requery on the dev instrument.
 
-`bench/REQUERY_CENSUS_DECLARATION.md` fixes everything this script
+The requery-census declaration fixes everything this script
 computes — the 8-cell family (kept x F x M), the engagement gate at
 the engine's own shipped coverage constant, both passes' reads, the
 oracle-min diagnostic, and the license/twitch/park ladder — and was

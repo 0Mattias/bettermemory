@@ -1,6 +1,6 @@
 """The W2 geometry census: the trained encoder's term space, pair by pair.
 
-`bench/w/W2_DECLARATION.md` §6: a term's vector is the encoder's
+The W2 declaration §6: a term's vector is the encoder's
 pooled output on the bare surface form; the term inventory is the
 words of the pretraining token cache at min-count 10 capped at
 150,000 (W1b's vocabulary rule, carried); the pair enumeration and

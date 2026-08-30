@@ -1,6 +1,6 @@
 """Deterministic corpus readers for the W1 trainer.
 
-The read side of `bench/w/W1_DECLARATION.md` §2: every function here is
+The read side of the W1 declaration §2: every function here is
 a pure, order-stable stream over the pinned register bytes
 (`bench/w/corpora.json`), so a retrain sees byte-identical input in
 byte-identical order. Nothing here touches the network; the register's

@@ -1,7 +1,7 @@
 """P2a feature census: does anything a rerank could use order gold above
 the distractors that outrank it?
 
-`bench/P2A_CENSUS_DECLARATION.md` fixes everything this script computes
+The P2A census declaration fixes everything this script computes
 — the feature family, every direction, the pair rule, both corpora's
 pools, and the readiness criterion — and was committed before this ran.
 This file is the mechanical half: it replays the shipped engine over

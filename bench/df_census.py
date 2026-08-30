@@ -11,7 +11,7 @@ term's df a usable separator between the vocabulary that helps a
 technical store and the vocabulary that harms a conversational one),
 and it is deliberately produced BEFORE any gate exists in code, so a
 threshold can be fixed from corpus structure rather than fitted to an
-outcome. `bench/longmemeval/PREREGISTRATION.md` addendum 4 declares
+outcome. The LongMemEval preregistration addendum 4 declares
 exhaustively what is read from the held-out corpus: this file's output
 and nothing else.
 

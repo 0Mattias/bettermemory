@@ -1,6 +1,6 @@
 """The W2 body census: the second surface of the pair corpus, priced.
 
-`bench/w/W2_BODY_CENSUS_DECLARATION.md` fixes everything this script
+The W2 body-census declaration fixes everything this script
 computes and was committed before it. The edge rule and the streaming
 are W3-P2's committed code path, imported (`w3p2_pairs.duplicate_edges`,
 `iter_member_lines`); the counting rule is W3-P2's exclusive

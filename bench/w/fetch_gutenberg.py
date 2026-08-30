@@ -1,6 +1,6 @@
 """Fetch the W1 register's curated Project Gutenberg subset, verified.
 
-The fetch step `bench/w/W1_DECLARATION.md` §3 names, run once under the
+The fetch step the W1 declaration §3 names, run once under the
 owner's plain-sentence yes of 2026-08-15. The list below is the
 hand-curated selection the declaration's constraint ledger requires:
 canonical English-language works chosen by title, no popularity feed,

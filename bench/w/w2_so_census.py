@@ -1,6 +1,6 @@
 """The W2 SO census: the programming register's duplicate graph, priced.
 
-`bench/w/W2_SO_CENSUS_DECLARATION.md` fixes everything this script
+The W2 SO-census declaration fixes everything this script
 computes and was committed before it. Every rule that counts is
 imported: the edge rule (`w3p2_pairs.duplicate_edges`), the body
 surfaces and the census core (`w2_body_census.body_surfaces`,

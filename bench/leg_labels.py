@@ -199,7 +199,7 @@ def lc_standout(leg: dict[str, Any]) -> float:
     """Round 4's retired statistic, recomputed from a census record.
 
     Kept so the labels can show what the rules they replace would have
-    done — `bench/longmemeval/PREREGISTRATION.md` addendum 7 quotes
+    done — the LongMemEval preregistration addendum 7 quotes
     those counts."""
     gaps = leg["gaps"]
     if len(gaps) < 2:

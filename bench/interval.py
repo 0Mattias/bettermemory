@@ -8,7 +8,7 @@ number in either direction." That reasoning was applied to census work,
 where n is a few hundred emitted terms, and never to the gate reads,
 which at the time ran on twenty questions where the over-reading risk
 is far worse. I1 has since taken the dev instrument to 120 questions
-(`bench/retrieval/I1_RECORD.md`), which moves the resolution floor
+(the I1 record), which moves the resolution floor
 from 30 points to 5 — it does not make the interval optional, and the
 gate reads still print one.
 
@@ -23,7 +23,7 @@ dev instrument:
 None of that makes the published gate verdicts wrong: a bar is a point
 comparison and the records that missed theirs missed honestly. What it
 makes wrong is READING a one-question move as a finding. The repository
-already says so in `bench/retrieval/README.md`, which calls a +5 at
+already says so in the retrieval-bench notes, which call a +5 at
 recall@1 "one question out of twenty, read as no measurable change";
 this module is that sentence made callable, so a runner can print it
 instead of a reader having to remember it.

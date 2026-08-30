@@ -1,6 +1,6 @@
 """The T1 live-store census — the shipped verdict graded on declared claims.
 
-Implements `bench/rot/T1_LIVE_STORE_DECLARATION.md`, committed one sha
+Implements the T1 live-store declaration, committed one sha
 before this file. The declaration's thresholds are encoded here verbatim
 and graded mechanically into the artifact's `predictions` block; the sha
 ordering (declaration, implementation, run) is the enforcement record.
@@ -12,7 +12,7 @@ machinery — `claims.load_claims` / `claims.check_claim`, and the same
 `detect_path_drift` / `compute_verification_status` /
 `compute_commit_drift` / `compute_staleness_verdict` composition the
 `memory_show` handler runs — never a reimplementation
-(`bench/rot/README.md`'s standing rule).
+(the rot-bench notes' standing rule).
 
 One deliberate framing choice, named in the declaration: the verdict for
 census B is computed AS A READ FROM THE MEMORY'S OWN WORKTREE would

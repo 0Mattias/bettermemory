@@ -1,6 +1,6 @@
 """Run an instrument with a W1 table swapped into the expansion leg.
 
-The measurement harness `bench/w/W1_DECLARATION.md` §4 constrains: the
+The measurement harness the W1 declaration §4 constrains: the
 ranking code path must be byte-identical to shipped
 ``search.search(rescue_expansion=True)`` except for the table
 contents. The seam is the one the instruments themselves already use —

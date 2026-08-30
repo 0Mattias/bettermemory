@@ -1,6 +1,6 @@
 """The W1b geometry probe: what the trained space holds, pair by pair.
 
-A training-internal signal, the class `bench/w/W1B_DECLARATION.md` §6
+A training-internal signal, the class the W1b declaration §6
 licenses without limit ("committed neighbor spot-lists"). It grades no
 bar and moves no verdict; it exists so the unit's diagnosis is auditable
 rather than asserted.

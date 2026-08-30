@@ -1,7 +1,7 @@
 """Dense scoring census: can store-trained geometry point at the right
 DOCUMENT, on the pool lexical retrieval cannot reach?
 
-`bench/DENSE_SCORING_CENSUS_DECLARATION.md` fixes everything this
+The dense-scoring-census declaration fixes everything this
 script computes — the 8-cell family, every pooling definition, the
 pools, the reach bar, and the routing/parking criterion — and was
 committed before this ran. This file is the mechanical half: it trains

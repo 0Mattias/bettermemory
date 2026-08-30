@@ -1,6 +1,6 @@
 """W3-C builder: two evidence tables and their composition, emitted.
 
-Implements `bench/w/W3C_DECLARATION.md` §5. Table P scores exclusive
+Implements the W3-C declaration §5. Table P scores exclusive
 title substitution from the W3-P2 pair file with PPMI under W3-P's
 declared floors; Table D scores the W3-D edge file's attestations
 under W3-D's label weights, SYMMETRIZED per the declared deviation

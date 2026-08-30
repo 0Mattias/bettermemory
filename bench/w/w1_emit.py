@@ -1,6 +1,6 @@
 """Emit the W1 neighbor table from a trained run directory.
 
-The emission step of `bench/w/W1_DECLARATION.md` §4: compose one
+The emission step of the W1 declaration §4: compose one
 vector per vocabulary word (mean of its bag — own row plus hashed
 n-gram rows, the same composition the trainer optimized), find nearest
 neighbors by cosine over the whole vocabulary, and keep only pairs

@@ -1,6 +1,6 @@
 """W3-P2 reader: labeled duplicate-pair extraction and the Stage-0 census.
 
-Implements `bench/w/W3P2_DECLARATION.md` §3 and §4 over the eighteen
+Implements the W3-P2 declaration §3 and §4 over the eighteen
 per-site Stack Exchange archives the declaration admits. Per archive,
 in ascending order of the archive filename: the pinned sha256 is
 re-verified over the exact bytes, then `PostLinks.xml` is streamed for

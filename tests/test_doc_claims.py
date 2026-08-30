@@ -66,8 +66,8 @@ fast each claim shape decays:
   now, so a frozen release note that was right when written would drift
   into permanent allowlist churn.
 
-On src/ and tests/ docstrings and comments: INCLUDED
-----------------------------------------------------
+On src/, tests/ and bench/ docstrings and comments: INCLUDED
+------------------------------------------------------------
 Decided by measurement, not taste — but the measurement is deliberately
 not written down here. A standing total ("across all N docstrings…") is
 precisely the rot-prone shape this module exists to catch, and it lands
@@ -91,9 +91,9 @@ of docstrings being added:
   "``_register_tools`` lived in ``server.py``" — was answered with an
   extractor rule, never an allowlist entry. That is the load-bearing
   half, so it is derived rather than asserted from memory:
-  ``test_no_allowlist_entry_covers_a_python_source`` fails the moment a
-  scanned ``src/`` or ``tests/`` source needs exempting, and it computes
-  its population from both corpora so the comment half cannot drift out
+  ``test_no_allowlist_entry_covers_a_python_source`` fails the moment
+  any scanned Python source needs exempting, and it computes its
+  population from both corpora so the comment half cannot drift out
   from under it.
 
 Docstrings and ``#`` comments are read, never statement bodies — the
@@ -123,7 +123,10 @@ Scanning ``tests/`` matters because this file is itself shipped prose,
 and its first commit miscounted the files carrying the name
 ``verify.py`` — asserting three where the repo holds two. Excluding
 ``tests/`` had made the guard structurally unable to audit its own
-docstrings.
+docstrings. Scanning ``bench/`` matters for the same class at one
+remove: the 2026-08-24 nameful-citation sweep tracked this corpus's
+then-boundary exactly, so bench docstrings went on citing withdrawn
+documents by path with no CI signal.
 
 The honest caveat, in two parts:
 
@@ -854,13 +857,21 @@ def _docstrings_under(prefix: str) -> list[tuple[str, int, str]]:
 
 
 def _code_docstrings() -> list[tuple[str, int, str]]:
-    """Docstrings from both shipped source and the test suite.
+    """Docstrings from shipped source, the test suite, and the bench.
 
     ``tests/`` is included so that this module — itself shipped prose,
     and the origin of a false claim on its first commit — falls inside
-    the corpus it polices.
+    the corpus it polices. ``bench/`` joined 2026-08-30: the 2026-08-24
+    sweep converting withdrawn-document citations to names covered
+    exactly the corpus this function then scanned, so bench docstrings
+    kept citing the LongMemEval preregistration and the deleted bench
+    READMEs by path for six further days — nothing scanned them.
     """
-    return _docstrings_under("src/") + _docstrings_under("tests/")
+    return (
+        _docstrings_under("src/")
+        + _docstrings_under("tests/")
+        + _docstrings_under("bench/")
+    )
 
 
 def _code_comments() -> list[tuple[str, int, str]]:
@@ -876,7 +887,7 @@ def _code_comments() -> list[tuple[str, int, str]]:
 
     Same prefixes as ``_code_docstrings``, so the two Python corpora are
     one scope rather than two. Reading every tracked ``*.py`` here would
-    admit sources outside ``src/`` and ``tests/`` whose docstrings this
+    admit sources outside the scanned trees whose docstrings this
     module still does not read, and every scope sentence in the module
     docstring would then describe only the narrower half.
 
@@ -896,7 +907,7 @@ def _code_comments() -> list[tuple[str, int, str]]:
     """
     out: list[tuple[str, int, str]] = []
     for rel in _all_py_files():
-        if not rel.startswith(("src/", "tests/")):
+        if not rel.startswith(("src/", "tests/", "bench/")):
             continue
         src = (_REPO_ROOT / rel).read_text(encoding="utf-8")
         for token in tokenize.generate_tokens(io.StringIO(src).readline):

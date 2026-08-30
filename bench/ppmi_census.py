@@ -23,7 +23,7 @@ tokens from the pool, and asks the only question that matters:
 
 **Statistics only.** No ranking change, no engine integration, no
 threshold applied — a parameter grid is swept and reported, and
-`bench/longmemeval/PREREGISTRATION.md` fixes the values from it.
+the LongMemEval preregistration fixes the values from it.
 
 Dev-side by construction: it needs gold labels. The held-out instrument
 under `bench/heldout/` is NOT read.

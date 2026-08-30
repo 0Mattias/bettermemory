@@ -1,6 +1,6 @@
 """Derive the committed reduced register for W1's CI determinism check.
 
-G3 of `bench/w/W1_DECLARATION.md` §7 needs a corpus CI can retrain
+G3 of the W1 declaration §7 needs a corpus CI can retrain
 twice without the full register on disk. This script derives it from
 the pinned Gutenberg bytes — public-domain text, so the derived slice
 is committable — by a rule a reader can replay: PG-stripped prose of

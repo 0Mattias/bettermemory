@@ -1,6 +1,6 @@
 """The W2 subword vocabulary: byte-pair encoding, this repository's own.
 
-`bench/w/W2_DECLARATION.md` §2 declares the tokenizer: byte-pair
+The W2 declaration §2 declares the tokenizer: byte-pair
 encoding learned from the pretraining slice by committed code,
 deterministic merge order, lowercased input. The pre-tokenization is
 the committed `w1_corpus.tokenize` — the same word stream the register
@@ -194,7 +194,7 @@ def load_tokenizer(out_dir: Path) -> Bpe:
 
 # --- the pair-row grammar ------------------------------------------------
 
-# The census's derived TSV (`bench/w/W2_SO_CENSUS_DECLARATION.md` §4):
+# The census's derived TSV (the W2 SO-census declaration §4):
 # site, post id, related id, left prose, right prose, left markup-text,
 # right markup-text. The trainer reads the prose columns.
 _PAIR_COLUMNS = 7
@@ -218,5 +218,5 @@ def keep_pair(
     right_ids: tuple[int, ...] | list[int],
     min_tokens: int,
 ) -> bool:
-    """`bench/w/W2_DECLARATION.md` §3's keep rule: both sides at the floor."""
+    """The W2 declaration §3's keep rule: both sides at the floor."""
     return len(left_ids) >= min_tokens and len(right_ids) >= min_tokens

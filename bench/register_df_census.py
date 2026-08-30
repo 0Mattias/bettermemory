@@ -1,6 +1,6 @@
 """Register/df census: where is the vocabulary wall, per corpus?
 
-`bench/REGISTER_DF_CENSUS_DECLARATION.md` fixes everything this script
+The register-DF-census declaration fixes everything this script
 computes — three corpora through their own committed loaders, the
 matched / gap-elsewhere / gap-absent token classes against declared
 gold, the register margins, the dev-only requery decomposition, and

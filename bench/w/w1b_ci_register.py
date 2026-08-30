@@ -1,6 +1,6 @@
 """Derive the committed SE-register slice for W1b's CI determinism check.
 
-G3 of `bench/w/W1B_DECLARATION.md` §7 extends the CI leg with a second
+G3 of the W1b declaration §7 extends the CI leg with a second
 reduced register derived from the pinned Stack Exchange bytes, so the
 determinism assert exercises the register this unit actually turns on.
 The derivation replays from the pin: post documents of the beer

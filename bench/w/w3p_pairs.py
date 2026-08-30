@@ -1,6 +1,6 @@
 """W3-P reader: duplicate-title pair extraction and the Stage-0 census.
 
-Implements `bench/w/W3P_DECLARATION.md` §3 and §4. One streaming pass
+Implements the W3-P declaration §3 and §4. One streaming pass
 over the pinned StackOverflow Posts archive: question rows carrying the
 legacy "Possible Duplicate" closure blockquote yield (own title, target
 title) pairs; the same pass counts rows by PostTypeId (the reader

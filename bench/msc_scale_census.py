@@ -1,7 +1,7 @@
 """MSC scale census: does store-trained dense retrieval work at
 conversational store scale, or does the technical-corpus wall hold?
 
-`bench/MSC_SCALE_CENSUS_DECLARATION.md` fixes everything this script
+The MSC scale-census declaration fixes everything this script
 computes — the three store scales, the probe rules over MSC's own
 per-turn persona annotations, both arms' definitions, every read, and
 the four-rung outcome ladder — and was committed before this file

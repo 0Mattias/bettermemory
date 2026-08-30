@@ -1,6 +1,6 @@
 """The W2 pair-class census: does the labeled-pair corpus carry the prize?
 
-`bench/w/W2_PAIR_CENSUS_DECLARATION.md` fixes everything this script
+The W2 pair-census declaration fixes everything this script
 computes and was committed before it. The counting rule is W3-P2's
 exclusive substitution, imported verbatim (`w3p_pairs.need_supported`);
 the probe sets are imported, not copied — the committed six from the

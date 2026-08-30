@@ -1,7 +1,7 @@
 """The W1 trainer: skip-gram with negative sampling, subword bags, sealed
 determinism.
 
-This is the from-scratch trainer `bench/w/W1_DECLARATION.md` §2
+This is the from-scratch trainer the W1 declaration §2
 declares: this repository's own code, no third-party weights anywhere,
 numpy as the declared bench-side build dependency. Every stochastic
 choice — subsampling, window widths, negative draws, initialization —
@@ -30,7 +30,7 @@ sha256 of each sibling file. `w1_emit.py` composes vectors and emits
 the neighbor table from these files; nothing at inference time ever
 loads them.
 
-W1b's declared revision (`bench/w/W1B_DECLARATION.md` §2): each
+W1b's declared revision (the W1b declaration §2): each
 epoch's pair set is enumerated in fixed-size segments of the kept
 stream instead of all at once, holding the update mathematics, the
 batch schedule, the decay arithmetic, the RNG consumption order, and

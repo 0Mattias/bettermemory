@@ -1,6 +1,6 @@
 """The W2 trainer: a small transformer encoder, own code end to end.
 
-This is the trainer `bench/w/W2_DECLARATION.md` §2 declares: this
+This is the trainer the W2 declaration §2 declares: this
 repository's own forward and backward passes, its own Adam, its own
 BPE (`w2_tokenizer.py`), numpy as the sole bench-side dependency — no
 torch, no accelerator stack, no third-party weights anywhere in the

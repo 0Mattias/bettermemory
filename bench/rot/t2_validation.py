@@ -1,6 +1,6 @@
 """The T2 acceptance read — A-P2 (wire compatibility) and A-P4 (the live
 reappeared cases), graded mechanically against
-`bench/rot/T2_ABSENCE_CLAIM_DECLARATION.md`.
+the T2 absence-claim declaration.
 
 Read-only over the live store, aggregates-only in the artifact — the
 same publication rule as the T1 census: counts, booleans and grades, no
