@@ -1693,6 +1693,53 @@ def test_verification_debt_threshold_respected() -> None:
     assert report.verification_debt.fresh_count == 1
 
 
+def test_verification_debt_checkability_partition_and_ordering() -> None:
+    """`never_verified_checkable` / `stale_checkable` split each total by
+    whether a verify pass has something mechanical to check — declared
+    claims or drift anchors (body-cited paths plus attested
+    verified_paths) — and the capped row lists sort checkable rows
+    first, so the display window leads with work a pass can actually
+    drain. A judgment record with nothing to check still counts in the
+    total; the split is what tells the two apart."""
+    anchored = _memory(
+        body="config lives in `src/bettermemory/config.py`",
+        created=_utc(2026, 2, 1),
+    )
+    judgment = _memory(
+        body="prefers code-first tutorials over long prose",
+        created=_utc(2026, 1, 1),
+    )
+    stale_anchored = _memory(
+        body="the floor constant sits in `src/bettermemory/health.py`",
+        created=_utc(2026, 1, 1),
+        last_verified_at=_utc(2026, 1, 3),
+    )
+    stale_judgment = _memory(
+        body="tone on this project: terse, no ceremony",
+        created=_utc(2026, 1, 1),
+        last_verified_at=_utc(2026, 1, 2),
+    )
+    report = compute_health(
+        [anchored, judgment, stale_anchored, stale_judgment],
+        [],
+        now=_utc(2026, 6, 1),
+    )
+    debt = report.verification_debt
+    assert debt.never_verified_total == 2
+    assert debt.never_verified_checkable == 1
+    assert debt.stale_total == 2
+    assert debt.stale_checkable == 1
+    # Checkable-first beats the timestamp sort: the judgment records are
+    # older (never_verified) / older-verified (stale) but the anchored
+    # rows lead each display window.
+    assert [s.id for s in debt.never_verified] == [anchored.id, judgment.id]
+    assert [s.id for s in debt.stale] == [stale_anchored.id, stale_judgment.id]
+    # The published rendering carries the split.
+    rendered = debt.to_dict()
+    assert rendered["never_verified_checkable"] == 1
+    assert rendered["stale_checkable"] == 1
+
+
 def test_verification_debt_caps_row_lists_at_20() -> None:
     """When the buckets blow past the cap, the inline row lists are
     truncated to keep JSON output bounded, while the totals stay
@@ -1708,16 +1755,19 @@ def test_verification_debt_caps_row_lists_at_20() -> None:
 
 
 def test_verification_debt_to_dict_shape() -> None:
-    """JSON shape is stable: `{stale_after_days, *_total, fresh_count,
-    never_verified, stale}`. Asserting the shape so downstream consumers
-    don't drift relative to it without us noticing."""
+    """JSON shape is stable: `{stale_after_days, *_total, *_checkable,
+    fresh_count, never_verified, stale}`. Asserting the shape so
+    downstream consumers don't drift relative to it without us
+    noticing. The `*_checkable` splits joined 2026-08-30 (additive)."""
     m = _memory(created=_utc(2026, 1, 1), last_verified_at=None)
     report = compute_health([m], [], now=_utc(2026, 5, 1))
     payload = report.to_dict()["verification_debt"]
     assert set(payload) == {
         "stale_after_days",
         "never_verified_total",
+        "never_verified_checkable",
         "stale_total",
+        "stale_checkable",
         "fresh_count",
         "never_verified",
         "stale",

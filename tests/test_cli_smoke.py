@@ -357,21 +357,26 @@ def _seed_weakly_endorsed_memory(store: Store) -> str:
     """Seed one memory that only the RATIO half of the cold-endorsement
     predicate can catch, and return its id.
 
-    Shape: 5 retrievals (the `_COLD_ENDORSEMENT_MIN_RETRIEVALS` floor)
+    Shape: 30 retrievals (the `_COLD_ENDORSEMENT_MIN_RETRIEVALS` floor)
     and 10 applied events split 1 explicit / 9 auto. `explicit == 0` is
     False, so the always-on binary check never fires; the ratio 0.1 is
     below a 0.25 threshold, so the bucket lights up if and only if the
-    caller actually threaded `cold_endorsement_ratio_threshold`.
+    caller actually threaded `cold_endorsement_ratio_threshold`. One
+    Stop-hook audit event rides along as pure coverage — the CLI path
+    arms the telemetry gate, the endorsement leg is gated alongside
+    dead_weight, and a hookless fixture would suppress the very bucket
+    these tests measure.
     """
     from bettermemory.events import Recorder
 
     memory = store.write(content="deploy with uv, never pip", scopes=["tools"])
     rec = Recorder(root=store.root, session_id="sess-cold-endorse")
-    for _ in range(5):
+    for _ in range(30):
         rec.record("search", returned=[memory.id], relevance=["high"])
     rec.record("use", ids=[memory.id], outcome="applied", auto=False)
     for _ in range(9):
         rec.record("use", ids=[memory.id], outcome="applied", auto=True)
+    rec.record("turn_audited", triggered_from="stop_hook")
     return memory.id
 
 

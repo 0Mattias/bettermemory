@@ -638,12 +638,28 @@ class VerificationDebt:
     stale: list[MemoryStats] = field(default_factory=list)
     stale_total: int = 0
     fresh_count: int = 0
+    # Checkability partition (2026-08-30). A debt row is *checkable*
+    # when a verify pass has something mechanical to check: the memory
+    # declares claims, or it carries drift anchors (body-cited paths
+    # plus attested verified_paths — `commit_drift_anchor_paths`, the
+    # same notion every drift surface reads). The remainder are
+    # judgment records — preferences, directives, lessons — whose
+    # verification is a re-read, not a tree check. Measured on the
+    # dogfood store the day this landed, a large minority of debt was
+    # structurally uncheckable, so an undivided total reads as backlog
+    # a curate pass can never drain. The capped row lists sort
+    # checkable-first for the same reason: the 20-row window should
+    # show the rows a pass can actually act on.
+    never_verified_checkable: int = 0
+    stale_checkable: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "stale_after_days": self.stale_after_days,
             "never_verified_total": self.never_verified_total,
+            "never_verified_checkable": self.never_verified_checkable,
             "stale_total": self.stale_total,
+            "stale_checkable": self.stale_checkable,
             "fresh_count": self.fresh_count,
             "never_verified": [s.to_dict() for s in self.never_verified],
             "stale": [s.to_dict() for s in self.stale],
@@ -2000,15 +2016,24 @@ def compute_health(
     )
 
     # Verification debt — partition active memories into never_verified /
-    # stale / fresh against the staleness threshold. Sort each bucket by
-    # the timestamp that's most actionable for a curation pass:
-    # never_verified by `created` (oldest unverified first — those are
-    # the highest-risk because they've had the most time to drift), and
-    # stale by `last_verified_at` (oldest verification first — same
-    # rationale, applied to memories that have at least been spot-checked
-    # once). The capped `_VERIFICATION_DEBT_CAP` rows are inlined for
-    # display; the totals are always uncapped so a downstream reader can
-    # tell "5 stale" from "500 stale" without re-counting.
+    # stale / fresh against the staleness threshold. Sort each bucket
+    # checkable-first (see the predicate below and the field comment on
+    # `VerificationDebt`), then by the timestamp that's most actionable
+    # for a curation pass: never_verified by `created` (oldest
+    # unverified first — those are the highest-risk because they've had
+    # the most time to drift), and stale by `last_verified_at` (oldest
+    # verification first — same rationale, applied to memories that
+    # have at least been spot-checked once). The capped
+    # `_VERIFICATION_DEBT_CAP` rows are inlined for display; the totals
+    # are always uncapped so a downstream reader can tell "5 stale"
+    # from "500 stale" without re-counting, and the `*_checkable`
+    # splits say how much of each total a verify pass can mechanically
+    # drain. The predicate reuses the maps the drift rollup already
+    # built — declared claims, or drift anchors (body-cited paths plus
+    # attested verified_paths) — so the partition costs no extraction.
+    def _is_checkable(mid: str) -> bool:
+        return bool(claims_by_id.get(mid)) or bool(anchor_paths_by_id.get(mid))
+
     never_verified_all: list[MemoryStats] = []
     stale_all: list[MemoryStats] = []
     fresh_count = 0
@@ -2019,8 +2044,10 @@ def compute_health(
             stale_all.append(stats)
         else:
             fresh_count += 1
-    never_verified_all.sort(key=lambda s: s.created)
-    stale_all.sort(key=lambda s: s.last_verified_at or s.created)
+    never_verified_all.sort(key=lambda s: (not _is_checkable(s.id), s.created))
+    stale_all.sort(
+        key=lambda s: (not _is_checkable(s.id), s.last_verified_at or s.created)
+    )
 
     verification_debt = VerificationDebt(
         stale_after_days=verification_stale_days,
@@ -2029,6 +2056,10 @@ def compute_health(
         stale=stale_all[:_VERIFICATION_DEBT_CAP],
         stale_total=len(stale_all),
         fresh_count=fresh_count,
+        never_verified_checkable=sum(
+            1 for s in never_verified_all if _is_checkable(s.id)
+        ),
+        stale_checkable=sum(1 for s in stale_all if _is_checkable(s.id)),
     )
 
     commit_drift_debt = _compute_commit_drift_debt(
@@ -2530,14 +2561,21 @@ def render_text(report: HealthReport) -> str:
     debt = report.verification_debt
     lines.append("")
     lines.append(
-        f"Verification debt — never={debt.never_verified_total}  "
-        f"stale={debt.stale_total}  fresh={debt.fresh_count}  "
-        f"(stale after {debt.stale_after_days} days):"
+        f"Verification debt — never={debt.never_verified_total} "
+        f"({debt.never_verified_checkable} checkable)  "
+        f"stale={debt.stale_total} ({debt.stale_checkable} checkable)  "
+        f"fresh={debt.fresh_count}  "
+        f"(stale after {debt.stale_after_days} days; checkable = "
+        "declared claims or cited/attested paths a verify pass can "
+        "check mechanically):"
     )
     if debt.never_verified_total == 0 and debt.stale_total == 0:
         lines.append("  (none)")
     if debt.never_verified:
-        lines.append(f"  never-verified ({debt.never_verified_total}, oldest first):")
+        lines.append(
+            f"  never-verified ({debt.never_verified_total}, "
+            "checkable first, then oldest):"
+        )
         for s in debt.never_verified:
             lines.append(f"    {s.id} {','.join(s.scopes)}: {s.summary}")
         if debt.never_verified_total > len(debt.never_verified):
@@ -2545,7 +2583,9 @@ def render_text(report: HealthReport) -> str:
                 f"    ... and {debt.never_verified_total - len(debt.never_verified)} more"
             )
     if debt.stale:
-        lines.append(f"  stale ({debt.stale_total}, oldest verification first):")
+        lines.append(
+            f"  stale ({debt.stale_total}, checkable first, then oldest verification):"
+        )
         for s in debt.stale:
             verified = _iso(s.last_verified_at) or "?"
             lines.append(
