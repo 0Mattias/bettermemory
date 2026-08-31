@@ -945,6 +945,27 @@ def _coerce_str_list(
     return out
 
 
+def _coerce_optional_str(
+    value: object, *, label: str, config_path: Path | None
+) -> str | None:
+    """Require a TOML value to be a string when present (cf. ``_coerce_int``).
+
+    ``[storage] directory`` was the one config key with no type check: a
+    mistyped ``directory = 123`` (or ``true``, or ``["/a"]``) loaded
+    cleanly and first failed deep inside ``Config.resolved_directory()``
+    at ``Path(self.storage.directory)`` with a bare stdlib TypeError
+    naming neither the key nor the file — crashing ``bettermemory serve``
+    startup, and silently no-opping the Stop-hook audit lane (whose broad
+    except swallows the traceback and exits 0). Reject non-strings at
+    load time with the same located ``_malformed_config_msg`` error every
+    other scalar key gets. ``None`` (key absent) passes through so the
+    resolution rule in ``resolved_directory`` still fires. No coercion of
+    other types to str: a quoted path is the only valid spelling."""
+    if value is None or isinstance(value, str):
+        return value
+    raise ValueError(_malformed_config_msg(label, value, config_path, "a string path"))
+
+
 def default_config_path() -> Path:
     return Path(platformdirs.user_config_dir("bettermemory")) / CONFIG_FILENAME
 
@@ -1076,7 +1097,13 @@ def load_config(path: Path | None = None) -> Config:
     _apply_legacy_endorsement_debt_alias(behavior_raw, config_path)
 
     return Config(
-        storage=StorageConfig(directory=storage_raw.get("directory")),
+        storage=StorageConfig(
+            directory=_coerce_optional_str(
+                storage_raw.get("directory"),
+                label="[storage] directory",
+                config_path=config_path,
+            )
+        ),
         behavior=BehaviorConfig(
             require_write_confirmation=_coerce_bool(
                 behavior_raw.get("require_write_confirmation"), False

@@ -313,6 +313,34 @@ def test_load_config_storage_directory_is_none_when_unset(tmp_path: Path) -> Non
     assert cfg.storage.directory is None
 
 
+def test_load_config_rejects_non_string_storage_directory(tmp_path: Path) -> None:
+    """A mistyped `[storage] directory` (int, bool, list) must fail inside
+    `load_config` with the located `_malformed_config_msg` error, like
+    every other scalar key. It used to load cleanly and first blow up in
+    `Config.resolved_directory()` at `Path(self.storage.directory)` with
+    a bare stdlib TypeError naming neither the key nor the file — which
+    crashed `bettermemory serve` startup opaquely and made the Stop-hook
+    audit lane silently no-op (its broad except prints to stderr and
+    exits 0)."""
+    for name, toml_value in [
+        ("int", "123"),
+        ("bool", "true"),
+        ("list", '["/a"]'),
+    ]:
+        config_path = tmp_path / f"config-{name}.toml"
+        config_path.write_text(
+            f"[storage]\ndirectory = {toml_value}\n", encoding="utf-8"
+        )
+        with pytest.raises(ValueError, match=r"malformed config") as excinfo:
+            load_config(config_path)
+        # The message must locate the culprit: section/key, offending
+        # value, expected type, and the file path.
+        message = str(excinfo.value)
+        assert "[storage] directory" in message
+        assert "must be a string path" in message
+        assert str(config_path) in message
+
+
 def test_load_config_coerces_behavior_int_fields(tmp_path: Path) -> None:
     """Integer-typed fields go through `int(...)`. A TOML float would otherwise
     survive as a float and silently round at use-site."""
