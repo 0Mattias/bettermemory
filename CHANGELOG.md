@@ -7,6 +7,79 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 6.4.1 - 2026-08-31
+
+A patch by the [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract):
+bug fixes only, from the round-192/193 audit drive — a user-directed
+catch-up audit of the 4.0.0→6.4.0 window (256 commits, 16 releases;
+eight audit domains, every finding adversarially verified, every fix
+gate-run in an isolated worktree before integration). Twenty-four of
+the twenty-five confirmed findings are fixed here; the one remaining
+(author-date-space drift counting wants a reachability anchor) is
+queued as a design item.
+
+### Fixed
+
+- `1d5e2b8` fix(search): guard out-of-range month years; demand context
+  for 'may'. "december 9999" / "january 0000" queries crashed
+  `search()` under shipped defaults (an unguarded ValueError in the
+  conversational lane's month branch — the sibling date branch already
+  had the guard), taking the silent-miss audit and prompt recall down
+  with it on any turn that mentioned such a date. And the modal
+  auxiliary "may" no longer parses as the month May without a year or
+  a temporal context word, so ordinary prose ("you may need sudo") no
+  longer engages the near-tie window rerank.
+- `8735834` fix(origin): pin patch-stream diff shape against user git
+  config. `commit_patch_stream` now pins
+  diff.noprefix/srcPrefix/dstPrefix/mnemonicPrefix/core.quotePath with
+  `-c` and dequotes residually-quoted headers, so a user's global git
+  config can no longer silently blind the claim drift legs.
+- `354e0c3` fix(verify): quiescent drift applicability + attestation
+  re-checks. `compute_commit_drift` classifies escape/phantom anchors
+  on the count==0 branch instead of minting a clean verdict that
+  demoted "stale" to "fresh"; a preserving re-verify re-runs the
+  stored-attestation existence check; `$HOME`-style attestations
+  rejoin the anchored-citation check via the shared predicate.
+- `5adc3b3` fix(consolidate): llm apply gate parity and attestation
+  integrity. Merge and rewrite_date proposals reset
+  `last_verified_at`/attestations/claims when they replace a body
+  (mirroring `memory_update`), replacement bodies pass the
+  credential/transient/size gates, propose_new refuses
+  user-claim-shaped bodies, and demote_tier preserves verification on
+  its category-only retag.
+- `ef9c31e` fix(hook): thread conversational into probe, split
+  transcript on newline. The hook producers now probe with the
+  store's `[behavior] conversational` setting (parity with the MCP
+  audit path), and the transcript tail splits on `\n` only so rows
+  carrying raw U+2028/U+2029 survive parsing.
+- `5f7942a` fix(eval): cold-endorsement parity + usage-replay
+  dedup/cutoff/guards. The eval floor matches health's recalibrated
+  30 (test-pinned parity), `--usage-replay` no longer double-counts a
+  delivered-recall turn, honors `silent_miss_cutoff`, and guards
+  log-sourced capture fields against malformed values.
+- `a8f4822` fix(health): dedupe use-event ids and drop admin phantom
+  sessions. Duplicate ids in one `record_use` call no longer
+  double-bump per-memory counts, and admin CLI writers no longer
+  inflate `distinct_sessions`.
+- `66974f3` fix(events): stamp ts under shard lock; window lists
+  actives first. Per-segment timestamp order now holds by
+  construction under concurrent writers, and the windowed reader can
+  no longer lose a segment to a rotation between its two directory
+  scans.
+- `0259b5a` fix(index): catch ValueError in the v6 reader except
+  tuples, so a poisoned `schema_version` degrades to the no-index
+  path instead of crashing search.
+- `de7040d` fix(doctor): thread cfg into probe, judge absolute uvx
+  runner paths. Retrieval-discrimination now measures the store's
+  configured ranking, and an absolute uvx/uv runner path that no
+  longer exists reports stale instead of hard-coded healthy.
+- `258e4e2` fix(config): reject non-string `[storage] directory` with
+  the located error message instead of a deferred stdlib TypeError.
+- `6322bcf` fix(consolidate): transcript split keeps raw unicode
+  separator rows (the hook fix's consolidation-side half).
+- `d1b0054` fix(cli): eval `--min-retrievals` help states the 30
+  default.
+
 ## 6.4.0 - 2026-08-30
 
 A minor by the [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract):
