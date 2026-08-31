@@ -161,6 +161,53 @@ def test_extract_last_exchange_tolerates_malformed_lines(tmp_path: Path) -> None
     assert assistant == "reply"
 
 
+def test_extract_last_exchange_survives_unicode_line_separators(
+    tmp_path: Path,
+) -> None:
+    """Regression: the reverse walk split the tail with `splitlines()`,
+    which also breaks on U+2028/U+2029/U+0085 — characters that are
+    legal RAW inside JSON strings and that real serializers emit
+    unescaped (Node's `JSON.stringify`, Python's
+    `json.dumps(ensure_ascii=False)`). A transcript row whose content
+    carried one shattered into fragments that all failed `json.loads`
+    and were silently skipped, so the walk anchored on an OLDER
+    exchange: the Stop audit probed a stale user message and
+    attribution matched against a stale reply. The JSONL framing
+    contract is bytes-level \\n; the parser must split exactly on
+    that."""
+    latest_ask = "why did the deploy\u2028script fail"
+    latest_reply = "the runner's env file\u2029was missing"
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text(
+        "\n".join(
+            json.dumps(row, ensure_ascii=False)
+            for row in [
+                {"type": "user", "message": {"content": "stale ask"}},
+                {
+                    "type": "assistant",
+                    "message": {"content": [{"type": "text", "text": "stale reply"}]},
+                },
+                {"type": "user", "message": {"content": latest_ask}},
+                {
+                    "type": "assistant",
+                    "message": {"content": [{"type": "text", "text": latest_reply}]},
+                },
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    # The seed must hold the separators RAW in the FILE (the
+    # ensure_ascii=False dump above writes them unescaped, as Node's
+    # JSON.stringify does) — a backslash-escaped sequence in the file
+    # would never trip splitlines() and the test would pin nothing.
+    raw = transcript.read_bytes().decode("utf-8")
+    assert "\u2028" in raw and "\u2029" in raw
+    user, assistant, _ = _extract_last_exchange(transcript)
+    assert user == latest_ask
+    assert assistant == latest_reply
+
+
 def test_extract_last_exchange_skips_task_notification_row(tmp_path: Path) -> None:
     """Regression: background-task completions inject a `type="user"` row
     whose content is a `<task-notification>` envelope AFTER the human's
@@ -2156,6 +2203,48 @@ def test_run_audit_threads_ranker_config_into_probe(
     )
     assert captured["half_life_days"] == 7.0
     assert captured["applied_by_id"] == {memory_id: 1}
+
+
+def test_run_audit_threads_conversational_opt_out_into_probe(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`[behavior] conversational = false` must reach the probe. The
+    shared `_probe_message` body — one body serving BOTH hook producers
+    (the Stop audit and the prompt-recall injection lane) precisely so
+    they cannot drift — omitted `conversational` from its
+    `probe_for_miss` call, so the hook ranked with the Lane L
+    conversational rerank forced ON (the probe's default) under every
+    config, while production `memory_search` and the MCP audit producer
+    both threaded the knob. On an opted-out store with a temporal-phrase
+    prompt the probe then scored with a different ranker than the
+    model's actual retrieval — masked and phantom misses, and a recall
+    injection production's own ranking would never have surfaced. The
+    flag travels with the rest of the `RankingInputs` SET."""
+    from bettermemory.audit import probe_for_miss as real_probe
+    from bettermemory.config import BehaviorConfig, Config, StorageConfig
+
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    _write_miss_memory(mem_dir)
+
+    captured: dict[str, object] = {}
+
+    def spy(*args: object, **kwargs: object) -> object:
+        captured.update(kwargs)
+        return real_probe(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr("bettermemory.hook.probe_for_miss", spy)
+    cfg = Config(
+        storage=StorageConfig(directory=str(mem_dir)),
+        behavior=BehaviorConfig(conversational=False),
+    )
+    run_audit(
+        user_message=_MISS_QUERY,
+        assistant_response=None,
+        session_id="claude-conversational-off",
+        config=cfg,
+    )
+    assert captured["conversational"] is False
 
 
 def test_run_audit_endorsement_tally_drops_out_of_window_applies(

@@ -265,7 +265,19 @@ def _extract_last_exchange(
 
     # Walk lines in reverse — the most recent user/assistant come
     # last. Stop once we have both.
-    for line in reversed(text.splitlines()):
+    #
+    # split("\n"), NOT splitlines(): the JSONL framing contract is
+    # bytes-level \n, while splitlines() also breaks on U+2028/U+2029/
+    # U+0085 — characters that are legal RAW inside JSON strings and
+    # that real serializers emit unescaped (Node's JSON.stringify,
+    # Python's json.dumps(ensure_ascii=False)). A transcript row whose
+    # content carried one shattered into fragments that all failed
+    # json.loads and were silently skipped, so the reverse walk
+    # anchored on an OLDER exchange: the audit probed a stale user
+    # message and attribution matched against a stale reply. The
+    # strip() below already handles \r remnants and the trailing empty
+    # piece a terminal \n produces.
+    for line in reversed(text.split("\n")):
         line = line.strip()
         if not line:
             continue
@@ -458,6 +470,7 @@ def _probe_message(
         negative_by_id=ranking.negative_by_id,
         corroboration_boost=ranking.corroboration_boost,
         rescue_expansion=ranking.rescue_expansion,
+        conversational=ranking.conversational,
         corpus_stats_provider=probe_pool.corpus_stats_provider,
     )
 
