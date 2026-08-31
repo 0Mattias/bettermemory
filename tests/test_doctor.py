@@ -1729,6 +1729,64 @@ def test_retrieval_discrimination_skips_scopes_too_small_to_measure(
     assert diag.details.get("scopes") is None
 
 
+def test_retrieval_discrimination_probe_ranks_with_configured_knobs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The probe must measure the ranker `memory_search` actually runs.
+    `cfg` sat unread in this check after the 4.0.0 embedding removal
+    deleted its only use, so a `[behavior] search_mode = "keyword"` store
+    (or tuned half-life / conversational / rescue_expansion) was probed
+    on `search.search`'s hard defaults — a verdict about a configuration
+    the user never executes, and worst for keyword mode, which has no
+    IDF weighting, the very axis the rare/topical contrast rides on.
+    Every ranking call must carry the configured knobs; an unnormalised
+    programmatic mode must fall back to "hybrid" (the loader's own
+    `_coerce_search_mode` rule) instead of dying on `search.search`'s
+    runtime mode guard."""
+    from bettermemory import search as search_module
+    from bettermemory.doctor import _discrimination_probe
+    from bettermemory.store import Store
+
+    _seed_homogeneous_scope(tmp_path)
+    memories = Store(tmp_path).load_all()
+
+    captured: list[dict[str, Any]] = []
+    real_search = search_module.search
+
+    def _spy(pool: Any, query: str, **kwargs: Any) -> Any:
+        captured.append(kwargs)
+        return real_search(pool, query, **kwargs)
+
+    monkeypatch.setattr("bettermemory.search.search", _spy)
+
+    cfg = _config_for(
+        tmp_path,
+        search_mode="keyword",
+        recency_boost_half_life_days=7.0,
+        conversational=False,
+        rescue_expansion=True,
+    )
+    assert _discrimination_probe(memories, "ops", cfg) is not None
+    assert captured, "the probe never reached the ranker"
+    for kwargs in captured:
+        assert kwargs["mode"] == "keyword"
+        assert kwargs["half_life_days"] == 7.0
+        assert kwargs["conversational"] is False
+        assert kwargs["rescue_expansion"] is True
+
+    # The loader normalises config FILES only; `BehaviorConfig(...)`
+    # constructions reach consumers unnormalised (see
+    # `_coerce_search_mode`'s scope note), and a pre-4.0 "semantic" (or
+    # any casing of it) must degrade to hybrid, not crash the check.
+    captured.clear()
+    probed = _discrimination_probe(
+        memories, "ops", _config_for(tmp_path, search_mode="Semantic")
+    )
+    assert probed is not None
+    assert captured and all(k["mode"] == "hybrid" for k in captured)
+
+
 # ---------------------------------------------------------------------------
 # mcp_client_configs
 # ---------------------------------------------------------------------------
@@ -1809,6 +1867,73 @@ def test_mcp_client_configs_ok_for_uvx_runner_shape(
     diag = _check_mcp_client_configs()
     assert diag.status == "ok"
     assert "1 client config(s)" in diag.message
+
+
+def test_mcp_client_configs_warns_on_stale_absolute_uvx_runner_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An ABSOLUTE uvx runner path that no longer exists is the module's
+    motivating failure mode ("registered path no longer exists") wearing
+    the runner shape: GUI-launched clients inherit a minimal PATH, so
+    users there pin `/Users/me/.local/bin/uvx`, and a uv reinstall or
+    move rots it. The runner branch used to hard-code `binary_exists:
+    True` and certify the config healthy; it must report the stale path
+    with a measured `binary_exists`, while the bare `"uvx"` name stays
+    unjudged (the test above) and an absolute runner that EXISTS stays
+    healthy — the absolute-path-only rule
+    `_session_start_hook_broken_path` draws."""
+    missing_runner = tmp_path / "gone" / "uvx"
+    target = tmp_path / "fake_config.json"
+    target.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "memory": {
+                        "command": str(missing_runner),
+                        "args": ["bettermemory"],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("bettermemory.doctor.KNOWN_CLIENTS", _tmp_clients(tmp_path))
+    monkeypatch.setattr(
+        "bettermemory.doctor.find_binary", lambda: str(tmp_path / "bettermemory")
+    )
+    diag = _check_mcp_client_configs()
+    assert diag.status == "warn"
+    assert "no longer exists" in diag.message
+    assert str(missing_runner) in diag.message
+    (finding,) = diag.details["findings"]
+    assert finding["binary_exists"] is False
+    assert finding["matches_resolved_binary"] is False
+    assert finding["runner"] == "uvx"
+
+    # Overreach guard: the same shape whose runner file EXISTS must keep
+    # reporting healthy — the fix judges dead absolute paths, not the
+    # absolute form itself.
+    present_runner = tmp_path / "bin" / "uvx"
+    present_runner.parent.mkdir()
+    present_runner.write_text("#!/bin/sh\n", encoding="utf-8")
+    target.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "memory": {
+                        "command": str(present_runner),
+                        "args": ["bettermemory"],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    diag = _check_mcp_client_configs()
+    assert diag.status == "ok"
+    (finding,) = diag.details["findings"]
+    assert finding["binary_exists"] is True
 
 
 def test_mcp_client_configs_warns_on_stale_path(

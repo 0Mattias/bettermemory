@@ -49,10 +49,10 @@ import sysconfig
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from . import search
-from .config import Config, TelemetryConfig, load_config
+from .config import Config, TelemetryConfig, _coerce_search_mode, load_config
 from .eval import is_admin_recorded_event
 from .events import EVENT_LOG_FILENAME, iter_all_events
 from .health import is_hook_telemetry_event
@@ -3019,7 +3019,7 @@ _DISCRIMINATION_QUERY_TERMS = 6
 
 
 def _discrimination_probe(
-    memories: list[Any], scope: str
+    memories: list[Any], scope: str, cfg: Config
 ) -> tuple[int, float, float] | None:
     """`(sampled, rare_recall_at_1, topical_recall_at_1)` for one scope.
 
@@ -3039,6 +3039,22 @@ def _discrimination_probe(
     query-document vocabulary mismatch from every other cause of a bad
     result, because both arms run against the same pool, ranker, mode and
     corpus statistics — only the query's term rarity differs.
+
+    Both arms rank with the CALLER'S configured ranker — `cfg.behavior`'s
+    `search_mode`, `recency_boost_half_life_days`, `conversational` and
+    `rescue_expansion` — never `search.search`'s defaults. The probe's
+    question is whether PRODUCTION retrieval can find this store, and
+    before `cfg` was threaded through it quietly answered for
+    hybrid-at-30-days regardless of what `memory_search` actually runs:
+    a `[behavior] search_mode = "keyword"` store was measured on a
+    ranker it never executes, and keyword mode has no IDF weighting —
+    the exact axis this probe's rare/topical contrast is built on. The
+    mode passes through `_coerce_search_mode` first because the loader
+    only normalises config FILES; a programmatically built
+    `BehaviorConfig` reaches consumers unnormalised (that function's
+    scope note), and a diagnostic must degrade to the loader's own loud
+    "hybrid" fallback rather than die on `search.search`'s runtime mode
+    guard.
 
     Returns None when the scope holds fewer than
     `_DISCRIMINATION_MIN_POOL` memories, and also when no sampled memory
@@ -3083,6 +3099,14 @@ def _discrimination_probe(
     # letting each call default `now` to its own utcnow() would let the
     # two arms be scored against slightly different decay.
     now = datetime.now(timezone.utc)
+    # The configured mode, normalised exactly the way `load_config` would
+    # have — see the docstring for why the loader can't be trusted to
+    # have run already. The cast is the same `SearchMode` narrowing
+    # `handlers.search` performs after its own guard.
+    mode = cast(
+        search.SearchMode,
+        _coerce_search_mode(cfg.behavior.search_mode, config_path=None),
+    )
 
     counted = 0
     rare_first = 0
@@ -3110,7 +3134,15 @@ def _discrimination_probe(
             (ordered[-_DISCRIMINATION_QUERY_TERMS:], False),
         ):
             hits = search.search(
-                pool, " ".join(terms), scopes=[scope], max_results=1, now=now
+                pool,
+                " ".join(terms),
+                scopes=[scope],
+                max_results=1,
+                now=now,
+                mode=mode,
+                half_life_days=cfg.behavior.recency_boost_half_life_days,
+                conversational=cfg.behavior.conversational,
+                rescue_expansion=cfg.behavior.rescue_expansion,
             )
             if hits and hits[0].id == mem.id:
                 if is_rare:
@@ -3355,7 +3387,13 @@ def _check_retrieval_discrimination(directory: Path, cfg: Config) -> Diagnosis:
     the one it needed ranked sixth.
 
     This probes that directly (see `_discrimination_probe`) and warns on
-    the topical arm, per scope. A low topical arm beside a high rare arm
+    the topical arm, per scope. The probe ranks with this store's
+    configured `[behavior]` retrieval knobs — search mode, recency
+    half-life, conversational, rescue expansion — so the verdict is
+    about the retrieval `memory_search` actually runs; `cfg` sat unread
+    here after the 4.0.0 embedding removal deleted its only use (the
+    ad56c07 semantic-lane branch), quietly measuring hybrid-at-30-days
+    for every store. A low topical arm beside a high rare arm
     means query-document vocabulary mismatch: lexical retrieval needs the
     query to share rare terms with the target, and inside a topically
     coherent scope the shared vocabulary carries almost no information —
@@ -3385,7 +3423,7 @@ def _check_retrieval_discrimination(directory: Path, cfg: Config) -> Diagnosis:
     scopes = sorted({s for m in memories for s in m.scopes})
     measured: list[tuple[str, int, float, float]] = []
     for scope in scopes:
-        probed = _discrimination_probe(memories, scope)
+        probed = _discrimination_probe(memories, scope, cfg)
         if probed is not None:
             measured.append((scope, *probed))
     if not measured:
@@ -3549,31 +3587,48 @@ def _check_mcp_client_configs() -> Diagnosis:
                 # .mcp.json) names "uvx" as the command with "bettermemory" in
                 # args, so the substring filter below misses it and doctor used
                 # to report a healthy managed install as absent. uvx resolves
-                # the binary dynamically — there is no static path to validate,
-                # and the byte-path checks below assume `command` IS the binary
-                # — so recognize it via the SHARED init recognizer (one
-                # definition, so init and doctor cannot drift on which runner
-                # shapes count as ours: bare, version-pinned
-                # `bettermemory@latest` / `bettermemory==X`, `--from`,
-                # `uv tool run`, and the Windows `uvx.exe` spelling) and
-                # record it healthy.
+                # the BETTERMEMORY binary dynamically — there is no static
+                # server path to validate, and the byte-path checks below
+                # assume `command` IS the binary — so recognize it via the
+                # SHARED init recognizer (one definition, so init and doctor
+                # cannot drift on which runner shapes count as ours: bare,
+                # version-pinned `bettermemory@latest` / `bettermemory==X`,
+                # `--from`, `uv tool run`, and the Windows `uvx.exe`
+                # spelling). The RUNNER path is a different matter: an
+                # ABSOLUTE `command` — the shape GUI-launched clients
+                # realistically pin, since they inherit the minimal PATH the
+                # binary_on_path story describes — IS statically checkable
+                # and rots exactly like a pinned server binary when uv is
+                # moved or reinstalled, so judge its existence and report it
+                # stale like any other dead path. The bare `"uvx"` name stays
+                # unjudged, mirroring `_session_start_hook_broken_path`'s
+                # absolute-path-only rule, and `binary_exists` records the
+                # measured answer, never a literal.
                 args = entry.get("args")
                 if (
                     Path(command).stem.lower() in {"uvx", "uv"}
                     and isinstance(args, list)
                     and command_launches_bettermemory(command, args, resolved_binary)
                 ):
+                    runner_exists = (
+                        Path(command).exists() if Path(command).is_absolute() else True
+                    )
                     findings.append(
                         {
                             "client": client_name,
                             "config_path": str(path),
                             "entry_name": entry_name,
                             "command": command,
-                            "binary_exists": True,
-                            "matches_resolved_binary": True,
+                            "binary_exists": runner_exists,
+                            "matches_resolved_binary": runner_exists,
                             "runner": Path(command).name,
                         }
                     )
+                    if not runner_exists:
+                        stale_rows.append(
+                            f"{client_name} ({path}): {command} no longer exists"
+                        )
+                        stale_clients.append(client_name)
                     continue
                 # Doctor deliberately matches ANY bettermemory-pathed command
                 # (broader than init's exact-launch gate) so it can diagnose
