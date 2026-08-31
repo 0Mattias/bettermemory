@@ -79,6 +79,11 @@ queued as a design item.
   separator rows (the hook fix's consolidation-side half).
 - `d1b0054` fix(cli): eval `--min-retrievals` help states the 30
   default.
+- `1092c84` fix(origin): decode git output as UTF-8, not the locale
+  codepage. The shared `_git` runner's bare `text=True` let Windows
+  decode git's UTF-8 stdout as cp1252, mojibaking every non-ASCII path
+  on its way to the drift legs — caught by the new quotePath
+  regression test on the windows CI leg.
 
 ## 6.4.0 - 2026-08-30
 
