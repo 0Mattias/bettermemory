@@ -560,7 +560,15 @@ def _git(
             ["git", *args],
             cwd=str(cwd),
             capture_output=True,
-            text=True,
+            # Git emits UTF-8 (paths especially, and unconditionally so
+            # under the core.quotePath=false pin in commit_patch_stream).
+            # Bare text=True decodes with locale.getpreferredencoding —
+            # cp1252 on Windows — which mojibakes every non-ASCII path
+            # and mis-binds the drift legs there. Decode UTF-8
+            # explicitly; errors="replace" keeps failure soft, matching
+            # this runner's origin-is-nice-to-have posture.
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
             check=False,
         )
