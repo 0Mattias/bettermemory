@@ -47,7 +47,7 @@ def add_subparser(
         type=int,
         default=None,
         help=(
-            "Floor for cold-endorsement row inclusion. Default 5; below "
+            "Floor for cold-endorsement row inclusion. Default 30; below "
             "this, the absence of explicit endorsement is treated as "
             "insufficient signal rather than debt."
         ),
