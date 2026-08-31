@@ -20,6 +20,7 @@ from bettermemory.origin import (
     capture,
     commit_author_timestamps,
     commit_author_timestamps_touching_pathspecs,
+    commit_patch_stream,
     commits_since,
     commits_since_touching_paths,
     commits_touching_pathspecs,
@@ -1374,6 +1375,199 @@ def test_author_timestamps_touching_nonempty_for_deleted_file(tmp_path: Path) ->
     )
     stamps = commit_author_timestamps_touching_pathspecs(tmp_path, ["gone.py"])
     assert stamps, "a deleted-but-cited file must stay in history, not read as phantom"
+
+
+# ---------------------------------------------------------------------------
+# commit_patch_stream — the diff shape is pinned against user git config
+# ---------------------------------------------------------------------------
+
+
+def _set_repo_config(cwd: Path, key: str, value: str) -> None:
+    """Write repo-local git config — the same inherited-config channel a
+    hostile ~/.gitconfig reaches `git log` through, without touching the
+    developer's real config."""
+    subprocess.run(
+        ["git", "config", key, value],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+    )
+
+
+def _delete_and_commit(cwd: Path, relpath: str) -> None:
+    (cwd / relpath).unlink()
+    subprocess.run(["git", "add", "-A"], cwd=cwd, check=True, capture_output=True)
+    env = os.environ.copy()
+    env["GIT_AUTHOR_NAME"] = "Test"
+    env["GIT_AUTHOR_EMAIL"] = "test@example.com"
+    env["GIT_COMMITTER_NAME"] = "Test"
+    env["GIT_COMMITTER_EMAIL"] = "test@example.com"
+    subprocess.run(
+        ["git", "commit", "-m", f"rm {relpath}"],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        env=env,
+    )
+
+
+def _all_shas(cwd: Path) -> list[str]:
+    result = subprocess.run(
+        ["git", "log", "--format=%H"],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.split()
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_commit_patch_stream_pins_prefixes_against_noprefix_config(
+    tmp_path: Path,
+) -> None:
+    """`diff.noprefix=true` in inherited config drops the `a/`/`b/` header
+    prefixes, and a DELETION diff then parses to NOTHING: without a
+    `--- a/` line there is no path in hand at `+++ /dev/null`, the hunk
+    is skipped, and `parse_mismatches` stays 0 — a deleted claimed file
+    measured zero commit drift and read fresh. The `-c` pinning must win
+    over the inherited value, end to end through the parser."""
+    _init_repo(tmp_path)
+    _set_repo_config(tmp_path, "diff.noprefix", "true")
+    _commit_file(
+        tmp_path,
+        "mod.py",
+        content="x = 1\n",
+        when=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    _delete_and_commit(tmp_path, "mod.py")
+    stream = commit_patch_stream(tmp_path, _all_shas(tmp_path), ["mod.py"])
+    assert stream is not None
+    assert "--- a/mod.py" in stream
+
+    from bettermemory.claims import build_binding_index
+
+    index = build_binding_index(stream)
+    assert "mod.py" in index["deleted"]
+    assert index["parse_mismatches"] == 0
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_commit_patch_stream_pins_custom_src_dst_prefixes(tmp_path: Path) -> None:
+    """`diff.srcPrefix`/`diff.dstPrefix` (git >= 2.45) substitute arbitrary
+    prefixes and `diff.mnemonicPrefix` swaps in c//w/ pairs — every path
+    would be indexed under the wrong spelling. Pinning restores `a/`/`b/`.
+    On older gits the unknown keys are ignored and the assertion holds
+    trivially, so the test is deterministic across versions."""
+    _init_repo(tmp_path)
+    _set_repo_config(tmp_path, "diff.srcPrefix", "left/")
+    _set_repo_config(tmp_path, "diff.dstPrefix", "right/")
+    _set_repo_config(tmp_path, "diff.mnemonicPrefix", "true")
+    _commit_file(
+        tmp_path,
+        "mod.py",
+        content="x = 1\n",
+        when=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    _commit_file(
+        tmp_path,
+        "mod.py",
+        content="x = 2\n",
+        when=datetime(2026, 1, 2, tzinfo=timezone.utc),
+    )
+    stream = commit_patch_stream(tmp_path, _all_shas(tmp_path), ["mod.py"])
+    assert stream is not None
+    assert "--- a/mod.py" in stream
+    assert "+++ b/mod.py" in stream
+
+    from bettermemory.claims import build_binding_index
+
+    index = build_binding_index(stream)
+    assert index["files"] == {"mod.py"}
+    assert index["parse_mismatches"] == 0
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_commit_patch_stream_pins_quotepath_for_non_ascii_paths(
+    tmp_path: Path,
+) -> None:
+    """`core.quotePath=true` — git's DEFAULT — octal-escapes non-ASCII
+    path bytes, so a claimed non-ASCII file is indexed under its quoted
+    spelling (`"b/mod\\303\\274l.py"`) and never equals the claim's
+    rel_path. Pinning quotePath off emits the raw UTF-8 path. Cyrillic
+    has no NFD decomposition, so the spelling is stable across APFS."""
+    _init_repo(tmp_path)
+    _set_repo_config(tmp_path, "core.quotePath", "true")
+    name = "модуль.py"
+    _commit_file(
+        tmp_path,
+        name,
+        content="x = 1\n",
+        when=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    stream = commit_patch_stream(tmp_path, _all_shas(tmp_path), [name])
+    assert stream is not None
+    assert f"+++ b/{name}" in stream
+    assert "\\320" not in stream, "octal-escaped spelling leaked through"
+
+    from bettermemory.claims import build_binding_index
+
+    index = build_binding_index(stream)
+    assert name in index["files"]
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="'\"' is illegal in Windows filenames"
+)
+def test_commit_patch_stream_dequotes_embedded_quote_path(tmp_path: Path) -> None:
+    """A path with an embedded double quote stays C-quoted even under
+    `core.quotePath=false` (git always escapes quotes, backslashes, and
+    control bytes), so the producer-side `_dequote_patch_headers` rewrite
+    is what lets the parser record its deletion."""
+    _init_repo(tmp_path)
+    name = 'we"ird.py'
+    _commit_file(
+        tmp_path,
+        name,
+        content="x = 1\n",
+        when=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    _delete_and_commit(tmp_path, name)
+    stream = commit_patch_stream(tmp_path, _all_shas(tmp_path), [name])
+    assert stream is not None
+    assert f"--- a/{name}" in stream
+
+    from bettermemory.claims import build_binding_index
+
+    index = build_binding_index(stream)
+    assert name in index["deleted"]
+
+
+def test_dequote_patch_headers_rewrites_only_complete_prefixed_headers() -> None:
+    """The rewrite fires only when the whole header remainder decodes as
+    ONE complete C-quoted string whose body carries the pinned prefix —
+    content lines that merely resemble quoted headers, malformed quoting,
+    and prefix-less strings all pass through byte-exact."""
+    from bettermemory.origin import _dequote_patch_headers
+
+    quoted_deletion = '--- "a/we\\"ird.py"'
+    octal_header = '+++ "b/ctl\\001x.py"'
+    content_line = '--- "just removed text"'
+    unterminated = '--- "a/unterminated'
+    stream = "\n".join(
+        [quoted_deletion, "+++ /dev/null", octal_header, content_line, unterminated]
+    )
+    out = _dequote_patch_headers(stream).split("\n")
+    assert out[0] == '--- a/we"ird.py'
+    assert out[1] == "+++ /dev/null"
+    assert out[2] == "+++ b/ctl\x01x.py"
+    assert out[3] == content_line
+    assert out[4] == unterminated
+
+    # The zero-quoted-header fast path returns the identical object.
+    plain = "--- a/mod.py\n+++ /dev/null\n@@ -1 +0,0 @@\n-x = 1"
+    assert _dequote_patch_headers(plain) is plain
 
 
 # ---------------------------------------------------------------------------

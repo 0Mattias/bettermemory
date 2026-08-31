@@ -512,6 +512,18 @@ def should_include_for_caller(
 # ---------------------------------------------------------------------------
 
 
+def _log_subcommand(args: tuple[str, ...]) -> str:
+    """The subcommand in a git argv, for failure log lines.
+
+    Skips leading ``-c <key>=<val>`` pairs so a config-pinned call
+    (`commit_patch_stream`) logs as ``git log``, not ``git -c``.
+    """
+    i = 0
+    while i + 1 < len(args) and args[i] == "-c":
+        i += 2
+    return args[i] if i < len(args) else ""
+
+
 def _git(
     cwd: Path, *args: str, timeout: float = 1.0, empty_ok: bool = False
 ) -> str | None:
@@ -558,7 +570,7 @@ def _git(
     except subprocess.TimeoutExpired:
         log.warning(
             "git %s timed out after %ss in %s",
-            args[0] if args else "",
+            _log_subcommand(args),
             timeout,
             cwd,
         )
@@ -575,7 +587,7 @@ def _git(
         first = stderr[0] if stderr else ""
         log.debug(
             "git %s exited %s in %s: %s",
-            args[0] if args else "",
+            _log_subcommand(args),
             result.returncode,
             cwd,
             first,
@@ -1219,6 +1231,116 @@ def commit_author_sha_pairs_touching_pathspecs(
 MAX_PATCH_STREAM_COMMITS = 256
 
 
+# The single-character escapes git's `quote_c_style` emits inside a
+# quoted path header, mapped to their byte values. Everything else it
+# deems unprintable comes out as 3-digit octal. Both decode to BYTES —
+# an octal escape is one raw byte of the path's on-disk encoding, so a
+# multi-byte UTF-8 character arrives as several escapes and the path
+# must be reassembled as bytes and decoded once at the end.
+_C_QUOTE_ESCAPES = {
+    "a": 0x07,
+    "b": 0x08,
+    "t": 0x09,
+    "n": 0x0A,
+    "v": 0x0B,
+    "f": 0x0C,
+    "r": 0x0D,
+    '"': 0x22,
+    "\\": 0x5C,
+}
+
+
+def _unquote_c_path(quoted: str) -> str | None:
+    """Decode ONE complete git C-quoted string, or None if `quoted` is
+    not exactly that.
+
+    "Exactly that" is the safety property: the input must be a leading
+    quote, a well-formed escaped body with no unescaped interior quote,
+    and a trailing quote with nothing after it. Anything else — an
+    unterminated quote, an unknown escape, an interior close-quote with
+    trailing text, bytes that don't decode as UTF-8 — returns None and
+    the caller leaves the line untouched. Better to keep a quoted
+    spelling (a false mismatch, the conservative direction downstream)
+    than to guess at a path git didn't actually name.
+    """
+    if len(quoted) < 2 or not quoted.startswith('"') or not quoted.endswith('"'):
+        return None
+    body = quoted[1:-1]
+    out = bytearray()
+    i = 0
+    n = len(body)
+    while i < n:
+        ch = body[i]
+        if ch == '"':
+            # An unescaped interior quote means `quoted` was not ONE
+            # complete quoted string (e.g. `"x" -> "y"` content).
+            return None
+        if ch != "\\":
+            out.extend(ch.encode("utf-8"))
+            i += 1
+            continue
+        i += 1
+        if i >= n:
+            return None
+        esc = body[i]
+        code = _C_QUOTE_ESCAPES.get(esc)
+        if code is not None:
+            out.append(code)
+            i += 1
+            continue
+        if esc in "01234567":
+            j = i + 1
+            while j < n and j - i < 3 and body[j] in "01234567":
+                j += 1
+            out.append(int(body[i:j], 8) & 0xFF)
+            i = j
+            continue
+        return None
+    try:
+        return out.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def _dequote_patch_headers(stream: str) -> str:
+    """Rewrite residually-quoted ``---``/``+++`` headers to the unquoted
+    shape `claims.build_binding_index` hard-requires.
+
+    Even with ``core.quotePath=false`` pinned, git still C-quotes a
+    header whose path carries a double quote, a backslash, or control
+    bytes — ``--- "a/we\\"ird.py"`` — and the parser's exact
+    ``--- a/`` / ``+++ b/`` prefix match then misses it (a deletion of
+    such a path would go unrecorded; an edit would be indexed under the
+    quoted spelling and never equal a claim's rel_path). Decoding
+    happens HERE, on the producer side, so the parser keeps its
+    one-argument no-lookup guarantee and its exact prefix match.
+
+    A header line is rewritten only when the whole remainder decodes as
+    one complete quoted string AND the decoded path starts with the
+    pinned ``a/`` (old side) or ``b/`` (new side) prefix. That guard
+    keeps hunk-body content lines out: a removed source line
+    ``-- "x"`` renders as ``--- "x"`` in the stream, but its decoded
+    body doesn't start with a prefix, so it passes through byte-exact.
+    (A content line spelling a quoted a/-path remains theoretically
+    rewritable — the cost is one slightly-off change anchor, never a
+    missed deletion.) The fast path keeps the zero-quoted-header case,
+    i.e. essentially every real stream, allocation-free.
+    """
+    if '--- "' not in stream and '+++ "' not in stream:
+        return stream
+    lines = stream.split("\n")
+    for idx, line in enumerate(lines):
+        if not line.startswith(('--- "', '+++ "')):
+            continue
+        decoded = _unquote_c_path(line[4:])
+        if decoded is None:
+            continue
+        prefix = "a/" if line.startswith("--- ") else "b/"
+        if decoded.startswith(prefix):
+            lines[idx] = line[:4] + decoded
+    return "\n".join(lines)
+
+
 def commit_patch_stream(
     cwd: Path | None,
     shas: list[str],
@@ -1234,6 +1356,32 @@ def commit_patch_stream(
     post-`since` slice of `commit_author_sha_pairs_touching_pathspecs`,
     author-date space), so a rev-range walk here would re-answer that
     question in commit-graph space and disagree under rebases.
+
+    THE DIFF SHAPE IS PINNED AT THE INVOCATION. The parser hard-requires
+    unquoted ``--- a/<path>`` / ``+++ b/<path>`` headers (``/dev/null``
+    on the created/deleted side), and this call otherwise inherits the
+    user's git config, which can silently reshape them:
+
+    * ``diff.noprefix=true`` drops both prefixes. A DELETION then
+      parses to nothing — ``--- mod.py`` no longer matches ``--- a/``,
+      so no path is in hand when ``+++ /dev/null`` arrives, the hunk is
+      skipped, and `parse_mismatches` stays 0. A deleted claimed file
+      measures zero drift and reads FRESH: the exact false-fresh the
+      trust machinery exists to prevent, with no loud-failure tripwire.
+    * ``diff.srcPrefix`` / ``diff.dstPrefix`` (git >= 2.45) and
+      ``diff.mnemonicPrefix`` substitute arbitrary prefixes — every
+      file's path is then indexed under the wrong spelling.
+    * ``core.quotePath=true`` (git's DEFAULT) octal-escapes non-ASCII
+      bytes, so a claimed ``modül.py`` is indexed as its quoted
+      spelling and never equals the claim's rel_path.
+
+    Each is pinned back to the parser's shape with ``-c``, which
+    outranks every config file (older gits ignore the >= 2.45 keys).
+    Paths git quotes even with quotePath off — embedded quotes,
+    backslashes, control bytes — are rewritten to the unquoted spelling
+    by `_dequote_patch_headers` before the stream is returned, so the
+    normalization lives with the producer and the parser keeps its
+    one-argument guarantee.
 
     ``--format=<COMMIT_MARK>%H`` writes the same control-character
     record separator the bench streams carry; source content cannot
@@ -1258,8 +1406,20 @@ def commit_patch_stream(
             return None
     from .claims import COMMIT_MARK
 
-    return _git(
+    raw = _git(
         toplevel,
+        # Global `-c` options must precede the subcommand. See the
+        # docstring for why each key is pinned.
+        "-c",
+        "diff.noprefix=false",
+        "-c",
+        "diff.srcPrefix=a/",
+        "-c",
+        "diff.dstPrefix=b/",
+        "-c",
+        "diff.mnemonicPrefix=false",
+        "-c",
+        "core.quotePath=false",
         "log",
         "--no-walk=unsorted",
         "-p",
@@ -1271,6 +1431,9 @@ def commit_patch_stream(
         timeout=5.0,
         empty_ok=True,
     )
+    if raw is None:
+        return None
+    return _dequote_patch_headers(raw)
 
 
 # ---------------------------------------------------------------------------
