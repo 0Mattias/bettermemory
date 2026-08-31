@@ -1711,9 +1711,13 @@ def test_commit_drift_status_clean_when_no_commits_after_verify(
     """Repo exists and matches, the verify anchor is after the last commit:
     status is 'clean', count is 0, recommendation is None. The clean
     branch is the positive evidence the consumer needs to trust the
-    calendar verification."""
+    calendar verification. The fixture commit TOUCHES the cited file
+    (`_commit_touching`, not the old `--allow-empty` `_commit_at`):
+    since the quiescent branch classifies applicability, a cited path
+    no commit ever touched is a PHANTOM and reads None — clean/0 is
+    reserved for a memory whose anchor is real."""
     _init_repo_with_remote(tmp_path, remote=_REMOTE)
-    _commit_at(tmp_path, "older", when=datetime(2026, 1, 1, tzinfo=timezone.utc))
+    _commit_touching(tmp_path, "older", when=datetime(2026, 1, 1, tzinfo=timezone.utc))
     result = compute_commit_drift(
         last_verified_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
         memory_origin_repo=_REMOTE,
@@ -1787,9 +1791,11 @@ def test_commit_drift_recommendation_singular_for_one_commit(
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
 def test_commit_drift_to_dict_shape_clean(tmp_path: Path) -> None:
     """JSON shape is uniform across status values so consumers can branch
-    on `status` alone without an existence check on every field."""
+    on `status` alone without an existence check on every field. The
+    fixture commit touches the cited `notes.md` so the quiescent
+    applicability classification reads the anchor as real, not phantom."""
     _init_repo_with_remote(tmp_path, remote=_REMOTE)
-    _commit_at(tmp_path, "older", when=datetime(2026, 1, 1, tzinfo=timezone.utc))
+    _commit_touching(tmp_path, "older", when=datetime(2026, 1, 1, tzinfo=timezone.utc))
     result = compute_commit_drift(
         last_verified_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
         memory_origin_repo=_REMOTE,
@@ -1992,6 +1998,108 @@ def test_commit_drift_clean_when_cited_path_untouched(tmp_path: Path) -> None:
         memory_origin_repo=_REMOTE,
         caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
         body="claims about notes.md hold",
+    )
+    assert result is not None
+    assert result.status == "clean"
+    assert result.commits_since_verify == 0
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_commit_drift_none_when_anchors_escape_and_repo_quiescent(
+    tmp_path: Path,
+) -> None:
+    """The QUIESCENT half of the all-escape cross product: same memory as
+    `test_commit_drift_none_when_anchors_all_escape_repo`, but the repo
+    has seen NO commits since the verify. Pre-fix the `count > 0` gate
+    skipped anchor resolution entirely and minted clean/0 — which the
+    stale-plus-zero demotion consumed as a measurement, so a
+    calendar-stale memory citing only remote-host paths read `fresh`
+    exactly as long as the repo sat still, then flipped to
+    `spot_check_required` on the first unrelated commit. Applicability
+    must not be keyed to unrelated repo activity: None on both sides."""
+    _init_repo_with_remote(tmp_path, remote=_REMOTE)
+    _commit_at(tmp_path, "older", when=datetime(2026, 1, 1, tzinfo=timezone.utc))
+    result = compute_commit_drift(
+        last_verified_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        memory_origin_repo=_REMOTE,
+        caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
+        body="the router config lives at /data/compose/.env on the board",
+        verified_paths=["~/.claude.json"],
+    )
+    assert result is None
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_commit_drift_none_for_phantom_citation_when_repo_quiescent(
+    tmp_path: Path,
+) -> None:
+    """Quiescent parity for the phantom rule: a cited path no commit in
+    history ever touched is not-applicable on the positive branch
+    (`test_commit_drift_none_for_phantom_subroot_citation`), and a zero
+    repo-wide count must classify it the same way rather than minting
+    clean/0 off an anchor that was never resolved."""
+    _init_repo_with_remote(tmp_path, remote=_REMOTE)
+    _commit_at(tmp_path, "older", when=datetime(2026, 1, 1, tzinfo=timezone.utc))
+    result = compute_commit_drift(
+        last_verified_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        memory_origin_repo=_REMOTE,
+        caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
+        body="claims about notes.md hold",
+    )
+    assert result is None
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_commit_drift_clean_when_quiescent_and_governed_claim_real(
+    tmp_path: Path,
+) -> None:
+    """The governed half of the quiescent classification: a memory whose
+    ONLY anchor is a declared claim (untethered body) is fully governed
+    — `claim_paths` joins the spec set exactly as in
+    `_resolve_with_claims` — so a real, untouched claim path keeps the
+    affirmative clean/0 in a quiescent repo."""
+    _init_repo_with_remote(tmp_path, remote=_REMOTE)
+    _commit_touching(tmp_path, "older", when=datetime(2026, 1, 1, tzinfo=timezone.utc))
+    result = compute_commit_drift(
+        last_verified_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        memory_origin_repo=_REMOTE,
+        caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
+        body="a workflow note that cites nothing path-shaped",
+        claims=["notes.md"],
+    )
+    assert result is not None
+    assert result.status == "clean"
+    assert result.commits_since_verify == 0
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_commit_drift_quiescent_deleted_but_real_anchor_stays_clean(
+    tmp_path: Path,
+) -> None:
+    """Guard on the quiescent classification: a since-DELETED cited file
+    is REAL, not phantom — its add + delete commits keep it in the
+    touching log — so it stays clean/0, never None. Mirrors
+    `test_resolve_commit_drift_count_zero_for_deleted_but_real_anchor`
+    for the zero-count branch: the probe must read history, not the
+    current tree, or every memory about a deliberately removed file
+    would lose its measurement the moment the repo goes quiet."""
+    _init_repo_with_remote(tmp_path, remote=_REMOTE)
+    _commit_touching(
+        tmp_path,
+        "add gone.py",
+        when=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        filename="gone.py",
+    )
+    (tmp_path / "gone.py").unlink()
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True, capture_output=True)
+    _commit_at(
+        tmp_path, "delete gone.py", when=datetime(2026, 1, 10, tzinfo=timezone.utc)
+    )
+    result = compute_commit_drift(
+        last_verified_at=datetime(2026, 2, 1, tzinfo=timezone.utc),
+        memory_origin_repo=_REMOTE,
+        caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
+        body="gone.py was removed on purpose; see its final revision",
     )
     assert result is not None
     assert result.status == "clean"
@@ -3761,6 +3869,51 @@ def test_anchored_relative_attestation_miss_is_claim_anchored(
     resolved = str(tmp_path / "src" / "auth.py")
     assert report.missing == (resolved,)
     assert report.claim_anchored_missing == (resolved,)
+
+
+def test_home_env_spelled_attestation_reads_verified_not_claim_anchored(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A `$HOME/`-spelled attestation is ABSOLUTE — the env-var spelling
+    of `~/` that `_is_absolute_attestation`, `_normalize_candidate`, and
+    the write gate all accept — so the anchored-attestation pass must
+    SKIP it, not join it onto the worktree root. Pre-fix, `_anchored`
+    restated the split locally as `startswith(("/", "~"))`:
+    `unverifiable_attestations` ACCEPTED `$HOME/.zshrc` at write time
+    (existence-checked via `~` canonicalization) while every retrieval
+    stat-failed the manufactured `<root>/$HOME/.zshrc` and appended it
+    to `claim_anchored_missing` — a phantom permanently poisoning the
+    escalating bucket whose justification is the 3-of-3-real precision
+    of anchored attestations. With a LIVE worktree_root the attested,
+    existing file must land in `verified` through the main loop's
+    set-membership path and nowhere near the missing buckets."""
+    from bettermemory.verify import unverifiable_attestations
+
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".zshrc").write_text("alias ll='ls -la'\n", encoding="utf-8")
+    root = tmp_path / "worktree"
+    root.mkdir()
+    # Cross-platform `~` redirect — same env discipline as
+    # `test_home_relative_single_segment_still_extracted`.
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.delenv("HOMEDRIVE", raising=False)
+    monkeypatch.delenv("HOMEPATH", raising=False)
+
+    # The write gate accepts this exact attestation; the read side must
+    # not then flag it — that split-brain is the bug.
+    assert unverifiable_attestations(["$HOME/.zshrc"], worktree_root=root) == []
+
+    report = detect_path_drift(
+        "shell aliases live in `~/.zshrc`",
+        verified_paths=["$HOME/.zshrc"],
+        worktree_root=str(root),
+    )
+    assert report.claim_anchored_missing == ()
+    assert report.missing == ()
+    assert "~/.zshrc" in report.verified
+    assert str(root / "$HOME" / ".zshrc") not in report.checked
 
 
 def test_anchored_relative_citation_miss_is_claim_anchored(tmp_path: Path) -> None:

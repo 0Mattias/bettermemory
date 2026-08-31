@@ -870,8 +870,22 @@ def _check_anchored_attestations(
     seen = {_normalize_for_compare(p) for p in checked}
 
     def _anchored(raw: str) -> str | None:
+        # Delegate the absolute/relative split to `_is_absolute_attestation`
+        # — the ONE predicate whose docstring mandates mirroring
+        # `_normalize_candidate`'s accepted anchors — rather than testing
+        # `startswith(("/", "~"))` locally. The local test classified the
+        # env-var home spellings (`$HOME/…`, `${HOME}/…` — forms
+        # `_normalize_candidate`, `_BARE_RE`, and the write gate all
+        # support) as worktree-RELATIVE, joined them onto the root
+        # (`<root>/$HOME/…`), stat-failed, and appended the phantom to
+        # `claim_anchored_missing` — permanently escalating the verdict of
+        # a memory whose attestation `unverifiable_attestations` had
+        # ACCEPTED via `~` canonicalization. Anchored forms skipped here
+        # are not dropped from checking: the main `detect_path_drift` loop
+        # existence-checks them via `_normalize_attestations`
+        # set-membership when the body cites them.
         rel = raw.strip() if raw else ""
-        if not rel or rel.startswith(("/", "~")):
+        if not rel or _is_absolute_attestation(rel):
             return None
         return _normalize_candidate(str(root / rel))
 
@@ -1087,6 +1101,17 @@ def _is_absolute_attestation(s: str) -> bool:
     mirroring them: a form this call treats as RELATIVE gets skipped when
     there is no worktree to join it to, so a disagreement between the two
     silently disables the check rather than erroring.
+
+    Two consumers, one predicate, by design: `unverifiable_attestations`
+    (the write gate) uses it to decide which attestations resolve
+    without a root, and `_check_anchored_attestations`' `_anchored`
+    (the read side) uses it to decide which attestations must NOT be
+    joined onto the worktree root. A local restatement in either place
+    re-opens the split-brain this docstring warns about — the read side
+    once tested only ``startswith(("/", "~"))``, so a `$HOME/`-spelled
+    attestation the write gate had accepted was root-joined into a
+    phantom and escalated as `claim_anchored_missing` on every
+    retrieval.
 
     That is not hypothetical. The first version tested only
     `startswith(("/", "~"))`, which classifies every Windows drive-absolute
@@ -2504,6 +2529,88 @@ def resolve_commit_drift_count(
     return len(touching) - idx
 
 
+def _quiescent_drift_applicable(
+    cwd: Path,
+    anchors: Sequence[str],
+    claims: Sequence[Claim],
+) -> bool:
+    """Classify commit-drift APPLICABILITY when the repo is quiescent.
+
+    `compute_commit_drift` narrows a POSITIVE repo-wide count through
+    `resolve_commit_drift`, whose escape/phantom classification returns
+    None (signal not applicable) for a memory none of whose anchors land
+    in this repo's history. A ZERO repo-wide count used to skip that
+    classification entirely and mint an affirmative clean/0 for the very
+    same memory: a calendar-stale record citing only
+    ``/opt/gitea/conf/app.ini`` read *fresh* whenever the caller's repo
+    happened to be quiescent since the verify (`verdict_from_signals`'
+    stale-plus-zero demotion consumed the 0 as a measurement), then
+    flipped to ``spot_check_required`` the moment one unrelated commit
+    landed. The measurement never ran — the demotion's premise ("the
+    commit leg has actually run and returned zero") was false, and the
+    calendar backstop this module promises for out-of-repo claims was
+    stood down by mere repo inactivity.
+
+    So the quiescent branch classifies applicability with the same two
+    rules the positive branch applies, over ONE combined spec set —
+    anchors resolved via `resolve_repo_pathspecs`, plus the governed
+    `claim_paths` (toplevel-relative by construction, used as pathspecs
+    directly, exactly as `_resolve_with_claims` does):
+
+    - every spec ESCAPES the repo (and no claim governs a path) →
+      False: the claims are real, they just aren't about this repo's
+      code;
+    - every spec is PHANTOM (clean-exit EMPTY touching log — no commit
+      in history ever touched any spec) → False, the same rule
+      `resolve_commit_drift_count` applies on the positive branch;
+    - otherwise → True: at least one anchor is real and untouched since
+      the verify, which is the affirmative evidence clean/0 exists to
+      report.
+
+    Could-not-ask keeps the signal, mirroring the positive branch's
+    conservative unfiltered fallback: a None from
+    `resolve_repo_pathspecs` or a None touching log returns True, so
+    infrastructure failure degrades to the incumbent clean/0 rather
+    than silently widening the not-applicable exemption.
+
+    Cost: one ``rev-parse`` plus at most one path-filtered ``git log``
+    (both legs share a single log over the union, where the positive
+    branch's claim split needs two), paid only on the quiescent branch
+    of an ANCHORED memory — the untethered class (the measured
+    100%-false-positive population the anchor gate exists for) still
+    pays no git work, because `compute_commit_drift` returns None
+    before reaching here. The batch surfaces
+    (`_response.attach_commit_drift_counts`,
+    `health._compute_commit_drift_debt`) still gate ALL resolution on a
+    positive count and so still emit 0 for a quiescent all-escaping
+    memory; their alignment is a change to their own files, recorded
+    here so the divergence is at least written down rather than implied
+    away.
+    """
+    toplevel = repo_toplevel(cwd)
+    specs: list[str] = []
+    if anchors:
+        resolved = resolve_repo_pathspecs(cwd, list(anchors), toplevel=toplevel)
+        if resolved is None:
+            # Git itself couldn't answer. We can't judge anchoring, so
+            # keep the signal (conservative), mirroring the positive
+            # branch's unfiltered fallback.
+            return True
+        specs = resolved
+    governed = claim_paths(list(claims)) if claims else []
+    combined = list(dict.fromkeys((*specs, *governed)))
+    if not combined:
+        return False
+    touching = commit_author_timestamps_touching_pathspecs(
+        cwd, combined, toplevel=toplevel
+    )
+    if touching is None:
+        # Git couldn't run the path-filtered log — could-not-ask never
+        # manufactures a not-applicable verdict.
+        return True
+    return bool(touching)
+
+
 def compute_commit_drift(
     last_verified_at: datetime | None,
     memory_origin_repo: str | None,
@@ -2559,11 +2666,17 @@ def compute_commit_drift(
     `last_verified_at` (`resolve_commit_drift_count`). A memory anchored
     to ``[/etc/foo]`` reports drift only when commits touched
     ``/etc/foo``, not when other parts of the repo moved. The narrowing
-    only runs when the unfiltered count is already positive (mirroring
-    the health rollup), and falls back to the unfiltered count when git
-    can't answer the path-filtered query — but resolves to None (signal
-    not applicable, see above) when the memory has no anchors at all or
-    none land inside this repo.
+    only runs when the unfiltered count is already positive, and falls
+    back to the unfiltered count when git can't answer the path-filtered
+    query — but resolves to None (signal not applicable, see above) when
+    the memory has no anchors at all or none land inside this repo. That
+    not-applicable classification holds on BOTH sides of the count gate:
+    a QUIESCENT repo (zero commits since the verify) runs the same
+    escape/phantom rules via `_quiescent_drift_applicable` before an
+    affirmative clean/0 may be minted, because clean/0 is what stands
+    the calendar backstop down (`verdict_from_signals`' stale-plus-zero
+    demotion) and an all-escaping or all-phantom memory earned no such
+    measurement from the repo merely sitting still.
     """
     if last_verified_at is None:
         return None
@@ -2601,14 +2714,19 @@ def compute_commit_drift(
     count = len(timestamps) - idx
     # Claim-anchored narrowing. Anchor derivation is pure CPU (bounded
     # regex over the body) and runs unconditionally so an untethered
-    # memory reads consistently as not-applicable; the git-backed
-    # resolution + `git log` only run when there's drift to narrow
-    # (`count > 0`), mirroring `_compute_commit_drift_debt` / the
-    # curation rollup so a caught-up memory never pays a git call and
-    # all four surfaces gate on the exact same condition. The narrowed
-    # count is measured on AUTHOR date, the same space as the bisect
-    # above, so it is a strict subset of `count` — no clamp, and no
-    # committer-date boundary to fall back from.
+    # memory reads consistently as not-applicable; the full git-backed
+    # NARROWING (claim split, weak tier, per-claim detail) only runs
+    # when there's drift to narrow (`count > 0`). The narrowed count is
+    # measured on AUTHOR date, the same space as the bisect above, so it
+    # is a strict subset of `count` — no clamp, and no committer-date
+    # boundary to fall back from. The quiescent branch (`count == 0`)
+    # no longer skips git entirely: it classifies APPLICABILITY first
+    # (`_quiescent_drift_applicable` — escape/phantom → None) so an
+    # all-escaping memory can't read clean, and only the untethered
+    # class above keeps the pays-no-git-work guarantee. The batch
+    # surfaces (`_compute_commit_drift_debt` / the curation rollup /
+    # `_response.attach_commit_drift_counts`) still gate all resolution
+    # on `count > 0` — see `_quiescent_drift_applicable`'s closing note.
     anchors = commit_drift_anchor_paths(body, verified_paths)
     # Stored claim strings parse leniently — a hand-edited bad entry
     # contributes nothing rather than crashing the hottest read path.
@@ -2645,6 +2763,16 @@ def compute_commit_drift(
         count = resolved.count
         claims_checked = resolved.claims_checked
         claims_drifted = resolved.claims_drifted
+    elif not _quiescent_drift_applicable(cwd_path, anchors, parsed_claims):
+        # Zero repo-wide commits since the verify. Before an affirmative
+        # clean/0 is minted — the exact value the stale-plus-zero
+        # demotion reads as "measured, nothing moved" — classify whether
+        # the signal applies to this memory AT ALL, by the same
+        # escape/phantom rules the positive branch gets from
+        # `resolve_commit_drift`. A memory citing only remote-host paths
+        # must read the same not-applicable here as it does the moment
+        # one unrelated commit lands.
+        return None
     if count == 0:
         return CommitDriftStatus(
             status="clean",

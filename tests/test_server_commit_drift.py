@@ -302,8 +302,11 @@ async def test_memory_show_clean_when_no_commits_after_verify(
     repo = tmp_path / "repo"
     repo.mkdir()
     _init_repo(repo)
-    # Far-past commit only — verify will record "now", so commits_since_verify is 0.
-    _commit_at(repo, "ancient", when=datetime(2020, 1, 1, tzinfo=timezone.utc))
+    # Far-past commit only — verify will record "now", so commits_since_verify
+    # is 0. It must TOUCH the cited `notes.md`: the quiescent branch of
+    # `compute_commit_drift` classifies applicability, and a cited path no
+    # commit ever touched is a phantom that reads None, not clean/0.
+    _commit_touching(repo, "ancient", when=datetime(2020, 1, 1, tzinfo=timezone.utc))
 
     origin = Origin(cwd=str(repo), repo=_REMOTE, branch="main")
     server = server_with_fake_origin(origin)
@@ -1138,7 +1141,9 @@ async def test_commit_drift_count_agrees_across_surfaces_after_rebase(
     repo = tmp_path / "repo"
     repo.mkdir()
     _init_repo(repo)
-    _commit_at(repo, "anchor", when=datetime(2025, 1, 1, tzinfo=timezone.utc))
+    # The anchor TOUCHES the cited `notes.md` so the quiescent applicability
+    # classification in memory_show reads the anchor as real, not phantom.
+    _commit_touching(repo, "anchor", when=datetime(2025, 1, 1, tzinfo=timezone.utc))
 
     origin = Origin(cwd=str(repo), repo=_REMOTE, branch="main")
     server = server_with_fake_origin(origin)
@@ -1189,7 +1194,10 @@ async def test_commit_drift_count_agrees_across_surfaces_same_second_boundary(
     repo = tmp_path / "repo"
     repo.mkdir()
     _init_repo(repo)
-    _commit_at(repo, "anchor", when=datetime(2020, 1, 1, tzinfo=timezone.utc))
+    # Touch the cited `notes.md` at the anchor so the quiescent
+    # applicability classification reads it as real; the boundary probe
+    # below stays an EMPTY commit on purpose.
+    _commit_touching(repo, "anchor", when=datetime(2020, 1, 1, tzinfo=timezone.utc))
 
     origin = Origin(cwd=str(repo), repo=_REMOTE, branch="main")
     server = server_with_fake_origin(origin)

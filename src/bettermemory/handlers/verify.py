@@ -68,6 +68,62 @@ def _refuse_stale_stored_claims(stored: list[str], origin_root: str | None) -> N
         )
 
 
+def _refuse_unverifiable_stored_attestations(
+    stored: list[str], origin_root: str | None
+) -> None:
+    """Refuse a preserving re-verify when a STORED attestation is gone.
+
+    The attestation-existence gate in the handler runs on a NEWLY passed
+    `verified_paths` list; `verified_paths=None` preserves the stored
+    lists (`Store.mark_verified` None-preserves). But stamping
+    `last_verified_at` asserts the whole record still matches reality —
+    the exact rationale the stored-CLAIMS re-check gives for re-running
+    the oracle on every stamp — and a stored attestation whose target
+    has since been deleted is the same kind of recorded counterexample.
+    The read side cannot recover it on its own: an absolute attestation
+    the prose never cites is inert forever (`unverifiable_attestations`'
+    own docstring), so without this gate the documented no-arg
+    slide-the-timestamp path re-stamps `fresh` on top of it for another
+    whole freshness window.
+
+    Scoping mirrors the stored-claims re-check's worktree-visibility
+    discipline, split per entry kind because attestations, unlike
+    claims, come in both anchored forms:
+
+    - ABSOLUTE entries (`/`, `~`, `$HOME`, drive-letter spellings) are
+      checked always — they were attested as on-this-machine
+      observations and need no root to resolve;
+    - RELATIVE entries are checked only when the origin worktree is a
+      live directory HERE (`worktree_root=None` makes
+      `unverifiable_attestations` skip them). A synced replica carries
+      the origin host's `worktree_root`; joining relatives onto a dead
+      root would refuse every replica re-verify wholesale — the
+      constant-function failure `verify._worktree_root_is_live`
+      documents — so an invisible tree reads as could-not-ask, never as
+      a counterexample.
+    """
+    if not stored:
+        return
+    root: str | None = None
+    if origin_root is not None:
+        try:
+            resolved = Path(origin_root).resolve(strict=False)
+        except (OSError, ValueError):
+            resolved = None
+        if resolved is not None and resolved.is_dir():
+            root = origin_root
+    unseen = unverifiable_attestations(stored, worktree_root=root)
+    if unseen:
+        raise ValueError(
+            f"cannot attest {len(unseen)} stored path(s) that do not exist "
+            f"on this machine: {', '.join(unseen)}. verified_paths=None "
+            "preserves the stored attestation list, and stamping "
+            "last_verified_at asserts it still holds. Pass a corrected "
+            "verified_paths list (the lists REPLACE, not append), or move "
+            "intentionally-absent entries to verified_absent_paths."
+        )
+
+
 DESC_MEMORY_VERIFY = (
     "Bump `last_verified_at` to now after spot-checking that a "
     "memory's claims still match reality (file paths exist, "
@@ -84,7 +140,9 @@ DESC_MEMORY_VERIFY = (
     "- `verified_paths` (optional list of strings): the ONLY "
     "attestation the drift legs read — checked against the memory's "
     "own worktree, and the anchor narrowing commit drift. Prefer it "
-    "when the memory cites paths. Paths absent here are REFUSED.\n"
+    "when the memory cites paths. Paths absent here are REFUSED. "
+    "Stored entries re-check when `None` preserves them — a vanished "
+    "one blocks the stamp; pass a corrected list.\n"
     "- `verified_commits` / `verified_versions` (optional lists): "
     "audit trail only; nothing on the read path resolves them.\n"
     "- `verified_absent_paths` (optional): attest paths "
@@ -187,7 +245,10 @@ async def memory_verify(
     # synced to another legitimately names paths the reader lacks. Only the
     # moment of attestation, where the caller asserts it looked, can demand
     # existence — which is also why this is the handler's job and not
-    # `Store.mark_verified`'s.
+    # `Store.mark_verified`'s. A preserving re-verify is such a moment too:
+    # `verified_paths=None` carries the stored list onto a fresh stamp, so
+    # it is gated below as well, with synced-store scoping
+    # (`_refuse_unverifiable_stored_attestations`).
     origin_root = snapshot.origin.worktree_root if snapshot.origin else None
     if (
         origin_root is None
@@ -228,6 +289,16 @@ async def memory_verify(
                 "checked here; if a path is intentionally absent, pass it as "
                 "verified_absent_paths instead."
             )
+    elif verified_paths is None and snapshot.verified_paths:
+        # A PRESERVING re-verify (`None` carries the stored list forward)
+        # gets the same existence discipline as a fresh list — stored
+        # attestations are part of the record the stamp re-asserts, the
+        # same symmetry the stored-claims re-check below enforces. `[]`
+        # (the explicit clear) needs no check. Scoped leniently for the
+        # synced-store case: see `_refuse_unverifiable_stored_attestations`.
+        _refuse_unverifiable_stored_attestations(
+            list(snapshot.verified_paths), origin_root
+        )
 
     # Claims are the one attestation the tool can CHECK, so it does — in
     # both directions. A newly-passed list goes through the same
