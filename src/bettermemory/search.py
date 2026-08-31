@@ -1442,7 +1442,51 @@ _MONTH_NO = {name: i + 1 for i, name in enumerate(_MONTH_NAMES)}
 # not the token stream — these are phrase shapes, and stemming would
 # destroy them.
 _CONV_DATE_RE = re.compile(r"\b(\d{4})[/-](\d{2})[/-](\d{2})\b")
-_CONV_MONTH_RE = re.compile(r"\b(" + "|".join(_MONTH_NAMES) + r")\b(?:\s+(\d{4}))?")
+# 'may' is the one month name that doubles as a high-frequency function
+# word (the modal auxiliary — "you may need sudo"), and the lane is
+# default-on over raw user messages (the silent-miss probe feeds them
+# verbatim), so a bare-'may' month reading would hand every modal
+# sentence a May window and a ×_CONV_WINDOW_BOOST rerank inside the
+# near-tie band. The may-branch therefore demands disambiguation the
+# genuine month reading carries anyway: an explicit trailing year
+# ("may 2024") or a preceding temporal preposition/determiner ("in
+# may", "since may", "mid-may"). Every other month name stays bare —
+# none of them is a function word, and demanding context there would
+# drop real windows. 'and' stays OUT of the context set even though it
+# appears in range phrases ("between march and may"): "and may" is the
+# modal's own high-frequency bigram ("crashed and may need a restart"),
+# and a missed month leg only narrows a window while a phantom May
+# window reranks every modal sentence — the asymmetry the lane's
+# boost-only design already commits to. The guard is zero-width
+# (lookbehinds, each fixed-width as `re` requires, plus one
+# lookahead), so the two capture groups keep their (month, year)
+# numbering.
+_CONV_MAY_CONTEXT_WORDS = (
+    "in",
+    "last",
+    "during",
+    "by",
+    "until",
+    "since",
+    "for",
+    "next",
+    "this",
+    "early",
+    "late",
+    "mid",
+)
+_CONV_MAY_GUARD = (
+    "(?:"
+    + "|".join(rf"(?<=\b{w}[\s-])" for w in _CONV_MAY_CONTEXT_WORDS)
+    + r"|(?=may\s+\d{4}))"
+)
+_CONV_MONTH_RE = re.compile(
+    r"\b((?:"
+    + "|".join(n for n in _MONTH_NAMES if n != "may")
+    + r")|"
+    + _CONV_MAY_GUARD
+    + r"may)\b(?:\s+(\d{4}))?"
+)
 _CONV_LAST_PERIOD_RE = re.compile(r"\blast\s+(week|month|year)\b")
 _CONV_THIS_PERIOD_RE = re.compile(r"\bthis\s+(week|month|year)\b")
 _CONV_YESTERDAY_RE = re.compile(r"\byesterday\b")
@@ -1551,7 +1595,14 @@ def _temporal_reading(query: str, now: datetime) -> _TemporalReading:
         else:
             # The most recent occurrence of that month not after now.
             year = today.year if month <= today.month else today.year - 1
-        windows.append(_month_window(month, year))
+        try:
+            windows.append(_month_window(month, year))
+        except ValueError:
+            # An explicit year outside date's range — "december 9999"
+            # (the never-expires sentinel, so it shows up in ordinary
+            # cert/expiry talk; month 12 touches year+1) or "january
+            # 0000" — is not a window, same as the sibling date branch.
+            pass
     for m in _CONV_LAST_PERIOD_RE.finditer(lower):
         unit = m.group(1)
         if unit == "week":

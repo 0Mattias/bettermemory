@@ -95,6 +95,26 @@ def test_month_name_builds_window_with_year_rollback() -> None:
     assert r2.window == (date(2023, 3, 1), date(2023, 3, 31))
 
 
+def test_modal_may_is_not_a_month() -> None:
+    # 'may' is the only month name that doubles as a high-frequency
+    # function word (the modal auxiliary), and the lane reads raw user
+    # messages via the silent-miss probe; bare modal 'may' must not
+    # parse a May window and engage the window rerank.
+    r = _temporal_reading("you may need sudo for the docker socket", _NOW)
+    assert not r.is_temporal
+    # The genuine month reading survives through its disambiguators —
+    # an explicit trailing year, or a preceding temporal
+    # preposition/determiner (the rollback test above pins "in May").
+    assert _temporal_reading("may 2022 retro notes", _NOW).window == (
+        date(2022, 5, 1),
+        date(2022, 5, 31),
+    )
+    assert _temporal_reading("last may we migrated the registry", _NOW).window == (
+        date(2022, 5, 1),
+        date(2022, 5, 31),
+    )
+
+
 def test_last_month_is_a_calendar_window_not_a_selector() -> None:
     r = _temporal_reading("How many plants did I acquire in the last month?", _NOW)
     assert r.window == (date(2023, 2, 1), date(2023, 2, 28))
@@ -258,6 +278,23 @@ def test_non_temporal_query_is_inert_under_the_flag() -> None:
     off = search(mems, q, mode="hybrid", max_results=3, now=_NOW, conversational=False)
     on = search(mems, q, mode="hybrid", max_results=3, now=_NOW, conversational=True)
     assert _pairs(off) == _pairs(on)
+
+
+def test_out_of_range_explicit_year_does_not_crash_search() -> None:
+    # "december 9999" is the standard never-expires sentinel (month 12
+    # touches year 10000, past date.MAXYEAR) and year 0000 sits below
+    # date.MINYEAR: both must read as no-window — the month branch
+    # mirrors _CONV_DATE_RE's ValueError guard — never raise out of
+    # search() under the shipped defaults (hybrid, lane on).
+    assert not _temporal_reading("it expires in december 9999", _NOW).is_temporal
+    assert not _temporal_reading("notes from january 0000", _NOW).is_temporal
+    mems = _adversarial_store()
+    for q in (
+        "why does the cert say it expires in december 9999",
+        "notes from january 0000 in the ledger",
+    ):
+        hits = search(mems, q, max_results=3, now=_NOW)
+        assert isinstance(hits, list)
 
 
 def test_lane_lifts_content_match_over_scaffold_matchers(monkeypatch) -> None:
