@@ -2032,8 +2032,11 @@ def consolidate_llm(
     config knob and gates propose_new writes the same way
     `memory_write` does — the LLM only sees ~8 cluster members as
     context, so guardrails that don't depend on a single-call view of
-    the store have to fire here. None disables the size cap (used
-    only by tests that exercise the apply path without a Config).
+    the store have to fire here. It also caps the merge / rewrite_date
+    REPLACEMENT bodies (`_gate_llm_replacement_body`), which
+    `memory_update` would size-check on the interactive edit surface.
+    None disables the size cap (used only by tests that exercise the
+    apply path without a Config).
 
     `allowed_scopes` mirrors the `[scopes] allowed` config knob the same
     way — `memory_write` rejects an out-of-allowlist scope in
@@ -2177,6 +2180,80 @@ def consolidate_llm(
     return report
 
 
+def _body_replacement_reset_fields() -> dict[str, Any]:
+    """The verification/claims reset every body-replacing branch applies.
+
+    Mirrors `handlers/update.py`'s content-edit reset field for field:
+    when a body is replaced, the prior `last_verified_at` attested prose
+    that no longer exists, the structured `verified_*` lists would lie
+    about the new text, and `claims` declare what the OLD body asserted
+    — carrying any of them onto an LLM-authored body manufactures a
+    false `staleness_verdict="fresh"` (the quick-card tells the model to
+    rely on fresh without spot-checking) plus unearned `_pick_keeper`
+    Tier-0 standing and a dead-weight freshest-touch exemption on later
+    curation passes. Returned fresh per call so no two `model_copy`
+    updates share list objects.
+    """
+    return {
+        "last_verified_at": None,
+        "verified_paths": [],
+        "verified_commits": [],
+        "verified_versions": [],
+        "verified_absent_paths": [],
+        "claims": [],
+    }
+
+
+def _gate_llm_replacement_body(
+    new_body: str,
+    *,
+    proposal_kind: str,
+    max_content_bytes: int | None,
+) -> None:
+    """Body-content gates for an LLM-authored replacement body.
+
+    The merge and rewrite_date branches persist `proposal.new_body` —
+    text the LLM authored freely, not a body any write gate has ever
+    seen. `memory_update`, the equivalent interactive body-edit
+    surface, refuses a credential-shaped token, transient phrasing, and
+    an over-cap body on every content edit; without the same checks
+    here, a body `memory_update` would refuse commits through
+    `consolidate --llm --apply` (and with `--yes`, nobody reviews it).
+    Hard-refuse via `RuntimeError` like the propose_new branch — no
+    `acknowledge_*` escape hatch exists on this path, and refusing is
+    conservative: the originals stay active and `consolidate_llm`
+    reports the cluster as failed. Credential first, mirroring
+    `handlers/write.py`'s gate ordering ("credential before everything").
+    """
+    from .credentials import find_credential_markers
+    from .durability import find_transient_markers
+
+    credential_hits = find_credential_markers(new_body)
+    if credential_hits:
+        kinds = ", ".join(h.kind for h in credential_hits)
+        raise RuntimeError(
+            f"{proposal_kind} new_body contains a secret-shaped token "
+            f"({kinds}); refuse — the consolidate path can't ask the "
+            "LLM to acknowledge_credential and this store syncs "
+            "plain-text across hosts"
+        )
+    transient = find_transient_markers(new_body)
+    if transient:
+        markers = ", ".join(h.marker for h in transient)
+        raise RuntimeError(
+            f"{proposal_kind} new_body contains transient markers "
+            f"({markers}); refuse — the consolidate path can't ask "
+            "the LLM to acknowledge_transient"
+        )
+    if max_content_bytes is not None:
+        body_bytes = len(new_body.encode("utf-8"))
+        if body_bytes > max_content_bytes:
+            raise RuntimeError(
+                f"{proposal_kind} new_body exceeds max_content_bytes "
+                f"({body_bytes} > {max_content_bytes})"
+            )
+
+
 def _apply_llm_proposal(
     store: Store,
     proposal: Any,
@@ -2198,10 +2275,16 @@ def _apply_llm_proposal(
     `max_content_bytes` and `allowed_scopes` gate the
     `propose_new` branch's write — the LLM only saw a small cluster
     slice, so the credential / size / scope-allowlist / transient /
-    dedup checks `memory_write` runs at the MCP surface have to fire
-    here too. Gate failures raise `RuntimeError`; `consolidate_llm`
-    catches it as one `LLMClusterFailure` and the operator sees the
-    rejection reason in the report.
+    dedup / user-claim checks `memory_write` runs at the MCP surface
+    have to fire here too. The merge and rewrite_date branches persist
+    an LLM-authored REPLACEMENT body, so the body-content subset
+    (credential / transient / size) fires on `proposal.new_body` as
+    well (`_gate_llm_replacement_body`), and both branches reset the
+    target's verification fields and claims alongside the body
+    (`_body_replacement_reset_fields`) — the old attestations described
+    prose that no longer exists. Gate failures raise `RuntimeError`;
+    `consolidate_llm` catches it as one `LLMClusterFailure` and the
+    operator sees the rejection reason in the report.
 
     `origin` is passed straight into the propose_new `store.write` so
     the persisted memory carries the caller's repo/worktree context;
@@ -2215,6 +2298,13 @@ def _apply_llm_proposal(
         keeper = by_id.get(proposal.keeper_id)
         if keeper is None:
             raise RuntimeError(f"merge keeper {proposal.keeper_id} not found in store")
+        # Gate BEFORE any mutation — a gate that refuses after the
+        # keeper update or a tombstone would be the worse bug.
+        _gate_llm_replacement_body(
+            proposal.new_body,
+            proposal_kind="merge",
+            max_content_bytes=max_content_bytes,
+        )
         # Carry the duplicates' scopes onto the keeper, for exactly the
         # reason the non-LLM dedup path states at the top of its own
         # merge block: similarity is scope-blind, so two near-identical
@@ -2242,7 +2332,16 @@ def _apply_llm_proposal(
             dup = by_id.get(dup_id)
             if dup is not None:
                 merged_scopes.update(dup.scopes)
-        update_fields: dict[str, Any] = {"body": proposal.new_body}
+        # The body is REPLACED, so the keeper's verification fields and
+        # claims reset in the same write (`_body_replacement_reset_fields`)
+        # — carrying them forward would present the LLM-authored fusion
+        # as `staleness_verdict="fresh"` prose no one ever verified. The
+        # rollback below restores the full pre-merge snapshot, original
+        # attestation included, via `store.update(keeper, force=True)`.
+        update_fields: dict[str, Any] = {
+            "body": proposal.new_body,
+            **_body_replacement_reset_fields(),
+        }
         if merged_scopes != set(keeper.scopes):
             update_fields["scopes"] = sorted(merged_scopes)
         merged = keeper.model_copy(update=update_fields)
@@ -2334,10 +2433,21 @@ def _apply_llm_proposal(
         memory = by_id.get(proposal.memory_id)
         if memory is None:
             raise RuntimeError(f"rewrite target {proposal.memory_id} not found")
+        _gate_llm_replacement_body(
+            proposal.new_body,
+            proposal_kind="rewrite_date",
+            max_content_bytes=max_content_bytes,
+        )
         # `updated` is stamped by `Store.update` itself; preserve the
         # snapshot's `updated` for the W2 CAS check (see the
-        # MergeProposal branch above for the same fix).
-        rewritten = memory.model_copy(update={"body": proposal.new_body})
+        # MergeProposal branch above for the same fix). The body is
+        # replaced, so verification and claims reset alongside it —
+        # rewrite_date specifically targets OLDER (hence plausibly
+        # verified) memories, and carrying the attestation forward would
+        # stamp the rewritten prose "fresh" unexamined.
+        rewritten = memory.model_copy(
+            update={"body": proposal.new_body, **_body_replacement_reset_fields()}
+        )
         store.update(rewritten)
         actions.append(
             LLMProposalAction(
@@ -2354,7 +2464,19 @@ def _apply_llm_proposal(
             Category.AMBIENT if proposal.new_category == "ambient" else Category.FACT
         )
         demoted = memory.model_copy(update={"category": new_category})
-        store.update(demoted)
+        # Category-only edit → metadata-only convention (store.py):
+        # `by_id` is the snapshot taken at consolidate_llm start, and
+        # the window to this apply spans LLM provider calls and
+        # interactive accept prompts — minutes, not microseconds. A
+        # `memory_verify` landing in that window bumps
+        # `last_verified_at` WITHOUT bumping `updated`, so the W2 CAS
+        # cannot catch it; without preserve_verification the stale
+        # snapshot's verification fields silently clobber the fresh
+        # attestation — which then feeds `_pick_keeper`'s Tier-0
+        # attested-beats-unattested rule and dead-weight classification
+        # on later passes. Same rationale as the non-LLM demotion retag
+        # and the dedup scope-merge above.
+        store.update(demoted, preserve_verification=True)
         actions.append(
             LLMProposalAction(
                 kind="llm_demote_tier",
@@ -2447,6 +2569,34 @@ def _apply_llm_proposal(
                 f"propose_new body contains transient markers "
                 f"({markers}); refuse — the consolidate path can't "
                 "ask the LLM to acknowledge_transient"
+            )
+
+        # User-claim body classification — the same body-shape rule
+        # `UserClaimGate` enforces at the memory_write surface
+        # (handlers/write.py): a body that reads as a claim ABOUT THE
+        # USER ("Mattias prefers tabs") must go through the
+        # `user-inference` pending-confirm flow so the user keeps the
+        # veto — misattribution sticks. This branch is literally a model
+        # inferring claims about the user from a transcript, the exact
+        # high-risk surface that flow exists for, yet
+        # `_validate_propose_new` whitelists only fact/ambient (the
+        # user-inference tier needs a confirmation the consolidate pass
+        # can't supply), so a user-claim-shaped body here cannot be
+        # rerouted into staging — only refused. Scoped to
+        # `proposal.body` like the transient and dedup gates above: the
+        # provenance excerpt is a verbatim user turn, and first-person
+        # phrasing there ("My Postgres is on 5433") would bounce genuine
+        # proposals on the citation rather than the claim.
+        from .handlers.write import _find_user_claims
+
+        user_claims = _find_user_claims(proposal.body)
+        if user_claims:
+            phrases = ", ".join(h.phrase for h in user_claims)
+            raise RuntimeError(
+                f"propose_new body reads as a claim about the user "
+                f"({phrases}); refuse — that tier requires the "
+                "user-inference pending-confirm flow, which the "
+                "consolidate path can't stage"
             )
 
         from .search import find_similar, find_similar_tombstones

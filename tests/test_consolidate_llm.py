@@ -333,7 +333,12 @@ def test_apply_rewrite_relative_date_updates_body(tmp_path: Path) -> None:
         proposals=[
             RewriteRelativeDateProposal(
                 memory_id=a_id,
-                new_body="we shipped 2026-05-20 the new auth flow\n",
+                # A DURABLE replacement body — the branch runs the same
+                # body-content gates `memory_update` runs, and the prior
+                # fixture's "the new auth flow" is a transient marker
+                # ("the new"). The transient refusal has its own test in
+                # the body-replacing-gates section below.
+                new_body="we shipped 2026-05-20 the revised auth flow\n",
                 rationale="today -> 2026-05-20",
             )
         ]
@@ -1379,3 +1384,268 @@ def test_propose_new_rejects_a_body_that_reopens_a_tombstone(tmp_path: Path) -> 
     assert not any(a.kind == "llm_propose_new" for a in applied.actions_taken)
     assert applied.failures
     assert "previously-removed" in applied.failures[0].reason
+
+
+def test_propose_new_rejects_a_body_that_reads_as_a_user_claim(
+    tmp_path: Path,
+) -> None:
+    """The user-inference veto ceremony, on the one entry path that IS
+    "a model inferring claims about the user from conversation". A
+    third-person user claim ("Mattias prefers tabs") distilled as
+    category=fact used to commit with no pending-confirm, where the
+    byte-identical body through `memory_write` triggers
+    `user_claim_warning`. `_validate_propose_new` whitelists only
+    fact/ambient (the user-inference tier needs a confirmation this
+    pass can't supply), so the body cannot be rerouted into staging —
+    only refused. Scoped to `proposal.body` like the transient gate:
+    the excerpt is a verbatim user turn whose first-person phrasing
+    ("i prefer …") must NOT bounce the proposal — the positive
+    controls above ("My Postgres is on port 5433…" excerpts) pin that
+    side.
+    """
+    store = _make_store_with_existing(tmp_path)
+    transcript = tmp_path / "session.md"
+    transcript.write_text(
+        "[user] i prefer tabs over spaces for indentation\n[assistant] Noted.",
+        encoding="utf-8",
+    )
+    proposal = ProposeNewProposal(
+        scope="personal-context",
+        category="fact",
+        body="Mattias prefers tabs over spaces for indentation.",
+        source_excerpt="i prefer tabs over spaces for indentation",
+        rationale="user preference",
+    )
+    provider = FakeProvider(proposals=[proposal])
+
+    applied = consolidate_llm(
+        store, provider, apply=True, accept=True, from_transcript=str(transcript)
+    )
+
+    assert not any(a.kind == "llm_propose_new" for a in applied.actions_taken)
+    assert applied.failures
+    assert "claim about the user" in applied.failures[0].reason
+    assert len(store.load_all()) == 1  # nothing written
+
+
+# ---------------------------------------------------------------------------
+# Body-replacing branches: verification reset + replacement-body gates
+# ---------------------------------------------------------------------------
+#
+# The merge and rewrite_date branches persist an LLM-authored REPLACEMENT
+# body. Two regression families live here:
+#
+# * the verification/claims reset `handlers/update.py` applies on every
+#   content edit must fire on these branches too — round-88 (696bb5d)
+#   fixed `preserve_verification` on the metadata-only branches, but the
+#   body-edit branches carried `last_verified_at` / `verified_*` /
+#   `claims` verbatim onto the new prose, presenting an unreviewed LLM
+#   fusion as `staleness_verdict="fresh"` (trust-machinery false-fresh);
+# * the body-content gates `memory_update` runs on the equivalent
+#   interactive edit surface (credential / transient / size) must judge
+#   `proposal.new_body`, hard-refusing like the propose_new arms above —
+#   and refusing BEFORE any mutation, because a gate that refuses after
+#   the keeper update or a tombstone would be the worse bug.
+
+
+def test_merge_resets_verification_and_claims_on_the_new_body(
+    tmp_path: Path,
+) -> None:
+    """The merge branch used to build `update_fields = {"body": …}` bare,
+    so the keeper's pre-merge attestation rode verbatim onto the
+    LLM-authored fusion — a body no human or agent ever verified then
+    presented `staleness_verdict="fresh"` on every subsequent
+    search/show, and its carried `claims` attached declare-time promises
+    to prose that never declared them."""
+    store, a_id, b_id = _make_store_with_dupes(tmp_path)
+    store.mark_verified(
+        a_id,
+        verified_paths=["src/deploy.py"],
+        claims=["src/deploy.py::PORT=5432"],
+    )
+    assert store.load_one(a_id).last_verified_at is not None
+    provider = FakeProvider(
+        proposals=[
+            MergeProposal(
+                keeper_id=a_id,
+                duplicate_ids=(b_id,),
+                new_body="postgres on port 5432 (queue + worker)\n",
+                rationale="combined",
+            )
+        ]
+    )
+
+    report = consolidate_llm(store, provider, apply=True, accept=True)
+
+    assert any(a.kind == "llm_merge_keeper" for a in report.actions_taken)
+    merged = store.load_one(a_id)
+    assert "queue + worker" in merged.body
+    # The attestation described the pre-merge prose; carrying it onto
+    # the fusion would lie about the new body.
+    assert merged.last_verified_at is None
+    assert merged.verified_paths == []
+    assert merged.claims == []
+
+
+def test_rewrite_date_resets_verification_and_claims_on_the_new_body(
+    tmp_path: Path,
+) -> None:
+    """Same reset, rewrite_date branch — the arm that specifically
+    targets OLDER (hence plausibly verified) memories."""
+    store, a_id, _b = _make_store_with_dupes(tmp_path)
+    store.mark_verified(
+        a_id,
+        verified_paths=["src/deploy.py"],
+        verified_commits=["abc1234"],
+        claims=["src/deploy.py::PORT=5432"],
+    )
+    provider = FakeProvider(
+        proposals=[
+            RewriteRelativeDateProposal(
+                memory_id=a_id,
+                new_body="we shipped 2026-05-20 the revised auth flow\n",
+                rationale="today -> 2026-05-20",
+            )
+        ]
+    )
+
+    report = consolidate_llm(store, provider, apply=True, accept=True)
+
+    assert any(a.kind == "llm_rewrite_date" for a in report.actions_taken)
+    rewritten = store.load_one(a_id)
+    assert "2026-05-20" in rewritten.body
+    assert rewritten.last_verified_at is None
+    assert rewritten.verified_paths == []
+    assert rewritten.verified_commits == []
+    assert rewritten.claims == []
+
+
+def test_merge_rejects_a_new_body_carrying_a_credential(tmp_path: Path) -> None:
+    """`memory_update` refuses a credential-shaped token on every body
+    edit; the merge branch used to commit one straight through
+    `--apply --yes`. Refused before any mutation: keeper body unchanged
+    AND the duplicate still active, and the secret never lands on
+    disk."""
+    store, a_id, b_id = _make_store_with_dupes(tmp_path)
+    # Canonical AWS example access-key-id shape, as in the propose_new
+    # credential test above.
+    secret = "AKIAIOSFODNN7EXAMPLE"
+    provider = FakeProvider(
+        proposals=[
+            MergeProposal(
+                keeper_id=a_id,
+                duplicate_ids=(b_id,),
+                new_body=f"postgres on port 5432; deploy key {secret}\n",
+                rationale="combined",
+            )
+        ]
+    )
+
+    report = consolidate_llm(store, provider, apply=True, accept=True)
+
+    assert not any(a.kind == "llm_merge_keeper" for a in report.actions_taken)
+    assert report.failures
+    assert "secret-shaped token" in report.failures[0].reason
+    assert {m.id for m in store.load_all()} == {a_id, b_id}
+    assert not any(secret in m.body for m in store.load_all())
+
+
+def test_rewrite_date_rejects_a_new_body_carrying_transient_markers(
+    tmp_path: Path,
+) -> None:
+    """An LLM rewrite can introduce transient phrasing the original
+    gated body never carried ("we just switched…"). `memory_update`
+    would answer with `transient_warning` and an escape hatch; this
+    path has no one to ask, so it refuses and the target keeps its
+    body."""
+    store, a_id, _b = _make_store_with_dupes(tmp_path)
+    body_before = store.load_one(a_id).body
+    provider = FakeProvider(
+        proposals=[
+            RewriteRelativeDateProposal(
+                memory_id=a_id,
+                new_body="we just switched the queue to postgres on port 5432\n",
+                rationale="today -> resolved",
+            )
+        ]
+    )
+
+    report = consolidate_llm(store, provider, apply=True, accept=True)
+
+    assert not any(a.kind == "llm_rewrite_date" for a in report.actions_taken)
+    assert report.failures
+    assert "transient markers" in report.failures[0].reason
+    assert store.load_one(a_id).body == body_before
+
+
+def test_merge_rejects_a_new_body_over_max_content_bytes(tmp_path: Path) -> None:
+    """The size cap `memory_update` applies to every body edit bounds
+    the replacement body too — an over-cap LLM fusion refuses instead
+    of committing, and both originals stay active."""
+    store, a_id, b_id = _make_store_with_dupes(tmp_path)
+    new_body = "postgres on port 5432 (queue + worker), " * 20 + "\n"
+    provider = FakeProvider(
+        proposals=[
+            MergeProposal(
+                keeper_id=a_id,
+                duplicate_ids=(b_id,),
+                new_body=new_body,
+                rationale="combined",
+            )
+        ]
+    )
+    cap = len(new_body.encode("utf-8")) - 10
+
+    report = consolidate_llm(
+        store, provider, apply=True, accept=True, max_content_bytes=cap
+    )
+
+    assert not any(a.kind == "llm_merge_keeper" for a in report.actions_taken)
+    assert report.failures
+    assert "exceeds max_content_bytes" in report.failures[0].reason
+    assert {m.id for m in store.load_all()} == {a_id, b_id}
+
+
+# ---------------------------------------------------------------------------
+# demote_tier vs a concurrent verify (the round-88 race, LLM branch)
+# ---------------------------------------------------------------------------
+
+
+def test_demote_tier_preserves_a_verify_landing_mid_pass(tmp_path: Path) -> None:
+    """Attestation-loss race: `by_id` is snapshotted at consolidate_llm
+    start and the window to the demote apply spans LLM provider calls
+    (and interactive accept prompts) — minutes, not microseconds. A
+    `memory_verify` landing in that window bumps `last_verified_at`
+    WITHOUT bumping `updated`, so the W2 CAS cannot catch it; without
+    `preserve_verification=True` the retag wrote the stale snapshot's
+    empty verification fields back, silently erasing the attestation
+    (and with it the memory's `_pick_keeper` Tier-0 standing). The
+    sibling non-LLM demotion retag and dedup scope-merge already pass
+    the flag for exactly this reason (round-88, 696bb5d)."""
+    store, a_id, _b = _make_store_with_dupes(tmp_path)
+
+    @dataclass
+    class VerifyMidPassProvider:
+        """Attests the demote target DURING the provider call — after
+        consolidate_llm's `by_id` snapshot, before the apply."""
+
+        name: str = "verify-mid-pass"
+
+        def propose(self, cluster: Cluster, today: str) -> list[Proposal]:
+            store.mark_verified(a_id, verified_paths=["src/deploy.py"])
+            return [
+                DemoteTierProposal(
+                    memory_id=a_id,
+                    new_category="ambient",
+                    rationale="superseded",
+                )
+            ]
+
+    report = consolidate_llm(store, VerifyMidPassProvider(), apply=True, accept=True)
+
+    assert any(a.kind == "llm_demote_tier" for a in report.actions_taken)
+    demoted = store.load_one(a_id)
+    assert demoted.category == Category.AMBIENT
+    # The concurrent attestation survives the retag.
+    assert demoted.last_verified_at is not None
+    assert demoted.verified_paths == ["src/deploy.py"]
