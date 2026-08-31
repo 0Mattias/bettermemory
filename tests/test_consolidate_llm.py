@@ -505,14 +505,10 @@ def test_load_transcript_survives_raw_unicode_line_separators(
 
     row = {
         "type": "user",
-        "message": {
-            "content": "postgres runs on port 5433 in staging"
-        },
+        "message": {"content": "postgres runs on port 5433 in staging"},
     }
     path = tmp_path / "session.jsonl"
-    path.write_text(
-        json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
+    path.write_text(json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
     flattened = _load_transcript(path)
     assert "port 5433" in flattened, (
         "the U+2028-bearing row was dropped — _load_transcript is "
