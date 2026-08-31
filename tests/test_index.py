@@ -2221,6 +2221,25 @@ def test_corpus_document_frequencies_survives_a_corrupt_index(
     )
 
 
+def test_corpus_document_frequencies_survives_a_poisoned_schema_version(
+    store: Store, memory_dir: Path
+) -> None:
+    """The OTHER corruption class: a valid SQLite file whose
+    `meta.schema_version` was hand-edited to a non-integer fails
+    `_ensure_schema`'s `int()` read with ValueError, not a
+    DatabaseError. Pre-fix the except tuple here caught only
+    (sqlite3.Error, IndexVersionError, OSError), so exactly the state
+    status() reports corrupt and rebuild() recovers from leaked as a
+    raise out of a helper documented never to raise."""
+    store.write(content="alpha", scopes=["tools"])
+    _poison_meta(memory_dir, "schema_version")
+
+    assert (
+        index.corpus_document_frequencies(memory_dir, ["alpha"], admit=_admit_all)
+        is None
+    )
+
+
 def test_corpus_document_frequencies_counts_only_admitted_rows(
     store: Store, memory_dir: Path
 ) -> None:
@@ -2379,6 +2398,23 @@ def test_scope_counts_degrade_to_none_without_a_usable_index(
     index_path.write_bytes(b"this is not a sqlite database" * 40)
 
     assert index.scope_counts(memory_dir, admit=_admit_all) is None
+
+
+def test_scope_counts_and_category_rows_survive_a_poisoned_schema_version(
+    store: Store, memory_dir: Path
+) -> None:
+    """The poisoned-meta corruption class for the SessionStart hook's
+    two readers: a non-integer `meta.schema_version` raises ValueError
+    from `_ensure_schema`, which the except tuples must treat as
+    corruption — degrade to None, never raise — exactly as the
+    docstrings promise and status() already does. `category_rows` is
+    pinned alongside because its degrade contract explicitly mirrors
+    `scope_counts`'."""
+    store.write(content="alpha", scopes=["tools"])
+    _poison_meta(memory_dir, "schema_version")
+
+    assert index.scope_counts(memory_dir, admit=_admit_all) is None
+    assert index.category_rows(memory_dir, category="fact", admit=_admit_all) is None
 
 
 def test_index_round_trips_origin_columns(store: Store, memory_dir: Path) -> None:

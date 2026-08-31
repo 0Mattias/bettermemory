@@ -1044,10 +1044,14 @@ def corpus_document_frequencies(
             if any_hits:
                 scope_df[term] = len(any_hits)
         return len(admitted), body_df, scope_df
-    except (sqlite3.Error, IndexVersionError, OSError):
+    except (sqlite3.Error, ValueError, IndexVersionError, OSError):
         # Same posture as every other read helper here: the index is a
         # derived cache, so a failure degrades the ranking rather than
-        # failing the search.
+        # failing the search. ValueError is the poisoned-meta class —
+        # `_ensure_schema`'s `int()` read of a hand-edited or
+        # foreign-tool-written `schema_version` — the same inclusion
+        # `status()` and `_open_for_rebuild` carry for it; `scope_counts`
+        # and `category_rows` below share this tuple for the same reason.
         return None
     finally:
         if conn is not None:
@@ -1136,7 +1140,7 @@ def scope_counts(
             for scope in scope_list:
                 counts[scope] = counts.get(scope, 0) + 1
         return total, counts
-    except (sqlite3.Error, IndexVersionError, OSError):
+    except (sqlite3.Error, ValueError, IndexVersionError, OSError):
         return None
     finally:
         if conn is not None:
@@ -1208,7 +1212,7 @@ def category_rows(
                 continue
             out.append((row["id"], row["filename"]))
         return out
-    except (sqlite3.Error, IndexVersionError, OSError):
+    except (sqlite3.Error, ValueError, IndexVersionError, OSError):
         return None
     finally:
         if conn is not None:
