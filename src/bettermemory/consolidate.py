@@ -1925,7 +1925,14 @@ def _load_transcript(path: Path) -> str:
         return raw
 
     out: list[str] = []
-    for line in raw.splitlines():
+    # Split on "\n" only — NOT splitlines(). The transcript is written
+    # by external serializers (Node's JSON.stringify emits U+2028/U+2029
+    # raw inside strings, legal JSON), and splitlines() breaks on those
+    # code points, shattering a valid row into fragments that fail
+    # json.loads and silently vanish from the candidate window. Same
+    # fix as hook._extract_last_exchange; strip() below still absorbs
+    # any \r remnants and blank pieces.
+    for line in raw.split("\n"):
         line = line.strip()
         if not line:
             continue

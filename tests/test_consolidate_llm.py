@@ -492,6 +492,34 @@ def test_load_transcript_does_not_hang_on_fifo(tmp_path: Path) -> None:
     assert result == [""]
 
 
+def test_load_transcript_survives_raw_unicode_line_separators(
+    tmp_path: Path,
+) -> None:
+    """A `.jsonl` row whose content embeds RAW U+2028/U+2029 (legal
+    inside JSON strings — Node's JSON.stringify emits U+2028 unescaped)
+    must still parse. The old `raw.splitlines()` walk shattered such a
+    row into fragments that failed `json.loads` and silently vanished
+    from the candidate window; splitting on "\\n" only keeps the row
+    whole. Mirrors the hook._extract_last_exchange fix."""
+    from bettermemory.consolidate import _load_transcript
+
+    row = {
+        "type": "user",
+        "message": {
+            "content": "postgres runs on port 5433 in staging"
+        },
+    }
+    path = tmp_path / "session.jsonl"
+    path.write_text(
+        json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    flattened = _load_transcript(path)
+    assert "port 5433" in flattened, (
+        "the U+2028-bearing row was dropped — _load_transcript is "
+        "splitting on unicode line separators again"
+    )
+
+
 def test_build_transcript_cluster_loads_jsonl_session(tmp_path: Path) -> None:
     """A `.jsonl` transcript (Claude Code per-session format) gets
     flattened to `[role] text` lines so the LLM sees a readable
