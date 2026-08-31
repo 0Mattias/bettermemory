@@ -208,6 +208,68 @@ def test_iter_events_merges_shards_preserving_per_session_order(tmp_path: Path) 
     assert [x for x in ids if x[0] == "b"] == [f"b{i}" for i in range(5)]
 
 
+def test_record_stamps_ts_under_the_shard_lock(tmp_path: Path) -> None:
+    """The `ts` stamp must be taken while HOLDING the shard append lock.
+
+    Stamped before acquiring it, two sessions striping onto the same
+    shard (~1/16 per pair) can win the flock in the opposite order from
+    their stamps — flock wakeup order is arbitrary, and the inversion
+    window reaches the full lock-hold time of a rotation — so one
+    segment ends up holding a newer `ts` before an older one. That
+    breaks the per-segment ts-order `iter_events` /
+    `iter_events_backward` document as holding by construction
+    (`heapq.merge` trusts each segment as an already-sorted stream),
+    and an inversion straddling the pending-token dedup boundary makes
+    `handlers._shared._already_recorded_pending_ids`' newest-first
+    early-exit skip a newer-stamped `use` event — double-emitting
+    `applied` into the append-only log.
+
+    Structural pin (the race itself is a scheduling accident no test
+    can force reliably): wrap `_locked` to track hold depth and
+    `_utcnow_iso` to observe the depth at stamp time, the same
+    instrumentation style as the fsync_dir pins.
+    """
+    from contextlib import contextmanager
+    from typing import Iterator as _Iterator
+
+    from bettermemory import events as events_mod
+
+    depth = 0
+    stamped_at_depth: list[int] = []
+    real_locked = events_mod._locked
+    real_utcnow = events_mod._utcnow_iso
+
+    @contextmanager
+    def tracking_locked(path: Path) -> _Iterator[None]:
+        nonlocal depth
+        with real_locked(path):
+            depth += 1
+            try:
+                yield
+            finally:
+                depth -= 1
+
+    def tracking_utcnow() -> str:
+        stamped_at_depth.append(depth)
+        return real_utcnow()
+
+    with (
+        patch.object(events_mod, "_locked", tracking_locked),
+        patch.object(events_mod, "_utcnow_iso", tracking_utcnow),
+    ):
+        rec = Recorder(root=tmp_path, session_id="sess_stamp_under_lock")
+        rec.record("use", id="01HXYZ")
+
+    # `record` swallows failures, so first pin that the event actually
+    # landed — a wiring mistake above must not pass vacuously.
+    assert [e["kind"] for e in iter_events(tmp_path)] == ["use"]
+    assert stamped_at_depth == [1], (
+        "the ts stamp must happen inside the shard append lock (depth 1); "
+        "a stamp at depth 0 re-opens the cross-session same-shard "
+        f"inversion window: {stamped_at_depth}"
+    )
+
+
 def test_legacy_events_jsonl_merges_in_after_sharding(tmp_path: Path) -> None:
     """A pre-upgrade store's single `.events.jsonl` is read as one more
     source and merged chronologically with the new shard writes — no
@@ -1263,6 +1325,77 @@ def test_iter_events_window_sees_events_across_a_real_rotation(
     assert [e["id"] for e in iter_events(tmp_path)] == ["AFTER"]
     ids = [e["id"] for e in iter_events_window(tmp_path, 600)]
     assert ids == ["BEFORE", "AFTER"]
+
+
+def test_iter_events_window_survives_rotation_between_directory_scans(
+    tmp_path: Path,
+) -> None:
+    """A rotation landing BETWEEN the reader's two directory scans must
+    not hide the events that just rotated out.
+
+    Regression: `iter_events_window` listed the rotated candidates
+    FIRST and the active segments second. A concurrent rotation's
+    step-1 rename (active shard file -> `.rotating`) landing between
+    those scans made the just-rotated segment invisible to that read —
+    absent from the candidates (listed pre-rename) while the shard's
+    fresh active segment no longer covered the window — so nothing was
+    prepended and the rotated-out events vanished. Transient (the next
+    call self-heals), but the concrete victim is the retrieval shield
+    (`hook.run_audit` / `memory_audit_turn` run this windowed read up
+    to twice per turn, and uniform crc32 striping makes shards rotate
+    in phase with appends): the turn's own `search` event disappears
+    and the turn re-fires as a false `search_miss`, inflating the
+    published silent_miss_rate — the precise miss this reader exists to
+    prevent. Active-first listing closes the interleave: step 1 renames
+    (never deletes), so a rotation that removes a shard file from the
+    active listing has necessarily landed its `.rotating`/archive
+    before a later candidates scan.
+
+    The race is made deterministic by tripping a REAL rotation from a
+    hook on whichever of the two listing helpers runs first; asserting
+    the trip fired keeps the test from passing vacuously if a refactor
+    stops calling either helper.
+    """
+    from bettermemory import events as events_mod
+
+    Recorder(root=tmp_path, session_id="sess_scan_race").record("search", id="BEFORE")
+
+    real_active = events_mod._active_segments
+    real_rotated = events_mod._rotated_segments
+    tripped: list[bool] = []
+
+    def _trip_rotation_once() -> None:
+        if tripped:
+            return
+        tripped.append(True)
+        # max_bytes=1: the next append rotates the existing segment
+        # (rename -> gzip -> archive) and then writes to a fresh one.
+        Recorder(root=tmp_path, session_id="sess_scan_race", max_bytes=1).record(
+            "write", id="AFTER"
+        )
+        assert list(tmp_path.glob(".events-*.jsonl.gz")), "rotation did not fire"
+
+    def hooked_active(root: Path) -> list[tuple[Path, int | None]]:
+        result = real_active(root)
+        _trip_rotation_once()
+        return result
+
+    def hooked_rotated(root: Path) -> list[Path]:
+        result = real_rotated(root)
+        _trip_rotation_once()
+        return result
+
+    with (
+        patch.object(events_mod, "_active_segments", hooked_active),
+        patch.object(events_mod, "_rotated_segments", hooked_rotated),
+    ):
+        ids = [e["id"] for e in iter_events_window(tmp_path, 600)]
+
+    assert tripped, "the rotation trip never ran; the interleave was not exercised"
+    assert ids == ["BEFORE", "AFTER"], (
+        "a rotation landing between the two directory scans hid the "
+        f"just-rotated events from the windowed read: {ids}"
+    )
 
 
 def test_iter_events_window_per_segment_coverage_across_shards(

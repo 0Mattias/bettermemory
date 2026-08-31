@@ -399,28 +399,55 @@ class Recorder:
     def record(self, kind: str, **fields: Any) -> None:
         """Append one event of the given `kind`. Extra `fields` are merged
         into the event dict. Best-effort — failures are logged, not raised.
+
+        The `ts` stamp (and the serialisation of the line it lands in)
+        happens INSIDE the shard append lock. Stamped before acquiring
+        it — the original shape — two sessions striping onto the same
+        shard (~1/16 per pair; the supported mode the torn-tail guard
+        is built around) could acquire the flock in the opposite order
+        from their stamps: flock wakeup order is arbitrary, and the
+        inversion window reaches the full lock-hold time of a rotation
+        (the gzip of a 10 MB segment), so one segment ended up holding
+        a newer `ts` before an older one. That silently broke the
+        per-segment ts-order `iter_events` / `iter_events_backward`
+        state as holding by construction — `heapq.merge` trusts each
+        segment as an already-sorted stream — and an inversion
+        straddling the pending-token dedup boundary let
+        `handlers._shared._already_recorded_pending_ids`' newest-first
+        early-exit skip a newer-stamped `use` event, double-emitting
+        `applied` into the append-only log. Stamping under the lock
+        (after `_rotate_if_needed`, so the stamp sits as close to the
+        append as possible) makes the invariant true by construction:
+        every event already in the segment was stamped under an earlier
+        hold of this same lock. Cost: microseconds of extra hold time.
+        Only the free-text redaction stays outside — pure CPU on data
+        the lock does not protect.
         """
         if not self.enabled:
             return
         try:
             if not self.log_queries_verbatim:
                 fields = _redact_event_fields(fields)
-            event = {
-                "ts": _utcnow_iso(),
-                "session": self.session_id,
-                "kind": kind,
-                **fields,
-            }
-            # Stamp the process worktree (queue #28) so a prior session
-            # that wrote only events (e.g. a search-only loop tick that
-            # crashed before episode_write) is still worktree-matchable
-            # by episode_handoff. Only when known; a handler field of the
-            # same name (none exist today) is left untouched.
-            if self.worktree_root is not None:
-                event.setdefault("worktree_root", self.worktree_root)
-            line = json.dumps(event, separators=(",", ":"), default=str) + "\n"
             with _locked(self.path):
                 self._rotate_if_needed()
+                # Stamped under the lock — see the docstring. Everything
+                # already in this segment carries a stamp taken under an
+                # earlier hold, so per-segment ts-order holds by
+                # construction rather than by scheduling luck.
+                event = {
+                    "ts": _utcnow_iso(),
+                    "session": self.session_id,
+                    "kind": kind,
+                    **fields,
+                }
+                # Stamp the process worktree (queue #28) so a prior session
+                # that wrote only events (e.g. a search-only loop tick that
+                # crashed before episode_write) is still worktree-matchable
+                # by episode_handoff. Only when known; a handler field of the
+                # same name (none exist today) is left untouched.
+                if self.worktree_root is not None:
+                    event.setdefault("worktree_root", self.worktree_root)
+                line = json.dumps(event, separators=(",", ":"), default=str) + "\n"
                 # Append-binary so we control line endings explicitly across
                 # platforms and don't fight Python's text-mode translation.
                 # fsync the file after each event so the audit log survives
@@ -962,21 +989,19 @@ def _active_segment_paths(root: Path) -> list[Path]:
     return [path for path, _ in _active_segments(root)]
 
 
-def iter_events(root: Path) -> Iterator[dict[str, Any]]:
-    """Yield events from the *active* segments — the per-shard
-    `.events.NN.jsonl` files plus any legacy `.events.jsonl` — merged
-    into chronological order by event `ts`.
-
-    Each segment is appended by a single stream of writers under that
-    shard's lock, so it is already ts-ordered; `heapq.merge` across the
-    segments yields the global chronological order without buffering,
-    with open fds bounded by the shard count. Skips malformed lines
-    defensively — single-process-per-shard writers make corruption
-    unlikely, but the read side stays robust against external editing
-    (a stray non-UTF-8 byte or hand-edit must not crash the reader).
-    Does not read rotated archives — call `iter_all_events` for that.
+def _merge_active_segments(paths: list[Path]) -> Iterator[dict[str, Any]]:
+    """heapq-merge an already-listed set of active segments by event
+    `ts` — the open-and-merge leg of `iter_events`, split out so
+    `iter_events_window` can thread the SAME active-segment snapshot it
+    decided window coverage from into its final merge. Re-listing at
+    merge time (the pre-split shape, where the window reader appended a
+    lazy `iter_events(root)` stream) let a concurrent rotation land
+    between the coverage listing and the merge's own listing, so the
+    coverage decisions and the read disagreed about which files the
+    active set even was. A segment that cannot be opened is skipped —
+    it vanished to a concurrent rotation between listing and open, and
+    its events are reachable through the rotated side on the next read.
     """
-    paths = _active_segment_paths(root)
     if not paths:
         return
     handles: list[Any] = []
@@ -996,6 +1021,25 @@ def iter_events(root: Path) -> Iterator[dict[str, Any]]:
                 handle.close()
             except OSError:  # pragma: no cover
                 pass
+
+
+def iter_events(root: Path) -> Iterator[dict[str, Any]]:
+    """Yield events from the *active* segments — the per-shard
+    `.events.NN.jsonl` files plus any legacy `.events.jsonl` — merged
+    into chronological order by event `ts`.
+
+    Each segment is appended by a single stream of writers under that
+    shard's lock (which is also where each event's `ts` is stamped —
+    see `Recorder.record`), so it is already ts-ordered; `heapq.merge`
+    across the segments yields the global chronological order without
+    buffering, with open fds bounded by the shard count. Skips
+    malformed lines defensively — single-process-per-shard writers make
+    corruption unlikely, but the read side stays robust against
+    external editing (a stray non-UTF-8 byte or hand-edit must not
+    crash the reader). Does not read rotated archives — call
+    `iter_all_events` for that.
+    """
+    yield from _merge_active_segments(_active_segment_paths(root))
 
 
 def _iter_parsed_reversed(lines: list[bytes]) -> Iterator[dict[str, Any]]:
@@ -1450,6 +1494,27 @@ def iter_events_window(
     `iter_all_events` does), so the yield is chronological rather than
     merely oldest-segment-first.
 
+    LISTING ORDER IS LOAD-BEARING: the active segments are snapshotted
+    FIRST, the rotated candidates second, and the final merge reads the
+    SAME active snapshot the coverage loop decided from
+    (`_merge_active_segments`) rather than re-listing lazily. Listed
+    the other way round (candidates first — the shape through 6.4.0), a
+    concurrent rotation's step-1 rename (active shard file ->
+    `.rotating`) landing between the two directory scans made the
+    just-rotated segment invisible to that read: absent from the
+    candidates (listed pre-rename) while the shard's file was absent
+    from the active listing (taken post-rename), so the shard either
+    dropped out of the coverage union entirely (first rotation) or got
+    an OLDER archive prepended in place of the events that had just
+    rotated out — the turn's own `search` event vanished and the
+    retrieval shield re-fired a false `search_miss`. Active-first
+    closes the interleave: step 1 renames (never deletes), so any
+    rotation that removes a shard file from the active listing has
+    necessarily landed its `.rotating`/archive before a
+    subsequently-taken candidates listing. The durable
+    crash-mid-rotation variant needs no ordering help — a `.rotating`
+    orphan persists into every later candidates listing.
+
     COST. Two directory-level costs, both unconditional:
     `_active_segments` probes `SHARD_COUNT + 1` fixed names, and
     `_rotated_segments` does one `iterdir()` of the store root. The
@@ -1471,6 +1536,11 @@ def iter_events_window(
     the per-segment statement below it. It is gone.)
     """
     cutoff = (now or datetime.now(timezone.utc)) - timedelta(seconds=window_seconds)
+    # Active snapshot FIRST, rotated candidates second — the order is
+    # load-bearing (see the docstring): a rotation's rename landing
+    # between the two scans must land its `.rotating`/archive where the
+    # LATER scan sees it. This snapshot also feeds the final merge.
+    active_segments = _active_segments(root)
     candidates = _rotated_segments(root)
 
     prepend: list[Path] = []
@@ -1484,7 +1554,7 @@ def iter_events_window(
     # `_active_segments` yields at most one entry per shard (plus the
     # legacy file under shard `None`), so this mapping is lossless.
     active_by_shard: dict[int | None, Path] = {
-        shard: path for path, shard in _active_segments(root)
+        shard: path for path, shard in active_segments
     }
     # Only REAL (tagged) shards join the union from the candidate side.
     # The untagged `None` bucket is deliberately excluded: `None` is not
@@ -1530,7 +1600,11 @@ def iter_events_window(
     streams: list[Iterator[dict[str, Any]]] = [
         _iter_segment(path) for path in _segments_in_write_order(prepend)
     ]
-    streams.append(iter_events(root))
+    # The SAME snapshot the coverage loop decided from — a lazy
+    # `iter_events(root)` here would re-list the actives only when the
+    # merge first pulls from it, re-opening the two-scans race the
+    # active-first listing order just closed.
+    streams.append(_merge_active_segments([path for path, _ in active_segments]))
     yield from heapq.merge(*streams, key=_event_ts_key)
 
 
