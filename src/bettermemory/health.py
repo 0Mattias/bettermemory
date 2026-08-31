@@ -1489,13 +1489,28 @@ class _StatsAccumulator:
         # a second pass because `compute_health` already walks every
         # event exactly once and the predicate is two dict reads.
         self._hook_telemetry_events = 0
+        # `eval.is_admin_recorded_event`, bound at construction through
+        # a deferred import: eval.py imports `health.applied_tier` at
+        # module scope, so a module-level import here would be a cycle.
+        # By the time an accumulator is constructed both modules are
+        # fully initialised, and binding once keeps `handle_event` —
+        # which runs for every row in the log — free of repeated import
+        # machinery. Calling the predicate, rather than re-spelling
+        # either axis of the classification locally, is the one wiring
+        # `tests/test_eval.py::TestAdminRecordedParity` permits.
+        from .eval import is_admin_recorded_event
+
+        self._is_admin_recorded_event: Callable[[dict[str, Any]], bool] = (
+            is_admin_recorded_event
+        )
 
     # ---- dispatch -------------------------------------------------------
 
     def handle_event(self, ev: dict[str, Any]) -> None:
         """Route one event to its per-kind handler. Always bumps the
-        total-events counter and the per-session set, regardless of
-        kind — those rollups are kind-agnostic."""
+        total-events counter, regardless of kind; the per-session set
+        adds every event EXCEPT admin-recorded ones (the inline comment
+        below has the why)."""
         self._total_events += 1
         # Canonical-first session read with the legacy fallback the
         # other event consumers use. The Recorder stamps `session` on
@@ -1508,8 +1523,20 @@ class _StatsAccumulator:
         # `set.add()` would raise TypeError and blank the whole rollup
         # (memory_health / scope_overview / doctor). Only a non-empty
         # string can be a real session id anyway.
+        # Admin/CLI writers (`consolidate --acknowledge-debt`'s use
+        # rows and its `silent_miss_cutoff` marker, `doctor --fix`)
+        # record under a fresh throwaway SessionState id — counting one
+        # would publish a session no client ever attached to, so each
+        # admin run would permanently inflate the Sessions line by one
+        # and put `memory_health` in silent disagreement with
+        # `eval.compute_report` and doctor's cadence census, which both
+        # already exclude these. The exclusion gates the SESSION TALLY
+        # ONLY: the event still dispatches to its handler below, so
+        # acknowledge-debt's rows keep counting as the genuine
+        # endorsements they are (eval.py's scope note on
+        # `ADMIN_RECORDED_ATTRIBUTION_PREFIX`).
         sess = ev.get("session") or ev.get("session_id")
-        if isinstance(sess, str) and sess:
+        if isinstance(sess, str) and sess and not self._is_admin_recorded_event(ev):
             self._sessions.add(sess)
 
         kind = ev.get("kind")
@@ -1555,7 +1582,17 @@ class _StatsAccumulator:
         self._note_hook_telemetry(ev)
         outcome = ev.get("outcome")
         ts = _ensure_utc(parse_event_ts(ev.get("ts")))
-        for mid in _event_id_list(ev.get("ids") or ev.get("memory_ids")):
+        # Dedupe ids WITHIN this one event before counting — mirroring
+        # `eval.compute_eval`'s per-event dedup. The recorder stores
+        # `memory_ids` verbatim (handlers/record_use.py), so a single
+        # `memory_record_use(memory_ids=["A", "A"], ...)` call yields a
+        # duplicate-carrying event; counting it raw settles two
+        # applied/auto/explicit (and hook/model) increments for one
+        # settlement, skews endorsement_ratio, lets two such events
+        # cross the heavily_used floor (applied >= 3), and silently
+        # disagrees with the published eval counters over the same log.
+        # `dict.fromkeys` keeps first-seen order.
+        for mid in dict.fromkeys(_event_id_list(ev.get("ids") or ev.get("memory_ids"))):
             stats = self._by_id.get(mid)
             if stats is None:
                 # Memory may have been tombstoned after the use was
@@ -3431,7 +3468,15 @@ def curation_counts(
                             earliest_retrieval[mid] = search_ts
         elif kind == "use" and ev.get("outcome") == "applied":
             is_auto = ev.get("auto") is True
-            for mid in _event_id_list(ev.get("ids") or ev.get("memory_ids")):
+            # Same per-event id dedup as `_StatsAccumulator._handle_use`
+            # and eval's counting loop. The numerical contract (each
+            # count here must agree with its `compute_health` bucket)
+            # breaks without it: a duplicate-carrying event raw-counted
+            # here shifts the explicit/total ratio that feeds the
+            # `cold_endorsement_memories` threshold below.
+            for mid in dict.fromkeys(
+                _event_id_list(ev.get("ids") or ev.get("memory_ids"))
+            ):
                 if mid in applied_counts:
                     applied_counts[mid] += 1
                     if not is_auto and mid in explicit_applied_counts:

@@ -10,6 +10,7 @@ from typing import Any
 
 
 from bettermemory.durability import SHA_MARKER
+from bettermemory.eval import compute_eval, compute_report
 from bettermemory.health import (
     MarkerStats,
     _edit_distance_within,
@@ -1389,6 +1390,86 @@ def test_use_outcome_counters() -> None:
     assert stats.corrected_count == 1
 
 
+def test_duplicate_ids_in_one_use_event_settle_once_agreeing_with_eval() -> None:
+    """A single `use` event carrying the same id twice — reachable from
+    one `memory_record_use(memory_ids=["A", "A"], ...)` call, because
+    the recorder stores ids verbatim — is ONE settlement, not two.
+    `eval.compute_eval` dedups ids within each use event before
+    counting `applied_total`; the health rollup must apply the same
+    per-event dedup, or two duplicate-carrying events read as
+    applied_count=4, cross the heavily_used floor (applied >= 3), and
+    put `memory_health` in silent disagreement with the published eval
+    counters over the same log."""
+    m = _memory(created=_utc(2026, 1, 1))
+    events = [
+        _event("search", ts=_utc(2026, 2, 1), returned=[m.id]),
+        _event(
+            "use",
+            ts=_utc(2026, 3, 1),
+            ids=[m.id, m.id],
+            outcome="applied",
+            attribution="model",
+        ),
+        _event(
+            "use",
+            ts=_utc(2026, 3, 2),
+            ids=[m.id, m.id],
+            outcome="applied",
+            attribution="model",
+        ),
+    ]
+    report = compute_health([m], events, now=_utc(2026, 5, 1))
+    # Two events -> applied_count 2: below the default floor of 3. Raw
+    # counting would read 4 and promote the row.
+    assert report.heavily_used == []
+    tools = next(s for s in report.scope_health if s.scope == "tools")
+    # Conservation: the health scope rollup and the published eval
+    # counter agree over the exact same duplicate-id event stream.
+    eval_report = compute_eval([m], events, now=_utc(2026, 5, 1))
+    assert tools.applied_total == eval_report.applied_total == 2
+
+
+def test_curation_counts_dedupes_ids_within_one_use_event() -> None:
+    """The `curation_counts` use branch shares `_handle_use`'s per-event
+    dedup. Observable through the ratio threshold: an auto apply
+    carrying the id twice raw-counts as total=3 explicit=1 (ratio 1/3,
+    under 0.5 -> flagged); deduped it is total=2 explicit=1 (ratio
+    exactly 0.5, not under -> clean). The numerical contract holds:
+    the count agrees with `compute_health`'s bucket for the same
+    inputs."""
+    m = _memory(created=_utc(2026, 1, 1))
+    events = [
+        _event("search", ts=_utc(2026, 2, 1), returned=[m.id]),
+        _event("search", ts=_utc(2026, 2, 2), returned=[m.id]),
+        _event(
+            "use", ts=_utc(2026, 3, 1), ids=[m.id, m.id], outcome="applied", auto=True
+        ),
+        _event(
+            "use",
+            ts=_utc(2026, 3, 2),
+            ids=[m.id],
+            outcome="applied",
+            attribution="model",
+        ),
+    ]
+    counts = curation_counts(
+        [m],
+        events,
+        now=_utc(2026, 5, 1),
+        cold_endorsement_min_retrievals=2,
+        cold_endorsement_ratio_threshold=0.5,
+    )
+    assert counts["cold_endorsement_memories"] == 0
+    report = compute_health(
+        [m],
+        events,
+        now=_utc(2026, 5, 1),
+        cold_endorsement_min_retrievals=2,
+        cold_endorsement_ratio_threshold=0.5,
+    )
+    assert report.cold_endorsement_memories.total == 0
+
+
 def test_corrected_does_not_raise_contradiction_flag() -> None:
     """`corrected` is the audit-only outcome for the
     noticed-and-fixed-inline workflow: the caller has already run
@@ -1813,6 +1894,41 @@ def test_distinct_sessions_counted() -> None:
     ]
     report = compute_health([], events, now=_utc(2026, 5, 1))
     assert report.distinct_sessions == 2
+
+
+def test_distinct_sessions_exclude_admin_recorded_events() -> None:
+    """Admin/CLI writers record under a fresh throwaway SessionState id
+    (`consolidate --acknowledge-debt`'s use rows and `silent_miss_cutoff`
+    marker, `doctor --fix`), so counting those ids publishes one phantom
+    session per admin run, forever. `eval.compute_report` and doctor's
+    cadence census already drop them via `eval.is_admin_recorded_event`;
+    the health rollup must call the same predicate — both its axes — or
+    `memory_health` and `eval --report` report different Sessions
+    figures over the same log. In-session side-effect kinds carry the
+    client's own id and must keep counting (over-excluding would
+    under-report the store shape just as badly)."""
+    events = [
+        _event("show", session="sess_real", id="x"),
+        # Attribution axis: acknowledge-debt rides `use`, a kind real
+        # sessions also emit — only the `cli_*` stamp separates it.
+        _event(
+            "use",
+            session="sess_cli_ack_debt",
+            ids=["m1"],
+            outcome="applied",
+            attribution="cli_acknowledge_debt",
+        ),
+        # Kind axis: kinds only admin surfaces ever emit.
+        _event("doctor_fix", session="sess_cli_doctor"),
+        _event("silent_miss_cutoff", session="sess_cli_ack_misses"),
+        # In-session side-effect kind, recorded under the client's id.
+        _event("search_miss", session="sess_hook"),
+    ]
+    report = compute_health([], events, now=_utc(2026, 5, 1))
+    assert report.distinct_sessions == 2
+    # Conservation: eval's report-level tally agrees over the same log.
+    doc = compute_report([], events, now=_utc(2026, 5, 1), version="0-test")
+    assert doc.distinct_session_count == report.distinct_sessions
 
 
 def test_scope_distribution_counts_each_scope() -> None:
