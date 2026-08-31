@@ -784,6 +784,8 @@ class TestSilentMissInvalidation:
         threshold-rule tracking, the buffer contents, and the full
         serialised shape are pinned (values hand-computed against the
         pre-change event loop)."""
+        from bettermemory.health import _HOOKLESS_REASON
+
         now = datetime(2026, 5, 20, 12, 0, tzinfo=timezone.utc)
         mem = _mem()
         events = [
@@ -834,6 +836,11 @@ class TestSilentMissInvalidation:
                 "min_retrievals": DEFAULT_ENDORSEMENT_MIN_RETRIEVALS,
                 "total": 0,
                 "rows": [],
+                # None of these synthetic events qualifies as Stop-hook
+                # settlement telemetry, so the honesty gate reports the
+                # bucket suppressed — empty by construction, not clean.
+                "suppressed": True,
+                "suppressed_reason": _HOOKLESS_REASON,
             },
             "silent_miss_recent": [
                 {
@@ -1045,7 +1052,13 @@ class TestColdEndorsementMemories:
     def _make_events(
         self, mem_id: str, retrievals: int, *, with_explicit: bool = False
     ) -> list[dict[str, Any]]:
-        events: list[dict[str, Any]] = []
+        events: list[dict[str, Any]] = [
+            # One Stop-hook audit so the stream counts as covered
+            # settlement telemetry — without it the honesty gate
+            # (mirrored from health 2026-08-30) suppresses the bucket
+            # these tests assert on.
+            _ev("turn_audited", verdict="ok", triggered_from="stop_hook"),
+        ]
         for _ in range(retrievals):
             events.append(_ev("search", returned=[mem_id]))
             events.append(_ev("use", ids=[mem_id], outcome="applied", auto=True))
@@ -1147,6 +1160,86 @@ class TestColdEndorsementMemories:
         )
         assert [r.id for r in report.cold_endorsement_memories_rows] == [m2.id, m1.id]
 
+    def test_default_floor_matches_health_constant(self) -> None:
+        """The default floor duplicates health's private constant by
+        design (dependency-light), and the old comment's claim that
+        drift "would be inert" shipped as a real defect: the 2026-08-30
+        5 → 30 recalibration landed on health first and the two
+        surfaces published materially different buckets. This pin turns
+        the next recalibration into a test failure instead of drift —
+        the name is cited from the constant's comment in eval.py."""
+        from bettermemory.health import _COLD_ENDORSEMENT_MIN_RETRIEVALS
+
+        assert DEFAULT_ENDORSEMENT_MIN_RETRIEVALS == _COLD_ENDORSEMENT_MIN_RETRIEVALS
+
+    def test_list_and_show_do_not_count_toward_floor(self) -> None:
+        """The floor basis is SEARCH deliveries only, matching health's
+        `_handle_search`-only `retrieval_count` (no `list` handler;
+        `show` feeds a separate `show_count`). Before the basis was
+        pinned, one `memory_list` over an N-memory store bumped every
+        memory's floor count at once while health saw nothing — the
+        recalibrated floor is derived per search delivery, so a wider
+        basis mis-calibrates it. The rate denominator keeps the wider
+        basis: all three kinds still count in `retrieval_occurrences`."""
+        mem = _mem()
+        events: list[dict[str, Any]] = [
+            _ev("turn_audited", verdict="ok", triggered_from="stop_hook"),
+            _ev("use", ids=[mem.id], outcome="applied", auto=True),
+        ]
+        # 4 search deliveries + 1 list + 1 show = floor count 4 (< 5).
+        events += [_ev("search", returned=[mem.id]) for _ in range(4)]
+        events.append(_ev("list", returned=[mem.id]))
+        events.append(_ev("show", id=mem.id))
+        report = compute_eval(
+            memories=[mem], events=events, endorsement_min_retrievals=5
+        )
+        assert report.retrieval_occurrences == 6
+        assert report.cold_endorsement_memories_total == 0
+        # A fifth SEARCH delivery crosses the floor.
+        report = compute_eval(
+            memories=[mem],
+            events=events + [_ev("search", returned=[mem.id])],
+            endorsement_min_retrievals=5,
+        )
+        assert report.cold_endorsement_memories_total == 1
+        assert report.cold_endorsement_memories_rows[0].retrieval_count == 5
+
+    def test_bucket_suppressed_without_hook_telemetry(self) -> None:
+        """Honesty-gate parity with health's `telemetry_coverage`
+        (widened to the endorsement leg 2026-08-30): on a log with zero
+        Stop-hook settlement telemetry, `explicit_applied_count == 0`
+        is a statement about the client's hook configuration, not the
+        memory, so the bucket is emptied by construction and the report
+        says so. One qualifying event un-suppresses it."""
+        mem = _mem()
+        hookless: list[dict[str, Any]] = []
+        for _ in range(5):
+            hookless.append(_ev("search", returned=[mem.id]))
+            hookless.append(_ev("use", ids=[mem.id], outcome="applied", auto=True))
+        report = compute_eval(
+            memories=[mem], events=hookless, endorsement_min_retrievals=5
+        )
+        assert report.cold_endorsement_suppressed is True
+        assert report.cold_endorsement_memories_total == 0
+        assert report.cold_endorsement_memories_rows == []
+        published = report.to_dict()["cold_endorsement_memories"]
+        assert published["suppressed"] is True
+        assert isinstance(published["suppressed_reason"], str)
+        text = render_text(report)
+        assert "Cold-endorsement memories: suppressed" in text
+
+        covered = hookless + [
+            _ev("turn_audited", verdict="ok", triggered_from="stop_hook")
+        ]
+        report = compute_eval(
+            memories=[mem], events=covered, endorsement_min_retrievals=5
+        )
+        assert report.cold_endorsement_suppressed is False
+        assert report.cold_endorsement_memories_total == 1
+        assert (
+            report.to_dict()["cold_endorsement_memories"]["suppressed_reason"] is None
+        )
+
 
 # ---------------------------------------------------------------------------
 # scope filter + since window
@@ -1244,7 +1337,9 @@ class TestRenderText:
 
     def test_cold_endorsement_memories_section(self) -> None:
         mem = _mem()
-        events = []
+        # Hook telemetry so the honesty gate doesn't suppress the
+        # section this test renders.
+        events = [_ev("turn_audited", verdict="ok", triggered_from="stop_hook")]
         for _ in range(5):
             events.append(_ev("search", returned=[mem.id]))
             events.append(_ev("use", ids=[mem.id], outcome="applied", auto=True))
@@ -2497,16 +2592,22 @@ class TestRenderReportMarkdown:
         canary = "leakcanary9q4"
         mem = _mem(body=f"Body {canary} first sentence.", scopes=[f"scope-{canary}"])
         events = [
+            # 30 deliveries: the cold-endorsement floor rode health's
+            # 2026-08-30 recalibration up from 5, and the row below must
+            # stay populated for this test's non-vacuity check.
             *[
                 _ev("search", returned=[mem.id], query=f"find {canary}")
-                for _ in range(5)
+                for _ in range(30)
             ],
             _ev("use", ids=[mem.id], outcome="applied", auto=True),
+            # `stop_hook` provenance doubles as settlement coverage so
+            # the honesty gate doesn't empty the cold-endorsement rows.
             _ev(
                 "turn_audited",
                 verdict="miss",
                 session_id=f"sess-{canary}",
                 probe_query=f"{canary} probe",
+                triggered_from="stop_hook",
             ),
             _ev(
                 "search_miss",
@@ -2533,7 +2634,7 @@ class TestRenderReportMarkdown:
         md = render_report_markdown(doc)
         assert canary not in md
         # ...while the numbers those events feed still render.
-        assert "0/5 = **0.00**" in md  # helped rate over 5 retrievals
+        assert "0/30 = **0.00**" in md  # helped rate over 30 retrievals
         assert "1/1 = **1.00**" in md  # silent-miss rate 1/1
 
     def test_untelemetered_tool_row_is_marked_not_published_as_zero(self) -> None:

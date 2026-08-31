@@ -11,7 +11,9 @@ Three layers, matching the data's path from ranker to read:
    additively (absent on default-config turns).
 3. `eval.compute_usage_replay` — the offline aggregation: counts,
    the pinned judgment rule, the demotion invariant, the density
-   preconditions, and the window filter.
+   preconditions, the window filter, the delivered-recall companion
+   dedup (one turn, one row), the `silent_miss_cutoff` invalidation,
+   and the malformed-capture guards.
 """
 
 from __future__ import annotations
@@ -526,3 +528,235 @@ class TestComputeUsageReplay:
         assert report.replayable_turns == 0
         assert report.endorsed_distinct_in_window == 0
         assert {f.flag: f for f in report.flags}["endorsement_boost"].changed_turns == 0
+
+    def _recall_pair(
+        self,
+        t0: datetime,
+        *,
+        audit_probe: Any = None,
+        audit_offset: timedelta = timedelta(minutes=9),
+    ) -> list[dict[str, Any]]:
+        """A delivered recall plus the Stop hook's same-turn companion
+        audit — the shape production writes for every recall-cohort
+        turn (`prompt_recall` at prompt time; then `is_duplicate_audit`
+        matches only prior `turn_audited` events, so the Stop hook's
+        audit of the same message lands with `repeat=False`, verdict
+        "ok", `suppressed_by="retrieval"`, carrying the same capture).
+        Both events carry the same redacted `probe_query` unless the
+        caller overrides the audit's."""
+        probe = {"hash": "aa11bb22cc33dd44", "preview": "how does postg", "len": 41}
+        capture = {"endorsement_boost": _toggle("M4", "high", 3)}
+        return [
+            _ev(
+                "prompt_recall",
+                t0,
+                top_hits=_top1("M3", "low", 1),
+                usage_active=["endorsement_boost"],
+                usage_toggles=capture,
+                probe_query=probe,
+            ),
+            _ev(
+                "turn_audited",
+                t0 + audit_offset,
+                verdict="ok",
+                suppressed_by="retrieval",
+                top_hits=_top1("M3", "low", 1),
+                usage_active=["endorsement_boost"],
+                usage_toggles=capture,
+                probe_query=audit_probe if audit_probe is not None else probe,
+            ),
+        ]
+
+    def test_delivered_recall_companion_audit_counts_once(self) -> None:
+        """One delivered-recall turn, one row. Before the dedup, both
+        the `prompt_recall` and its same-turn `turn_audited` companion
+        passed the filters, so replayable_turns / active_turns /
+        changed_turns and every judgment double-counted the recall
+        cohort — the ROADMAP bars' "n >= 10 changed turns" hold was
+        crossable with 5 real turns. The kept row must be the recall
+        (it records what the model was shown)."""
+        t0 = _NOW - timedelta(hours=3)
+        report = compute_usage_replay(self._recall_pair(t0), since=None, now=_NOW)
+        assert report.replayable_turns == 1
+        assert report.prompt_recall_turns == 1
+        assert report.turn_audited_turns == 0
+        assert report.recall_companion_audits_skipped == 1
+        assert report.repeat_audits_skipped == 0
+        endorsement = {f.flag: f for f in report.flags}["endorsement_boost"]
+        assert endorsement.active_turns == 1
+        assert endorsement.changed_turns == 1
+        assert endorsement.worsening == 1
+        assert endorsement.miss_labeled_worsening == 1
+        assert endorsement.changes[0].event_kind == "prompt_recall"
+
+    def test_companion_dedup_needs_matching_probe_inside_the_window(self) -> None:
+        """The dedup key and window are the producers' own
+        (`is_duplicate_audit`): a different probe hash is a fresh
+        decision point and still counts; so does an audit past
+        `REAUDIT_DEDUP_WINDOW_SECONDS`; and events without
+        `probe_query` never match (pre-capture bias: count the row).
+        The verbatim-string shape (`log_queries_verbatim = true`)
+        matches too."""
+        t0 = _NOW - timedelta(hours=6)
+        # Different hash → both rows count.
+        other_probe = {"hash": "ee55ff66aa77bb88", "preview": "unrelated", "len": 9}
+        report = compute_usage_replay(
+            self._recall_pair(t0, audit_probe=other_probe), since=None, now=_NOW
+        )
+        assert report.replayable_turns == 2
+        assert report.recall_companion_audits_skipped == 0
+        # Same hash but past the dedup window → a legitimately
+        # re-audited decision point, both rows count.
+        from bettermemory.audit import REAUDIT_DEDUP_WINDOW_SECONDS
+
+        report = compute_usage_replay(
+            self._recall_pair(
+                t0,
+                audit_offset=timedelta(seconds=REAUDIT_DEDUP_WINDOW_SECONDS + 1),
+            ),
+            since=None,
+            now=_NOW,
+        )
+        assert report.replayable_turns == 2
+        assert report.recall_companion_audits_skipped == 0
+        # Verbatim-string probe_query (both sides) → skipped.
+        verbatim = self._recall_pair(t0)
+        for ev in verbatim:
+            ev["probe_query"] = "how does postgres pooling work"
+        report = compute_usage_replay(verbatim, since=None, now=_NOW)
+        assert report.replayable_turns == 1
+        assert report.recall_companion_audits_skipped == 1
+
+    def test_silent_miss_cutoff_drops_invalidated_turns(self) -> None:
+        """`--acknowledge-misses-before` retracts audit/recall rows the
+        way every rate surface retracts them: rows with ts before the
+        latest `cutoff_ts` vanish from the replay set (counters, rows,
+        and the repeat tally alike), and a later-in-log marker with an
+        EARLIER cutoff_ts cannot shrink the invalidated window."""
+        t0 = _NOW - timedelta(hours=5)
+        keep_ts = t0 + timedelta(hours=1)
+        events = [
+            # Invalidated: audited turn, delivered recall, and a repeat
+            # — all before the cutoff.
+            _ev(
+                "turn_audited",
+                t0,
+                verdict="ok",
+                top_hits=_top1("M1"),
+                usage_active=["endorsement_boost"],
+                usage_toggles={"endorsement_boost": _toggle("M2", "medium", 2)},
+            ),
+            _ev(
+                "prompt_recall",
+                t0 + timedelta(minutes=10),
+                top_hits=_top1("M3", "low", 1),
+                usage_active=["endorsement_boost"],
+                usage_toggles={"endorsement_boost": _toggle("M4", "high", 3)},
+            ),
+            _ev("turn_audited", t0 + timedelta(minutes=20), verdict="ok", repeat=True),
+            # Survivor.
+            _ev(
+                "turn_audited",
+                keep_ts,
+                verdict="ok",
+                top_hits=_top1("M1"),
+                usage_active=["endorsement_boost"],
+                usage_toggles={"endorsement_boost": _toggle("M2", "medium", 2)},
+            ),
+            # The marker, later in the log than everything it retracts;
+            # then a second marker whose earlier cutoff_ts must lose.
+            _ev(
+                "silent_miss_cutoff",
+                _NOW - timedelta(hours=2),
+                cutoff_ts=(t0 + timedelta(minutes=30)).isoformat(),
+            ),
+            _ev(
+                "silent_miss_cutoff",
+                _NOW - timedelta(hours=1),
+                cutoff_ts=(t0 + timedelta(minutes=5)).isoformat(),
+            ),
+        ]
+        report = compute_usage_replay(events, since=None, now=_NOW)
+        assert report.replayable_turns == 1
+        assert report.turn_audited_turns == 1
+        assert report.prompt_recall_turns == 0
+        assert report.repeat_audits_skipped == 0
+        assert report.first_capture_ts == keep_ts.isoformat()
+        endorsement = {f.flag: f for f in report.flags}["endorsement_boost"]
+        assert endorsement.changed_turns == 1
+
+    def test_cutoff_marker_outside_window_still_applies(self) -> None:
+        """Global marker semantics, mirroring `compute_eval` /
+        `compute_threshold_sweep`: a `silent_miss_cutoff` whose own ts
+        falls outside `--since` still retracts in-window rows — without
+        this, a windowed replay would count turns every rate surface
+        has already invalidated."""
+        in_window = _NOW - timedelta(days=2)
+        events = [
+            _ev(
+                "silent_miss_cutoff",
+                _NOW - timedelta(days=40),  # marker itself outside 30d
+                cutoff_ts=(_NOW - timedelta(days=1)).isoformat(),
+            ),
+            _ev(
+                "turn_audited",
+                in_window,
+                verdict="ok",
+                top_hits=_top1("M1"),
+                usage_active=["endorsement_boost"],
+                usage_toggles={"endorsement_boost": _toggle("M2", "high", 3)},
+            ),
+        ]
+        report = compute_usage_replay(events, since=timedelta(days=30), now=_NOW)
+        assert report.replayable_turns == 0
+        assert {f.flag: f for f in report.flags}["endorsement_boost"].changed_turns == 0
+
+    def test_malformed_capture_features_degrade_to_zero(self) -> None:
+        """The event log is plaintext + git-synced + hand-editable — the
+        same threat model behind the sweep/widening hit guards — so a
+        torn `matched_unique` / `query_unique` (string, bool, dict) must
+        degrade the one row to 0, not crash the whole
+        `--usage-replay` run with a bare `int(...)` ValueError."""
+        t0 = _NOW - timedelta(hours=1)
+        events = [
+            _ev(
+                "turn_audited",
+                t0,
+                verdict="ok",
+                top_hits=[
+                    {
+                        "id": "M1",
+                        "relevance_v2": "high",
+                        "matched_unique": "3x",  # hand-mangled
+                        "query_unique": None,
+                    }
+                ],
+                usage_active=["endorsement_boost"],
+                usage_toggles={
+                    "endorsement_boost": {
+                        "top1": {
+                            "id": "M2",
+                            "relevance_v2": "high",
+                            "matched_unique": True,  # bool ⊂ int
+                            "query_unique": {"bad": 1},
+                        }
+                    }
+                },
+            ),
+        ]
+        report = compute_usage_replay(events, since=None, now=_NOW)
+        endorsement = {f.flag: f for f in report.flags}["endorsement_boost"]
+        assert endorsement.changed_turns == 1
+        change = endorsement.changes[0]
+        assert change.on_matched_unique == 0
+        assert change.off_matched_unique == 0
+        assert change.query_unique == 0
+        # Tier tie + matched tie (both degraded) → neutral, per the rule.
+        assert change.judgment == "neutral"
+
+        # The per-side fallback: a malformed `off` copy falls through to
+        # the production hit's valid one.
+        events[0]["top_hits"][0]["query_unique"] = 4
+        report = compute_usage_replay(events, since=None, now=_NOW)
+        change = {f.flag: f for f in report.flags}["endorsement_boost"].changes[0]
+        assert change.query_unique == 4

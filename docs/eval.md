@@ -63,7 +63,16 @@ hook) versus the bare auto-fallback?
 A low rate means nothing produced evidence the retrievals shaped a
 reply. The per-memory companion in `memory_health` is
 `cold_endorsement_memories`: distinct memories with `retrieval_count >=
-5` and zero explicit applies — retrieved often, never visibly used.
+30` and zero explicit applies — retrieved often, never visibly used.
+`bettermemory eval` publishes the same bucket under the same contract:
+one floor (the 2026-08-30 recalibration of
+`health._COLD_ENDORSEMENT_MIN_RETRIEVALS`, derived as `(1-p)^N` against
+the store's own explicit-endorse rate per search delivery; parity with
+eval's default is test-pinned), one counting basis (search deliveries
+only — `memory_list` / `memory_show` occurrences feed the rate
+denominators but not the floor), and one honesty gate (with zero
+Stop-hook settlement telemetry in the log the bucket is suppressed and
+says so, rather than reporting an unwired hook as acknowledge-debt).
 
 ### `silent_miss_rate`
 
@@ -260,8 +269,17 @@ Five additional modes:
   (`v1_later_top1_explicit_apply_within_600s`), and the density
   preconditions (distinct explicitly-endorsed and negative-outcome
   memories in the window; corroborated-memory liveness from the store
-  rollup). Measurements only: the declared thresholds stay in
-  docs/ROADMAP.md, and an unread bar is a hold.
+  rollup). Each turn counts once: a delivered recall's same-turn
+  Stop-hook companion audit (which re-carries the same capture under
+  an `ok` verdict) is skipped on the producers' own
+  (session, probe-query) dedup key, keeping the `prompt_recall` row —
+  the one recording what the model was shown. Audit/recall rows honor
+  the bulk `silent_miss_cutoff` marker with the rate surfaces' global
+  latest-wins semantics; per-event `miss_ack`s reference a
+  `search_miss`'s event id, which no audit/recall row carries, so they
+  are structurally unjoinable here and not applied. Measurements only:
+  the declared thresholds stay in docs/ROADMAP.md, and an unread bar
+  is a hold.
 
 All honor `--since`; all but `--report` honor `--json` (the report is
 markdown by construction). Rules live in `eval.THRESHOLD_RULES` /

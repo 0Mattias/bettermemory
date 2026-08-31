@@ -70,7 +70,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
+from .health import _HOOKLESS_REASON  # one sentence, shared — see its comment
 from .health import applied_tier as _applied_tier
+from .health import is_hook_telemetry_event
 from .models import Memory, first_summary_line
 from .time_utils import isoformat_utc, parse_event_ts
 
@@ -88,11 +90,25 @@ DEFAULT_SINCE_SPEC = "30d"
 # Default floor for cold-endorsement row inclusion. Two design choices
 # baked in here that look like sloppiness but aren't:
 #
-# 1. Value-duplication of the literal ``5``. The same integer lives at
-#    ``health._COLD_ENDORSEMENT_MIN_RETRIEVALS``. We duplicate rather
-#    than import so the eval module stays dependency-light (no reach
-#    into health's privates), and the value is conservative enough
-#    that drift between the two would be inert in practice.
+# 1. Value-duplication of the literal ``30``. The same integer lives at
+#    ``health._COLD_ENDORSEMENT_MIN_RETRIEVALS``, and that copy is the
+#    canonical one — it carries the derivation (calibrated 2026-08-30:
+#    (1-p)^N against the dogfood log's pooled explicit-endorse rate
+#    *per search delivery*, picking the smallest N with
+#    P(zero explicit | healthy) at or under 0.05; the old floor of 5
+#    sat at ~coin-flip and flagged memories in active use). We still
+#    duplicate rather than import so the eval module keeps out of
+#    health's private constants — but the retired claim that drift
+#    "would be inert in practice" is exactly what shipped: the 5 → 30
+#    recalibration landed on the health side first and the two
+#    surfaces published materially different buckets until this copy
+#    caught up. Parity is now pinned mechanically
+#    (``tests/test_eval.py::TestColdEndorsementMemories::
+#    test_default_floor_matches_health_constant``), so the next
+#    recalibration fails a test instead of drifting. Because the
+#    derivation is per SEARCH delivery, the per-memory count this
+#    floor is compared against is search-only too — see the
+#    ``search_delivery_count`` comment in ``compute_eval``.
 #
 # 2. Bare ``ENDORSEMENT`` prefix instead of ``COLD_ENDORSEMENT``. The
 #    constant feeds ``endorsement_min_retrievals`` on ``compute_eval``
@@ -106,7 +122,7 @@ DEFAULT_SINCE_SPEC = "30d"
 #    this nesting (it's a kwarg passed flat through several layers),
 #    which is why the two modules diverge on the identifier even
 #    though they share the literal.
-DEFAULT_ENDORSEMENT_MIN_RETRIEVALS = 5
+DEFAULT_ENDORSEMENT_MIN_RETRIEVALS = 30
 
 # Default cap for the inline silent-miss list. Recent enough to triage
 # by eye; the full series lives in the event log for offline replay.
@@ -203,7 +219,11 @@ class RateCI:
 class ColdEndorsementMemoriesRow:
     """One memory the ranker keeps surfacing that the model never
     deliberately endorses. Mirrors ``health.MemoryStats`` minimally —
-    we only carry what the eval renderer needs."""
+    we only carry what the eval renderer needs. ``retrieval_count``
+    is SEARCH deliveries only, the same basis as
+    ``health.MemoryStats.retrieval_count`` (which only
+    ``_handle_search`` bumps) — see ``search_delivery_count`` in
+    ``compute_eval`` for why ``list`` / ``show`` don't count here."""
 
     id: str
     scopes: list[str]
@@ -322,6 +342,17 @@ class EvalReport:
     )
     cold_endorsement_memories_total: int = 0
     endorsement_min_retrievals: int = DEFAULT_ENDORSEMENT_MIN_RETRIEVALS
+    # Honesty gate on the bucket above (2026-08-30, parity with
+    # health's `telemetry_coverage.cold_endorsement_suppressed`): True
+    # when the walked log carries zero Stop-hook settlement telemetry
+    # (`health.is_hook_telemetry_event`, counted over the WHOLE log —
+    # not the window — matching health/curation_counts' "did settlement
+    # telemetry EVER reach this log" semantics), in which case the rows
+    # and total above are empty BY CONSTRUCTION, not because the store
+    # is clean. Serialised under `cold_endorsement_memories` with the
+    # shared `health._HOOKLESS_REASON` sentence so the two surfaces
+    # cannot explain the same silence two different ways.
+    cold_endorsement_suppressed: bool = False
 
     silent_miss_recent: list[SilentMissCandidate] = field(default_factory=list)
 
@@ -381,6 +412,10 @@ class EvalReport:
                 "min_retrievals": self.endorsement_min_retrievals,
                 "total": self.cold_endorsement_memories_total,
                 "rows": [r.to_dict() for r in self.cold_endorsement_memories_rows],
+                "suppressed": self.cold_endorsement_suppressed,
+                "suppressed_reason": (
+                    _HOOKLESS_REASON if self.cold_endorsement_suppressed else None
+                ),
             },
             "silent_miss_recent": [c.to_dict() for c in self.silent_miss_recent],
         }
@@ -485,6 +520,19 @@ def compute_eval(
     use occurrences — we attribute via id, not via live status — but
     it cannot participate in cold-endorsement rows because we need
     its body/scopes for display.
+
+    The ``cold_endorsement_memories`` bucket mirrors health's on both
+    axes the 2026-08-30 recalibration touched: the per-memory floor
+    count is SEARCH deliveries only (``memory_list`` browses and
+    ``memory_show`` pinpoint reads keep feeding
+    ``retrieval_occurrences`` but not the floor — see the
+    ``search_delivery_count`` comment below), and the bucket rides the
+    same Stop-hook telemetry honesty gate: on a log with zero
+    ``health.is_hook_telemetry_event`` rows — measured over the whole
+    log, not the window — the rows are skipped entirely and
+    ``cold_endorsement_suppressed`` says so, because
+    ``explicit_applied_count == 0`` is uninformative when nothing was
+    ever in a position to attribute an apply.
     """
     now = now or datetime.now(timezone.utc)
     cutoff: datetime | None = (now - since) if since is not None else None
@@ -521,10 +569,29 @@ def compute_eval(
     total_events_scanned = 0
     events_in_window = 0
 
-    # Per-memory counts for cold-endorsement rollup.
-    retrieval_count: dict[str, int] = {}
+    # Per-memory counts for cold-endorsement rollup. The floor basis is
+    # SEARCH deliveries only — `list` and `show` occurrences do NOT
+    # count — mirroring health's `MemoryStats.retrieval_count`, which
+    # only `_handle_search` bumps (`show` feeds a separate `show_count`;
+    # there is no `list` handler at all). Two reasons the bases must
+    # match: the recalibrated floor is DERIVED per search delivery
+    # ((1-p)^N over search-delivered explicit-endorse odds), and one
+    # `memory_list` call over an N-memory store would otherwise bump
+    # every memory's floor count at once, so the two surfaces would
+    # bucket different memories under the same nominal floor. The
+    # `retrieval_occurrences` scalar deliberately keeps its wider
+    # search+list+show basis — it is the helped-rate denominator with a
+    # recorded baseline, not a floor input.
+    search_delivery_count: dict[str, int] = {}
     auto_applied_count: dict[str, int] = {}
     explicit_applied_count: dict[str, int] = {}
+    # Stop-hook settlement coverage for the cold-endorsement honesty
+    # gate — counted over the WHOLE log (before the window filter),
+    # matching `health.compute_health` / `curation_counts`, whose
+    # accumulators measure "did settlement telemetry EVER reach this
+    # event log", not "recently". Costs nothing: the walk below already
+    # visits every event.
+    hook_telemetry_events = 0
 
     # Rolling buffer of recent silent-miss events (last K, since
     # events come in chronological order — we just keep the tail).
@@ -579,6 +646,10 @@ def compute_eval(
             events_in_window += 1
 
         kind = ev.get("kind")
+        # Coverage tally — like the markers below, deliberately ahead
+        # of the window skip: the honesty gate asks about the whole log.
+        if is_hook_telemetry_event(ev):
+            hook_telemetry_events += 1
         # Invalidation markers — resolved BEFORE the `since` window
         # filter, mirroring `curation_counts`' delta-mode exemption:
         # both are global markers, so a cutoff/ack whose own ts falls
@@ -630,15 +701,22 @@ def compute_eval(
                 if not passes_scope(mid):
                     continue
                 retrieval_occurrences += 1
-                retrieval_count[mid] = retrieval_count.get(mid, 0) + 1
+                # Floor basis: search deliveries only (see the
+                # `search_delivery_count` comment above), so a `list`
+                # browse widens the rate denominator without pushing
+                # every browsed memory toward the cold bucket.
+                if kind == "search":
+                    search_delivery_count[mid] = search_delivery_count.get(mid, 0) + 1
         elif kind == "show":
             mid = ev.get("id")
             if not isinstance(mid, str):
                 continue
             if not passes_scope(mid):
                 continue
+            # A pinpoint read counts as a retrieval occurrence but not
+            # toward the cold-endorsement floor — health keys `show`
+            # into `show_count`, never `retrieval_count`.
             retrieval_occurrences += 1
-            retrieval_count[mid] = retrieval_count.get(mid, 0) + 1
         elif kind == "use":
             outcome = ev.get("outcome")
             if outcome != "applied":
@@ -789,11 +867,11 @@ def compute_eval(
                 elif len(silent_miss_buffer) > silent_miss_limit:
                     silent_miss_buffer = silent_miss_buffer[-silent_miss_limit:]
 
-    # Cold-endorsement rows: retrieval_count >= floor AND at least one
-    # apply happened AND explicit_applied_count == 0. Ambient memories
-    # are excluded — same rationale as health's cold_endorsement_memories
-    # bucket (their value is implicit; an explicit use event is
-    # structurally rare).
+    # Cold-endorsement rows: search deliveries >= floor AND at least
+    # one apply happened AND explicit_applied_count == 0. Ambient
+    # memories are excluded — same rationale as health's
+    # cold_endorsement_memories bucket (their value is implicit; an
+    # explicit use event is structurally rare).
     #
     # The "at least one apply" gate (auto + explicit > 0) keeps the
     # bucket as the COMPLEMENT of dead_weight, matching health's
@@ -801,35 +879,47 @@ def compute_eval(
     # but every one was the auto fallback." A memory retrieved over the
     # floor with zero applies is dead_weight, not cold-endorsement, and
     # must not surface here.
+    #
+    # Honesty gate, mirroring health's `telemetry_coverage` (widened to
+    # the endorsement leg 2026-08-30): with zero Stop-hook settlement
+    # telemetry anywhere in the log, the loop is SKIPPED, not run and
+    # filtered — the input signal (`explicit_applied_count`, produced
+    # by the hook's containment matcher plus deliberate model calls) is
+    # missing for every row at once, so listing rows would report an
+    # unwired hook as acknowledge-debt. The report's
+    # `cold_endorsement_suppressed` flag explains the empty bucket.
     floor = max(1, int(endorsement_min_retrievals))
     cold_rows: list[ColdEndorsementMemoriesRow] = []
     cold_total = 0
-    for mid, rcount in retrieval_count.items():
-        if rcount < floor:
-            continue
-        if auto_applied_count.get(mid, 0) + explicit_applied_count.get(mid, 0) == 0:
-            continue
-        if explicit_applied_count.get(mid, 0) > 0:
-            continue
-        mem = by_id.get(mid)
-        if mem is None:
-            continue
-        if mem.category == "ambient":
-            continue
-        cold_total += 1
-        cold_rows.append(
-            ColdEndorsementMemoriesRow(
-                id=mem.id,
-                scopes=list(mem.scopes),
-                summary=first_summary_line(mem.body),
-                retrieval_count=rcount,
-                auto_applied_count=auto_applied_count.get(mid, 0),
-                explicit_applied_count=0,
+    cold_suppressed = hook_telemetry_events == 0
+    if not cold_suppressed:
+        for mid, rcount in search_delivery_count.items():
+            if rcount < floor:
+                continue
+            if auto_applied_count.get(mid, 0) + explicit_applied_count.get(mid, 0) == 0:
+                continue
+            if explicit_applied_count.get(mid, 0) > 0:
+                continue
+            mem = by_id.get(mid)
+            if mem is None:
+                continue
+            if mem.category == "ambient":
+                continue
+            cold_total += 1
+            cold_rows.append(
+                ColdEndorsementMemoriesRow(
+                    id=mem.id,
+                    scopes=list(mem.scopes),
+                    summary=first_summary_line(mem.body),
+                    retrieval_count=rcount,
+                    auto_applied_count=auto_applied_count.get(mid, 0),
+                    explicit_applied_count=0,
+                )
             )
-        )
-    # Sort by retrieval_count descending so the chattiest dead-letter
-    # rows surface first; tie-break by id for determinism.
-    cold_rows.sort(key=lambda r: (-r.retrieval_count, r.id))
+        # Sort by retrieval_count descending so the chattiest
+        # dead-letter rows surface first; tie-break by id for
+        # determinism.
+        cold_rows.sort(key=lambda r: (-r.retrieval_count, r.id))
 
     report = EvalReport(
         generated_at=now,
@@ -850,6 +940,7 @@ def compute_eval(
         cold_endorsement_memories_rows=cold_rows,
         cold_endorsement_memories_total=cold_total,
         endorsement_min_retrievals=floor,
+        cold_endorsement_suppressed=cold_suppressed,
         silent_miss_recent=silent_miss_buffer,
         repeat_audits=repeat_audits,
         by_model=by_model,
@@ -926,6 +1017,12 @@ def render_text(report: EvalReport) -> str:
             )
         if report.cold_endorsement_memories_total > 10:
             lines.append(f"  … plus {report.cold_endorsement_memories_total - 10} more")
+    elif report.cold_endorsement_suppressed:
+        # The one shared sentence (`health._HOOKLESS_REASON`) so this
+        # renderer, memory_health, and the consolidate refusal cannot
+        # drift into different explanations of the same silence.
+        lines.append("")
+        lines.append(f"Cold-endorsement memories: suppressed — {_HOOKLESS_REASON}")
 
     if report.silent_miss_recent:
         lines.append("")
@@ -2378,6 +2475,38 @@ def render_widening_detail_text(report: WideningDetailReport) -> str:
 # an "approximate" lane would put a number the mechanism can't back in
 # front of a flip decision. Turns logged before the capture shipped are
 # counted and labeled not-replayable instead.
+#
+# One turn, one row — the delivered-recall companion dedup: a delivery
+# writes `prompt_recall` at prompt time, and the Stop hook still audits
+# the SAME message at turn end (`is_duplicate_audit` matches prior
+# `turn_audited` events only, so the companion lands with
+# `repeat=False`, verdict "ok", `suppressed_by="retrieval"`) carrying
+# the same usage capture — `prompt_recall_fields`' docstring names this
+# companion. Both clear the per-event filters, so counting both would
+# double every recall-cohort turn and its toggle change, letting the
+# bars' "n >= 10 changed turns" hold be crossed with 5 real turns. The
+# walk therefore skips a `turn_audited` row whose (session,
+# `probe_query` hash-or-text) pair matches a kept `prompt_recall` row
+# within `audit.REAUDIT_DEDUP_WINDOW_SECONDS` before it — the same key
+# and window the producers' own re-audit dedup reads, and the same
+# never-match bias for events without `probe_query` — keeping the
+# recall row because it records what the model was actually shown.
+#
+# Invalidation markers: the bulk `silent_miss_cutoff` (written by
+# `bettermemory consolidate --acknowledge-misses-before`) IS honored,
+# with `compute_eval`'s global latest-wins semantics — a marker whose
+# own ts falls outside `--since` still applies, and audit/recall rows
+# earlier than the latest `cutoff_ts` drop as if never logged. Unlike
+# the widening replay, whose cutoff exemption is time-bound ("no event
+# that predates the feature payload can enter"), usage captures ship
+# 6.4.0+ alongside the cutoff machinery, so a cutoff written to
+# retract a post-capture bad batch overlaps this lane's input and must
+# not be ignored. Per-event `miss_ack` markers are structurally
+# unjoinable here and deliberately NOT applied: a `miss_ack` retracts
+# one `search_miss` by `event_id`, and the schema carries no link from
+# that id to the same turn's `turn_audited` / `prompt_recall` row —
+# nor does any surface retract the logged verdict `miss_labeled`
+# reads. The bulk cutoff is this lane's only retraction path.
 
 # Pinned judgment rule for a changed top-1, versioned like the
 # threshold rules so a future rule can be swept against the same log.
@@ -2398,6 +2527,49 @@ USAGE_IMPROVEMENT_RULE = "v1_relevance_v2_tier_then_matched_unique"
 USAGE_DEMOTION_INVARIANT_RULE = "v1_later_top1_explicit_apply_within_600s"
 
 _USAGE_V2_TIER = {"low": 0, "medium": 1, "high": 2}
+
+
+def _capture_int(value: Any) -> int:
+    """Read a log-sourced capture feature (``matched_unique`` /
+    ``query_unique``) as an int, degrading anything else to 0.
+
+    Same element discipline as the sweep and widening walks' hit
+    guards: the event log is plaintext + git-synced + hand-editable,
+    so one torn or hand-mangled entry (``matched_unique: "3x"``, a
+    list, a merge-conflict fragment) must degrade the one row a bare
+    ``int(...)`` would have crashed the whole CLI run on. ``bool`` ⊂
+    ``int`` — same caveat as ``_silent_miss_from_event``: a stray
+    ``True`` would otherwise count as 1.
+    """
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def _replay_probe_key(ev: dict[str, Any]) -> tuple[str, str, str] | None:
+    """Dedup key joining a ``prompt_recall`` row to its same-turn
+    ``turn_audited`` companion: (session, probe-query shape, value).
+
+    Reads ``probe_query`` in BOTH shapes the Recorder produces —
+    mirroring ``audit.is_duplicate_audit``: the redacted ``{hash,
+    preview, len}`` dict keys on its ``hash``; the verbatim string
+    (``log_queries_verbatim = true``) keys on itself. Both events of a
+    pair pass through the same redaction, so like compares with like;
+    the shape tag keeps a verbatim string from ever colliding with a
+    hash. Events without a usable session or ``probe_query`` return
+    ``None`` and never match — the same bias toward the pre-existing
+    behavior (count the row) the producer-side dedup documents.
+    """
+    session = ev.get("session_id") or ev.get("session")
+    if not isinstance(session, str) or not session:
+        return None
+    pq = ev.get("probe_query")
+    if isinstance(pq, dict):
+        digest = pq.get("hash")
+        if isinstance(digest, str) and digest:
+            return (session, "hash", digest)
+        return None
+    if isinstance(pq, str) and pq:
+        return (session, "text", pq)
+    return None
 
 
 def _judge_usage_change(
@@ -2504,6 +2676,12 @@ class UsageReplayReport:
     turn_audited_turns: int
     prompt_recall_turns: int
     repeat_audits_skipped: int
+    # Stop-hook audits of a message whose delivered recall is already a
+    # row — the same-turn companion pair the section comment describes.
+    # Skipped so a recall-cohort turn counts once, and tallied here
+    # (mirroring `repeat_audits_skipped`) so the dedup's reach stays
+    # observable.
+    recall_companion_audits_skipped: int
     turns_without_capture: int
     first_capture_ts: str | None
     endorsed_distinct_in_window: int
@@ -2522,6 +2700,7 @@ class UsageReplayReport:
             "turn_audited_turns": self.turn_audited_turns,
             "prompt_recall_turns": self.prompt_recall_turns,
             "repeat_audits_skipped": self.repeat_audits_skipped,
+            "recall_companion_audits_skipped": self.recall_companion_audits_skipped,
             "turns_without_capture": self.turns_without_capture,
             "first_capture_ts": self.first_capture_ts,
             "endorsed_distinct_in_window": self.endorsed_distinct_in_window,
@@ -2546,15 +2725,28 @@ def compute_usage_replay(
     `prompt_recall` events (a delivery IS a miss verdict, computed
     before the turn) that carry a well-formed `top_hits` payload —
     the same guards `_collect_replayable_audits` applies, extended to
-    the delivery lane. The same single pass tallies the density
-    preconditions the bars declare: distinct memories with explicit
-    non-auto `applied` use events, and distinct memories with negative
-    (`ignored` / `contradicted`) use events, both inside the window.
-    `memories` feeds the corroboration-liveness counts (the persisted
-    rollup is the signal `corroboration_boost` ranks on; the event log
-    has nothing to say about it).
+    the delivery lane — minus a delivered recall's same-turn Stop-hook
+    companion audit, which is skipped so each turn lands in exactly
+    one row (see the section comment; the recall row is the one kept).
+    The same pass tallies the density preconditions the bars declare:
+    distinct memories with explicit non-auto `applied` use events, and
+    distinct memories with negative (`ignored` / `contradicted`) use
+    events, both inside the window. `memories` feeds the
+    corroboration-liveness counts (the persisted rollup is the signal
+    `corroboration_boost` ranks on; the event log has nothing to say
+    about it).
+
+    Audit/recall rows honor the bulk `silent_miss_cutoff` marker with
+    `compute_eval`'s global latest-wins semantics — buffered during
+    the walk and resolved after it, so a cutoff later in the log (or
+    outside the `--since` window) still retracts the batch every rate
+    surface has already invalidated. Per-event `miss_ack` markers are
+    structurally unjoinable to these rows and are not applied — the
+    section comment carries the full position. `use` events are
+    settlement telemetry, not miss telemetry, and stay outside the
+    cutoff, matching `compute_eval`.
     """
-    from .audit import ATTRIBUTION_LOOKBACK_SECONDS
+    from .audit import ATTRIBUTION_LOOKBACK_SECONDS, REAUDIT_DEDUP_WINDOW_SECONDS
     from .events import _event_id_list
     from .search import USAGE_FLAG_NAMES
 
@@ -2565,9 +2757,20 @@ def compute_usage_replay(
     turn_audited_turns = 0
     prompt_recall_turns = 0
     repeats_skipped = 0
+    recall_companions_skipped = 0
     turns_without_capture = 0
     first_capture_ts: str | None = None
+    latest_miss_cutoff: datetime | None = None
 
+    # In-window audit/recall candidates buffered as (ts, event) for
+    # post-pass resolution against the invalidation cutoff — counting
+    # them inline would let a `silent_miss_cutoff` later in the log
+    # arrive too late to retract an already-counted turn. Same
+    # buffer-then-resolve shape as `compute_eval` /
+    # `compute_threshold_sweep`; with no cutoff in the stream the
+    # resolution pass is the identity walk (order preserved), so the
+    # counting matches the pre-buffer inline loop exactly.
+    buffered_turns: list[tuple[datetime, dict[str, Any]]] = []
     # One row per replayable turn, in stream order:
     # (ts, kind, miss_labeled, top1_dict, usage_active, usage_toggles)
     rows: list[
@@ -2586,9 +2789,22 @@ def compute_usage_replay(
         in_window = cutoff is None or (ts is not None and ts >= cutoff)
         if in_window:
             events_in_window += 1
+        kind = ev.get("kind")
+        # Global invalidation marker — resolved BEFORE the window skip,
+        # mirroring `compute_eval` / `compute_threshold_sweep`: a
+        # cutoff whose own ts falls outside `--since` still applies.
+        # Latest `cutoff_ts` wins; a malformed value parses to None and
+        # is ignored. `miss_ack` events fall through unhandled on
+        # purpose — see the docstring.
+        if kind == "silent_miss_cutoff":
+            parsed_cutoff = _parse_ts(ev.get("cutoff_ts"))
+            if parsed_cutoff is not None and (
+                latest_miss_cutoff is None or parsed_cutoff > latest_miss_cutoff
+            ):
+                latest_miss_cutoff = parsed_cutoff
+            continue
         if not in_window or ts is None:
             continue
-        kind = ev.get("kind")
         if kind == "use":
             outcome = ev.get("outcome")
             ids = _event_id_list(ev.get("ids") or ev.get("memory_ids"))
@@ -2600,7 +2816,30 @@ def compute_usage_replay(
             continue
         if kind not in ("turn_audited", "prompt_recall"):
             continue
-        if kind == "turn_audited":
+        buffered_turns.append((ts, ev))
+
+    # Resolve the buffered turns. A row invalidated by the latest
+    # cutoff (ts strictly before `cutoff_ts`) is dropped from
+    # EVERYTHING — both kind counters, the repeat/companion skip
+    # tallies, the capture split, and the replay rows — as if never
+    # logged, matching `compute_eval`'s resolution. Rows with an
+    # unparseable ts never reach this loop (dropped above even with no
+    # cutoff), so health's conservative unparseable-ts read is moot
+    # here.
+    #
+    # `recall_seen` drives the companion dedup: a kept `prompt_recall`
+    # row registers its (session, probe) key — latest delivery wins —
+    # and a later `turn_audited` matching that key within the producer
+    # dedup window is the same turn's second measurement, skipped. A
+    # cutoff-retracted recall deliberately does NOT register: with the
+    # delivery erased, the surviving audit is the turn's only
+    # measurement and counting it once is correct.
+    recall_seen: dict[tuple[str, str, str], datetime] = {}
+    for ts, ev in buffered_turns:
+        if latest_miss_cutoff is not None and ts < latest_miss_cutoff:
+            continue
+        kind_s = str(ev.get("kind"))
+        if kind_s == "turn_audited":
             if ev.get("repeat"):
                 repeats_skipped += 1
                 continue
@@ -2613,12 +2852,26 @@ def compute_usage_replay(
             or not isinstance(top_hits[0], dict)
         ):
             continue
-        if kind == "turn_audited":
+        if kind_s == "turn_audited":
+            key = _replay_probe_key(ev)
+            if key is not None:
+                recall_ts = recall_seen.get(key)
+                if (
+                    recall_ts is not None
+                    and 0
+                    <= (ts - recall_ts).total_seconds()
+                    <= REAUDIT_DEDUP_WINDOW_SECONDS
+                ):
+                    recall_companions_skipped += 1
+                    continue
             turn_audited_turns += 1
             miss_labeled = ev.get("verdict") == "miss"
         else:
             prompt_recall_turns += 1
             miss_labeled = True
+            key = _replay_probe_key(ev)
+            if key is not None:
+                recall_seen[key] = ts
         usage_active_raw = ev.get("usage_active")
         usage_active = (
             [f for f in usage_active_raw if isinstance(f, str)]
@@ -2634,7 +2887,7 @@ def compute_usage_replay(
         else:
             turns_without_capture += 1
         rows.append(
-            (ts, str(kind), miss_labeled, top_hits[0], usage_active, usage_toggles)
+            (ts, kind_s, miss_labeled, top_hits[0], usage_active, usage_toggles)
         )
 
     flags: list[UsageFlagReplay] = []
@@ -2651,10 +2904,14 @@ def compute_usage_replay(
             off = toggle.get("top1")
             if not isinstance(off, dict):
                 continue
+            # `_capture_int`, not bare `int(...)`: a hand-mangled
+            # feature value must degrade this one row to 0, not crash
+            # the run — the same threat model the sweep / widening hit
+            # guards document.
             on_v2 = str(top1.get("relevance_v2") or "low")
-            on_matched = int(top1.get("matched_unique") or 0)
+            on_matched = _capture_int(top1.get("matched_unique"))
             off_v2 = str(off.get("relevance_v2") or "low")
-            off_matched = int(off.get("matched_unique") or 0)
+            off_matched = _capture_int(off.get("matched_unique"))
             judgment = _judge_usage_change(on_v2, on_matched, off_v2, off_matched)
             changes.append(
                 UsageToggleChange(
@@ -2667,8 +2924,12 @@ def compute_usage_replay(
                     off_top1_id=str(off.get("id") or ""),
                     off_relevance_v2=off_v2,
                     off_matched_unique=off_matched,
-                    query_unique=int(
-                        off.get("query_unique") or top1.get("query_unique") or 0
+                    # Guarded per side so a malformed `off` value falls
+                    # through to the production hit's copy (both sides
+                    # describe the same probe query) instead of raising.
+                    query_unique=(
+                        _capture_int(off.get("query_unique"))
+                        or _capture_int(top1.get("query_unique"))
                     ),
                     judgment=judgment,
                 )
@@ -2739,6 +3000,7 @@ def compute_usage_replay(
         turn_audited_turns=turn_audited_turns,
         prompt_recall_turns=prompt_recall_turns,
         repeat_audits_skipped=repeats_skipped,
+        recall_companion_audits_skipped=recall_companions_skipped,
         turns_without_capture=turns_without_capture,
         first_capture_ts=first_capture_ts,
         endorsed_distinct_in_window=len(endorsed_ids),
@@ -2769,6 +3031,12 @@ def render_usage_replay_text(report: UsageReplayReport) -> str:
         lines.append(
             f"  (skipped {report.repeat_audits_skipped} repeat audits — "
             "multi-stop re-probes of the same message)"
+        )
+    if report.recall_companion_audits_skipped:
+        lines.append(
+            f"  (skipped {report.recall_companion_audits_skipped} "
+            "recall-companion audits — the Stop hook re-auditing a "
+            "message whose delivered recall is already counted)"
         )
     if report.turns_without_capture:
         lines.append(
