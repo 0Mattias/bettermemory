@@ -2533,6 +2533,8 @@ def _quiescent_drift_applicable(
     cwd: Path,
     anchors: Sequence[str],
     claims: Sequence[Claim],
+    *,
+    toplevel: Path | None = None,
 ) -> bool:
     """Classify commit-drift APPLICABILITY when the repo is quiescent.
 
@@ -2573,21 +2575,31 @@ def _quiescent_drift_applicable(
     infrastructure failure degrades to the incumbent clean/0 rather
     than silently widening the not-applicable exemption.
 
-    Cost: one ``rev-parse`` plus at most one path-filtered ``git log``
-    (both legs share a single log over the union, where the positive
-    branch's claim split needs two), paid only on the quiescent branch
-    of an ANCHORED memory — the untethered class (the measured
-    100%-false-positive population the anchor gate exists for) still
-    pays no git work, because `compute_commit_drift` returns None
-    before reaching here. The batch surfaces
-    (`_response.attach_commit_drift_counts`,
-    `health._compute_commit_drift_debt`) still gate ALL resolution on a
-    positive count and so still emit 0 for a quiescent all-escaping
-    memory; their alignment is a change to their own files, recorded
-    here so the divergence is at least written down rather than implied
-    away.
+    Cost: one ``rev-parse`` (skipped when the caller threads an
+    already-resolved `toplevel`, as the per-hit search surface does)
+    plus at most one path-filtered ``git log`` (both legs share a
+    single log over the union, where the positive branch's claim split
+    needs two), paid only on the quiescent branch of an ANCHORED
+    memory — the untethered class (the measured 100%-false-positive
+    population the anchor gate exists for) still pays no git work,
+    because `compute_commit_drift` returns None before reaching here.
+    The escape half is pure path arithmetic: an all-escaping anchor
+    set returns False before the log is ever forked.
+
+    Two other surfaces mint or count a per-memory drift figure. The
+    per-hit search surface (`_response.attach_commit_drift_counts`)
+    runs THIS classification on its own quiescent branch and omits the
+    count where the signal does not apply — an affirmative 0 there is
+    read exactly as memory_show's clean/0 is. The health rollups
+    (`_compute_commit_drift_debt`, the curation ``drifted`` count) do
+    not need it: they report only ``count > 0`` rows and totals, so a
+    quiescent memory contributes nothing whether or not the signal
+    applies — there is no affirmative 0 for a classification to
+    correct, and running the log per caught-up memory on a store-wide
+    pass would buy nothing but forks.
     """
-    toplevel = repo_toplevel(cwd)
+    if toplevel is None:
+        toplevel = repo_toplevel(cwd)
     specs: list[str] = []
     if anchors:
         resolved = resolve_repo_pathspecs(cwd, list(anchors), toplevel=toplevel)

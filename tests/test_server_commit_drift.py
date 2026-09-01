@@ -678,11 +678,19 @@ async def test_memory_search_hits_carry_zero_commit_drift_count_when_clean(
 ) -> None:
     """A hit anchored to the matching repo with no commits since verify
     carries `commit_drift_count: 0` — positive evidence the calendar
-    verification still reflects reality, distinct from "field absent"."""
+    verification still reflects reality, distinct from "field absent".
+    The ancient commit TOUCHES the cited `notes.md`: the hit surface now
+    classifies applicability on its quiescent branch, and a citation no
+    commit ever touched is a phantom anchor that omits the key."""
     repo = tmp_path / "repo"
     repo.mkdir()
     _init_repo(repo)
-    _commit_at(repo, "ancient", when=datetime(2020, 1, 1, tzinfo=timezone.utc))
+    _commit_touching(
+        repo,
+        "ancient",
+        when=datetime(2020, 1, 1, tzinfo=timezone.utc),
+        filename="notes.md",
+    )
 
     origin = Origin(cwd=str(repo), repo=_REMOTE, branch="main")
     server = server_with_fake_origin(origin)
@@ -861,6 +869,124 @@ def test_commit_drift_count_git_cost_shape(
     forks, annotated = count_git_calls(bodies_cite_paths=False)
     assert annotated == 0
     assert forks == 2
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_commit_drift_count_omitted_when_anchors_escape_and_repo_quiescent(
+    memory_dir: Path, tmp_path: Path
+) -> None:
+    """The hit-surface sibling of memory_show's quiescent classification.
+
+    `compute_commit_drift` stopped minting clean/0 for a memory whose
+    anchors all escape the caller's repo when the repo has simply sat
+    still since the verify (the escape/phantom rules now run on the
+    quiescent branch too). The per-hit search surface gated ALL of its
+    resolution on `count > 0` and so kept stamping `commit_drift_count:
+    0` on exactly that memory — an affirmative "measured, nothing
+    moved" beside a verdict the show surface had stopped reading clean.
+    Same memory, same quiescent repo: the key must be OMITTED here, and
+    a memory anchored to a real in-repo file keeps its honest 0.
+    """
+    from bettermemory._response import ResponseBuilder
+    from bettermemory.search import search as run_search
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    (repo / "notes.md").write_text("anchor\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "add", "notes.md"], cwd=repo, check=True, capture_output=True
+    )
+    _commit_at(repo, "seed", when=datetime(2025, 1, 1, tzinfo=timezone.utc))
+
+    origin = Origin(cwd=str(repo), repo=_REMOTE, branch="main")
+    store = Store(memory_dir)
+    escaping = store.write(
+        content=(
+            "widget rule: the router config lives at /data/compose/.env on the board"
+        ),
+        scopes=["tools"],
+        origin=origin,
+    )
+    anchored = store.write(
+        content=f"widget rule: claims about {repo / 'notes.md'} hold",
+        scopes=["tools"],
+        origin=origin,
+    )
+    # Verified AFTER the only commit: zero repo-wide commits since, for
+    # both memories.
+    store.mark_verified(escaping.id)
+    store.mark_verified(anchored.id)
+
+    memories = store.load_all()
+    hits = run_search(memories, "widget rule", max_results=50)
+    builder = ResponseBuilder(stale_after_days=30)
+    now = datetime.now(timezone.utc)
+    out = [builder.hit_to_dict(h, now=now) for h in hits]
+    builder.attach_commit_drift_counts(out, hits, memories, caller_origin=origin)
+    by_id = {hit["id"]: hit for hit in out}
+    assert {escaping.id, anchored.id} <= set(by_id), "fixture must surface both"
+    assert "commit_drift_count" not in by_id[escaping.id], (
+        "all-escaping anchors in a quiescent repo minted an affirmative 0"
+    )
+    assert by_id[anchored.id]["commit_drift_count"] == 0
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_commit_drift_count_quiescent_anchored_hits_pay_one_classification_log(
+    memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The quiescent half of the cost contract: a caught-up hit with an
+    in-repo anchor forks exactly one path-filtered log (the phantom
+    check), so three such hits cost ``2 + 3`` git processes — the same
+    bound the drifting shape pays, never more."""
+    from bettermemory import origin as origin_module
+    from bettermemory._response import ResponseBuilder
+    from bettermemory.search import search as run_search
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    anchors = [repo / f"notes{i}.md" for i in range(3)]
+    for path in anchors:
+        path.write_text("anchor\n", encoding="utf-8")
+        subprocess.run(
+            ["git", "add", path.name], cwd=repo, check=True, capture_output=True
+        )
+    _commit_at(repo, "seed", when=datetime(2025, 1, 1, tzinfo=timezone.utc))
+
+    origin = Origin(cwd=str(repo), repo=_REMOTE, branch="main")
+    store = Store(memory_dir)
+    for i, path in enumerate(anchors):
+        memory = store.write(
+            content=f"widget rule number {i} lives in {path}",
+            scopes=["tools"],
+            origin=origin,
+        )
+        store.mark_verified(memory.id)
+
+    memories = store.load_all()
+    hits = run_search(memories, "widget rule", max_results=50)
+    builder = ResponseBuilder(stale_after_days=30)
+    now = datetime.now(timezone.utc)
+    out = [builder.hit_to_dict(h, now=now) for h in hits]
+    calls: list[tuple[str, ...]] = []
+    real_git = origin_module._git
+
+    def spy(cwd: Path, *args: str, **kwargs: Any) -> Any:
+        calls.append(args)
+        return real_git(cwd, *args, **kwargs)
+
+    monkeypatch.setattr(origin_module, "_git", spy)
+    try:
+        builder.attach_commit_drift_counts(out, hits, memories, caller_origin=origin)
+    finally:
+        monkeypatch.setattr(origin_module, "_git", real_git)
+    counts = [hit["commit_drift_count"] for hit in out if "commit_drift_count" in hit]
+    assert counts == [0, 0, 0]
+    assert calls[0][:2] == ("log", "--format=%aI")
+    assert calls[1][:2] == ("rev-parse", "--show-toplevel")
+    assert len(calls) == 2 + 3
 
 
 # ---------------------------------------------------------------------------

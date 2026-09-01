@@ -41,6 +41,7 @@ from .time_utils import isoformat_utc_optional as _isoformat_utc_optional
 from .time_utils import parse_event_ts
 from .claims import load_claims
 from .verify import (
+    _quiescent_drift_applicable,
     commit_drift_anchor_paths,
     compute_staleness_verdict,
     compute_verification_status,
@@ -492,16 +493,20 @@ class ResponseBuilder:
         claim anchor or declared claim), one more git fork+exec, the
         path-filtered `commit_author_timestamps_touching_pathspecs` log.
         The git-process
-        count is therefore ``2 + <drifting anchored hits>``, bounded above
-        by ``2 + len(hits)`` (`max_results` caps that at 50 on the MCP
-        surface, 30 on the web's). That third call buys the SAME
+        count is therefore ``2 + <anchored hits that fork a path-filtered
+        log>``: every drifting anchored hit, plus every quiescent
+        (count == 0) anchored hit with at least one in-repo anchor —
+        the phantom half of the applicability classification
+        (`verify._quiescent_drift_applicable`; an all-escaping anchor
+        set is classified without git). Bounded above by
+        ``2 + len(hits)`` (`max_results` caps that at 50 on the MCP
+        surface, 30 on the web's). The narrowing call buys the SAME
         claim-anchored narrowing `memory_show` and the health rollups run —
         a cheaper per-surface shortcut here is precisely how the four
-        surfaces used to disagree — and the two gates keep the ordinary
-        shapes at zero extra forks: a caught-up memory (count == 0) and an
-        untethered one (no anchors, no declared claims) never reach it.
+        surfaces used to disagree — and the untethered gate (no anchors,
+        no declared claims) keeps that shape at zero extra forks.
         ``tests/test_server_commit_drift.py::test_commit_drift_count_git_cost_shape``
-        pins that arithmetic.
+        and its quiescent sibling pin that arithmetic.
 
         Omitted (key absent from the dict, not set to null) when:
 
@@ -608,9 +613,10 @@ class ResponseBuilder:
             # whole-second boundary could resurrect drift a clean bisect had
             # ruled out — hence the clamp this guard used to backstop. Both are
             # gone; the date spaces are unified at the source.)
-            # What the guard still does: skip a needless `git log` for a
-            # caught-up memory, and keep an unmoved repo reading "clean" rather
-            # than routing through the phantom/not-applicable path.
+            # What the guard still does: route a caught-up memory to the
+            # quiescent applicability classification below instead of the
+            # narrowing, so an unmoved repo reads "clean" only for a memory
+            # the signal actually applies to.
             if count > 0:
                 # The claim-aware entry point over the same shared core
                 # `memory_show` uses (`resolve_commit_drift_count` is its
@@ -637,6 +643,22 @@ class ResponseBuilder:
                         "checked": resolved.claims_checked,
                         "drifted": list(resolved.claims_drifted),
                     }
+            elif not _quiescent_drift_applicable(
+                cwd_path, anchors, parsed_claims, toplevel=toplevel
+            ):
+                # Zero repo-wide commits since the verify. Classify
+                # applicability BEFORE minting the affirmative 0 the model
+                # reads as "measured, nothing moved" — the same
+                # escape/phantom rules `verify.compute_commit_drift` runs
+                # on its quiescent branch, so a hit citing only
+                # remote-host paths omits the key here exactly as
+                # memory_show returns None for it. Pre-fix this surface
+                # gated ALL resolution on `count > 0` and stamped 0 on
+                # the very memory the show surface had stopped reading
+                # clean. The escape half is pure path arithmetic against
+                # the threaded toplevel; only a memory with at least one
+                # in-repo anchor pays the phantom check's filtered log.
+                continue
             hit_dict["commit_drift_count"] = count
             # Recompute the verdict now that we have the commit-drift
             # contribution. `hit_to_dict` initialised it without that
