@@ -1807,6 +1807,16 @@ class _StatsAccumulator:
     # Class-level dispatch table. Defined after the methods so the
     # references resolve; declared on the class so the lookup is
     # built once per process rather than per `handle_event` call.
+    #
+    # `list` events are DELIBERATELY absent: `retrieval_count` is the
+    # ranked-delivery basis the cold-endorsement floor and the
+    # dead-weight rule read (a memory the RANKER keeps surfacing that
+    # the model never applies), and a `memory_list` browse of an entire
+    # scope would mark every row in it retrieved at once. `eval.py`
+    # keys `list` into its `retrieval_occurrences` rate denominator by
+    # design while keeping its own floor basis (`search_delivery_count`)
+    # search-only — the two surfaces split the same way, on purpose;
+    # `show` is likewise keyed into `show_count`, never here.
     _HANDLERS: dict[str, Callable[["_StatsAccumulator", dict[str, Any]], None]] = {
         "search": _handle_search,
         "show": _handle_show,
@@ -2443,7 +2453,12 @@ def _drift_rows_for_candidates(
         # repo: the claims live elsewhere, drift is not applicable, drop
         # the row. Falls back to the unfiltered count only when git can't
         # answer the filtered query. Guarded on count > 0 so a caught-up
-        # memory never pays the extra git call.
+        # memory never pays the extra git call — and, unlike the
+        # per-memory surfaces (memory_show, the search hit), this loop
+        # needs no quiescent applicability classification: it emits
+        # rows for `count > 0` only, so a caught-up memory contributes
+        # nothing whether or not the signal applies to it, and there is
+        # no affirmative 0 here for the escape/phantom rules to correct.
         if count > 0:
             stored_claims = claims_by_id.get(stats.id, ()) if claims_by_id else ()
             resolved = resolve_commit_drift_count(
@@ -3618,7 +3633,11 @@ def curation_counts(
                 # a claim-less preference/lesson), and one whose anchors
                 # all escape this repo is exempt too. Anchor derivation
                 # is pure CPU; git work stays behind the count > 0 guard
-                # so a caught-up memory pays no git call.
+                # so a caught-up memory pays no git call. No quiescent
+                # applicability classification either: this is a
+                # `drifted` COUNT, incremented on `count > 0` only, so a
+                # caught-up memory reads the same zero contribution
+                # whether the signal applies to it or not.
                 anchors = commit_drift_anchor_paths(m.body, m.verified_paths)
                 parsed_claims = load_claims(m.claims) if m.claims else []
                 if not anchors and not parsed_claims:

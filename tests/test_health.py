@@ -1345,6 +1345,22 @@ def test_retrieval_count_from_search_returned_field() -> None:
     assert stats.retrieval_count == 2
 
 
+def test_list_events_do_not_bump_retrieval_count() -> None:
+    """A `memory_list` browse is not a ranked delivery: `retrieval_count`
+    is the cold-endorsement / dead-weight basis, and one scope-wide list
+    would mark every row in it retrieved. Deliberate split from eval's
+    `retrieval_occurrences` denominator, pinned here so the two surfaces
+    cannot silently converge in the wrong direction."""
+    m = _memory()
+    events = [
+        _event("list", returned=[m.id]),
+        _event("list", returned=[m.id]),
+    ]
+    report = compute_health([m], events, now=_utc(2026, 5, 1))
+    stats = next(s for s in report.cold_memories if s.id == m.id)
+    assert stats.retrieval_count == 0
+
+
 def test_show_count_increments() -> None:
     m = _memory()
     events = [
