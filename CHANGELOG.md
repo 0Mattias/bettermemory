@@ -7,6 +7,67 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 6.4.2 - 2026-09-01
+
+A patch by the [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract):
+bug fixes only. Eight of the nine items the round-193 drain carried in
+the audit ledger's Open list are resolved here (six fixes, one
+documented deliberate split, one test-hygiene change), plus one
+attestation defect found while re-attesting the store's own records.
+The remaining carry (author-date-space drift counting wants a
+reachability anchor) stays queued as a design item.
+
+### Fixed
+
+- `66f281f` fix(response): classify quiescent drift applicability on
+  the hit surface. `attach_commit_drift_counts` gated every anchor
+  resolution on a positive repo-wide count and so stamped a
+  `commit_drift_count` of 0 on a memory whose anchors all escape the
+  caller's repo whenever the repo had sat still since the verify,
+  while `memory_show` had already stopped reading the same memory
+  clean. The hit surface now runs the same escape/phantom
+  classification and omits the key where the signal does not apply;
+  the once-resolved repo root is threaded through, so a quiescent hit
+  with an in-repo anchor pays one path-filtered log and the git-process
+  bound of two per search plus one per hit stands.
+- `bf49f84` fix(events): snapshot active segments before rotated in
+  the full read. `iter_all_events` listed the rotated segments first
+  and picked up the active set lazily at merge time, so a rotation
+  landing between the two scans dropped the just-rotated events from
+  a full-history read; the windowed reader's 6.4.1 fix now covers this
+  sibling.
+- `3b4fdae` fix(verify): demote the weak tier when the patch stream is
+  unreadable. A non-empty stream that indexes no files (mojibake, an
+  unrecognised diff format, a merge-commit window without diff bodies)
+  or carries a hunk-count mismatch falls back to the incumbent
+  per-file count instead of passing a silent zero for the governed
+  half.
+- `23aa6d7` fix(verify): anchor in-worktree absolute attestations. An
+  absence attested in absolute form for a file inside the recorded
+  worktree escalated the body's relative citation of that file to
+  `claim_anchored_missing`, while the same attestation spelled
+  relatively routed to `expected_absent`; both spellings now seed the
+  anchored pass and read identically.
+- `6ceb1b9` fix(eval): honor the silent-miss cutoff in the widening
+  replay. The widening preview and detail lanes now drop replayable
+  audits retracted by the latest `silent_miss_cutoff` marker, with the
+  same global max-semantics the rate surfaces apply, and report the
+  count as an additive `cutoff_retracted` field.
+- `3bbc4ea` fix(search): read modal followers after may as the
+  auxiliary. "this may need sudo" no longer parses as a May window: a
+  closed list of the words that follow the modal keeps the auxiliary
+  reading, while "this may 2026" and "this may we migrated" keep
+  theirs.
+
+### Changed
+
+- `af0a58f` the health rollups record why `memory_list` events do not
+  count toward `retrieval_count` (eval's rate denominator includes
+  them by design) and why the batch commit-drift rollups need no
+  quiescent classification; a test pins the health side.
+- `803dd48` the three subprocess-spawning consolidate tests carry a
+  600s hang guard sized for an oversubscribed host.
+
 ## 6.4.1 - 2026-08-31
 
 A patch by the [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract):

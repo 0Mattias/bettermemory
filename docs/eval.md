@@ -230,7 +230,11 @@ Five additional modes:
   overcount production (the project-suppression arm isn't replayable
   from the event), so read the delta, not the absolutes. Because
   logging the RAW pair makes the record formula-agnostic, any future
-  candidate rule can be back-tested the same way.
+  candidate rule can be back-tested the same way. Audits retracted by
+  a `silent_miss_cutoff` marker (written by `consolidate
+  --acknowledge-misses`) are dropped from both widening lanes under
+  the rate surfaces' global latest-cutoff semantics and reported as
+  `cutoff_retracted`, so the replayable population stays explicit.
 - `--widening-preview --detail`: the precision-labeling surface behind
   the counts. Dumps each flagged turn's logged evidence — the redacted
   `probe_query` preview ({hash, 32-char preview, len} by default; the
