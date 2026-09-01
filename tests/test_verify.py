@@ -1956,6 +1956,78 @@ def test_commit_drift_none_for_untethered_memory_despite_commits(
 
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_weak_tier_keeps_zero_for_an_empty_patch_stream(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An EMPTY stream is the legitimate no-touch window: the commits
+    diffed nothing under the governed specs, so no claim fires and the
+    governed half contributes an honest zero — `([], set())`, never a
+    demotion to the incumbent count."""
+    from bettermemory import verify as verify_mod
+    from bettermemory.claims import load_claims
+
+    monkeypatch.setattr(verify_mod, "commit_patch_stream", lambda *a, **k: "")
+    drifted, implicated = verify_mod._weak_tier_evaluation(
+        tmp_path, ["deadbeef"], ["src/x.py"], load_claims(["src/x.py::foo"]), None
+    )
+    assert drifted == []
+    assert implicated == set()
+
+
+def test_weak_tier_demotes_when_stream_indexes_no_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A NON-empty stream whose diff headers never parsed (mojibake, an
+    unrecognised format, or a merge-commit window that lists commits
+    without diff bodies) indexes no files at all. Pre-fix every claim
+    then read "untouched" and the governed half contributed a silent
+    zero. The evaluation must demote to the incumbent per-file count
+    instead — `None` for the implicated set, the caller's fallback."""
+    from bettermemory import verify as verify_mod
+    from bettermemory.claims import COMMIT_MARK, load_claims
+
+    claims = load_claims(["src/x.py::foo"])
+    for stream in (
+        "garbage that is not a diff\nmore \ufffd bytes\n",
+        f"{COMMIT_MARK}deadbeef\n{COMMIT_MARK}cafebabe\n",
+    ):
+        monkeypatch.setattr(
+            verify_mod, "commit_patch_stream", lambda *a, _s=stream, **k: _s
+        )
+        drifted, implicated = verify_mod._weak_tier_evaluation(
+            tmp_path, ["deadbeef", "cafebabe"], ["src/x.py"], claims, None
+        )
+        assert drifted == []
+        assert implicated is None, stream
+
+
+def test_weak_tier_demotes_on_a_hunk_count_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`build_binding_index` counts a hunk whose line tally disagrees with
+    its header instead of raising; a window that produced one cannot be
+    trusted to have indexed the claim's binding, so the weak tier steps
+    aside for the incumbent count rather than passing on a partial read."""
+    from bettermemory import verify as verify_mod
+    from bettermemory.claims import COMMIT_MARK, load_claims
+
+    stream = (
+        f"{COMMIT_MARK}abc1234\n"
+        "diff --git a/src/x.py b/src/x.py\n"
+        "--- a/src/x.py\n"
+        "+++ b/src/x.py\n"
+        "@@ -1,2 +1,1 @@\n"
+        "-def foo():\n"
+        "+def foo(): pass\n"
+    )
+    monkeypatch.setattr(verify_mod, "commit_patch_stream", lambda *a, **k: stream)
+    drifted, implicated = verify_mod._weak_tier_evaluation(
+        tmp_path, ["abc1234"], ["src/x.py"], load_claims(["src/x.py::foo"]), None
+    )
+    assert drifted == []
+    assert implicated is None
+
+
 def test_commit_drift_none_when_anchors_all_escape_repo(tmp_path: Path) -> None:
     """Anchors exist but none resolve inside the caller's repo (remote
     host paths, home-dir configs): the claims live elsewhere, so this

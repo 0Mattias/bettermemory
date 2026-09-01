@@ -2259,6 +2259,21 @@ def _weak_tier_evaluation(
     if stream is None:
         return [], None
     index = build_binding_index(stream)
+    # A stream the parser could not read is an infrastructure failure,
+    # not a clean window. `build_binding_index` COUNTS a malformed hunk
+    # rather than raising, and a non-empty stream whose diff headers
+    # never parsed (a locale-mojibaked or otherwise unrecognised diff)
+    # indexes NO files at all — every claim then reads "untouched" and
+    # the governed half contributes a silent zero to a count whose
+    # `weak` verdict was never actually evaluated. Demote to the
+    # incumbent per-file count (the caller's None branch) on either
+    # signal. An EMPTY stream keeps its zero: that is the legitimate
+    # no-touch case, the window's commits diffed nothing under these
+    # specs. A markers-only stream (commits listed, no diff bodies —
+    # the shape `git log -p` produces for merge commits) is non-empty
+    # and file-less, so it demotes too: the merge DID touch the spec.
+    if index["parse_mismatches"] or (stream.strip() and not index["files"]):
+        return [], None
     window = set(shas)
     drifted: list[str] = []
     implicated: set[str] = set()
