@@ -2914,6 +2914,45 @@ class TestWindowedEventCounts:
         assert "— last 7d" in text
         assert _events_scanned_row(text) == 1
 
+    def test_widening_lanes_honor_the_silent_miss_cutoff(self) -> None:
+        """A `silent_miss_cutoff` marker retracts every replayable audit
+        whose `ts` predates its `cutoff_ts`, in BOTH widening lanes, with
+        the same global max-semantics the rate surfaces apply: the
+        marker governs even when logged outside the window and even
+        when it appears in the stream before the audits it retracts.
+        The retracted rows are counted, not silently dropped."""
+        events = [
+            _audit_event(_AGED_TS),
+            _ev(
+                "silent_miss_cutoff",
+                ts=_AGED_TS,
+                cutoff_ts="2026-05-18T00:00:00.000+00:00",
+            ),
+            _audit_event("2026-05-17T00:00:00.000+00:00"),
+            _audit_event(_FRESH_TS),
+        ]
+        preview = compute_widening_preview(events, now=_WINDOW_NOW)
+        assert preview.audits_with_features == 1
+        assert preview.cutoff_retracted == 2
+        assert preview.v1_baseline_flagged == 1
+        assert preview.to_dict()["cutoff_retracted"] == 2
+        assert "retracted by a silent_miss_cutoff" in render_widening_preview_text(
+            preview
+        )
+        detail = compute_widening_detail(events, now=_WINDOW_NOW)
+        assert detail.audits_with_features == 1
+        assert detail.cutoff_retracted == 2
+        assert detail.to_dict()["cutoff_retracted"] == 2
+        # A later, EARLIER-dated marker cannot undo the later cutoff.
+        undo = events + [
+            _ev(
+                "silent_miss_cutoff",
+                ts=_FRESH_TS,
+                cutoff_ts="2026-01-02T00:00:00.000+00:00",
+            )
+        ]
+        assert compute_widening_preview(undo, now=_WINDOW_NOW).cutoff_retracted == 2
+
     def test_tool_usage_events_scanned_is_window_scoped(self) -> None:
         events = [
             _ev("search", ts=_AGED_TS),

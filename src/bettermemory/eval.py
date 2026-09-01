@@ -1773,9 +1773,15 @@ class WideningPreviewReport:
     that probed to a no-hit result) land in `audits_without_features`
     so the report is explicit about how much history was replayable.
     Repeat audits are excluded (`repeat_audits_skipped`), matching the
-    rate surfaces. The bulk `silent_miss_cutoff` marker is deliberately
-    NOT applied: it retracts pre-3.14 miss batches, and no event that
-    predates the feature payload can enter this replay anyway.
+    rate surfaces. The bulk `silent_miss_cutoff` marker IS applied
+    (`cutoff_retracted`): a replayable audit whose `ts` falls before the
+    latest logged `cutoff_ts` was invalidated by `consolidate
+    --acknowledge-misses` and is dropped from the replay, the same way
+    `compute_eval` drops it from the rate surfaces. The marker used to
+    be skipped on the reasoning that it only ever retracted pre-3.14
+    batches no replay could see; cutoffs have long postdated the
+    feature payload, so an unapplied one let retracted turns keep
+    voting on the widening deltas.
     """
 
     generated_at: datetime
@@ -1789,6 +1795,12 @@ class WideningPreviewReport:
     audits_without_features: int
     repeat_audits_skipped: int
     v1_baseline_flagged: int
+    # Replayable audits retracted by the latest `silent_miss_cutoff`
+    # marker — counted, not silently dropped, so the report stays
+    # explicit about how much history it replayed. Defaulted so a
+    # caller constructing the report without the walk still gets a
+    # well-formed record.
+    cutoff_retracted: int = 0
     rows: list[ThresholdSweepRow] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -1800,6 +1812,7 @@ class WideningPreviewReport:
             "audits_with_features": self.audits_with_features,
             "audits_without_features": self.audits_without_features,
             "repeat_audits_skipped": self.repeat_audits_skipped,
+            "cutoff_retracted": self.cutoff_retracted,
             "v1_baseline_flagged": self.v1_baseline_flagged,
             "rows": [r.to_dict() for r in self.rows],
         }
@@ -1823,6 +1836,9 @@ class _ReplayableAudits:
     with_features: int
     without_features: int
     repeats_skipped: int
+    # Replayable audits dropped because their `ts` predates the latest
+    # `silent_miss_cutoff` marker in the stream.
+    cutoff_retracted: int
     # One (event, top_hits, recent_retrieval_count) triple per
     # replayable audit, in stream order.
     rows: list[tuple[dict[str, Any], list[dict[str, Any]], int]]
@@ -1837,16 +1853,29 @@ def _collect_replayable_audits(
     """Filter the event stream down to replayable audited turns.
 
     Miss-capable (`verdict != "no_signal"`), non-repeat
-    `turn_audited` events carrying a non-empty `top_hits` payload.
+    `turn_audited` events carrying a non-empty `top_hits` payload,
+    minus those retracted by the latest `silent_miss_cutoff` marker.
     Materialised (not a generator) because both consumers need the
     skip counters alongside the rows.
+
+    The cutoff is a GLOBAL marker resolved after the walk, with the
+    same max-semantics `compute_eval` and `health` apply: the latest
+    `cutoff_ts` wins wherever it sits in the stream (an earlier cutoff
+    seen later cannot undo a later one), it governs even when the
+    marker event itself falls outside the `since` window, and once a
+    cutoff exists an audit with an unparseable `ts` drops too — the
+    same conservative read the rate surfaces take. Rows are therefore
+    buffered with their timestamps and filtered once the stream ends.
     """
     cutoff: datetime | None = (now - since) if since is not None else None
     total_events_scanned = 0
     events_in_window = 0
     without_features = 0
     repeats_skipped = 0
-    rows: list[tuple[dict[str, Any], list[dict[str, Any]], int]] = []
+    latest_miss_cutoff: datetime | None = None
+    candidates: list[
+        tuple[dict[str, Any], list[dict[str, Any]], int, datetime | None]
+    ] = []
     for ev in events:
         if not isinstance(ev, dict):
             continue
@@ -1861,7 +1890,18 @@ def _collect_replayable_audits(
             window_ts = _parse_ts(ev.get("ts"))
             if window_ts is not None and window_ts >= cutoff:
                 events_in_window += 1
-        if ev.get("kind") != "turn_audited":
+        kind = ev.get("kind")
+        if kind == "silent_miss_cutoff":
+            # Resolved regardless of the window — a bulk retraction
+            # logged last week still invalidates the turns it names. A
+            # malformed `cutoff_ts` parses to None and is ignored.
+            parsed_cutoff = _parse_ts(ev.get("cutoff_ts"))
+            if parsed_cutoff is not None and (
+                latest_miss_cutoff is None or parsed_cutoff > latest_miss_cutoff
+            ):
+                latest_miss_cutoff = parsed_cutoff
+            continue
+        if kind != "turn_audited":
             continue
         ts = _parse_ts(ev.get("ts"))
         if cutoff is not None and (ts is None or ts < cutoff):
@@ -1894,6 +1934,15 @@ def _collect_replayable_audits(
         # `bool` ⊂ `int` — same caveat as `_silent_miss_from_event`.
         if not isinstance(recent, int) or isinstance(recent, bool):
             recent = 0
+        candidates.append((ev, top_hits, recent, ts))
+    cutoff_retracted = 0
+    rows: list[tuple[dict[str, Any], list[dict[str, Any]], int]] = []
+    for ev, top_hits, recent, row_ts in candidates:
+        if latest_miss_cutoff is not None and (
+            row_ts is None or row_ts < latest_miss_cutoff
+        ):
+            cutoff_retracted += 1
+            continue
         rows.append((ev, top_hits, recent))
     return _ReplayableAudits(
         total_events_scanned=total_events_scanned,
@@ -1901,6 +1950,7 @@ def _collect_replayable_audits(
         with_features=len(rows),
         without_features=without_features,
         repeats_skipped=repeats_skipped,
+        cutoff_retracted=cutoff_retracted,
         rows=rows,
     )
 
@@ -1958,6 +2008,7 @@ def compute_widening_preview(
         audits_with_features=with_features,
         audits_without_features=without_features,
         repeat_audits_skipped=repeats_skipped,
+        cutoff_retracted=walk.cutoff_retracted,
         v1_baseline_flagged=v1_count,
         rows=rows,
     )
@@ -1985,6 +2036,12 @@ def render_widening_preview_text(report: WideningPreviewReport) -> str:
         lines.append(
             f"  (skipped {report.repeat_audits_skipped} repeat audits — "
             "multi-stop re-probes of the same message)"
+        )
+    if report.cutoff_retracted:
+        lines.append(
+            f"  (skipped {report.cutoff_retracted} audits retracted by a "
+            "silent_miss_cutoff marker — miss telemetry invalidated by "
+            "`consolidate --acknowledge-misses`)"
         )
     if report.audits_with_features == 0:
         lines.append("")
@@ -2181,6 +2238,9 @@ class WideningDetailReport:
     audits_without_features: int
     repeat_audits_skipped: int
     v1_baseline_flagged: int
+    # Same counter as `WideningPreviewReport.cutoff_retracted`, from the
+    # same walk, so the two lanes agree on what was replayable.
+    cutoff_retracted: int = 0
     rules: list[WideningRuleDetail] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -2192,6 +2252,7 @@ class WideningDetailReport:
             "audits_with_features": self.audits_with_features,
             "audits_without_features": self.audits_without_features,
             "repeat_audits_skipped": self.repeat_audits_skipped,
+            "cutoff_retracted": self.cutoff_retracted,
             "v1_baseline_flagged": self.v1_baseline_flagged,
             "rules": [r.to_dict() for r in self.rules],
         }
@@ -2365,6 +2426,7 @@ def compute_widening_detail(
         audits_with_features=walk.with_features,
         audits_without_features=walk.without_features,
         repeat_audits_skipped=walk.repeats_skipped,
+        cutoff_retracted=walk.cutoff_retracted,
         v1_baseline_flagged=v1_count,
         rules=rule_details,
     )
