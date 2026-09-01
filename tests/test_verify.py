@@ -2648,6 +2648,73 @@ def test_route_suppression_requires_first_segment_match(tmp_path: Path) -> None:
     assert report.missing == ()
 
 
+def test_absolute_absent_attestation_under_worktree_routes_to_expected_absent(
+    tmp_path: Path,
+) -> None:
+    """An absence attested in ABSOLUTE form for a file inside the recorded
+    worktree must route the body's relative citation of that file to
+    `expected_absent`, exactly as the relative spelling of the same
+    attestation does. Pre-fix the anchored-attestation pass skipped every
+    absolute form, so the citation pass stat'd the relative citation with
+    no absent set in hand and escalated a reviewed, intentional absence to
+    `claim_anchored_missing` — the altitude memory's five purged bench
+    documents read `spot_check_recommended` on every retrieval for it."""
+    (tmp_path / "bench").mkdir()
+    gone = tmp_path / "bench" / "DOOR_C_DECISION_BRIEF.md"
+    body = (
+        "Decision recorded in bench/DOOR_C_DECISION_BRIEF.md (withdrawn from "
+        "the tree; the archive copy lives elsewhere)."
+    )
+    absolute = detect_path_drift(body, absent_paths=[str(gone)], worktree_root=tmp_path)
+    relative = detect_path_drift(
+        body, absent_paths=["bench/DOOR_C_DECISION_BRIEF.md"], worktree_root=tmp_path
+    )
+    for report in (absolute, relative):
+        assert [Path(p).name for p in report.expected_absent] == [
+            "DOOR_C_DECISION_BRIEF.md"
+        ]
+        assert report.missing == ()
+        assert report.claim_anchored_missing == ()
+    assert absolute.to_dict() == relative.to_dict()
+
+
+def test_absolute_verified_attestation_under_worktree_lands_in_verified(
+    tmp_path: Path,
+) -> None:
+    """The present-file twin: an absolute `verified_paths` entry inside the
+    worktree is checked by the anchored pass and lands in `verified`, so
+    the body's relative citation of the same file is not re-stat'd as an
+    unattested citation."""
+    (tmp_path / "docs").mkdir()
+    present = tmp_path / "docs" / "ROADMAP.md"
+    present.write_text("# roadmap\n", encoding="utf-8")
+    report = detect_path_drift(
+        "the flip bars are declared in docs/ROADMAP.md",
+        verified_paths=[str(present)],
+        worktree_root=tmp_path,
+    )
+    assert [Path(p).name for p in report.verified] == ["ROADMAP.md"]
+    assert [Path(p).name for p in report.checked] == ["ROADMAP.md"]
+    assert report.missing == ()
+
+
+def test_absolute_attestation_outside_worktree_stays_out_of_anchored_pass(
+    tmp_path: Path,
+) -> None:
+    """An absolute attestation that resolves OUTSIDE the worktree is not a
+    worktree claim: the anchored pass leaves it alone (no phantom entry in
+    `checked`), and it remains reachable only through the main loop's
+    set-membership when the body cites it."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    elsewhere = tmp_path / "elsewhere" / "conf.ini"
+    report = detect_path_drift(
+        "nothing here cites a path", absent_paths=[str(elsewhere)], worktree_root=root
+    )
+    assert report.checked == ()
+    assert report.expected_absent == ()
+
+
 def test_absent_attestation_moves_missing_to_expected_absent(tmp_path: Path) -> None:
     """Classes C+D: remote-host / platform-conditional / cited-as-NOT-here
     paths are attestable via `verified_absent_paths` — excluded from

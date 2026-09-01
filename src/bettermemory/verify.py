@@ -833,7 +833,8 @@ def _check_anchored_attestations(
     verified: list[str],
     expected_absent: list[str],
 ) -> None:
-    """Existence-check RELATIVE attestations against the memory's worktree.
+    """Existence-check the attestations anchored to the memory's worktree:
+    relative spellings, plus absolute ones that resolve inside it.
 
     Body extraction drops relative paths on purpose, and the reason given
     is that without an anchor, checking them would mean checking the cwd
@@ -880,13 +881,29 @@ def _check_anchored_attestations(
         # (`<root>/$HOME/…`), stat-failed, and appended the phantom to
         # `claim_anchored_missing` — permanently escalating the verdict of
         # a memory whose attestation `unverifiable_attestations` had
-        # ACCEPTED via `~` canonicalization. Anchored forms skipped here
-        # are not dropped from checking: the main `detect_path_drift` loop
-        # existence-checks them via `_normalize_attestations`
-        # set-membership when the body cites them.
+        # ACCEPTED via `~` canonicalization.
+        #
+        # An absolute attestation that resolves INSIDE this worktree is
+        # the same reviewed claim as its relative spelling and seeds
+        # `checked` / `verified` / `expected_absent` the same way.
+        # Skipping it (the shape through 6.4.1) left the citation pass
+        # below to stat the body's RELATIVE citation of that file with
+        # no absent set to consult, so an attested absence in absolute
+        # form escalated to `claim_anchored_missing` while the identical
+        # attestation spelled relatively routed to `expected_absent`.
+        # An absolute form that resolves ELSEWHERE stays out of this
+        # pass — there is no worktree claim to anchor, and the main
+        # `detect_path_drift` loop already existence-checks it via
+        # `_normalize_attestations` set-membership when the body cites
+        # it.
         rel = raw.strip() if raw else ""
-        if not rel or _is_absolute_attestation(rel):
+        if not rel:
             return None
+        if _is_absolute_attestation(rel):
+            normalized = _normalize_candidate(rel)
+            if normalized is None or not _resolves_under(normalized, root):
+                return None
+            return normalized
         return _normalize_candidate(str(root / rel))
 
     # Built from the ANCHORED form, not from `_normalize_attestations`:
@@ -923,6 +940,29 @@ def _check_anchored_attestations(
         else:
             missing.append(resolved)
             claim_anchored.append(resolved)
+
+
+def _resolves_under(path: str, root: Path) -> bool:
+    """True when `path` — absolute or ``~``-anchored, already normalized —
+    resolves to a location inside `root`.
+
+    Symlinks are resolved on both sides so a worktree recorded as
+    ``/var/...`` and an attestation spelled ``/private/var/...`` (or the
+    reverse) still meet. Non-strict: the path need not exist — an
+    attested ABSENCE is exactly a path that does not. A spelling this
+    platform cannot treat as absolute (a Windows drive path read on
+    POSIX, which `_is_absolute_attestation` accepts for the synced
+    case) is not under any root here; joining it onto the cwd would
+    manufacture a phantom.
+    """
+    expanded = os.path.expanduser(path)
+    if not os.path.isabs(expanded):
+        return False
+    try:
+        candidate = Path(expanded).resolve(strict=False)
+        return candidate.is_relative_to(root.resolve(strict=False))
+    except (OSError, RuntimeError, ValueError):
+        return False
 
 
 def _worktree_root_is_live(worktree_root: str | Path) -> bool:
