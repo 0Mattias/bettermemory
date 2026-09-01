@@ -1480,12 +1480,111 @@ _CONV_MAY_GUARD = (
     + "|".join(rf"(?<=\b{w}[\s-])" for w in _CONV_MAY_CONTEXT_WORDS)
     + r"|(?=may\s+\d{4}))"
 )
+# The residual the context guard cannot see: "this" is a legitimate
+# month determiner ("this May we shipped"), so "this may <verb>" — the
+# modal's most common written shape — passed the lookbehind and read as
+# a May window. Disambiguate on the token AFTER "may": a closed list of
+# the words that follow the modal and never a month name (auxiliaries,
+# negation, common adverbs, and the verbs that dominate "may <verb>" in
+# engineering prose). A closed list rather than a part-of-speech guess
+# keeps the lane deterministic; unlisted verbs remain the priced
+# residual, bounded to the near-tie window boost the month reading can
+# engage. A following year or day number is never on the list, so
+# "this may 2026" keeps its window.
+_CONV_MAY_MODAL_FOLLOWERS = (
+    "be",
+    "have",
+    "has",
+    "not",
+    "also",
+    "still",
+    "never",
+    "just",
+    "only",
+    "even",
+    "already",
+    "well",
+    "actually",
+    "need",
+    "needs",
+    "want",
+    "require",
+    "requires",
+    "cause",
+    "take",
+    "help",
+    "seem",
+    "seems",
+    "work",
+    "look",
+    "get",
+    "become",
+    "make",
+    "break",
+    "fail",
+    "mean",
+    "differ",
+    "vary",
+    "change",
+    "depend",
+    "use",
+    "include",
+    "apply",
+    "affect",
+    "result",
+    "lead",
+    "contain",
+    "involve",
+    "run",
+    "return",
+    "throw",
+    "raise",
+    "crash",
+    "hang",
+    "conflict",
+    "explain",
+    "indicate",
+    "suggest",
+    "show",
+    "appear",
+    "exist",
+    "occur",
+    "happen",
+    "come",
+    "go",
+    "do",
+    "prove",
+    "turn",
+    "end",
+    "start",
+    "stop",
+    "block",
+    "prevent",
+    "allow",
+    "let",
+    "keep",
+    "hold",
+    "lose",
+    "miss",
+    "skip",
+    "ignore",
+    "override",
+    "expire",
+    "drop",
+    "leak",
+    "matter",
+    "sound",
+    "feel",
+)
+_CONV_MAY_MODAL_LOOKAHEAD = r"(?!\s+(?:" + "|".join(_CONV_MAY_MODAL_FOLLOWERS) + r")\b)"
 _CONV_MONTH_RE = re.compile(
     r"\b((?:"
     + "|".join(n for n in _MONTH_NAMES if n != "may")
     + r")|"
     + _CONV_MAY_GUARD
-    + r"may)\b(?:\s+(\d{4}))?"
+    + r"may"
+    + _CONV_MAY_MODAL_LOOKAHEAD
+    + r")\b(?:\s+(\d{4}))?"
 )
 _CONV_LAST_PERIOD_RE = re.compile(r"\blast\s+(week|month|year)\b")
 _CONV_THIS_PERIOD_RE = re.compile(r"\bthis\s+(week|month|year)\b")

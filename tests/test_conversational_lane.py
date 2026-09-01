@@ -115,6 +115,32 @@ def test_modal_may_is_not_a_month() -> None:
     )
 
 
+def test_this_may_followed_by_a_modal_follower_is_not_a_month() -> None:
+    # "this" is a legitimate month determiner, so it sits in the context
+    # list — which let the modal's commonest written shape through:
+    # "this may need sudo" read as a May window. The token AFTER "may"
+    # disambiguates: a closed list of modal followers (auxiliaries,
+    # negation, common adverbs and verbs) keeps the modal reading.
+    for text in (
+        "this may need sudo for the docker socket",
+        "this may be the cache again",
+        "this may not apply on arm boxes",
+        "this may also break the release gate",
+    ):
+        assert not _temporal_reading(text, _NOW).is_temporal, text
+    # The month reading survives its own shapes: a following year, a
+    # following day-of-month, or a following pronoun/noun that is not on
+    # the follower list.
+    assert _temporal_reading("this may 2022 we migrated", _NOW).window == (
+        date(2022, 5, 1),
+        date(2022, 5, 31),
+    )
+    assert _temporal_reading("this may we migrated the registry", _NOW).window == (
+        date(2022, 5, 1),
+        date(2022, 5, 31),
+    )
+
+
 def test_last_month_is_a_calendar_window_not_a_selector() -> None:
     r = _temporal_reading("How many plants did I acquire in the last month?", _NOW)
     assert r.window == (date(2023, 2, 1), date(2023, 2, 28))
