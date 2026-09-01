@@ -1301,9 +1301,33 @@ def iter_all_events(root: Path) -> Iterator[dict[str, Any]]:
     When a matching archive exists, the archive is canonical and the
     `.rotating` file is a stale duplicate that the next rotation will
     unlink — including it would double-count those events.
+
+    LISTING ORDER IS LOAD-BEARING, for the same reason it is in
+    `iter_events_window`: the active segments are snapshotted FIRST,
+    the rotated segments second, and the final merge reads that same
+    active snapshot (`_merge_active_segments`) rather than re-listing
+    lazily through `iter_events`. Listed the other way round (rotated
+    first, active at merge time — the shape through 6.4.1), a
+    concurrent rotation's step-1 rename landing between the two scans
+    dropped the just-rotated events from a full-history read: absent
+    from the rotated listing (taken pre-rename) and absent from the
+    active listing (taken post-rename), so consumers that read the
+    whole log as meaning (`compute_health`'s ``last_*`` timestamps,
+    consolidate's demotion, eval, doctor) saw a hole where a turn had
+    been. Active-first closes the interleave: step 1 renames, never
+    deletes, so a rotation that removes a shard file from the active
+    listing has necessarily landed its `.rotating`/archive before a
+    later rotated scan, and a snapshotted shard path that was renamed
+    under the merge re-opens as the fresh segment the rotation created
+    in its place (or is skipped, with its events reachable through the
+    rotated side).
     """
     if not root.exists():
         return
+
+    # Active snapshot FIRST — see the docstring; this list also feeds the
+    # final merge, so the two never disagree about the active set.
+    active_paths = _active_segment_paths(root)
 
     by_shard: dict[int, list[Path]] = {}
     untagged: list[Path] = []
@@ -1325,7 +1349,7 @@ def iter_all_events(root: Path) -> Iterator[dict[str, Any]]:
         streams.append(_iter_segment_chain(_segments_in_write_order(untagged)))
     for orphan in _segments_in_write_order(orphans):
         streams.append(_iter_segment(orphan))
-    streams.append(iter_events(root))
+    streams.append(_merge_active_segments(active_paths))
     yield from heapq.merge(*streams, key=_event_ts_key)
 
 

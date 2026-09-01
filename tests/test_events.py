@@ -1398,6 +1398,57 @@ def test_iter_events_window_survives_rotation_between_directory_scans(
     )
 
 
+def test_iter_all_events_survives_rotation_between_directory_scans(
+    tmp_path: Path,
+) -> None:
+    """The full-history reader has the same two-scan interleave the
+    windowed reader closed: it listed the rotated segments FIRST and
+    picked up the active set lazily at merge time via `iter_events`. A
+    rotation's step-1 rename landing between those scans left the
+    just-rotated events in neither listing — dropped from a read every
+    whole-log consumer treats as complete. Active-first snapshotting,
+    threaded into the merge, is the fix; the trip fires from whichever
+    listing helper runs first so the test cannot pass vacuously."""
+    from bettermemory import events as events_mod
+
+    Recorder(root=tmp_path, session_id="sess_all_race").record("search", id="BEFORE")
+
+    real_active = events_mod._active_segments
+    real_rotated = events_mod._rotated_segments
+    tripped: list[bool] = []
+
+    def _trip_rotation_once() -> None:
+        if tripped:
+            return
+        tripped.append(True)
+        Recorder(root=tmp_path, session_id="sess_all_race", max_bytes=1).record(
+            "write", id="AFTER"
+        )
+        assert list(tmp_path.glob(".events-*.jsonl.gz")), "rotation did not fire"
+
+    def hooked_active(root: Path) -> list[tuple[Path, int | None]]:
+        result = real_active(root)
+        _trip_rotation_once()
+        return result
+
+    def hooked_rotated(root: Path) -> list[Path]:
+        result = real_rotated(root)
+        _trip_rotation_once()
+        return result
+
+    with (
+        patch.object(events_mod, "_active_segments", hooked_active),
+        patch.object(events_mod, "_rotated_segments", hooked_rotated),
+    ):
+        ids = [e["id"] for e in iter_all_events(tmp_path)]
+
+    assert tripped, "the rotation trip never ran; the interleave was not exercised"
+    assert ids == ["BEFORE", "AFTER"], (
+        "a rotation landing between the two directory scans hid the "
+        f"just-rotated events from the full-history read: {ids}"
+    )
+
+
 def test_iter_events_window_per_segment_coverage_across_shards(
     tmp_path: Path,
 ) -> None:
