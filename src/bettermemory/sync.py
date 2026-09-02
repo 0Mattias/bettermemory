@@ -62,7 +62,7 @@ from .conflicts import CONFLICTS_FILENAME
 from .consolidate import AUTO_CONSOLIDATE_CLOCK_FILENAME
 from .doctor import DOCTOR_PROBE_FILENAME
 from .episodes import EPISODES_DIR
-from .events import ARCHIVE_PREFIX, EVENT_LOG_FILENAME
+from .events import ARCHIVE_PREFIX, EVENT_LOG_FILENAME, Recorder
 from .index import INDEX_FILENAME
 from .ingest import INGEST_WATERMARK_FILENAME
 from .patterns import PATTERNS_FILENAME
@@ -1737,11 +1737,59 @@ def push(
     }
 
 
+def _head_sha(root: Path) -> str | None:
+    """The commit `HEAD` names, or None on a repo with no commits yet
+    (a store that ran `sync init` and pulls before its first push)."""
+    result = _run_git(root, ["rev-parse", "--verify", "--quiet", "HEAD"], check=False)
+    if result.returncode != 0:
+        return None
+    sha = result.stdout.strip()
+    return sha or None
+
+
+def _pulled_files(root: Path, before_sha: str | None) -> list[str]:
+    """The store-root memory files the pull just brought down.
+
+    Read from git rather than from a before/after directory diff: the
+    rebase replays local commits on top of the fetched tip, so a plain
+    `before..HEAD` would also list files this host wrote. The three-dot
+    form diffs the fetched tip against its merge base with the pre-pull
+    HEAD, which is exactly the upstream side; on a repo with no prior
+    commit every file in the fetched tree arrived by pull. Deletions
+    are not "arrivals" and are filtered out; only top-level `.md` files
+    are memories (tombstones and sidecars live below or are dotfiles).
+    Never raises: a git failure reads as "nothing known", which the
+    provenance derivation treats as no evidence rather than as local."""
+    if before_sha is None:
+        result = _run_git(
+            root, ["ls-tree", "-r", "--name-only", "FETCH_HEAD"], check=False
+        )
+    else:
+        result = _run_git(
+            root,
+            [
+                "diff",
+                "--name-only",
+                "--diff-filter=ACMR",
+                f"{before_sha}...FETCH_HEAD",
+            ],
+            check=False,
+        )
+    if result.returncode != 0:
+        return []
+    return sorted(
+        name
+        for name in result.stdout.splitlines()
+        if name and "/" not in name and name.endswith(".md")
+    )
+
+
 def pull(
     root: Path,
     *,
     remote: str = "origin",
     reindex: bool = True,
+    recorder: Recorder | None = None,
 ) -> dict[str, object]:
     """Rebase-pull from the remote, then rebuild the FTS5 index
     (which the Store hooks bypassed during the file-level merge).
@@ -1749,6 +1797,12 @@ def pull(
     Set `reindex=False` to skip the post-pull rebuild — useful in
     scripts that batch multiple sync operations and want to defer
     the index rebuild to the end.
+
+    `recorder`, when supplied, receives one `sync_pull` event naming the
+    memory files the pull brought down, recorded BEFORE the rebuild so
+    the provenance derivation at `index.rebuild` reads them as `synced`
+    on that very rebuild. A pull that recorded nothing left pulled
+    files indistinguishable from hand-planted ones.
 
     Raises `SyncError` NAMING THE FILES when the worktree has
     uncommitted changes to tracked memories AND git would have refused
@@ -1843,6 +1897,10 @@ def pull(
                 f"rebase, and this check steps aside."
             )
 
+        # Taken before the pull so `_pulled_files` can diff the fetched
+        # tip against the pre-pull HEAD once the rebase has moved it.
+        before_sha = _head_sha(root)
+
         # `--no-tags` keeps a hostile (or sloppy) remote from injecting refs
         # under `refs/tags/` that shadow branch names, and keeps the local
         # `.git/refs/tags/` clean — the memory store has no concept of tags,
@@ -1904,6 +1962,19 @@ def pull(
                 f"the markers into your memories."
             )
 
+        # The event goes down before the rebuild, inside the same lock,
+        # so the rebuild's evidence pass sees it. Recorded even when the
+        # list is empty: "a pull ran and brought nothing" is a fact the
+        # audit trail should carry, and an empty `files` joins nothing.
+        pulled = _pulled_files(root, before_sha)
+        if recorder is not None:
+            recorder.record(
+                "sync_pull",
+                remote=remote,
+                files=pulled,
+                count=len(pulled),
+            )
+
         indexed: int | None = None
         if reindex:
             # Lazy import — same pattern the Store hooks use. Avoids
@@ -1924,10 +1995,15 @@ def pull(
     }
 
 
-def auto(root: Path, *, remote: str = "origin") -> dict[str, object]:
+def auto(
+    root: Path,
+    *,
+    remote: str = "origin",
+    recorder: Recorder | None = None,
+) -> dict[str, object]:
     """Commit local edits, pull-rebase, then push. The shell-alias /
     cron one-shot for "sync everything". Returns the combined status of
-    all three steps.
+    all three steps. `recorder` is handed to the pull step (see `pull`).
 
     THE COMMIT COMES FIRST, and that ordering is the fix for a bug that
     made this command unusable on a live store. `auto` used to pull
@@ -1962,7 +2038,7 @@ def auto(root: Path, *, remote: str = "origin") -> dict[str, object]:
         )
 
     committed_before_pull = _commit_local_changes(root, DEFAULT_COMMIT_MESSAGE)
-    pull_result = pull(root, remote=remote)
+    pull_result = pull(root, remote=remote, recorder=recorder)
     push_result = push(root, remote=remote)
     return {
         "root": str(root),

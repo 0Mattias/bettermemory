@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from ._common import cli_context
+from ._common import cli_context, cli_recorder
 
 
 def add_subparser(
@@ -310,7 +310,9 @@ def _cli_sync_pull(*, remote: str, reindex: bool, json_out: bool) -> None:
     ctx = cli_context()
     directory = ctx.directory
     try:
-        result = _sync.pull(directory, remote=remote, reindex=reindex)
+        result = _sync.pull(
+            directory, remote=remote, reindex=reindex, recorder=cli_recorder(ctx)
+        )
     except _sync.SyncError as exc:
         sys.stderr.write(f"sync pull failed: {exc}\n")
         raise SystemExit(2) from exc
@@ -337,7 +339,7 @@ def _cli_sync_auto(*, remote: str, json_out: bool) -> None:
     ctx = cli_context()
     directory = ctx.directory
     try:
-        result = _sync.auto(directory, remote=remote)
+        result = _sync.auto(directory, remote=remote, recorder=cli_recorder(ctx))
     except _sync.SyncError as exc:
         sys.stderr.write(f"sync auto failed: {exc}\n")
         raise SystemExit(2) from exc

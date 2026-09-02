@@ -1660,6 +1660,52 @@ def test_pull_rebuilds_index(
     assert candidates
 
 
+def test_pull_records_the_pulled_files_and_the_rebuild_reads_them_synced(
+    memory_dir: Path, bare_remote: Path, tmp_path: Path
+) -> None:
+    """A pull with a recorder names the files it brought down in a
+    `sync_pull` event, recorded before the rebuild so that same rebuild
+    reads them `synced`. A memory the clone already held when its log
+    started predates every event and reads `untracked`: the log cannot
+    speak to how it arrived, and says so rather than guessing."""
+    from bettermemory import index as _index
+    from bettermemory.events import Recorder, iter_events
+
+    sync.init(memory_dir, remote=str(bare_remote))
+    source = Store(memory_dir)
+    first = source.write(content="python list comprehension", scopes=["tools"])
+    sync.push(memory_dir)
+
+    other_dir = tmp_path / "other_clone"
+    subprocess.run(
+        ["git", "clone", str(bare_remote), str(other_dir)],
+        check=True,
+        capture_output=True,
+    )
+
+    second = source.write(
+        content="kubernetes networking notes", scopes=["infrastructure"]
+    )
+    sync.push(memory_dir)
+
+    recorder = Recorder(root=other_dir, session_id="sess-pull")
+    result = sync.pull(other_dir, recorder=recorder)
+    assert result["pulled"] is True
+    assert result["indexed_count"] == 2
+
+    pulls = [e for e in iter_events(other_dir) if e.get("kind") == "sync_pull"]
+    second_name = next(
+        p.name for p in other_dir.glob("*.md") if second.id.lower() in p.name
+    )
+    assert [(e["remote"], e["files"], e["count"]) for e in pulls] == [
+        ("origin", [second_name], 1)
+    ]
+    assert _index.provenance_for(other_dir, [first.id, second.id]) == {
+        first.id: "untracked",
+        second.id: "synced",
+    }
+
+
 def test_pull_no_reindex_flag(
     memory_dir: Path, bare_remote: Path, tmp_path: Path
 ) -> None:
