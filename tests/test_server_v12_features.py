@@ -441,6 +441,32 @@ def _init_repo(path: Path, *, remote: str = _FAKE_REPO_REMOTE) -> None:
     )
 
 
+def _commit_file(repo: Path, relpath: str) -> None:
+    """Commit ``relpath`` (already written under ``repo``) with the same
+    frozen 2020 identity and dates ``_init_repo`` uses, so the file has
+    history that predates any verify the test performs. The hit surface
+    classifies commit-drift APPLICABILITY on its quiescent branch the
+    same way ``memory_show`` does: an anchor that escapes the repo, or
+    that no commit ever touched, is not applicable and the recompute
+    never runs for it. A fixture that wants the recompute to fire must
+    therefore cite a file INSIDE the repo WITH history."""
+    env = os.environ.copy()
+    env["GIT_AUTHOR_DATE"] = "2020-01-02T00:00:00+00:00"
+    env["GIT_COMMITTER_DATE"] = "2020-01-02T00:00:00+00:00"
+    env["GIT_AUTHOR_NAME"] = "Test"
+    env["GIT_AUTHOR_EMAIL"] = "test@example.com"
+    env["GIT_COMMITTER_NAME"] = "Test"
+    env["GIT_COMMITTER_EMAIL"] = "test@example.com"
+    subprocess.run(["git", "add", relpath], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", f"add {relpath}"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        env=env,
+    )
+
+
 def _build_stale_server_with_origin(memory_dir: Path, origin: Origin) -> Any:
     """Build a server with ``verification_stale_days=0`` whose
     ``capture_origin`` returns the supplied ``origin``. Mirrors the
@@ -470,7 +496,9 @@ def _build_stale_server_with_origin(memory_dir: Path, origin: Origin) -> Any:
     return srv
 
 
-async def _write_memory_in_state(server: Any, *, status: str) -> str:
+async def _write_memory_in_state(
+    server: Any, *, status: str, repo: Path | None = None
+) -> str:
     """Produce a memory whose ``verification.status`` resolves to
     ``status`` against the server's ``verification_stale_days``
     configuration. ``"never"`` skips the verify call; ``"stale"`` calls
@@ -497,29 +525,50 @@ async def _write_memory_in_state(server: Any, *, status: str) -> str:
     irrelevant to this shape — an attested candidate skips every drop
     rule in ``detect_path_drift`` by design — but leaving the tree behind
     would make the fixture depend on it.
+
+    With ``repo`` given, the cited file lives INSIDE that repo and is
+    committed there (``_commit_file``) before the memory is written, then
+    deleted the same way. That is the shape the commit-drift recompute
+    tests need: the per-hit surface classifies applicability on its
+    quiescent branch, so an anchor outside the caller's repo omits the
+    count and the recompute never runs.
     """
+    if repo is not None:
+        cited = repo / "widget-staleness-pin.toml"
+        cited.write_text("[widget]\n", encoding="utf-8")
+        _commit_file(repo, cited.name)
+        written = await _write_and_attest(server, cited, status=status)
+        cited.unlink()
+        return str(written["id"])
     scratch = Path(tempfile.mkdtemp(prefix="bm-staleness-pin-"))
     try:
         cited = scratch / "widget-staleness-pin.toml"
         cited.write_text("[widget]\n", encoding="utf-8")
-        content = f"The widget configuration lives in `{cited}`."
-        written = await _call(server, "memory_write", content=content, scopes=["tools"])
-        if status == "stale":
-            await _call(
-                server,
-                "memory_verify",
-                id=written["id"],
-                note="seed",
-                # Attest while the file is still there — the write side
-                # refuses attestations the attesting machine cannot stat,
-                # so the order here is load-bearing.
-                verified_paths=[str(cited)],
-            )
-        elif status != "never":
-            raise AssertionError(f"unexpected raise-status fixture: {status!r}")
+        written = await _write_and_attest(server, cited, status=status)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
     return str(written["id"])
+
+
+async def _write_and_attest(server: Any, cited: Path, *, status: str) -> Any:
+    """The write-then-attest half of ``_write_memory_in_state``, shared by
+    its scratch-directory and in-repo shapes."""
+    content = f"The widget configuration lives in `{cited}`."
+    written = await _call(server, "memory_write", content=content, scopes=["tools"])
+    if status == "stale":
+        await _call(
+            server,
+            "memory_verify",
+            id=written["id"],
+            note="seed",
+            # Attest while the file is still there — the write side
+            # refuses attestations the attesting machine cannot stat,
+            # so the order here is load-bearing.
+            verified_paths=[str(cited)],
+        )
+    elif status != "never":
+        raise AssertionError(f"unexpected raise-status fixture: {status!r}")
+    return written
 
 
 def test_staleness_verdict_raise_statuses_match_frozenset() -> None:
@@ -614,7 +663,7 @@ async def test_staleness_verdict_stale_survives_commit_drift_recompute(
     origin = Origin(cwd=str(repo), repo=_FAKE_REPO_REMOTE, branch="main")
     server = _build_stale_server_with_origin(memory_dir, origin)
 
-    memory_id = await _write_memory_in_state(server, status="stale")
+    memory_id = await _write_memory_in_state(server, status="stale", repo=repo)
     hits = _unwrap(
         await _call(
             server,
@@ -658,7 +707,7 @@ async def test_staleness_verdict_matches_across_show_and_search(
     origin = Origin(cwd=str(repo), repo=_FAKE_REPO_REMOTE, branch="main")
     server = _build_stale_server_with_origin(memory_dir, origin)
 
-    memory_id = await _write_memory_in_state(server, status="stale")
+    memory_id = await _write_memory_in_state(server, status="stale", repo=repo)
     shown = await _call(server, "memory_show", id=memory_id)
     hits = _unwrap(
         await _call(
@@ -766,7 +815,7 @@ async def test_staleness_verdict_string_matches_constant_across_show_and_search(
     origin = Origin(cwd=str(repo), repo=_FAKE_REPO_REMOTE, branch="main")
     server = _build_stale_server_with_origin(memory_dir, origin)
 
-    memory_id = await _write_memory_in_state(server, status="stale")
+    memory_id = await _write_memory_in_state(server, status="stale", repo=repo)
     shown = await _call(server, "memory_show", id=memory_id)
     hits = _unwrap(
         await _call(
@@ -2282,8 +2331,11 @@ async def test_commit_drift_recompute_does_not_re_broaden_the_path_leg(
     origin = Origin(cwd=str(repo), repo=_FAKE_REPO_REMOTE, branch="main")
     server = _build_stale_server_with_origin(memory_dir, origin)
 
-    cited = tmp_path / "prose-recompute.toml"
+    # Inside the repo and committed there: the recompute only runs for an
+    # anchor the commit leg applies to (see ``_commit_file``).
+    cited = repo / "prose-recompute.toml"
     cited.write_text("x\n", encoding="utf-8")
+    _commit_file(repo, cited.name)
     written = await _call(
         server,
         "memory_write",
