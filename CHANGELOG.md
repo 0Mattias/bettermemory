@@ -7,6 +7,86 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 6.5.0 - 2026-09-02
+
+A minor by the [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract):
+additive read-surface fields, new event kinds, an index schema bump
+with an automatic rebuild, no removals. The integrity lane's second
+step, after the 2026-09-01 recon re-run: nothing on disk said how a
+memory entered the store, and a hand-written `last_verified_at` read
+fresh on every surface.
+
+### Added — provenance: how each memory entered the store
+
+- `00d8f3f` feat(index): the provenance column, derived at rebuild.
+  Schema v7 adds `provenance` to the index, one of `local` / `synced`
+  / `untracked` / `unaccounted`, derived at every rebuild from the
+  write-side events that name the memory id, a `sync_pull` event
+  naming the file or the store's own sync repo tracking it, and the
+  log's coverage of the memory's creation window. Frontmatter never
+  carries it, because frontmatter is attacker-writable. `local` and
+  `unaccounted` are sticky across rebuilds, every label survives the
+  drop a schema or tokenizer bump performs (parked in `meta` and
+  consumed by the rebuild that follows), and a classified baseline
+  lets a later rebuild read a never-seen id claiming to predate the
+  log as new rather than as old. Deleting the index reclassifies from
+  events alone. Cost is one event-log pass per rebuild and one
+  `git ls-files` in a sync repo; nothing per search. The derivation is
+  the `provenance` module's docstring and docs/internals.md.
+- `66b283a` feat(store): `Store.write` and `Store.restore` stamp
+  `local` at the index upsert they already perform, so every
+  in-process creation carries the label with or without telemetry;
+  update and verify keep whatever the row carries.
+- `d9f6c31` `44b2e8a` `2cf0549` the event-less write paths close, so
+  the derivation is complete from this release on: an applied
+  consolidation records `consolidate_update` for every memory it
+  rewrites and `consolidate_write` for a propose_new (the rollback's
+  restore records `restore`); `sync pull` records `sync_pull` naming
+  the files the rebase brought down, before the rebuild that reads
+  them; `tombstones restore`, `rename-scope`, `migrate origin` and
+  `consolidate --apply` record through one CLI recorder
+  (`MigrationReport` gains `updated_ids`), and `ingest` moves onto it.
+- `fde2278` feat(eval): the tool-usage rollup and the session census
+  classify the new kinds. `sync_pull` and `migrate` are admin by kind;
+  the consolidate kinds are in-session (the Stop hook records them
+  under the client's session id), with the CLI's copies carrying a
+  `cli_` attribution stamped once at construction by the new
+  `AttributedRecorder`, which every CLI mutation path now uses. The
+  parity scan reads the consolidate helper's kind positional too.
+- `3499125` feat(response): `provenance` on search hits and
+  `memory_list` rows (present once the index has classified the row)
+  and on `memory_show` (always, `null` until classified), read from
+  the index in one batched query per response.
+- `f63fafb` feat(hook): the prompt-recall pointer carries a
+  `[provenance: <label>]` suffix for anything not `local`, at the one
+  delivery that reaches the model without a tool call.
+- `3de5a79` feat(health): `memory_health.provenance` (the per-label
+  census and the `unaccounted` rows, null without an index), the
+  `review_unaccounted` recommendation (fires on one row; the remedy is
+  remove-then-restore for a record you recognise, since a restore
+  re-admits it through the store), and `curation_pending.unaccounted`
+  on `memory_scope_overview` (delta mode counts only the ones created
+  after the boundary). The lean description budget paid for the new
+  key by dropping a sentence the deep report already teaches.
+- `5cff4f0` feat(doctor): `memory_provenance` warns on any unaccounted
+  memory, names the first, and points unclassified rows at `reindex`.
+
+### Changed
+
+- `7e8af4d` the roadmap is forward-only: seven shipped entries left it
+  and their design records moved into the changelog entries that
+  shipped them (3.38.0, 3.40.0, 3.41.0, 3.42.0); the Planned section
+  now lists the integrity units in order.
+- `9803b3b` `.gitignore` names the two bench venvs the comparative
+  lanes use and folds the `.claude` rules into one block.
+- `0aa5555` SECURITY.md's supported-versions table names the 6.x line.
+- `9c232e4` docs/api.md, docs/internals.md and the README describe the
+  field on every surface and the derivation behind it.
+
+What this release does not claim: an injection-driven legitimate write
+reads `local`, truthfully. Cause provenance stays open on the roadmap,
+with sync-pull admission and the delivery gates behind it.
+
 ## 6.4.2 - 2026-09-01
 
 A patch by the [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract):
