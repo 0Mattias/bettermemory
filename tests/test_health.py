@@ -249,6 +249,7 @@ def test_curation_counts_zero_on_empty_store() -> None:
         "silent_misses": 0,
         "unique_silent_miss_memories": 0,
         "cold_endorsement_memories": 0,
+        "unaccounted": 0,
     }
 
 
@@ -518,6 +519,7 @@ def test_curation_counts_since_zero_when_nothing_new() -> None:
         "silent_misses": 0,
         "unique_silent_miss_memories": 0,
         "cold_endorsement_memories": 0,
+        "unaccounted": 0,
     }
 
 
@@ -3636,9 +3638,104 @@ def test_recommendation_kinds_constant_matches_compute_output() -> None:
         "resolve_contradicted",
         "cleanup_cold_endorsements",
         "verify_drifted",
+        "review_unaccounted",
         "fix_typo_scopes",
     }
     assert set(RECOMMENDATION_KINDS) == expected
+
+
+def _plant_beside(tmp_path: Path, root: Path, body: str, scopes: list[str]) -> Any:
+    """A valid memory file written by a throwaway Store and copied into
+    `root` by hand: no hook upsert, no event. Returns the Memory."""
+    import shutil
+
+    from bettermemory.store import Store
+
+    scratch = tmp_path / f"scratch-{generate_ulid().lower()}"
+    memory = Store(scratch).write(content=body, scopes=scopes)
+    source = next(p for p in scratch.glob("*.md"))
+    shutil.copy2(source, root / source.name)
+    return memory
+
+
+def test_report_for_directory_carries_the_provenance_bucket(tmp_path: Path) -> None:
+    """A hand-planted file reads `unaccounted` in the bucket with its
+    scopes and summary, the counts cover every label, and the
+    `review_unaccounted` recommendation fires on a single row. The
+    bucket is the index's, so it is null when there is no index."""
+    from bettermemory import index as _index
+    from bettermemory.events import Recorder
+    from bettermemory.store import Store
+
+    root = tmp_path / "store"
+    store = Store(root)
+    local = store.write(content="written through the store", scopes=["tools"])
+    Recorder(root=root, session_id="s").record(
+        "write", status="committed", id=local.id, scopes=["tools"]
+    )
+    planted = _plant_beside(
+        tmp_path, root, "placed by hand into the store", ["infrastructure"]
+    )
+    _index.rebuild(root, store.iter_active())
+
+    report = report_for_directory(root)
+    assert report.provenance is not None
+    assert report.provenance.counts == {"local": 1, "unaccounted": 1}
+    assert report.provenance.unaccounted_total == 1
+    (row,) = report.provenance.unaccounted
+    assert (row.id, row.scopes, row.summary) == (
+        planted.id,
+        ["infrastructure"],
+        "placed by hand into the store",
+    )
+    review = [r for r in report.recommendations if r.kind == "review_unaccounted"]
+    assert [(r.count, r.memory_ids) for r in review] == [(1, [planted.id])]
+    assert "memory_restore" in review[0].action
+    assert report.to_dict()["provenance"]["unaccounted"][0]["id"] == planted.id
+
+    empty = tmp_path / "never-indexed"
+    empty.mkdir()
+    assert report_for_directory(empty).provenance is None
+
+
+def test_curation_counts_unaccounted_reads_the_index_and_honors_since(
+    tmp_path: Path,
+) -> None:
+    from bettermemory import index as _index
+    from bettermemory.events import Recorder, iter_all_events
+    from bettermemory.store import Store
+
+    root = tmp_path / "store"
+    store = Store(root)
+    Recorder(root=root, session_id="s").record("search", returned=[], relevance=[])
+    planted = _plant_beside(tmp_path, root, "placed by hand", ["tools"])
+    _index.rebuild(root, store.iter_active())
+    memories = store.load_all()
+    events = list(iter_all_events(root))
+
+    assert curation_counts(memories, events, window_days=30)["unaccounted"] == 0, (
+        "no index root, no claim"
+    )
+    assert (
+        curation_counts(memories, events, window_days=30, index_root=root)[
+            "unaccounted"
+        ]
+        == 1
+    )
+    after = planted.created + timedelta(seconds=1)
+    assert (
+        curation_counts(memories, events, window_days=30, index_root=root, since=after)[
+            "unaccounted"
+        ]
+        == 0
+    ), "delta mode counts only unaccounted memories created after the boundary"
+    before = planted.created - timedelta(seconds=1)
+    assert (
+        curation_counts(
+            memories, events, window_days=30, index_root=root, since=before
+        )["unaccounted"]
+        == 1
+    )
 
 
 # ---------------------------------------------------------------------------

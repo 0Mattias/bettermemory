@@ -1545,6 +1545,7 @@ async def test_scope_overview_returns_curation_pending(server: Any) -> None:
         "unique_silent_miss_memories",
         "cold_endorsement_memories",
         "conflicts",
+        "unaccounted",
     }
     # All counts must be integers.
     for v in res["curation_pending"].values():
@@ -1563,6 +1564,7 @@ async def test_scope_overview_curation_pending_zero_on_empty(server: Any) -> Non
         "unique_silent_miss_memories": 0,
         "cold_endorsement_memories": 0,
         "conflicts": 0,
+        "unaccounted": 0,
     }
 
 
@@ -1732,6 +1734,7 @@ def test_desc_memory_scope_overview_enumerates_curation_pending_keys() -> None:
         "unique_silent_miss_memories",
         "cold_endorsement_memories",
         "conflicts",
+        "unaccounted",
     }
     assert extracted == expected, (
         "DESC_MEMORY_SCOPE_OVERVIEW's curation_pending key list drifted "
@@ -1788,6 +1791,7 @@ def test_desc_memory_health_enumerates_report_bucket_keys() -> None:
         "resolve_contradicted",
         "cleanup_cold_endorsements",
         "verify_drifted",
+        "review_unaccounted",
         "fix_typo_scopes",
         # `silent_misses` sub-fields — documented inline to explain the
         # dedup + tombstone-filter contract on the payload itself, not

@@ -48,6 +48,11 @@ DESC_MEMORY_HEALTH = (
     "memories anchored in OTHER repos, judged read-only at their "
     "recorded worktrees (capped; unresolvable groups listed as "
     "skipped with reasons).\n"
+    "- `provenance` — how each memory entered the store, from the "
+    "index: per-label counts (local / synced / untracked / "
+    "unaccounted / unclassified) and the unaccounted rows, the ones "
+    "the event log covers but nothing wrote or pulled; null when the "
+    "index is unusable.\n"
     "- `silent_misses` / `cold_endorsement_memories` — populated "
     "when `memory_audit_turn` has been firing (see that tool). The "
     "`silent_misses` payload carries `{audited_total, miss_total, "
@@ -70,7 +75,8 @@ DESC_MEMORY_HEALTH = (
     "summary, action, count, memory_ids, scope}` where `kind` is "
     "one of `remove_dead_weight` / `resolve_contradicted` / "
     "`cleanup_cold_endorsements` / `verify_drifted` / "
-    "`fix_typo_scopes`; empty list means nothing crossed.\n\n"
+    "`review_unaccounted` / `fix_typo_scopes`; empty list means "
+    "nothing crossed.\n\n"
     "CLI equivalent: `bettermemory health [--json]`.\n\n"
     # Documented AFTER the `CLI equivalent:` line on purpose. The bucket
     # region above is sliced and set-compared against the report's wire

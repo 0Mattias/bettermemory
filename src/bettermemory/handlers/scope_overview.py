@@ -48,7 +48,7 @@ DESC_MEMORY_SCOPE_OVERVIEW = (
     "should branch on:\n"
     "  {stale, never_verified, drifted, cold, dead, "
     "silent_misses, unique_silent_miss_memories, "
-    "cold_endorsement_memories, conflicts}\n"
+    "cold_endorsement_memories, conflicts, unaccounted}\n"
     # Deliberately unqualified: the count is now exactly "pairs
     # memory_conflicts can still rule on" (see the handler's
     # `split_judgeable` call), so this one line stayed true when the
@@ -57,15 +57,20 @@ DESC_MEMORY_SCOPE_OVERVIEW = (
     # DESC_MEMORY_CONFLICTS (full-surface only) and api.md.
     "`conflicts` = contradiction pairs awaiting a "
     "memory_conflicts verdict. "
+    # The tombstone-exclusion sentence that used to follow the
+    # silent-miss pair moved out to pay for `unaccounted`: it is taught
+    # on DESC_MEMORY_HEALTH, the surface that carries the rows, and the
+    # lean budget (tests/test_server.py) is what this description is
+    # measured against.
+    "`unaccounted` = memories that entered outside every recorded "
+    "path. "
     "Any non-zero `dead` or `drifted` is a cue to suggest a "
     "curation pass when the conversation has time. Non-zero "
     "`silent_misses` / `cold_endorsement_memories` means the "
     "audit-turn telemetry has actionable backlog. `silent_misses` "
     "counts events; `unique_silent_miss_memories` counts the "
     "distinct memories those misses pointed at (dedup'd by top-hit "
-    "id). Misses whose "
-    "top-hit memory has been tombstoned are excluded from both "
-    "counters. `cold_endorsement_memories` counts distinct "
+    "id). `cold_endorsement_memories` counts distinct "
     "memories (NOT turns) with `retrieval_count >= N` AND zero "
     "explicit applies — usually a sign the memory is over-surfaced "
     "or stale.\n\n"
@@ -198,6 +203,7 @@ async def memory_scope_overview(
         caller_origin=current_origin,
         tombstoned_ids=tombstoned_ids,
         hook_telemetry_events=hook_telemetry_events,
+        index_root=deps.store.root,
     )
     # `conflicts` rides on the same rollup but comes from the verdict
     # queue, not the event stream — pending memory-vs-memory
@@ -277,6 +283,7 @@ async def memory_scope_overview(
             # count here would make the delta arm report a phantom
             # hookless verdict every session-start.
             hook_telemetry_events=hook_telemetry_events,
+            index_root=deps.store.root,
         )
         # Delta arm of the queue-derived `conflicts` key: candidates
         # whose detection time postdates the boundary. Walks the same

@@ -1098,8 +1098,59 @@ RECOMMENDATION_KINDS: tuple[str, ...] = (
     "resolve_contradicted",
     "cleanup_cold_endorsements",
     "verify_drifted",
+    "review_unaccounted",
     "fix_typo_scopes",
 )
+
+
+# Cap on the `unaccounted` rows `ProvenanceDebt` inlines. The total is
+# uncapped; the rows are the triage window.
+_PROVENANCE_ROW_CAP = 20
+
+
+@dataclass
+class ProvenanceRow:
+    """One memory the provenance bucket surfaces: identity plus enough
+    to decide without a `memory_show` whether the record is recognised."""
+
+    id: str
+    scopes: list[str]
+    summary: str
+    created: datetime
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "scopes": list(self.scopes),
+            "summary": self.summary,
+            "created": _iso(self.created),
+        }
+
+
+@dataclass
+class ProvenanceDebt:
+    """How the store's memories entered it, from the index's provenance
+    column (schema v7; `provenance.py` carries the derivation).
+
+    `counts` is the per-label census over every indexed row, with
+    `unclassified` for rows a rebuild has not labelled yet.
+    `unaccounted_total` is the one count that is a finding: the event
+    log covers the memory's creation window, nothing wrote it, nothing
+    pulled it. The `unaccounted` rows (capped at `_PROVENANCE_ROW_CAP`,
+    newest first) are the triage window. Absent (None on the report)
+    when the index is missing or unusable, so "no unaccounted memories"
+    and "could not look" never read the same."""
+
+    counts: dict[str, int]
+    unaccounted_total: int
+    unaccounted: list[ProvenanceRow] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "counts": dict(self.counts),
+            "unaccounted_total": self.unaccounted_total,
+            "unaccounted": [r.to_dict() for r in self.unaccounted],
+        }
 
 
 @dataclass
@@ -1162,6 +1213,10 @@ class HealthReport:
     # calendar window hasn't elapsed.
     commit_drift_debt: CommitDriftDebt | None = None
     cross_repo_drift: CrossRepoDrift | None = None
+    # Provenance census plus the unaccounted rows, read off the index by
+    # `report_for_directory` (the one entry point with a root; the pure
+    # `compute_health` never sees the index). None when no index.
+    provenance: ProvenanceDebt | None = None
     # Silent-miss telemetry — the false-negative half of opt-in
     # retrieval. `audited_total` and `miss_total` come from the
     # `turn_audited` and `search_miss` event kinds emitted by
@@ -1266,6 +1321,9 @@ class HealthReport:
                 self.commit_drift_debt.to_dict()
                 if self.commit_drift_debt is not None
                 else None
+            ),
+            "provenance": (
+                self.provenance.to_dict() if self.provenance is not None else None
             ),
             "silent_misses": self.silent_misses.to_dict(),
             "recent_silent_misses": [m.to_dict() for m in self.recent_silent_misses],
@@ -2393,6 +2451,34 @@ def _compute_recommendations(report: "HealthReport") -> list["Recommendation"]:
             )
         )
 
+    if report.provenance is not None and report.provenance.unaccounted_total >= 1:
+        # Floor of one, like `contradicted`: a single record that entered
+        # the store outside every recorded path is independently
+        # actionable, and the label exists so nobody waits for three.
+        out.append(
+            Recommendation(
+                kind="review_unaccounted",
+                summary=(
+                    f"{report.provenance.unaccounted_total} memories entered "
+                    "the store outside every recorded path: the event log "
+                    "covers their creation, nothing wrote them, nothing "
+                    "pulled them."
+                ),
+                action=(
+                    "memory_show(id) each one. To keep a record you "
+                    "recognise, memory_remove(id, reason=...) then "
+                    "memory_restore(id): the restore re-admits it through "
+                    "the store and it reads local from then on. Remove the "
+                    "rest."
+                ),
+                count=report.provenance.unaccounted_total,
+                memory_ids=[
+                    r.id
+                    for r in report.provenance.unaccounted[:_RECOMMENDATION_ROW_CAP]
+                ],
+            )
+        )
+
     if report.rare_scopes:
         # One recommendation per typo singleton — each carries its own
         # candidate fix surfaced via the scope name. The model reads
@@ -3272,14 +3358,20 @@ def curation_counts(
     since: datetime | None = None,
     tombstoned_ids: set[str] | None = None,
     hook_telemetry_events: int | None = None,
+    index_root: Path | None = None,
 ) -> dict[str, int]:
     """Cheap summary of curation pressure.
 
     Returns
     ``{"stale", "never_verified", "drifted", "cold", "dead",
     "silent_misses", "unique_silent_miss_memories",
-    "cold_endorsement_memories"}`` —
-    integer counts only, no row materialisation. Used by
+    "cold_endorsement_memories", "unaccounted"}`` —
+    integer counts only, no row materialisation. `unaccounted` is the
+    one count that reads index state rather than event state: the
+    memories the index labels as having entered the store outside every
+    recorded path (`provenance.py`). It needs `index_root` and stays 0
+    without one; in delta mode it counts only the unaccounted memories
+    created after `since`. Used by
     `memory_scope_overview` so the model can see at a glance whether
     the store has anything worth a curation pass without paying the
     full `compute_health` cost (which materialises and sorts every
@@ -3659,6 +3751,22 @@ def curation_counts(
                 if count > 0:
                     drifted += 1
 
+    # Provenance is index state, not event state: read the `unaccounted`
+    # ids off the index when a root is given, and in delta mode count
+    # only the ones created after the boundary (`mem_list` is already
+    # the post-`since` slice, so membership in it is the filter).
+    unaccounted = 0
+    if index_root is not None:
+        from . import index as _index
+
+        unaccounted_ids = _index.provenance_rows(index_root, label="unaccounted")
+        if unaccounted_ids:
+            if since_aware is None:
+                unaccounted = len(unaccounted_ids)
+            else:
+                in_window = {m.id for m in mem_list}
+                unaccounted = sum(1 for i in unaccounted_ids if i in in_window)
+
     return {
         "stale": stale,
         "never_verified": never_verified,
@@ -3668,6 +3776,7 @@ def curation_counts(
         "silent_misses": silent_misses,
         "unique_silent_miss_memories": unique_silent_miss_memories,
         "cold_endorsement_memories": cold_endorsement_memories,
+        "unaccounted": unaccounted,
     }
 
 
@@ -3722,6 +3831,38 @@ _parse_event_ts = parse_event_ts
 _ensure_utc = ensure_utc
 
 
+def provenance_debt(root: Path, memories: Iterable[Memory]) -> ProvenanceDebt | None:
+    """The provenance bucket for `root`'s index, joined against `memories`.
+
+    Reads the index's per-label counts and its `unaccounted` ids, and
+    fills the rows from the memories the caller already loaded (no
+    second parse). None when the index is absent or unusable, which the
+    report carries as null rather than as an empty bucket."""
+    from . import index as _index
+
+    counts = _index.provenance_counts(root)
+    if counts is None:
+        return None
+    ids = _index.provenance_rows(root, label="unaccounted") or []
+    by_id = {m.id: m for m in memories}
+    rows: list[ProvenanceRow] = []
+    for memory_id in ids:
+        if len(rows) >= _PROVENANCE_ROW_CAP:
+            break
+        memory = by_id.get(memory_id)
+        if memory is None:
+            continue
+        rows.append(
+            ProvenanceRow(
+                id=memory.id,
+                scopes=list(memory.scopes),
+                summary=first_summary_line(memory.body),
+                created=memory.created,
+            )
+        )
+    return ProvenanceDebt(counts=counts, unaccounted_total=len(ids), unaccounted=rows)
+
+
 def report_for_directory(
     root: Path,
     *,
@@ -3752,8 +3893,9 @@ def report_for_directory(
 
     store = Store(root)
     tombstoned_ids = {t.id for t in store.load_tombstones()}
+    memories = store.load_all()
     report = compute_health(
-        store.load_all(),
+        memories,
         iter_all_events(root),
         window_days=window_days,
         heavily_used_top_k=heavily_used_top_k,
@@ -3771,6 +3913,12 @@ def report_for_directory(
         # `compute_health` is about to do anyway — see its docstring.
         hook_telemetry_events=0,
     )
+    # Post-assigned for the reason the episode gauge below is: the
+    # label lives in the index, and `compute_health` never sees a root.
+    # Recommendations are recomputed so `review_unaccounted` can fire
+    # on what the bucket found.
+    report.provenance = provenance_debt(root, memories)
+    report.recommendations = _compute_recommendations(report)
     # Post-assigned rather than threaded through `compute_health`, for
     # the same reason the honesty gate is armed here: `compute_health`
     # takes a memory list and an event iterable and NEVER sees `root`, so
