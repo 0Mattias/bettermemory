@@ -44,15 +44,22 @@ htmlcov/
 * [0-9].*
 * [0-9]
 
-# Local Claude Code settings (keep settings.json shared, ignore the per-machine one)
-.claude/settings.local.json
-
-# Claude Code session scratch (settings.local.json) + Workflow-agent worktrees —
-# untracked repo copies here must never enter lint/test globs or get committed.
+# Claude Code session scratch (settings.local.json, launch.json) and
+# Workflow-agent worktrees: untracked repo copies here must never enter
+# lint/test globs or get committed.
 .claude/
 
-# throwaway venv for the live comparative eval lane (tests/eval/run_live.sh)
+# Throwaway venvs for the comparative lanes. tests/eval/run_live.sh builds
+# .eval-venv/ and bench/longmemeval/mem0_run.py runs its base arm from it;
+# the mem0-extras arm decides its legs by what is importable, so it needs
+# its own environment in .eval-venv-extras/.
 .eval-venv/
+.eval-venv-extras/
+
+# Dev venv the bench/w and bench/longmemeval scripts name in their run
+# lines (fastvenv/bin/python ...). The package's own venv lives outside
+# the tree; see .envrc.
+fastvenv/
 
 # LongMemEval corpora (bench/longmemeval). 265MB for _s and 2.6GB for _m,
 # fetched from HuggingFace by bench/longmemeval/run.py --fetch. Pinned by
