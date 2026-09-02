@@ -5856,6 +5856,113 @@ def _anchored_store(tmp_path: Path, body: str, anchors: list[str]) -> Path:
     return repo
 
 
+def _provenance_store(tmp_path: Path) -> tuple[Path, str]:
+    """A store with one recorded write and one hand-planted file, the
+    index rebuilt so the labels are derived. Returns `(root, planted_id)`."""
+    import shutil
+
+    from bettermemory import index as _index
+    from bettermemory.events import Recorder
+    from bettermemory.store import Store
+
+    root = tmp_path / "store"
+    store = Store(root)
+    local = store.write(content="written through the store", scopes=["tools"])
+    Recorder(root=root, session_id="s").record(
+        "write", status="committed", id=local.id, scopes=["tools"]
+    )
+    scratch = tmp_path / "scratch"
+    planted = Store(scratch).write(content="placed by hand", scopes=["tools"])
+    source = next(p for p in scratch.glob("*.md"))
+    shutil.copy2(source, root / source.name)
+    _index.rebuild(root, store.iter_active())
+    return root, planted.id
+
+
+def test_memory_provenance_warns_on_a_planted_file(tmp_path: Path) -> None:
+    """The finding: a record the event log covers but nothing wrote or
+    pulled. Named by id, with the remedy that re-admits a recognised
+    one through the store rather than relabelling it."""
+    from bettermemory.doctor import _check_memory_provenance
+
+    root, planted_id = _provenance_store(tmp_path)
+    diag = _check_memory_provenance(root)
+    assert diag.status == "warn"
+    assert planted_id in diag.message
+    assert diag.details["counts"] == {"local": 1, "unaccounted": 1}
+    assert diag.details["unaccounted"] == [planted_id]
+    assert diag.fix_hint is not None
+    assert "memory_restore" in diag.fix_hint
+    assert "memory_verify" not in diag.fix_hint, "a verify is not the accept path"
+
+
+def test_memory_provenance_passes_on_a_labelled_store(tmp_path: Path) -> None:
+    from bettermemory.doctor import _check_memory_provenance
+    from bettermemory.store import Store
+
+    root = tmp_path / "store"
+    store = Store(root)
+    store.write(content="one", scopes=["tools"])
+    store.write(content="two", scopes=["tools"])
+    diag = _check_memory_provenance(root)
+    assert diag.status == "ok"
+    assert diag.details["counts"] == {"local": 2}
+    assert "local 2" in diag.message
+
+
+def test_memory_provenance_is_ok_without_an_index(tmp_path: Path) -> None:
+    """No index means nothing was classified, not that nothing is wrong;
+    the census is null so a consumer cannot read it as clean."""
+    from bettermemory.doctor import _check_memory_provenance
+
+    empty = tmp_path / "never-indexed"
+    empty.mkdir()
+    diag = _check_memory_provenance(empty)
+    assert diag.status == "ok"
+    assert diag.details["counts"] is None
+
+
+def test_memory_provenance_points_unclassified_rows_at_reindex(
+    tmp_path: Path,
+) -> None:
+    import shutil
+
+    from bettermemory import index as _index
+    from bettermemory.doctor import _check_memory_provenance
+    from bettermemory.store import Store
+
+    root = tmp_path / "store"
+    store = Store(root)
+    scratch = tmp_path / "scratch"
+    planted = Store(scratch).write(content="placed by hand", scopes=["tools"])
+    source = next(p for p in scratch.glob("*.md"))
+    shutil.copy2(source, root / source.name)
+    # A hook-shaped upsert with no claim: the row exists unlabelled.
+    _index.upsert(root, store.load_one(planted.id), filename=source.name)
+    diag = _check_memory_provenance(root)
+    assert diag.status == "warn"
+    assert diag.details["counts"] == {"unclassified": 1}
+    assert diag.fix_hint is not None
+    assert "reindex" in diag.fix_hint
+
+
+def test_doctor_report_includes_memory_provenance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The check is wired into the report on a store that exists, after
+    the attestation census it complements."""
+    from bettermemory.doctor import run_diagnostics
+
+    root, _ = _provenance_store(tmp_path)
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(root))
+    report = run_diagnostics()
+    names = [c.name for c in report.checks]
+    assert "memory_provenance" in names
+    assert names.index("memory_provenance") > names.index("attestation_anchors")
+    provenance = next(c for c in report.checks if c.name == "memory_provenance")
+    assert provenance.status == "warn"
+
+
 def test_attestation_anchors_flags_an_anchor_that_carries_none_of_the_claim(
     tmp_path: Path,
 ) -> None:

@@ -3376,6 +3376,88 @@ def _read_text_or_none(path: Path) -> str | None:
         return None
 
 
+def _check_memory_provenance(directory: Path) -> Diagnosis:
+    """Did every memory enter the store through a path that records?
+
+    Reads the index's provenance census (schema v7; `provenance.py`
+    carries the derivation). `unaccounted` is the finding: the event log
+    covers the memory's creation window and nothing wrote or pulled it,
+    the shape of a file placed by hand. `unclassified` rows are a
+    rebuild away from a label and get the reindex hint instead. A store
+    with no index has nothing to classify and reads ok, with the census
+    reported as null so the two cannot be confused.
+
+    The remedy is deliberate. Nothing here relabels a record: a memory
+    you recognise is re-admitted through the store (remove, then
+    restore, which stamps `local` and records the restore), and the
+    rest are removed. `memory_verify` is not the accept path, because a
+    verify vouches for the body's truth, not for how the file arrived.
+    """
+    from . import index as _index
+
+    counts = _index.provenance_counts(directory)
+    if counts is None:
+        return Diagnosis(
+            name="memory_provenance",
+            status="ok",
+            message=(
+                "No index to read provenance from; a store that has never "
+                "been indexed has nothing to classify."
+            ),
+            details={"counts": None},
+        )
+    total = sum(counts.values())
+    unaccounted = counts.get("unaccounted", 0)
+    unclassified = counts.get("unclassified", 0)
+    if unaccounted:
+        rows = _index.provenance_rows(directory, label="unaccounted") or []
+        first = rows[0] if rows else None
+        noun = "memory" if unaccounted == 1 else "memories"
+        return Diagnosis(
+            name="memory_provenance",
+            status="warn",
+            message=(
+                f"{unaccounted} of {total} indexed {noun} entered the store "
+                "outside every recorded path: the event log covers the "
+                "creation and nothing wrote or pulled it. "
+                f"First: {first}."
+            ),
+            fix_hint=(
+                "memory_show each one. To keep a record you recognise, "
+                "memory_remove(id, reason=...) then memory_restore(id): the "
+                "restore re-admits it through the store and it reads local "
+                "from then on. Remove the rest. `memory_health` lists them "
+                "under `provenance.unaccounted`."
+            ),
+            details={"counts": counts, "unaccounted": rows, "first": first},
+        )
+    if unclassified:
+        noun = "row" if unclassified == 1 else "rows"
+        return Diagnosis(
+            name="memory_provenance",
+            status="warn",
+            message=(
+                f"{unclassified} of {total} indexed {noun} carry no provenance "
+                "label yet."
+            ),
+            fix_hint=(
+                "Run `bettermemory reindex`: the rebuild classifies every row "
+                "from the event log and the sync repo."
+            ),
+            details={"counts": counts},
+        )
+    census = ", ".join(f"{label} {n}" for label, n in sorted(counts.items()))
+    return Diagnosis(
+        name="memory_provenance",
+        status="ok",
+        message=(
+            f"All {total} indexed memories carry a provenance label "
+            f"({census or 'empty index'})."
+        ),
+        details={"counts": counts},
+    )
+
+
 def _check_retrieval_discrimination(directory: Path, cfg: Config) -> Diagnosis:
     """Can this store still be found by the questions a model asks?
 
@@ -4173,6 +4255,12 @@ def run_diagnostics() -> DoctorReport:
             _safe(
                 "attestation_anchors",
                 lambda: _check_attestation_anchors(directory, Path.cwd()),
+            )
+        )
+        checks.append(
+            _safe(
+                "memory_provenance",
+                lambda: _check_memory_provenance(directory),
             )
         )
 
