@@ -94,9 +94,51 @@ declared claims on `memory_write` / `memory_verify` (3.40.0).
 - Scales past ~500 memories via a derived SQLite FTS5 index. The
   markdown files stay canonical; upgrades rebuild it automatically,
   and `bettermemory reindex` rebuilds on demand.
+- Provenance: the index labels how each memory entered the store
+  (`local`, `synced`, `untracked`, `unaccounted`), derived from the
+  event log and the sync repo and never from the file; the section
+  below.
 - Cross-machine sync over your own git remote, and an eval CLI
   (`memory_helped_rate` / `endorsement_rate` / `silent_miss_rate`,
   see [eval.md](eval.md)).
+
+## Provenance
+
+Every trust field a memory file carries (`last_verified_at`, `source`,
+`confidence`, `claims`) is frontmatter, and frontmatter is whatever the
+last writer chose to put there. Since 6.5.0 the index carries one label
+per memory that the file cannot supply, derived at every rebuild:
+
+- `local`: written, ingested, promoted, accepted or restored by this
+  host's own code path. Stamped at the index upsert the store's own
+  creation paths perform, so every in-process creation is covered even
+  with telemetry off, and re-derived at rebuild from the write-side
+  events that name the memory id.
+- `synced`: no local creation on record, but a `sync pull` event names
+  the file, or (for pulls made before pulls recorded) the store's own
+  sync repo tracks it while the log covers the memory's creation.
+- `untracked`: the event log cannot speak to it. The store keeps no
+  events, or the memory predates the oldest surviving event and no
+  classified rebuild had seen it arrive.
+- `unaccounted`: the log covers the memory's creation window, nothing
+  wrote it, nothing pulled it; or it claims a creation date older than
+  the log while appearing for the first time after a classified
+  baseline existed. The hand-planted shape.
+
+`local` and `unaccounted` are sticky across rebuilds, and every label
+survives the drop a schema or tokenizer bump performs. Deleting the
+index file and running `bettermemory reindex` discards both and
+reclassifies from events alone; that is the documented reset. The label
+rides search hits, `memory_show`, `memory_list`, the recall pointer,
+`memory_health` and `bettermemory doctor`. Nothing relabels a record:
+a memory you recognise is re-admitted through the store (remove, then
+restore), and the rest are removed.
+
+Cost: one pass over the event log per rebuild and one `git ls-files`
+in a sync repo; nothing per search. What it cannot see: an
+injection-driven legitimate write, which is `local` by every test here
+and truthfully so. Cause provenance (what was in context at write time)
+is a different question, and an open one.
 
 ## Storage
 

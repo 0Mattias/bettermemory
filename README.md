@@ -42,8 +42,10 @@ Offline, throwaway store.
 ## What it does
 
 - Checks memory before believing it. Every hit carries a staleness
-  verdict: calendar age, whether the paths it cites still exist, and
-  the commits landed since it was last confirmed. Declared claims
+  verdict: calendar age, whether the paths it cites still exist, the
+  commits landed since it was last confirmed, and how the record
+  entered the store (written here, pulled, or placed by hand).
+  Declared claims
   (`path`, `path::symbol`, `path::NAME=literal`) are re-checked
   against the working tree; a claim that stops being true blocks the
   stamp instead of riding along.
