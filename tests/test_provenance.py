@@ -413,3 +413,46 @@ def test_counts_cover_every_row(store: Store, memory_dir: Path, tmp_path: Path) 
     assert rows == sorted(
         rows, key=lambda memory_id: store.load_one(memory_id).created, reverse=True
     ), "newest created first"
+
+
+# ---------------------------------------------------------------------------
+# The Store's own creation paths stamp `local` at the upsert
+# ---------------------------------------------------------------------------
+
+
+def test_store_write_stamps_local_before_any_rebuild(
+    store: Store, memory_dir: Path
+) -> None:
+    memory = store.write(content="written through the store", scopes=["tools"])
+    assert index.provenance_for(memory_dir, [memory.id]) == {memory.id: "local"}
+    assert index.provenance_counts(memory_dir) == {"local": 1}
+
+
+def test_store_write_stays_local_with_no_events_and_a_rebuild(
+    store: Store, memory_dir: Path
+) -> None:
+    """No recorder runs here: the stamp, not an event, is what makes the
+    write local, and the sticky rule carries it through a rebuild that
+    finds no events at all."""
+    memory = store.write(content="written with telemetry off", scopes=["tools"])
+    _rebuild(store)
+    assert index.provenance_for(memory_dir, [memory.id]) == {memory.id: "local"}
+
+
+def test_update_and_verify_keep_the_label(
+    store: Store, memory_dir: Path, tmp_path: Path
+) -> None:
+    _, b = _local_and_unaccounted(store, memory_dir, tmp_path)
+    planted = store.load_one(b)
+    store.update(planted.model_copy(update={"body": "edited by hand later\n"}))
+    assert index.provenance_for(memory_dir, [b]) == {b: "unaccounted"}
+    store.mark_verified(b)
+    assert index.provenance_for(memory_dir, [b]) == {b: "unaccounted"}
+
+
+def test_restore_stamps_local(store: Store, memory_dir: Path, tmp_path: Path) -> None:
+    _, b = _local_and_unaccounted(store, memory_dir, tmp_path)
+    store.tombstone(b, reason="planted")
+    assert index.provenance_for(memory_dir, [b]) == {}
+    store.restore(b)
+    assert index.provenance_for(memory_dir, [b]) == {b: "local"}

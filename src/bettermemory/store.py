@@ -457,7 +457,15 @@ class Store:
             # overhead is worth it: stale FTS5 ranking quietly
             # misleads `memory_search`, and the file-lock cost is
             # bounded (we're already holding it through `_write_path`).
-            _index_upsert_quietly(self.root, memory, filename=path.name)
+            #
+            # `local`: this process created the record through its own
+            # code path. Stamped here rather than derived from the event
+            # the handler records afterwards, so a write made with
+            # telemetry off (or through a caller that records nothing)
+            # still reads local on every surface.
+            _index_upsert_quietly(
+                self.root, memory, filename=path.name, provenance="local"
+            )
         return memory
 
     def update(
@@ -1533,7 +1541,17 @@ class Store:
                 # interleave its SQLite upsert with ours and leave the index
                 # pointing at the deleted body. `restored` was loaded above,
                 # before the unlink, as the re-admission proof.
-                _index_upsert_quietly(self.root, restored, filename=active_path.name)
+                #
+                # `local`: a restore is this host re-admitting a record it
+                # held, on a caller's explicit instruction. The label the
+                # tombstone's active life carried (whatever it was) does
+                # not survive the round trip; the re-admission does.
+                _index_upsert_quietly(
+                    self.root,
+                    restored,
+                    filename=active_path.name,
+                    provenance="local",
+                )
         return restored
 
     # ---- scope rename ----------------------------------------------------
@@ -2686,9 +2704,15 @@ def _warn_index_out_of_sync(
     "index upsert",
     logger=_INDEX_LOG,
     repair_hint=_INDEX_REPAIR_HINT,
-    id_getter=lambda root, memory, *, filename: memory.id,
+    id_getter=lambda root, memory, *, filename, provenance=None: memory.id,
 )
-def _index_upsert_quietly(root: Path, memory: Memory, *, filename: str) -> None:
+def _index_upsert_quietly(
+    root: Path,
+    memory: Memory,
+    *,
+    filename: str,
+    provenance: str | None = None,
+) -> None:
     """Update the FTS5 index for one memory. Best-effort: a failure
     here (corrupt index, locked database, missing SQLite extension)
     logs a warning and continues so the on-disk write — the canonical
@@ -2701,6 +2725,14 @@ def _index_upsert_quietly(root: Path, memory: Memory, *, filename: str) -> None:
     collision-suffixed names; re-deriving from the Memory fields
     alone would silently point at the unsuffixed sibling.
 
+    `provenance` is the label this store can vouch for. Only the two
+    creation paths pass one (`write` and `restore` stamp `local`); the
+    update and verify paths pass nothing, and the index keeps the label
+    the row already carries, because editing or verifying a memory does
+    not change how it entered the store. Stamping at the upsert, not at
+    the event, is what keeps every in-process creation covered when
+    telemetry is off; the event log re-derives the same label at rebuild.
+
     Lazy import so this module loads cleanly even when callers don't
     actually use the index (e.g. pure-Python tests against the file
     store directly). The ``@best_effort`` wrapper supplies the
@@ -2708,7 +2740,7 @@ def _index_upsert_quietly(root: Path, memory: Memory, *, filename: str) -> None:
     happy-path call."""
     from . import index as _index
 
-    _index.upsert(root, memory, filename=filename)
+    _index.upsert(root, memory, filename=filename, provenance=provenance)
 
 
 @best_effort(
