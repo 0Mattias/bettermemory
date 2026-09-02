@@ -729,8 +729,17 @@ _RECALL_BLOCK_CAP_CHARS = 1_200
 _RECALL_SCOPES_CAP_CHARS = 200
 
 
-def _render_recall_block(report: MissReport) -> str:
+def _render_recall_block(report: MissReport, *, provenance: str | None = None) -> str:
     """Render the injected context block for a miss-verdict report.
+
+    `provenance` is the index's label for the top hit (schema v7). It is
+    rendered as a `[provenance: <label>]` suffix on the pointer line only
+    when it is known and not `local`: this block is the one delivery that
+    reaches the model without a tool call, so a record that did not enter
+    through the store's own paths announces itself here, while a local
+    record adds nothing to the common case. The suffix lives in the frame
+    the snippet math measures around, so the snippet absorbs its few
+    bytes under the block cap.
 
     One hit only — the verdict reads only rank 1 (`THRESHOLD_RULE_V1`),
     so rank 1 is the only hit the ~2%-of-turns fire rate was measured
@@ -757,10 +766,13 @@ def _render_recall_block(report: MissReport) -> str:
             kept.append(scope)
         scopes = (", ".join(kept) + ", …") if kept else "…"
     snippet = " ".join(hit.snippet.split())
+    pointer = f"- {hit.id} [{scopes}]"
+    if provenance is not None and provenance != "local":
+        pointer += f" [provenance: {provenance}]"
     frame = (
         "bettermemory recall (score-gated: a stored memory ranks high for "
         "this prompt; most turns get no injection):\n"
-        f"- {hit.id} [{scopes}]\n"
+        f"{pointer}\n"
         '  "{snippet}"\n'
         "Verify before relying: memory_show(id) carries the full body and "
         "staleness verdict, and say so when it shapes the reply. "
@@ -863,7 +875,14 @@ def run_prompt_recall(
         delivered_reason = "project_cohort"
     else:
         return None
-    block = _render_recall_block(report)
+    # One index read for the top hit's provenance label; lazy import
+    # because this path runs on every prompt submission and the SQLite
+    # module is only needed once a delivery is actually happening.
+    from . import index as _index
+
+    top_id = report.top_hits[0].id
+    provenance = _index.provenance_for(root, [top_id]).get(top_id)
+    block = _render_recall_block(report, provenance=provenance)
     recorder = Recorder(
         root=root,
         session_id=session_id,

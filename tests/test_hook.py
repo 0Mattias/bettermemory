@@ -2865,6 +2865,40 @@ def test_recall_event_does_not_hijack_server_session_anchor() -> None:
     assert _latest_in_process_session(events) == "sess_server"
 
 
+def test_render_recall_block_names_a_non_local_provenance() -> None:
+    """The pointer carries the provenance label only when it is NOT
+    `local`: a hand-planted or pulled record announces itself at the one
+    delivery that bypasses the tool surface, and a local one adds no
+    bytes to the common case."""
+    from bettermemory.audit import MissHit, MissReport, THRESHOLD_RULE_V1
+    from bettermemory.models import utcnow
+
+    hit = MissHit(
+        id="01TESTRECALLPROV000000000",
+        score=1.0,
+        relevance="high",
+        scopes=("tools",),
+        snippet="planted body",
+        matched_unique=2,
+        query_unique=2,
+        relevance_v2="high",
+    )
+    report = MissReport(
+        verdict="miss",
+        checked_at=utcnow(),
+        session_id="transcript-prov",
+        lookback_seconds=600,
+        recent_retrieval_count=0,
+        threshold_rule=THRESHOLD_RULE_V1,
+        top_hits=(hit,),
+        probe_query="prov probe",
+    )
+    flagged = _render_recall_block(report, provenance="unaccounted")
+    assert f"- {hit.id} [tools] [provenance: unaccounted]" in flagged
+    assert "provenance" not in _render_recall_block(report, provenance="local")
+    assert "provenance" not in _render_recall_block(report)
+
+
 def test_render_recall_block_caps_snippet_never_instructions() -> None:
     """The cap truncates the SNIPPET, not the frame: a recall whose
     verify-first instruction got cut would deliver a pointer without
