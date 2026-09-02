@@ -6,13 +6,13 @@ bettermemory follows semver from 1.0 onward. The latest minor of the current maj
 
 | Version | Status |
 |---------|--------|
-| 5.x latest | Supported |
-| 5.x earlier minor | Upgrade to latest 5.x |
-| 4.x | Unsupported; upgrade to 5.x (no on-disk migration required — SCHEMA_VERSION stayed at 1) |
-| 3.x and earlier | Unsupported; upgrade to 5.x (no on-disk migration required — SCHEMA_VERSION stayed at 1) |
+| 6.x latest | Supported |
+| 6.x earlier minor | Upgrade to latest 6.x |
+| 5.x | Unsupported; upgrade to 6.x (no on-disk migration required — SCHEMA_VERSION stayed at 1) |
+| 4.x and earlier | Unsupported; upgrade to 6.x (no on-disk migration required — SCHEMA_VERSION stayed at 1) |
 | 0.x | Unsupported (pre-1.0) |
 
-Upgrading across 4.0 or 5.0 costs no data migration but does lose surface: 4.0 removed the embedding lane (the `"semantic"` search mode, both embedding extras, `[behavior] semantic_provider` and `semantic_dedup`) and 5.0 removed the web UI (`bettermemory ui`, the `[ui]` extra). See the release notes for each.
+Upgrading across 4.0, 5.0 or 6.0 costs no data migration but does lose surface: 4.0 removed the embedding lane (the `"semantic"` search mode, both embedding extras, `[behavior] semantic_provider` and `semantic_dedup`), 5.0 removed the web UI (`bettermemory ui`, the `[ui]` extra), and 6.0 removed the embedding lane again after its 5.5.0 opt-in reentry (the `[embeddings]` and `[embeddings-fast]` extras). See the release notes for each.
 
 ## Reporting a vulnerability
 
