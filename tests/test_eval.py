@@ -1922,7 +1922,11 @@ class TestRenderToolUsageText:
         positional or ``kind=`` keyword form, so the assumption holds.
         If a future refactor switches to one of the patterns above,
         broaden the extractor here rather than letting drift sneak back
-        in via the ``unmapped_event_kinds`` footer.
+        in via the ``unmapped_event_kinds`` footer. One broadening has
+        landed: ``consolidate._emit(recorder, "<kind>", ...)`` is the
+        recorder-optional shape the consolidation passes record through,
+        and its second positional is read here so the helper cannot
+        become the pattern this scan misses.
         """
         import ast
 
@@ -1934,6 +1938,14 @@ class TestRenderToolUsageText:
                 if not isinstance(node, ast.Call):
                     continue
                 func = node.func
+                if isinstance(func, ast.Name) and func.id == "_emit":
+                    if (
+                        len(node.args) >= 2
+                        and isinstance(node.args[1], ast.Constant)
+                        and isinstance(node.args[1].value, str)
+                    ):
+                        discovered.add(node.args[1].value)
+                    continue
                 if not (isinstance(func, ast.Attribute) and func.attr == "record"):
                     continue
                 if (

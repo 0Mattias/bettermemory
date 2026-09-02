@@ -161,8 +161,8 @@ def test_tombstones_restore_brings_back_a_removed_memory(
     assert memory.id in out
     assert memory.id in {m.id for m in store.load_all()}
     restores = [e for e in iter_events(store.root) if e.get("kind") == "restore"]
-    assert [(e["id"], e["scopes"], e["via"]) for e in restores] == [
-        (memory.id, ["tools"], "cli")
+    assert [(e["id"], e["scopes"], e["attribution"]) for e in restores] == [
+        (memory.id, ["tools"], "cli_tombstones_restore")
     ]
     assert creation_id(restores[0]) == memory.id
 
@@ -205,9 +205,15 @@ def test_rename_scope_renames_across_memories(
     assert "infra" not in reloaded[memory.id].scopes
     renames = [e for e in iter_events(store.root) if e.get("kind") == "rename_scope"]
     assert [
-        (e["old"], e["new"], e["active_count"], e["tombstoned_count"], e["via"])
+        (
+            e["old"],
+            e["new"],
+            e["active_count"],
+            e["tombstoned_count"],
+            e["attribution"],
+        )
         for e in renames
-    ] == [("infra", "infrastructure", 1, 0, "cli")]
+    ] == [("infra", "infrastructure", 1, 0, "cli_rename_scope")]
 
 
 def test_rename_scope_rejects_identical_old_and_new(
@@ -804,8 +810,8 @@ def test_consolidate_apply_records_its_rewrites(
     updates = [
         e for e in iter_events(store.root) if e.get("kind") == "consolidate_update"
     ]
-    assert [(e["id"], e["action"]) for e in updates] == [
-        (newer.id, "dedup_scope_merge")
+    assert [(e["id"], e["action"], e["attribution"]) for e in updates] == [
+        (newer.id, "dedup_scope_merge", "cli_consolidate")
     ]
 
 
@@ -828,9 +834,61 @@ def test_migrate_origin_records_the_backfilled_ids(
     )
     assert "Results:" in capsys.readouterr().out
     migrations = [e for e in iter_events(store.root) if e.get("kind") == "migrate"]
-    assert [(e["action"], e["ids"], e["updated"], e["via"]) for e in migrations] == [
-        ("origin", [legacy.id], 1, "cli")
+    assert [
+        (e["action"], e["ids"], e["updated"], e["attribution"]) for e in migrations
+    ] == [("origin", [legacy.id], 1, "cli_migrate_origin")]
+
+
+def test_every_cli_recorder_attribution_carries_the_admin_prefix() -> None:
+    """Every `cli_recorder(ctx, attribution="...")` in the CLI package
+    names an attribution `eval.is_admin_recorded_event` reads as admin.
+    The helper does not check the prefix itself (the classification has
+    one definition, in `eval`, and its parity scan refuses a second copy
+    in `src/`), so this scan holds the coupling from the test side: a
+    CLI path that forgets the prefix would put its throwaway session
+    into the client census and its rows into the tool tallies."""
+    import ast
+
+    from bettermemory.eval import ADMIN_RECORDED_ATTRIBUTION_PREFIX
+
+    cli_root = Path(__file__).resolve().parents[1] / "src" / "bettermemory" / "cli"
+    found: list[tuple[str, str]] = []
+    for py_file in sorted(cli_root.glob("*.py")):
+        tree = ast.parse(py_file.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if not (isinstance(node.func, ast.Name) and node.func.id == "cli_recorder"):
+                continue
+            literal = next(
+                (
+                    kw.value.value
+                    for kw in node.keywords
+                    if kw.arg == "attribution"
+                    and isinstance(kw.value, ast.Constant)
+                    and isinstance(kw.value.value, str)
+                ),
+                None,
+            )
+            assert literal is not None, (
+                f"{py_file.name}: cli_recorder call without a literal attribution"
+            )
+            found.append((py_file.name, literal))
+    assert found, "no cli_recorder call sites discovered; the scan is broken"
+    bad = [
+        (name, value)
+        for name, value in found
+        if not value.startswith(ADMIN_RECORDED_ATTRIBUTION_PREFIX)
     ]
+    assert not bad, f"CLI attributions without the admin prefix: {bad}"
+    assert {name for name, _ in found} >= {
+        "consolidate.py",
+        "ingest.py",
+        "migrate.py",
+        "rename_scope.py",
+        "sync.py",
+        "tombstones.py",
+    }
 
 
 def test_tombstones_list_subcommand_runs_on_empty_store(

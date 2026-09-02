@@ -311,7 +311,10 @@ def _cli_sync_pull(*, remote: str, reindex: bool, json_out: bool) -> None:
     directory = ctx.directory
     try:
         result = _sync.pull(
-            directory, remote=remote, reindex=reindex, recorder=cli_recorder(ctx)
+            directory,
+            remote=remote,
+            reindex=reindex,
+            recorder=cli_recorder(ctx, attribution="cli_sync_pull"),
         )
     except _sync.SyncError as exc:
         sys.stderr.write(f"sync pull failed: {exc}\n")
@@ -339,7 +342,11 @@ def _cli_sync_auto(*, remote: str, json_out: bool) -> None:
     ctx = cli_context()
     directory = ctx.directory
     try:
-        result = _sync.auto(directory, remote=remote, recorder=cli_recorder(ctx))
+        result = _sync.auto(
+            directory,
+            remote=remote,
+            recorder=cli_recorder(ctx, attribution="cli_sync_auto"),
+        )
     except _sync.SyncError as exc:
         sys.stderr.write(f"sync auto failed: {exc}\n")
         raise SystemExit(2) from exc

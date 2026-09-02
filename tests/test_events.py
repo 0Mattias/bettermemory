@@ -118,6 +118,25 @@ def test_iter_events_skips_invalid_utf8_in_active_log(tmp_path: Path) -> None:
     assert [e["kind"] for e in events] == ["write", "show"]
 
 
+def test_attributed_recorder_stamps_every_event(tmp_path: Path) -> None:
+    """The CLI recorder's attribution rides every event it records, and
+    an explicit per-event attribution still wins: `eval` reads the field
+    as the admin/CLI axis, so a CLI path must not be able to forget it."""
+    from bettermemory.events import AttributedRecorder, iter_events
+
+    recorder = AttributedRecorder(
+        root=tmp_path, session_id="cli-run", attribution="cli_tombstones_restore"
+    )
+    recorder.record("restore", id="m1", scopes=["tools"])
+    recorder.record("restore", id="m2", scopes=["tools"], attribution="cli_other")
+    events = list(iter_events(tmp_path))
+    assert [(e["kind"], e["id"], e["attribution"]) for e in events] == [
+        ("restore", "m1", "cli_tombstones_restore"),
+        ("restore", "m2", "cli_other"),
+    ]
+    assert all(e["session"] == "cli-run" for e in events)
+
+
 def test_record_after_crash_torn_tail_keeps_the_new_event_readable(
     tmp_path: Path,
 ) -> None:

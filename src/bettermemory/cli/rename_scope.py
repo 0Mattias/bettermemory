@@ -112,8 +112,8 @@ def _cli_rename_scope(
     tombstoned = result["tombstoned"]
     # Mirrors the `memory_rename_scope` MCP tool's event, field for
     # field, so the audit log reads one shape whichever entry point ran
-    # the rename; `via` tells them apart.
-    cli_recorder(ctx).record(
+    # the rename; the recorder's attribution tells them apart.
+    cli_recorder(ctx, attribution="cli_rename_scope").record(
         "rename_scope",
         old=clean_old,
         new=clean_new,
@@ -121,7 +121,6 @@ def _cli_rename_scope(
         active_count=len(active),
         tombstoned_count=len(tombstoned),
         failed_count=len(result.get("failed", [])),
-        via="cli",
     )
     # Item 6/6b: records whose per-record re-dump was skipped inside the rename
     # loop (e.g. the rename would push the file past the size cap). Surface them

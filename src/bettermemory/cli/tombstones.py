@@ -226,11 +226,10 @@ def _cli_tombstones_restore(
     # the provenance derivation at `index.rebuild` reads a restore as this
     # host re-admitting the record, and a restore that recorded nothing
     # read as unaccounted on the next rebuild.
-    cli_recorder(ctx).record(
+    cli_recorder(ctx, attribution="cli_tombstones_restore").record(
         "restore",
         id=memory.id,
         scopes=list(memory.scopes),
-        via="cli",
     )
 
     if json_out:

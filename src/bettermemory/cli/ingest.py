@@ -193,7 +193,7 @@ def _cli_ingest(
         # rotation cap and verbatim-query redaction follow the same
         # config the server reads. Before the kwargs were threaded, an
         # opted-out user still got `write` events on every ingest.
-        recorder = cli_recorder(ctx)
+        recorder = cli_recorder(ctx, attribution="cli_ingest")
         # Thread the real config, not the `Config()` fallback — the CLI
         # is the one caller that always has it resolved, and passing the
         # same object to both phases keeps the plan and the commit on ONE

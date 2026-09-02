@@ -276,7 +276,11 @@ def _cli_consolidate(
     # nothing to record, and constructing one would touch the event log
     # (directory creation) for no event. Same session id as the
     # tombstones carry, so the audit trail reads as one run.
-    recorder = cli_recorder(ctx, session_id=session_id) if apply else None
+    recorder = (
+        cli_recorder(ctx, attribution="cli_consolidate", session_id=session_id)
+        if apply
+        else None
+    )
 
     report = consolidate(
         store,

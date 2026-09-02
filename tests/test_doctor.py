@@ -1450,6 +1450,64 @@ def test_use_token_expired_is_classified_in_session(tmp_path: Path) -> None:
     )
 
 
+def test_consolidate_rewrites_are_classified_in_session(tmp_path: Path) -> None:
+    """`consolidate_write` / `consolidate_update` are recorded on two
+    surfaces. The Stop hook's auto-consolidate writes them under the
+    live client's session id (`run_auto_consolidate` takes the hook's
+    recorder), so the KIND must be in-session or the census drops a real
+    session the moment it consolidates. `bettermemory consolidate
+    --apply` writes the same kinds under a throwaway id, and those rows
+    carry the `cli_` attribution the second axis reads, so they stay
+    out of the census on that axis alone. This is the hand-written
+    per-kind guard the roster comment in `eval.py` demands (see
+    `test_use_token_expired_is_classified_in_session` for why the
+    partition apparatus cannot catch a mis-landing itself)."""
+    from datetime import datetime, timezone
+
+    from bettermemory.eval import (
+        ADMIN_RECORDED_EVENT_KINDS,
+        _IN_SESSION_SIDE_EFFECT_KINDS,
+        is_admin_recorded_event,
+    )
+
+    for kind in ("consolidate_write", "consolidate_update"):
+        assert kind in _IN_SESSION_SIDE_EFFECT_KINDS
+        assert kind not in ADMIN_RECORDED_EVENT_KINDS
+    assert is_admin_recorded_event(
+        {"kind": "consolidate_update", "attribution": "cli_consolidate"}
+    )
+    assert not is_admin_recorded_event({"kind": "consolidate_update"})
+
+    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    _write_event(tmp_path, "turn_audited", ts=now_iso, session="the-real-one")
+    _write_event(
+        tmp_path,
+        "consolidate_update",
+        ts=now_iso,
+        session="the-real-one",
+        id="m1",
+        action="demoted_to_ambient",
+    )
+    _write_event(
+        tmp_path,
+        "consolidate_update",
+        ts=now_iso,
+        session="cli-run",
+        id="m2",
+        action="dedup_scope_merge",
+        attribution="cli_consolidate",
+    )
+    diag = _check_audit_turn_cadence(tmp_path)
+    assert diag.details["sessions"] == 1, (
+        "the hook's consolidate row must keep its session in the census "
+        "and the CLI's must not add one"
+    )
+    assert diag.details["total_events"] == 2, (
+        "the hook's row was dropped from the census (read as admin) or the "
+        "CLI's row was kept (attribution not read)"
+    )
+
+
 def test_prompt_recall_is_classified_in_session(tmp_path: Path) -> None:
     """`prompt_recall` (3.41.0) is written by the UserPromptSubmit hook
     under Claude Code's transcript session id — the SAME id the Stop

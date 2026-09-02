@@ -216,14 +216,13 @@ def _cli_migrate_origin(
     # rewrites from events. One event per run, naming every id, and none
     # for a dry run or a run that changed nothing.
     if not dry_run and report.updated_ids:
-        cli_recorder(ctx).record(
+        cli_recorder(ctx, attribution="cli_migrate_origin").record(
             "migrate",
             action="origin",
             ids=list(report.updated_ids),
             updated=report.updated,
             repaired_anchored=report.repaired_anchored,
             repaired_demoted=report.repaired_demoted,
-            via="cli",
         )
 
     print("Results:")

@@ -1023,6 +1023,28 @@ def _merge_active_segments(paths: list[Path]) -> Iterator[dict[str, Any]]:
                 pass
 
 
+@dataclass
+class AttributedRecorder(Recorder):
+    """A Recorder that stamps `attribution` on every event it records.
+
+    The admin and CLI surfaces record under a fresh throwaway session
+    id, and the kinds they emit are often the same kinds a live client
+    session emits (`restore`, `rename_scope`, the consolidate rewrites),
+    so the kind alone cannot classify them.
+    `eval.is_admin_recorded_event` reads the `attribution` field's
+    `cli_` prefix as its second axis; stamping the field here, once, at
+    construction, is what keeps every CLI mutation on that axis without
+    each call site having to remember it. A caller-supplied
+    `attribution` on a single event wins over the default."""
+
+    attribution: str = ""
+
+    def record(self, kind: str, **fields: Any) -> None:
+        if self.attribution:
+            fields.setdefault("attribution", self.attribution)
+        super().record(kind, **fields)
+
+
 def iter_events(root: Path) -> Iterator[dict[str, Any]]:
     """Yield events from the *active* segments — the per-shard
     `.events.NN.jsonl` files plus any legacy `.events.jsonl` — merged
@@ -1633,6 +1655,7 @@ def iter_events_window(
 
 
 __all__ = [
+    "AttributedRecorder",
     "Recorder",
     "iter_events",
     "iter_events_backward",

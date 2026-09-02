@@ -21,7 +21,7 @@ from ..config import Config, load_config
 from ..store import Store
 
 if TYPE_CHECKING:
-    from ..events import Recorder
+    from ..events import AttributedRecorder
 
 
 @dataclass(frozen=True)
@@ -55,7 +55,12 @@ def cli_context() -> CliContext:
     return CliContext(config=config, directory=directory, store=store)
 
 
-def cli_recorder(ctx: CliContext, *, session_id: str | None = None) -> Recorder:
+def cli_recorder(
+    ctx: CliContext,
+    *,
+    attribution: str,
+    session_id: str | None = None,
+) -> AttributedRecorder:
     """An event recorder for a CLI command that mutates the store.
 
     Mirrors the server's recorder construction (`builder.py`) so CLI
@@ -67,16 +72,26 @@ def cli_recorder(ctx: CliContext, *, session_id: str | None = None) -> Recorder:
     those events: a mutation that records nothing reads as unaccounted
     on the next rebuild.
 
-    `session_id` lets a command reuse the id it already stamped on
-    tombstones (consolidate); the default mints a fresh one.
+    `attribution` is required and must carry the admin prefix
+    `eval.is_admin_recorded_event` reads: a CLI run records under a
+    throwaway session id, often under kinds a live client session also
+    emits, and the attribution is what keeps it out of the client
+    session census and the tool-usage tallies. The prefix is not
+    checked here on purpose (that classification has exactly one
+    definition, in `eval`, and the parity scan there refuses a second
+    copy anywhere in `src/`); `tests/test_cli_smoke.py` scans every
+    call site against the real constant instead. `session_id` lets a
+    command reuse the id it already stamped on tombstones (consolidate);
+    the default mints a fresh one.
     """
-    from ..events import Recorder
+    from ..events import AttributedRecorder
     from ..session import SessionState
 
-    return Recorder(
+    return AttributedRecorder(
         root=ctx.directory,
         session_id=session_id or SessionState().session_id,
         enabled=ctx.config.telemetry.enabled,
         max_bytes=ctx.config.telemetry.max_bytes,
         log_queries_verbatim=ctx.config.telemetry.log_queries_verbatim,
+        attribution=attribution,
     )

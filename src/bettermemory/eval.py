@@ -3270,6 +3270,23 @@ TOOLS_WITHOUT_TELEMETRY: tuple[str, ...] = ("memory_health",)
 # tool invocation — no model call happened — so it stays off the usage
 # rollup; it is the delivery lane's OWN counter, read beside
 # ``search_miss`` when tracing what the recall path did.
+#
+# ``sync_pull`` and ``migrate`` are CLI-only admin records: the memory
+# files a ``bettermemory sync pull`` brought down, and the ids a
+# ``migrate origin`` rewrote. Written so the provenance derivation at
+# ``index.rebuild`` can account for records no tool call created or
+# touched; never a tool invocation, so admin by kind.
+#
+# ``consolidate_write`` / ``consolidate_update`` name the memory an
+# applied consolidation pass created or rewrote, for the same
+# derivation. They are recorded on TWO surfaces: the Stop hook's
+# auto-consolidate, under the live client's session id, and
+# ``bettermemory consolidate --apply``, under a throwaway id that
+# carries the ``cli_`` attribution the second axis reads. So the kind is
+# in-session (below) and the CLI rows are admin by attribution. They are
+# emitted through ``consolidate._emit`` rather than a bare
+# ``recorder.record``; the parity scan in ``tests/test_eval.py`` reads
+# that helper's second positional for exactly this reason.
 _KNOWN_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
     {
         "search_miss",
@@ -3279,6 +3296,10 @@ _KNOWN_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
         "doctor_fix",
         "use_token_expired",
         "prompt_recall",
+        "sync_pull",
+        "migrate",
+        "consolidate_write",
+        "consolidate_update",
     }
 )
 
@@ -3314,6 +3335,12 @@ _IN_SESSION_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
         "proposals_enqueued",
         "use_token_expired",
         "prompt_recall",
+        # The Stop hook's auto-consolidate records these under the live
+        # client's own session id (`run_auto_consolidate` takes the hook's
+        # recorder); the CLI's copies of the same kinds carry the `cli_`
+        # attribution and are caught on that axis instead.
+        "consolidate_write",
+        "consolidate_update",
     }
 )
 
