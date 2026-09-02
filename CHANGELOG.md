@@ -1183,10 +1183,16 @@ The tier ships on the five decisions the ROADMAP settled build-ready
   measurement exists yet. It flips only with dogfood evidence.
 - **The session-start negative mandate stays intact, and the cost is
   named.** Delivery records nothing — no event, no session — so v1
-  adoption is deliberately unmeasured; the two instrumentation shapes
-  considered and rejected (a `standing_delivered` event, retroactive
-  stamping from the first Stop hook) are recorded in the ROADMAP entry
-  with the census-corruption argument that killed them.
+  adoption is deliberately unmeasured, and a delivered memory does not
+  shield the miss probe (a same-topic prompt inside the attribution
+  window can re-point at it via prompt-recall: redundant, rare,
+  accepted). Two instrumentation shapes were considered and rejected.
+  A `standing_delivered` event classified like `prompt_recall` would
+  solve the anchor hijack through the roster, but an opened and then
+  abandoned session would put phantom sessions back into doctor's
+  cadence census, the exact corruption the mandate exists to stop; and
+  retroactive stamping from the first Stop hook cannot see the injected
+  context. Revisit only with a design that keeps the census clean.
   `test_standing_tier_records_nothing` enforces the mandate on the
   flag-on path with a real delivery.
 
@@ -1230,8 +1236,12 @@ injected block instructs the model to call before relying — the one
 delivery in the product that bypasses the tool surface still cannot
 bypass verification.
 
-Three interlocking decisions keep the telemetry honest, spelled out in
-docs/ROADMAP.md so they are not re-litigated: `prompt_recall` joins the
+Four decisions keep the telemetry honest, recorded here so they are not
+re-litigated. The probe is reused whole, `_caller_in_top_hit_project`
+included: the fire rate was measured with that shield, and dropping it
+for the recall path would fire injection on exactly the cohort its
+dogfood evidence measured as ~95% noise ("push it" asked from inside
+the repo, the project memory as the top hit). `prompt_recall` joins the
 retrieval-event set (a delivered pointer is not a SILENT miss, so the
 Stop audit reports `ok`, and a second injection self-suppresses for the
 attribution window — the anti-spam bound is the existing 600s constant,
@@ -1246,6 +1256,26 @@ with this release and are named in docs/eval.md and
 docs/eval-results.md before the first affected snapshot, the same
 discipline as the 2026-07-22 cutoff. `[behavior] prompt_recall = false`
 restores purely opt-in retrieval exactly.
+
+Rejected alternatives: a shorter prompt-path lookback (an unmeasured
+knob; ship the measured predicate and tune from `prompt_recall`
+telemetry); leaving the Stop audit unshielded to measure ignored
+injections (adoption is replayable from the injected id joined against
+subsequent `show` / `search` / `use` events, without polluting the
+silent lane with non-silent events); and touching
+`SYSTEM_PROMPT_ADDENDUM` or the MCP `instructions` block (model-initiated
+retrieval stays opt-in, both surfaces are budget-pinned, and the
+injected block teaches its own handling at the only moment it matters).
+Caveats recorded at the time: the predicate inherits v1's
+length-blindness, so long prompts are near-unflaggable and recall
+under-fires exactly where memory is most likely needed (the
+successor-rule work in docs/eval.md is where that gets fixed, and the
+recall path inherits any rule upgrade through the shared probe); a
+no-git cwd with a live server session can double-flag (worktree leg
+absent, session spaces differ; the conservative direction, over-flag
+rather than over-inject); and every prompt pays one `uvx` process
+spawn, bounded by the manifest's 10s timeout, `|| true`, and the
+common-path early exits.
 
 ### Fixed — the claim oracle reaches legacy no-worktree memories from a matching checkout
 
@@ -1344,8 +1374,19 @@ retraction demanded, landed as upstream narrowing with the switch
 untouched. Those figures grade the detector on extracted corpus claims;
 the live population (author-declared, oracle-gated) is cleaner by
 construction and unmeasured until the dogfood backfill mints a
-denominator — recorded in the roadmap entry before the first telemetry,
-not after.
+denominator, recorded before the first telemetry rather than after.
+Quote the corpus figures, not the superseded single-repo pilot's
+25.1 → 2.0. Three deliberate narrownesses: symbol and literal claims
+are Python-AST-shaped, so non-Python repos get path claims only;
+merge-only touches to governed files never escalate (`git log -p` skips
+merge diffs, the body-edit-is-not-drift direction the bench pinned);
+and a window past `MAX_PATCH_STREAM_COMMITS` (256) falls back to
+incumbent any-touch counting rather than paying unbounded patch fetches
+on a read path, since a memory that stale is loudly drifted under either
+signal. On this repository the incumbent leg was saturated when the tier
+landed: measured 2026-07-31 against the dogfood store, 68 of the 74
+memories whose commit leg can speak carried commits since their last
+verify, 29 of the 31 verified in the 2026-07-24 clear among them.
 
 `bench/rot/run.py` now imports the promoted detector from
 `bettermemory.claims` — the bench measures the shipped functions, per
@@ -1409,10 +1450,16 @@ The shrink conjunct is what makes a 0.4%-false-positive predicate usable as a
 gate rather than a report: alone it would refuse every edit to a body that
 legitimately ends on a bare identifier or a list item, including edits that only
 grew it. Both directions are pinned by tests that fail under deletion of the
-clause they name. One caveat travels with the rate, recorded in
-`docs/ROADMAP.md`: 0.4% was measured over stored bodies at rest, and the gate
-judges shrinking edits — a population nothing has measured. Three existing tests
-went red on the gate the hour it landed, all terse unpunctuated fixture bodies.
+clause they name. One caveat travels with the rate: 0.4% was measured over
+stored bodies at rest (real bodies end on punctuation 233 times in 234), and
+the gate judges shrinking edits — a population nothing has measured — so the
+figure should not be quoted about this gate without that qualification. Three
+existing tests went red on the gate the hour it landed, all terse unpunctuated
+fixture bodies. Rejected alternatives: a "new body is a strict prefix of the
+old" guard is 0% false positive but misses the incident that motivated the
+gate (a rewrite that got cut, not a prefix); "new body is >30% shorter"
+false-positives on condensing edits, the single most common update shape on
+the dogfood store.
 
 The gate had been deferred two releases on description budget, and the blocker
 was dissolved by reclamation rather than a ceiling bump. `DESC_MEMORY_LINKS_TAIL`
@@ -1422,8 +1469,10 @@ description — and collapses to a four-name type index that keeps only the
 glosses deciding which edge type to use. Net −471 on the lean surface (25,890 →
 25,419 against the 25,900 warning line); the `acknowledge_truncation` parameter
 itself cost 60 of 371 remainder headroom, so prose was the entire constraint.
-`_DESC_BASELINE`, `_FOOTPRINT_BASELINE`, and `_LANDED_PARAM_BUDGET` were
-re-measured in the same commit that moved them.
+Look for a duplicated paragraph before proposing a ceiling bump: the 888 had
+sat there through every previous budget squeeze. `_DESC_BASELINE`,
+`_FOOTPRINT_BASELINE`, and `_LANDED_PARAM_BUDGET` were re-measured in the
+same commit that moved them.
 
 Measured before tagging: the blind-authored retrieval gold set produces
 byte-identical results on this tree and on v3.37.0 in the same environment —
