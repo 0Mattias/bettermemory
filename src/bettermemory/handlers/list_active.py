@@ -57,6 +57,7 @@ async def memory_list(
             if scopes and not (memory_scopes & set(scopes)):
                 continue
             out.append(deps.responses.memory_to_dict(memory, now=now))
+        deps.responses.attach_provenance(out, root=deps.store.root)
         deps.recorder.record(
             "list",
             scopes_filter=scopes,
@@ -71,6 +72,10 @@ async def memory_list(
         if excluded and (set(summary.scopes) & excluded):
             continue
         out_summary.append(deps.responses.summary_to_dict(summary, now=now))
+    # Listing is the cheap-triage view, and provenance is exactly the
+    # kind of signal a curator scrolling it should see without a show
+    # per row: one batched index read for the whole listing.
+    deps.responses.attach_provenance(out_summary, root=deps.store.root)
     deps.recorder.record(
         "list",
         scopes_filter=scopes,

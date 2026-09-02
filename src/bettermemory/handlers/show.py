@@ -121,6 +121,14 @@ async def memory_show(
         path_drift_missing=len(drift.claim_anchored_missing),
         commit_drift_count=commit_drift_count_for_verdict,
     )
+    # How the record entered the store, from the index (schema v7) and
+    # never from the file: a hand-written frontmatter field cannot
+    # supply it. Null until a rebuild has classified the row, the same
+    # null-when-no-signal contract `path_drift` and `commit_drift` keep
+    # on this surface.
+    from .. import index as _index
+
+    provenance = _index.provenance_for(deps.store.root, [memory.id]).get(memory.id)
     # Issue a use-token for this show before returning so the
     # auto-`record_use` flow has something to commit on the next
     # turn if the model doesn't override.
@@ -148,6 +156,7 @@ async def memory_show(
         "last_verified_at": isoformat_optional(memory.last_verified_at),
         "verification": verification.to_dict(),
         "staleness_verdict": verdict,
+        "provenance": provenance,
         "body": memory.body,
         "origin": deps.responses.origin_to_dict(memory.origin),
         "path_drift": (

@@ -463,6 +463,30 @@ class ResponseBuilder:
 
     # ---- per-search bulk decorators -------------------------------------
 
+    def attach_provenance(self, out: list[dict[str, Any]], *, root: Path) -> None:
+        """Mutate `out` in-place, adding `provenance` to each row whose id
+        the index has classified.
+
+        The label is index-resident (schema v7; `provenance.py` carries
+        the derivation) and is read here in one batched lookup per
+        response: one SQLite query, no git, no file reads, so it rides
+        every search and every listing at no per-row cost. Omitted (key
+        absent, not null) when the index has no row for the id or an
+        unclassified one: a rebuild is what classifies, and a missing
+        key says "not derived yet" without inventing a tier. Read from
+        the index and never from the file, so a hand-written frontmatter
+        field cannot supply it."""
+        ids = [row["id"] for row in out if isinstance(row.get("id"), str)]
+        if not ids:
+            return
+        from . import index as _index
+
+        labels = _index.provenance_for(root, ids)
+        for row in out:
+            label = labels.get(row.get("id", ""))
+            if label is not None:
+                row["provenance"] = label
+
     def attach_commit_drift_counts(  # type: ignore[no-untyped-def]
         self,
         out: list[dict[str, Any]],

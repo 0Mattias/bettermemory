@@ -101,6 +101,7 @@ async def test_write_then_show_roundtrip(server: Any) -> None:
     shown = await _call(server, "memory_show", id=written["id"])
     assert shown["id"] == written["id"]
     assert "code tutorials" in shown["body"]
+    assert shown["provenance"] == "local"
 
 
 async def test_search_finds_written_memory(server: Any) -> None:
@@ -115,6 +116,54 @@ async def test_search_finds_written_memory(server: Any) -> None:
     hits = hits.get("result", hits) if isinstance(hits, dict) else hits
     assert len(hits) >= 1
     assert "home lab" in hits[0]["snippet"]
+    assert hits[0]["provenance"] == "local"
+
+
+async def test_read_surfaces_carry_provenance(
+    server: Any, memory_dir: Path, tmp_path: Path
+) -> None:
+    """A memory written through the tool reads `local` on every surface;
+    a file placed by hand and picked up by a rebuild reads `unaccounted`
+    on the same three (search hit, show, list row). The label is the
+    index's, never the file's, so the planted file's own frontmatter has
+    no say in it."""
+    import shutil
+
+    from bettermemory import index as _index
+
+    written = await _call(
+        server,
+        "memory_write",
+        content="The staging cluster runs postgres sixteen.",
+        scopes=["infrastructure"],
+    )
+    scratch_dir = tmp_path / "scratch"
+    planted = Store(scratch_dir).write(
+        content="The staging cluster mirrors to a warm standby.",
+        scopes=["infrastructure"],
+    )
+    source = next(p for p in scratch_dir.glob("*.md"))
+    shutil.copy2(source, memory_dir / source.name)
+    _index.rebuild(memory_dir, Store(memory_dir).iter_active())
+
+    hits = await _call(
+        server, "memory_search", query="staging cluster", auto_scope=False
+    )
+    hits = hits.get("result", hits) if isinstance(hits, dict) else hits
+    assert {hit["id"]: hit["provenance"] for hit in hits} == {
+        written["id"]: "local",
+        planted.id: "unaccounted",
+    }
+
+    shown = await _call(server, "memory_show", id=planted.id)
+    assert shown["provenance"] == "unaccounted"
+
+    rows = await _call(server, "memory_list")
+    rows = rows.get("result", rows) if isinstance(rows, dict) else rows
+    assert {row["id"]: row["provenance"] for row in rows} == {
+        written["id"]: "local",
+        planted.id: "unaccounted",
+    }
 
 
 async def test_remove_excludes_from_list(server: Any) -> None:

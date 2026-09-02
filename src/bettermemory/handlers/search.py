@@ -900,6 +900,10 @@ async def memory_search(
     deps.responses.attach_commit_drift_counts(
         out, hits, memories, caller_origin=current_origin
     )
+    # Per-hit `provenance` (schema v7): how the record entered the store,
+    # read from the index in one batched query. Omitted while the index
+    # has not classified the row; never read from the file.
+    deps.responses.attach_provenance(out, root=deps.store.root)
 
     # Per-hit `recent_negative_outcomes` (T2.3): walk the event log
     # once for the recent window and annotate any hit that was
