@@ -98,6 +98,11 @@ class MigrationReport:
     # than backfilling a missing one.
     repaired_anchored: int = 0
     repaired_demoted: int = 0
+    # The ids of every record a non-dry run rewrote (backfill and repair
+    # alike), in directory order. The CLI names them in its `migrate`
+    # event so the rewrite is on the audit trail the provenance
+    # derivation reads; a dry run leaves this empty.
+    updated_ids: list[str] = field(default_factory=list)
 
 
 def plan_repair(
@@ -574,6 +579,7 @@ def migrate_origin_in_directory(
             # write would inflate `report.updated` to include files the
             # write never landed.
             report.updated += 1
+            _note_updated_id(report, post)
 
     # This function rewrites `.md` files directly rather than through a
     # Store mutator, so nothing has kept the FTS index in step. The S4
@@ -630,7 +636,20 @@ def _write_repaired(
         log.warning("skipping file that failed to write %s: %s", path, exc)
         report.malformed.append(path)
         return False
+    _note_updated_id(report, post)
     return True
+
+
+def _note_updated_id(report: MigrationReport, post: "frontmatter.Post") -> None:
+    """Append the rewritten record's id to `report.updated_ids`.
+
+    The loops above admitted the record's frontmatter before writing it,
+    so `id` is present on every path that reaches here; the isinstance
+    guard is the same defensive read `store._load_path` applies, never a
+    branch a test can reach with a well-formed file."""
+    memory_id = post.metadata.get("id")
+    if isinstance(memory_id, str) and memory_id:
+        report.updated_ids.append(memory_id)
 
 
 def _iter_active_memory_files(memory_dir: Path) -> Iterator[Path]:

@@ -6,7 +6,7 @@ import argparse
 import sys
 from typing import Any
 
-from ._common import cli_context
+from ._common import cli_context, cli_recorder
 
 
 def add_subparser(
@@ -162,7 +162,6 @@ def _cli_ingest(
     assert source_root is not None  # narrowed by both branches above
 
     ctx = cli_context()
-    directory = ctx.directory
     store = ctx.store
     existing = store.load_all()
     tombstoned = store.load_tombstones()
@@ -187,24 +186,14 @@ def _cli_ingest(
         return  # pragma: no cover
 
     if not dry_run:
-        # Mirror the server's recorder construction (builder.py) so the
-        # ingest events land in the same audit log under the same
-        # telemetry posture: `[telemetry] enabled = false` turns the
-        # event log off everywhere — this CLI included — and the
+        # The shared CLI recorder mirrors the server's construction
+        # (builder.py) so the ingest events land in the same audit log
+        # under the same telemetry posture: `[telemetry] enabled = false`
+        # turns the event log off everywhere, this CLI included, and the
         # rotation cap and verbatim-query redaction follow the same
-        # config the server reads. Pre-fix this site omitted the
-        # telemetry kwargs, so an opted-out user still got `write`
-        # events appended on every ingest.
-        from ..events import Recorder
-        from ..session import SessionState
-
-        recorder = Recorder(
-            root=directory,
-            session_id=SessionState().session_id,
-            enabled=ctx.config.telemetry.enabled,
-            max_bytes=ctx.config.telemetry.max_bytes,
-            log_queries_verbatim=ctx.config.telemetry.log_queries_verbatim,
-        )
+        # config the server reads. Before the kwargs were threaded, an
+        # opted-out user still got `write` events on every ingest.
+        recorder = cli_recorder(ctx)
         # Thread the real config, not the `Config()` fallback — the CLI
         # is the one caller that always has it resolved, and passing the
         # same object to both phases keeps the plan and the commit on ONE

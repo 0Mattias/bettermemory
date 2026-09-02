@@ -134,6 +134,7 @@ def test_migration_backfills_legacy_memory(tmp_path: Path) -> None:
 
     assert report.scanned == 1
     assert report.updated == 1
+    assert report.updated_ids == [_LEGACY_IDS[0]]
     assert report.already_had_origin == 0
 
     meta = _read_metadata(path)

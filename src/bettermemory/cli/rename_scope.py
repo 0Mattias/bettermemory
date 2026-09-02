@@ -7,7 +7,7 @@ import sys
 from typing import Any
 
 from ..models import validate_scope
-from ._common import cli_context
+from ._common import cli_context, cli_recorder
 
 
 def add_subparser(
@@ -110,6 +110,19 @@ def _cli_rename_scope(
 
     active = result["active"]
     tombstoned = result["tombstoned"]
+    # Mirrors the `memory_rename_scope` MCP tool's event, field for
+    # field, so the audit log reads one shape whichever entry point ran
+    # the rename; `via` tells them apart.
+    cli_recorder(ctx).record(
+        "rename_scope",
+        old=clean_old,
+        new=clean_new,
+        include_tombstones=include_tombstones,
+        active_count=len(active),
+        tombstoned_count=len(tombstoned),
+        failed_count=len(result.get("failed", [])),
+        via="cli",
+    )
     # Item 6/6b: records whose per-record re-dump was skipped inside the rename
     # loop (e.g. the rename would push the file past the size cap). Surface them
     # so a partial run isn't silently reported as a clean one. `Store.rename_scope`

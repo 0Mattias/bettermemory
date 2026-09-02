@@ -29,9 +29,11 @@ from pathlib import Path
 
 import pytest
 
-from bettermemory.config import load_config
+from bettermemory.config import Config, load_config
+from bettermemory.events import iter_events
 from bettermemory.origin import Origin
 from bettermemory.proposals import Proposal, ProposalQueue
+from bettermemory.provenance import creation_id
 from bettermemory.server import main as cli_main
 from bettermemory.store import Store
 
@@ -126,17 +128,30 @@ def _seeded_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Store:
     return Store(load_config().resolved_directory())
 
 
+def _default_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the CLI to the shipped defaults (telemetry on) so the event
+    assertions below do not depend on the developer's own config.toml.
+    `BETTERMEMORY_DIR` still routes the store, exactly as `_seeded_store`
+    resolves it."""
+    from bettermemory.cli import _common
+
+    monkeypatch.setattr(_common, "load_config", lambda: Config())
+
+
 def test_tombstones_restore_brings_back_a_removed_memory(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     """`tombstones restore <id>` un-tombstones a memory — the CLI path for
-    memory_restore, which isn't registered on the lean default surface."""
+    memory_restore, which isn't registered on the lean default surface.
+    It records the same creation-side `restore` event the MCP tool does,
+    the shape the provenance join reads as a local re-admission."""
     store = _seeded_store(tmp_path, monkeypatch)
     memory = store.write(content="restore me", scopes=["tools"])
     store.tombstone(memory.id, reason="oops", session_id="sess_t")
     assert memory.id not in {m.id for m in store.load_all()}
+    _default_config(monkeypatch)
 
     _run_main(
         ["tombstones", "restore", memory.id], monkeypatch=monkeypatch, storage=tmp_path
@@ -145,6 +160,11 @@ def test_tombstones_restore_brings_back_a_removed_memory(
     assert "Restored" in out
     assert memory.id in out
     assert memory.id in {m.id for m in store.load_all()}
+    restores = [e for e in iter_events(store.root) if e.get("kind") == "restore"]
+    assert [(e["id"], e["scopes"], e["via"]) for e in restores] == [
+        (memory.id, ["tools"], "cli")
+    ]
+    assert creation_id(restores[0]) == memory.id
 
 
 def test_tombstones_restore_unknown_id_errors_cleanly(
@@ -171,6 +191,7 @@ def test_rename_scope_renames_across_memories(
     path for memory_rename_scope."""
     store = _seeded_store(tmp_path, monkeypatch)
     memory = store.write(content="x", scopes=["infra"])
+    _default_config(monkeypatch)
 
     _run_main(
         ["rename-scope", "infra", "infrastructure"],
@@ -182,6 +203,11 @@ def test_rename_scope_renames_across_memories(
     reloaded = {m.id: m for m in store.load_all()}
     assert "infrastructure" in reloaded[memory.id].scopes
     assert "infra" not in reloaded[memory.id].scopes
+    renames = [e for e in iter_events(store.root) if e.get("kind") == "rename_scope"]
+    assert [
+        (e["old"], e["new"], e["active_count"], e["tombstoned_count"], e["via"])
+        for e in renames
+    ] == [("infra", "infrastructure", 1, 0, "cli")]
 
 
 def test_rename_scope_rejects_identical_old_and_new(
@@ -751,6 +777,60 @@ def test_consolidate_json_subcommand_emits_payload(
         "failures",
     ):
         assert key in payload, f"key {key!r} missing from consolidate JSON"
+
+
+def test_consolidate_apply_records_its_rewrites(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`consolidate --apply` records through the CLI recorder: the keeper
+    whose scopes the dedup merged is named in a `consolidate_update`
+    event in the store's own log."""
+    store = _seeded_store(tmp_path, monkeypatch)
+    store.write(
+        content="Run pnpm install then pnpm dev; node 20 required.",
+        scopes=["projects:alpha"],
+    )
+    newer = store.write(
+        content="Run pnpm install then pnpm dev; node 20 required.",
+        scopes=["projects:beta"],
+    )
+    newer = store.update(newer)
+    _default_config(monkeypatch)
+
+    _run_main(["consolidate", "--apply"], monkeypatch=monkeypatch, storage=tmp_path)
+    assert "Consolidate report" in capsys.readouterr().out
+    updates = [
+        e for e in iter_events(store.root) if e.get("kind") == "consolidate_update"
+    ]
+    assert [(e["id"], e["action"]) for e in updates] == [
+        (newer.id, "dedup_scope_merge")
+    ]
+
+
+def test_migrate_origin_records_the_backfilled_ids(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`migrate origin --repo` rewrites records outside every Store
+    mutator, so the one `migrate` event it records is the only audit
+    trail of the rewrite; it names every id."""
+    store = _seeded_store(tmp_path, monkeypatch)
+    legacy = store.write(content="written before origins existed", scopes=["tools"])
+    _default_config(monkeypatch)
+
+    _run_main(
+        ["migrate", "origin", "--repo", "https://example.invalid/legacy.git"],
+        monkeypatch=monkeypatch,
+        storage=tmp_path,
+    )
+    assert "Results:" in capsys.readouterr().out
+    migrations = [e for e in iter_events(store.root) if e.get("kind") == "migrate"]
+    assert [(e["action"], e["ids"], e["updated"], e["via"]) for e in migrations] == [
+        ("origin", [legacy.id], 1, "cli")
+    ]
 
 
 def test_tombstones_list_subcommand_runs_on_empty_store(

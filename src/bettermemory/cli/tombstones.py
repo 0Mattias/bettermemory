@@ -8,7 +8,7 @@ from typing import Any
 
 from ..models import utcnow, validate_scope
 from .._response import isoformat
-from ._common import cli_context
+from ._common import cli_context, cli_recorder
 
 
 def add_subparser(
@@ -222,6 +222,16 @@ def _cli_tombstones_restore(
         if parser is not None:
             parser.error(str(exc))
         raise
+    # The same creation-side event the `memory_restore` MCP tool records:
+    # the provenance derivation at `index.rebuild` reads a restore as this
+    # host re-admitting the record, and a restore that recorded nothing
+    # read as unaccounted on the next rebuild.
+    cli_recorder(ctx).record(
+        "restore",
+        id=memory.id,
+        scopes=list(memory.scopes),
+        via="cli",
+    )
 
     if json_out:
         sys.stdout.write(

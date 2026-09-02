@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from ._common import cli_context
+from ._common import cli_context, cli_recorder
 
 
 def add_subparser(
@@ -211,6 +211,20 @@ def _cli_migrate_origin(
         keep_global=keep_global,
         dry_run=dry_run,
     )
+    # A backfill rewrites records outside every Store mutator, so nothing
+    # else puts it on the audit trail; the provenance derivation reads
+    # rewrites from events. One event per run, naming every id, and none
+    # for a dry run or a run that changed nothing.
+    if not dry_run and report.updated_ids:
+        cli_recorder(ctx).record(
+            "migrate",
+            action="origin",
+            ids=list(report.updated_ids),
+            updated=report.updated,
+            repaired_anchored=report.repaired_anchored,
+            repaired_demoted=report.repaired_demoted,
+            via="cli",
+        )
 
     print("Results:")
     print(f"  Scanned:           {report.scanned}")
