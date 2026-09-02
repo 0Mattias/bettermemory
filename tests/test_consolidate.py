@@ -1300,6 +1300,33 @@ def test_consolidate_apply_merges_duplicate_scopes_into_keeper(store: Store) -> 
     )
 
 
+def test_consolidate_apply_records_the_rewrites_it_makes(store: Store) -> None:
+    """Every memory the pass rewrites is named in a `consolidate_update`
+    event when a recorder is supplied, so the provenance derivation at
+    `index.rebuild` can account for the rewrite. The dedup scope merge
+    is the rewrite this store shape produces; the tombstone is not an
+    event of this pass, and without a recorder the pass still runs."""
+    older = store.write(
+        content="Run pnpm install then pnpm dev; node 20 required.",
+        scopes=["projects:alpha"],
+    )
+    newer = store.write(
+        content="Run pnpm install then pnpm dev; node 20 required.",
+        scopes=["projects:beta"],
+    )
+    newer = store.update(newer)
+    recorder = Recorder(root=store.root, session_id="sess-consolidate")
+
+    consolidate(store, apply=True, session_id="sess-consolidate", recorder=recorder)
+
+    events = list(iter_events(store.root))
+    updates = [e for e in events if e.get("kind") == "consolidate_update"]
+    assert [(e["id"], e["action"], e["session_id"]) for e in updates] == [
+        (newer.id, "dedup_scope_merge", "sess-consolidate")
+    ]
+    assert older.id not in {e.get("id") for e in events}
+
+
 def test_consolidate_apply_demotes_dead_weight(store: Store, memory_dir: Path) -> None:
     """A dead-weight memory gets retagged to category=ambient. The
     body stays available; the category change suppresses future

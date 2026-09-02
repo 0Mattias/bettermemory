@@ -1205,6 +1205,19 @@ def _exact_levenshtein(a: str, b: str) -> int:
 # ---------------------------------------------------------------------------
 
 
+def _emit(recorder: Recorder | None, kind: str, **fields: Any) -> None:
+    """Record an event when a recorder was supplied.
+
+    The library entry points here are reachable without one (tests,
+    programmatic callers), and a missing recorder must not stop a pass;
+    but every path that writes or rewrites a memory records when it can,
+    because the provenance derivation at `index.rebuild` joins on these
+    events and a rewrite that records nothing reads as unaccounted on
+    the next rebuild."""
+    if recorder is not None:
+        recorder.record(kind, **fields)
+
+
 def consolidate(
     store: Store,
     *,
@@ -1215,6 +1228,7 @@ def consolidate(
     apply: bool = False,
     session_id: str | None = None,
     now: datetime | None = None,
+    recorder: Recorder | None = None,
 ) -> ConsolidateReport:
     """Run all four passes against the store. With `apply=True`, dedup
     and demotion candidates are committed; cold scopes and typo pairs
@@ -1223,6 +1237,12 @@ def consolidate(
     `session_id` is forwarded to `Store.tombstone` so the tombstones
     record which session ran the consolidation — visible in
     `memory_list_tombstones` and the event log.
+
+    `recorder`, when supplied, receives one `consolidate_update` event
+    per memory this pass rewrites (the keeper whose scopes a dedup
+    merges, the record a demotion retags), naming the id and the action.
+    Tombstones are not events of this pass: a tombstone leaves the
+    active set, and the provenance join reads creations and rewrites.
 
     Dedup logic when applying: each duplicate id is tombstoned at most
     once even if it appears in multiple pairs (e.g. memory C is
@@ -1398,6 +1418,13 @@ def consolidate(
                         preserve_verification=True,
                     )
                     dedup_by_id[candidate.keeper_id] = updated_keeper
+                    _emit(
+                        recorder,
+                        "consolidate_update",
+                        id=candidate.keeper_id,
+                        action="dedup_scope_merge",
+                        session_id=session_id,
+                    )
             reason = (
                 f"consolidate: near-duplicate of {candidate.keeper_id}, "
                 f"similarity={candidate.similarity:.2f} ({candidate.method})"
@@ -1448,6 +1475,13 @@ def consolidate(
             # the attestation would also strip the demoted memory of
             # its `_pick_keeper` Tier-0 standing.
             store.update(new_memory, preserve_verification=True)
+            _emit(
+                recorder,
+                "consolidate_update",
+                id=demotion.memory_id,
+                action="demoted_to_ambient",
+                session_id=session_id,
+            )
             report.actions_taken.append(
                 ConsolidateAction(
                     kind="demoted_to_ambient",
@@ -1616,6 +1650,7 @@ def run_auto_consolidate(
         dedup_threshold=_AUTO_DEDUP_JACCARD_THRESHOLD,
         session_id=session_id,
         now=now,
+        recorder=recorder,
     )
     tombstoned = sum(1 for a in report.actions_taken if a.kind == "tombstoned")
     demoted = sum(1 for a in report.actions_taken if a.kind == "demoted_to_ambient")
@@ -1992,8 +2027,15 @@ def consolidate_llm(
     max_content_bytes: int | None = None,
     allowed_scopes: list[str] | None = None,
     origin: Origin | None = None,
+    recorder: Recorder | None = None,
 ) -> LLMConsolidateReport:
     """Run an LLM-driven consolidation pass.
+
+    `recorder`, when supplied, receives one event per memory an applied
+    proposal creates or rewrites (`consolidate_write` for propose_new,
+    `consolidate_update` for merge, rewrite and demote, `restore` for a
+    rollback's re-admission), so the provenance derivation at
+    `index.rebuild` can account for every record this pass touched.
 
     Steps:
 
@@ -2170,6 +2212,7 @@ def consolidate_llm(
                 max_content_bytes=max_content_bytes,
                 allowed_scopes=allowed_scopes,
                 origin=origin,
+                recorder=recorder,
             )
             report.actions_taken.extend(actions)
         except Exception as exc:  # noqa: BLE001
@@ -2270,6 +2313,7 @@ def _apply_llm_proposal(
     max_content_bytes: int | None = None,
     allowed_scopes: list[str] | None = None,
     origin: Origin | None = None,
+    recorder: Recorder | None = None,
 ) -> list[LLMProposalAction]:
     """Translate a validated `Proposal` into store-level mutations.
 
@@ -2353,6 +2397,13 @@ def _apply_llm_proposal(
             update_fields["scopes"] = sorted(merged_scopes)
         merged = keeper.model_copy(update=update_fields)
         store.update(merged)
+        _emit(
+            recorder,
+            "consolidate_update",
+            id=proposal.keeper_id,
+            action="llm_merge_keeper",
+            session_id=session_id,
+        )
         actions.append(
             LLMProposalAction(
                 kind="llm_merge_keeper",
@@ -2395,6 +2446,13 @@ def _apply_llm_proposal(
                     # the escape hatch: we've already reconciled the
                     # concurrent edit out-of-band (it was OUR write).
                     store.update(keeper, force=True)
+                    _emit(
+                        recorder,
+                        "consolidate_update",
+                        id=proposal.keeper_id,
+                        action="llm_merge_rollback",
+                        session_id=session_id,
+                    )
                 except Exception:  # noqa: BLE001 — log path
                     log.warning(
                         "merge rollback: keeper %s body could not be "
@@ -2405,7 +2463,19 @@ def _apply_llm_proposal(
                     )
                 for done_id in tombstoned:
                     try:
-                        store.restore(done_id)
+                        restored = store.restore(done_id)
+                        # A re-admission by this host, on the rollback's
+                        # own authority: the same creation-side event the
+                        # MCP `memory_restore` records, so the provenance
+                        # join reads the restored record as local.
+                        _emit(
+                            recorder,
+                            "restore",
+                            id=restored.id,
+                            scopes=list(restored.scopes),
+                            via="consolidate_rollback",
+                            session_id=session_id,
+                        )
                     except Exception:  # noqa: BLE001 — log path
                         log.warning(
                             "merge rollback: duplicate %s was tombstoned "
@@ -2456,6 +2526,13 @@ def _apply_llm_proposal(
             update={"body": proposal.new_body, **_body_replacement_reset_fields()}
         )
         store.update(rewritten)
+        _emit(
+            recorder,
+            "consolidate_update",
+            id=proposal.memory_id,
+            action="llm_rewrite_date",
+            session_id=session_id,
+        )
         actions.append(
             LLMProposalAction(
                 kind="llm_rewrite_date",
@@ -2484,6 +2561,13 @@ def _apply_llm_proposal(
         # on later passes. Same rationale as the non-LLM demotion retag
         # and the dedup scope-merge above.
         store.update(demoted, preserve_verification=True)
+        _emit(
+            recorder,
+            "consolidate_update",
+            id=proposal.memory_id,
+            action="llm_demote_tier",
+            session_id=session_id,
+        )
         actions.append(
             LLMProposalAction(
                 kind="llm_demote_tier",
@@ -2661,6 +2745,15 @@ def _apply_llm_proposal(
             # accept-proposal sibling passes origin=capture(...) for the
             # same reason.
             origin=origin,
+        )
+        _emit(
+            recorder,
+            "consolidate_write",
+            id=written.id,
+            scopes=list(written.scopes),
+            category=new_category.value,
+            action="llm_propose_new",
+            session_id=session_id,
         )
         actions.append(
             LLMProposalAction(

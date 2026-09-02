@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import argparse
 import sys
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..config import Config
 from ..store import Store
-from ._common import cli_context
+from ._common import cli_context, cli_recorder
+
+if TYPE_CHECKING:
+    from ..events import Recorder
 
 
 def add_subparser(
@@ -269,6 +272,12 @@ def _cli_consolidate(
 
     session_id = _SessionState().session_id
 
+    # The recorder exists only when the pass can write: a dry run has
+    # nothing to record, and constructing one would touch the event log
+    # (directory creation) for no event. Same session id as the
+    # tombstones carry, so the audit trail reads as one run.
+    recorder = cli_recorder(ctx, session_id=session_id) if apply else None
+
     report = consolidate(
         store,
         dedup_threshold=dedup_threshold,
@@ -277,6 +286,7 @@ def _cli_consolidate(
         typo_distance=typo_distance,
         apply=apply,
         session_id=session_id,
+        recorder=recorder,
     )
     sys.stdout.write(render_json(report) if json_out else render_text(report))
 
@@ -294,6 +304,7 @@ def _cli_consolidate(
             from_transcript=from_transcript,
             max_content_bytes=config.behavior.max_content_bytes,
             allowed_scopes=config.scopes.allowed,
+            recorder=recorder,
         )
 
     if acknowledge_debt:
@@ -672,6 +683,7 @@ def _cli_consolidate_llm(
     from_transcript: str | None = None,
     max_content_bytes: int | None = None,
     allowed_scopes: list[str] | None = None,
+    recorder: Recorder | None = None,
 ) -> None:
     """Run the --llm pass after the structural passes have rendered.
 
@@ -712,5 +724,6 @@ def _cli_consolidate_llm(
         # instead of persisting origin=None and leaking across scopes /
         # worktrees. Mirrors the accept-proposal path's capture_origin().
         origin=_capture_origin(),
+        recorder=recorder,
     )
     sys.stdout.write(render_llm_json(report) if json_out else render_llm_text(report))

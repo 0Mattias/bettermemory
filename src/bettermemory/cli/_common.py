@@ -15,9 +15,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ..config import Config, load_config
 from ..store import Store
+
+if TYPE_CHECKING:
+    from ..events import Recorder
 
 
 @dataclass(frozen=True)
@@ -49,3 +53,30 @@ def cli_context() -> CliContext:
     directory = config.resolved_directory()
     store = Store(directory)
     return CliContext(config=config, directory=directory, store=store)
+
+
+def cli_recorder(ctx: CliContext, *, session_id: str | None = None) -> Recorder:
+    """An event recorder for a CLI command that mutates the store.
+
+    Mirrors the server's recorder construction (`builder.py`) so CLI
+    writes land in the same audit log under the same telemetry posture:
+    `[telemetry] enabled = false` turns the log off here too, and the
+    rotation cap and verbatim-query redaction follow the same config.
+    Every CLI path that creates or rewrites a memory records through
+    this, because the provenance derivation at `index.rebuild` joins on
+    those events: a mutation that records nothing reads as unaccounted
+    on the next rebuild.
+
+    `session_id` lets a command reuse the id it already stamped on
+    tombstones (consolidate); the default mints a fresh one.
+    """
+    from ..events import Recorder
+    from ..session import SessionState
+
+    return Recorder(
+        root=ctx.directory,
+        session_id=session_id or SessionState().session_id,
+        enabled=ctx.config.telemetry.enabled,
+        max_bytes=ctx.config.telemetry.max_bytes,
+        log_queries_verbatim=ctx.config.telemetry.log_queries_verbatim,
+    )

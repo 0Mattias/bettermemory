@@ -26,7 +26,7 @@ from bettermemory.consolidate import (
     consolidate_llm,
     run_auto_consolidate,
 )
-from bettermemory.events import Recorder
+from bettermemory.events import Recorder, iter_events
 from bettermemory.llm import (
     Cluster,
     DemoteTierProposal,
@@ -38,6 +38,7 @@ from bettermemory.llm import (
 )
 from bettermemory.models import Category, Confidence, Source
 from bettermemory.origin import Origin
+from bettermemory.provenance import creation_id
 from bettermemory.store import Store
 
 
@@ -688,6 +689,82 @@ def test_consolidate_with_from_transcript_runs_propose_new(tmp_path: Path) -> No
     assert new_memory.scopes == ["infrastructure"]
     assert "consolidate --llm --from-transcript" in new_memory.body
     assert "[user] My Postgres is on port 5433" in new_memory.body
+
+
+def test_apply_records_a_merge_as_a_rewrite_of_the_keeper(tmp_path: Path) -> None:
+    """The keeper an applied merge rewrites is named in a
+    `consolidate_update` event carrying the session id, so the
+    provenance derivation can account for the rewrite."""
+    store, a_id, b_id = _make_store_with_dupes(tmp_path)
+    provider = FakeProvider(
+        proposals=[
+            MergeProposal(
+                keeper_id=a_id,
+                duplicate_ids=(b_id,),
+                new_body="postgres on port 5432 (queue + queue worker)\n",
+                rationale="combined",
+            )
+        ]
+    )
+    recorder = Recorder(root=store.root, session_id="sess-llm")
+    report = consolidate_llm(
+        store,
+        provider,
+        apply=True,
+        accept=True,
+        session_id="sess-llm",
+        recorder=recorder,
+    )
+    assert any(a.kind == "llm_merge_keeper" for a in report.actions_taken)
+    updates = [
+        e for e in iter_events(store.root) if e.get("kind") == "consolidate_update"
+    ]
+    assert [(e["id"], e["action"], e["session_id"]) for e in updates] == [
+        (a_id, "llm_merge_keeper", "sess-llm")
+    ]
+
+
+def test_apply_records_a_propose_new_as_a_creation(tmp_path: Path) -> None:
+    """A propose_new lands as a `consolidate_write` naming the new id,
+    and that event is exactly the shape the provenance join reads as a
+    local creation."""
+    store = _make_store_with_existing(tmp_path)
+    transcript = tmp_path / "session.md"
+    transcript.write_text(
+        "[user] My Postgres is on port 5433, not 5432.\n[assistant] Saved.",
+        encoding="utf-8",
+    )
+    provider = FakeProvider(
+        proposals=[
+            ProposeNewProposal(
+                scope="infrastructure",
+                category="fact",
+                body="Postgres listens on port 5433, not the default 5432.",
+                source_excerpt="[user] My Postgres is on port 5433, not 5432.",
+                rationale="user-stated infrastructure fact",
+            )
+        ]
+    )
+    recorder = Recorder(root=store.root, session_id="sess-llm")
+    report = consolidate_llm(
+        store,
+        provider,
+        apply=True,
+        accept=True,
+        session_id="sess-llm",
+        from_transcript=str(transcript),
+        recorder=recorder,
+    )
+    new_id = next(
+        a.memory_id for a in report.actions_taken if a.kind == "llm_propose_new"
+    )
+    writes = [
+        e for e in iter_events(store.root) if e.get("kind") == "consolidate_write"
+    ]
+    assert [(e["id"], e["action"], e["scopes"], e["category"]) for e in writes] == [
+        (new_id, "llm_propose_new", ["infrastructure"], "fact")
+    ]
+    assert creation_id(writes[0]) == new_id
 
 
 def test_propose_new_writes_durable_body_despite_transient_provenance(
