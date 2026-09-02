@@ -71,12 +71,15 @@ import time
 from collections.abc import Iterable, Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from ._fsutil import flock_excl
 from .models import Memory
 from .origin import Origin
 from .search import fts_index_text, fts_match_query, tokenizer_fingerprint
+
+if TYPE_CHECKING:
+    from .provenance import Evidence
 
 log = logging.getLogger("bettermemory.index")
 
@@ -152,7 +155,19 @@ log = logging.getLogger("bettermemory.index")
 # spellings, so admission is not expressible in SQL. Storing the raw
 # strings and deciding in Python is what keeps the IDF denominator
 # provably equal to the ranked set.
-SCHEMA_VERSION = 6
+#
+# Version 7 (provenance column): `memories` gains `provenance`, one of
+# `local` / `synced` / `untracked` / `unaccounted` (see `provenance.py`
+# for the derivation). Index-resident on purpose: frontmatter is
+# attacker-writable, so the label is derived from the event log and the
+# sync repo at `rebuild` and stamped `local` at the upsert the Store's
+# own creation paths perform, never read from the file. Prior labels
+# survive a rebuild (`_read_prior_provenance`) and survive the drop a
+# later version or tokenizer bump performs (`_stash_provenance` parks
+# them in `meta.provenance_carry`, which `meta` keeps across the drop);
+# `meta.provenance_classified` records that a classified rebuild has
+# run, the baseline rule 5 of the derivation reads.
+SCHEMA_VERSION = 7
 
 # Pinned `search.tokenizer_fingerprint()` digest for the current
 # SCHEMA_VERSION. Consumed only by the ratchet test
@@ -204,7 +219,14 @@ CREATE TABLE IF NOT EXISTS memories (
     -- (and its per-process alternate spellings) stays the single
     -- definition of "belongs to this caller".
     origin_repo TEXT,
-    origin_worktree TEXT
+    origin_worktree TEXT,
+    -- Schema v7. How the memory entered the store, derived at rebuild
+    -- (`provenance.classify`) or stamped `local` by the Store's own
+    -- creation upserts. NULL on a row an incremental hook wrote without
+    -- a label (an update on a memory the index had not classified yet);
+    -- the next rebuild classifies it. Read surfaces omit the field when
+    -- NULL rather than guess.
+    provenance TEXT
 );
 
 -- The FTS table indexes the PREPROCESSED columns (schema v4): body_fts /
@@ -545,6 +567,13 @@ def _ensure_schema(
             # `rebuild()` — incremental hook upserts must not be able
             # to make a post-migration index look usable while the
             # untouched rest of the corpus is missing from it.
+            #
+            # Provenance labels would go down with the table. Park them
+            # in `meta` first (its own committed transaction, so a crash
+            # between the stash and the drop leaves a harmless extra row
+            # the next rebuild reconciles against the still-present
+            # table); `_read_prior_provenance` reads the stash back.
+            _stash_provenance(conn)
             try:
                 conn.executescript(
                     "BEGIN IMMEDIATE;\n"
@@ -706,10 +735,18 @@ def rebuild(root: Path, items: Iterable[tuple[Path, Memory]]) -> int:
     # attempt would have partially drained. Same memory envelope
     # `load_all` already pays on every fallback search.
     entries = list(items)
+    # Gathered before the index is touched: the evidence is the event log
+    # and the sync repo, neither of which the rebuild changes, and a
+    # corruption fallback below must classify from the same evidence the
+    # first attempt had. Lazy import: `provenance` reads the event log,
+    # which this module otherwise never needs.
+    from . import provenance as _provenance
+
+    evidence = _provenance.gather_evidence(root)
     conn = _open_for_rebuild(path)
     try:
         try:
-            return _rebuild_data(conn, entries)
+            return _rebuild_data(conn, entries, evidence)
         except sqlite3.IntegrityError:
             # NOT a corruption signal, so it must not reach the nuclear
             # path below. A constraint violation is produced by the
@@ -732,7 +769,7 @@ def rebuild(root: Path, items: Iterable[tuple[Path, Memory]]) -> int:
             conn.close()
             _unlink_index_files(path)
             conn = _open_for_rebuild(path)
-            return _rebuild_data(conn, entries)
+            return _rebuild_data(conn, entries, evidence)
     finally:
         # Reassignment-safe: if the recovery `_open_for_rebuild` itself
         # raised, `conn` still names the already-closed first connection
@@ -740,13 +777,25 @@ def rebuild(root: Path, items: Iterable[tuple[Path, Memory]]) -> int:
         conn.close()
 
 
-def _rebuild_data(conn: sqlite3.Connection, entries: list[tuple[Path, Memory]]) -> int:
+def _rebuild_data(
+    conn: sqlite3.Connection,
+    entries: list[tuple[Path, Memory]],
+    evidence: Evidence,
+) -> int:
     """The transactional data phase of `rebuild`: truncate, refill,
     stamp `indexed_count`, clear `needs_rebuild`. Takes a LIST rather
     than the caller's iterable because `rebuild`'s corruption fallback
     re-runs this phase against a fresh file — a one-shot generator
-    would replay empty."""
+    would replay empty.
+
+    `evidence` is `provenance.gather_evidence`'s result. The prior
+    labels are read BEFORE the truncation, inside the same transaction,
+    so a crash mid-build rolls the read and the refill back together
+    and the sticky labels cannot be lost to a torn rebuild."""
+    from . import provenance as _provenance
+
     with conn:
+        prior, baseline = _read_prior_provenance(conn)
         conn.execute("DELETE FROM memories")
         count = 0
         seen: set[str] = set()
@@ -764,13 +813,25 @@ def _rebuild_data(conn: sqlite3.Connection, entries: list[tuple[Path, Memory]]) 
             # directory order wins)" — which is exactly what the upsert's
             # `ON CONFLICT(id) DO UPDATE` does, and what the incremental
             # hook path has always done.
-            _upsert_memory(conn, memory, entry_path.name)
+            label = _provenance.classify(
+                memory, entry_path.name, evidence, prior, baseline=baseline
+            )
+            _upsert_memory(conn, memory, entry_path.name, provenance=label)
             if memory.id not in seen:
                 seen.add(memory.id)
                 count += 1
         conn.execute(
             "INSERT OR REPLACE INTO meta(key, value) VALUES ('indexed_count', ?)",
             (str(count),),
+        )
+        # The stash is consumed by this rebuild; the baseline marker
+        # records that every row now carries a classified label, which
+        # is what lets the next rebuild treat an id it has never seen as
+        # new rather than as pre-existing.
+        conn.execute("DELETE FROM meta WHERE key = 'provenance_carry'")
+        conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value) "
+            "VALUES ('provenance_classified', '1')"
         )
         # The schema-migration `needs_rebuild` flag clears here and
         # ONLY here, inside the same transaction as the repopulation:
@@ -786,7 +847,13 @@ def _rebuild_data(conn: sqlite3.Connection, entries: list[tuple[Path, Memory]]) 
     return count
 
 
-def upsert(root: Path, memory: Memory, *, filename: str) -> None:
+def upsert(
+    root: Path,
+    memory: Memory,
+    *,
+    filename: str,
+    provenance: str | None = None,
+) -> None:
     """Insert or replace one memory in the index. Called by Store hooks
     on write / update. Safe to call before the index file exists — the
     schema is created on demand (and, when the store already holds
@@ -796,13 +863,18 @@ def upsert(root: Path, memory: Memory, *, filename: str) -> None:
     `filename` is the on-disk filename (no leading directory) the
     Store actually wrote. Threading it through — rather than
     re-deriving — is what lets `filenames_for_ids` resolve
-    collision-suffixed names back to the correct path."""
+    collision-suffixed names back to the correct path.
+
+    `provenance` is the label the caller can vouch for: the Store's own
+    creation paths pass `local`. None means "no claim": an update keeps
+    whatever label the row already carries, and a row that did not
+    exist lands unlabelled until the next rebuild classifies it."""
     path = index_path(root)
     conn = _connect(path)
     try:
         _ensure_schema(conn, path, inflight_filename=filename)
         with conn:
-            _upsert_memory(conn, memory, filename)
+            _upsert_memory(conn, memory, filename, provenance=provenance)
             _bump_count(conn)
     finally:
         conn.close()
@@ -925,6 +997,100 @@ def filenames_for_ids(root: Path, ids: list[str]) -> dict[str, str]:
         return {row["id"]: row["filename"] for row in rows if row["filename"]}
     finally:
         conn.close()
+
+
+# SQLite's default host-parameter ceiling is 999 on older builds; a
+# `memory_list` over a large store hands more ids than that in one call.
+_PROVENANCE_BATCH = 500
+
+
+def provenance_for(root: Path, ids: list[str]) -> dict[str, str]:
+    """`{id: label}` for every id whose row carries a classified label.
+
+    Ids without a row, or with a NULL label (a hook-written row the next
+    rebuild has not classified yet), are omitted: the read surfaces then
+    leave the field out rather than guess. Never raises; an absent or
+    unusable index reads as `{}`, the same degrade every other read
+    helper here takes."""
+    if not ids:
+        return {}
+    path = index_path(root)
+    if not path.exists():
+        return {}
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = _connect(path)
+        _ensure_schema(conn, path)
+        out: dict[str, str] = {}
+        for start in range(0, len(ids), _PROVENANCE_BATCH):
+            batch = ids[start : start + _PROVENANCE_BATCH]
+            placeholders = ",".join("?" * len(batch))
+            rows = conn.execute(
+                "SELECT id, provenance FROM memories "
+                f"WHERE id IN ({placeholders}) AND provenance IS NOT NULL",
+                batch,
+            ).fetchall()
+            for row in rows:
+                out[row["id"]] = row["provenance"]
+        return out
+    except (sqlite3.Error, ValueError, IndexVersionError, OSError):
+        return {}
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def provenance_counts(root: Path) -> dict[str, int] | None:
+    """`{label: count}` over every indexed row, with `unclassified` for
+    NULL labels. The health and doctor surfaces read this. Returns None
+    (never raises) when the index is absent or unusable, so a caller can
+    tell "no unaccounted memories" from "could not look"."""
+    path = index_path(root)
+    if not path.exists():
+        return None
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = _connect(path)
+        _ensure_schema(conn, path)
+        counts: dict[str, int] = {}
+        for row in conn.execute(
+            "SELECT provenance, COUNT(*) AS n FROM memories GROUP BY provenance"
+        ):
+            label = (
+                row["provenance"] if row["provenance"] is not None else "unclassified"
+            )
+            counts[label] = int(row["n"])
+        return counts
+    except (sqlite3.Error, ValueError, IndexVersionError, OSError):
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def provenance_rows(root: Path, *, label: str) -> list[str] | None:
+    """Ids of every row carrying `label`, newest `created` first.
+
+    The health bucket joins these against the memories it has already
+    loaded; the doctor check names the first. None (never raises) when
+    the index is absent or unusable."""
+    path = index_path(root)
+    if not path.exists():
+        return None
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = _connect(path)
+        _ensure_schema(conn, path)
+        rows = conn.execute(
+            "SELECT id FROM memories WHERE provenance = ? ORDER BY created DESC, id",
+            (label,),
+        ).fetchall()
+        return [row["id"] for row in rows]
+    except (sqlite3.Error, ValueError, IndexVersionError, OSError):
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 def corpus_document_frequencies(
@@ -1630,7 +1796,13 @@ def _isoformat_optional(dt: datetime | None) -> str | None:
     return dt.isoformat() if dt is not None else None
 
 
-def _upsert_memory(conn: sqlite3.Connection, memory: Memory, filename: str) -> None:
+def _upsert_memory(
+    conn: sqlite3.Connection,
+    memory: Memory,
+    filename: str,
+    *,
+    provenance: str | None = None,
+) -> None:
     """INSERT OR REPLACE on the id key. Trigger logic keeps the FTS
     virtual table in sync — the AFTER UPDATE trigger handles the
     delete-then-insert dance internally so callers don't have to.
@@ -1647,13 +1819,20 @@ def _upsert_memory(conn: sqlite3.Connection, memory: Memory, filename: str) -> N
     through from the path it just wrote. The store's collision suffix
     (`<slug>-<short_id>.md`) means we can't re-derive this from the
     Memory fields alone, and getting it wrong points `filenames_for_ids`
-    at the wrong file."""
+    at the wrong file.
+
+    `provenance` None is "no claim", and the conflict clause honours it
+    with COALESCE: an update on an already-labelled row keeps the label,
+    because how a memory entered the store does not change when its
+    body is edited. A label the caller does vouch for replaces whatever
+    was there (a rebuild reclassifying, or the Store stamping `local`
+    on a restore)."""
     conn.execute(
         "INSERT INTO memories("
         "id, created, updated, last_verified_at, confidence, category, "
         "body, body_fts, scopes_text, scopes_fts, scopes_json, filename, "
-        "origin_repo, origin_worktree) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "origin_repo, origin_worktree, provenance) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(id) DO UPDATE SET "
         "created = excluded.created, "
         "updated = excluded.updated, "
@@ -1671,7 +1850,8 @@ def _upsert_memory(conn: sqlite3.Connection, memory: Memory, filename: str) -> N
         # and an upsert that left these stale would keep filtering search
         # admission on the pre-repair value.
         "origin_repo = excluded.origin_repo, "
-        "origin_worktree = excluded.origin_worktree",
+        "origin_worktree = excluded.origin_worktree, "
+        "provenance = COALESCE(excluded.provenance, memories.provenance)",
         (
             memory.id,
             memory.created.isoformat(),
@@ -1687,6 +1867,7 @@ def _upsert_memory(conn: sqlite3.Connection, memory: Memory, filename: str) -> N
             filename,
             memory.origin.repo if memory.origin else None,
             memory.origin.worktree_root if memory.origin else None,
+            provenance,
         ),
     )
     _sync_links(conn, memory)
@@ -1733,6 +1914,70 @@ def _sync_links(conn: sqlite3.Connection, memory: Memory) -> None:
     )
 
 
+def _stash_provenance(conn: sqlite3.Connection) -> None:
+    """Park every classified label in `meta.provenance_carry` before a
+    schema or tokenizer drop empties the table.
+
+    Skipped when the table predates the column (the 6 -> 7 upgrade has
+    nothing to carry) or holds no labels. Its own committed transaction:
+    the drop that follows runs in a separate `BEGIN IMMEDIATE` script,
+    and a stash that outlives an aborted drop is reconciled by
+    `_read_prior_provenance` (the table wins over the stash)."""
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(memories)")}
+    if "provenance" not in columns:
+        return
+    rows = conn.execute(
+        "SELECT id, provenance FROM memories WHERE provenance IS NOT NULL"
+    ).fetchall()
+    if not rows:
+        return
+    payload = json.dumps({row[0]: row[1] for row in rows}, separators=(",", ":"))
+    conn.execute(
+        "INSERT OR REPLACE INTO meta(key, value) VALUES ('provenance_carry', ?)",
+        (payload,),
+    )
+    conn.commit()
+
+
+def _read_prior_provenance(conn: sqlite3.Connection) -> tuple[dict[str, str], bool]:
+    """The labels this index carried before a rebuild, and whether a
+    classified rebuild has completed on it before.
+
+    Merges the `meta.provenance_carry` stash (labels parked ahead of a
+    drop) under the live table's labels, so a row the hooks stamped
+    after the drop wins over the parked copy. Labels outside the known
+    set are dropped rather than carried: the stash is written by this
+    module, but `meta` is a plain table and the read must not trust it
+    blindly."""
+    from . import provenance as _provenance
+
+    prior: dict[str, str] = {}
+    stash = conn.execute(
+        "SELECT value FROM meta WHERE key = 'provenance_carry'"
+    ).fetchone()
+    if stash is not None:
+        try:
+            parked = json.loads(stash[0])
+        except (TypeError, ValueError):
+            parked = None
+        if isinstance(parked, dict):
+            for memory_id, label in parked.items():
+                if isinstance(memory_id, str) and label in _provenance.LABELS:
+                    prior[memory_id] = label
+    for row in conn.execute(
+        "SELECT id, provenance FROM memories WHERE provenance IS NOT NULL"
+    ):
+        if row[1] in _provenance.LABELS:
+            prior[row[0]] = row[1]
+    baseline = (
+        conn.execute(
+            "SELECT value FROM meta WHERE key = 'provenance_classified'"
+        ).fetchone()
+        is not None
+    )
+    return prior, baseline
+
+
 def _bump_count(conn: sqlite3.Connection) -> None:
     """Refresh the meta.indexed_count after a single-row mutation.
     Called inside the same transaction as the change so a crash
@@ -1754,6 +1999,9 @@ __all__ = [
     "indexed_ids",
     "links_for",
     "links_for_with_status",
+    "provenance_counts",
+    "provenance_for",
+    "provenance_rows",
     "query",
     "rebuild",
     "remove",
