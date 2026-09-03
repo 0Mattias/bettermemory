@@ -140,6 +140,57 @@ injection-driven legitimate write, which is `local` by every test here
 and truthfully so. Cause provenance (what was in context at write time)
 is a different question, and an open one.
 
+## Sync admission
+
+Since 6.6.0 `sync pull` judges every memory file the rebase brought
+down before it records the `sync_pull` event and before the index is
+rebuilt, inside the same store-wide sync lock. The chain, in order:
+
+1. A size cap. A file above the store's read cap (1 MiB) is refused
+   without being read.
+2. The store's own parser. A file the store could not load is refused.
+3. An id alias check. A pulled file whose id another active file
+   already carries is refused, and the file already here keeps the id:
+   the rebuild collapses duplicate ids by directory order, so without
+   the check a hostile body that sorts later would replace the
+   legitimate one in the index.
+4. The credential gate the write path runs (`ADMISSION_GATES` in
+   `handlers/write.py`, the one gate whose refusal is a property of the
+   bytes alone). The transient and user-claim gates are soft locally
+   (an acknowledgement or the pending handshake lifts them) and neither
+   travels with the file, so they are detected and reported as
+   advisory flags on admitted files, never refused; the dedup gates
+   would score an update pull against the record's own stored copy;
+   the scope gate judges a checkout a pull has none of.
+
+A refusal is quarantined: the file stays where git put it, tracked and
+unchanged, so the worktree stays clean and no deletion propagates to
+other hosts, and the host-local, gitignored sidecar `.quarantine.json`
+names it with the reason, a detail that never quotes the body, the
+remote, the pull time and the sha256 of the refused bytes. Every
+active-file walk skips the names in the sidecar (`iter_active_memory_paths`
+in `store.py` is the one definition), so a quarantined file is never
+indexed, searched, listed, shown, counted or pointed at. Every later
+pull judges the quarantined files again and releases one that passes
+(fixed upstream) or drops one that vanished; `bettermemory sync
+quarantine` lists them and `--release NAME` runs the chain by hand,
+`--force` admitting a credential refusal as it is. The structural
+refusals cannot be forced. `sync status` carries the count and doctor's
+`sync_quarantine` check warns while any file is held.
+
+### Remote stamps
+
+The index also records `verified_locally_at`: when this host last
+stamped the memory through its own `memory_verify`, set at the verify
+upsert and cleared by a pull for every file it lands. A `synced` record
+whose file carries a `last_verified_at` but whose row has no local
+verification reads `verification.status: "remote"` and
+`spot_check_required` on every surface, and the recall pointer says
+`unverified here`. A local verify re-checks the attested paths against
+this machine and lifts the rule. The column is carried across rebuilds
+and derived from `verify` and `sync_pull` events when the index is
+rebuilt from scratch, so the rule survives an index reset.
+
 ## Storage
 
 One file per memory, grep-able and hand-editable:
@@ -216,6 +267,7 @@ bettermemory consolidate      # dedup/demote pass (dry-run; --llm for more)
 bettermemory eval             # the three metrics, with CIs
 bettermemory eval --report    # same telemetry as publishable markdown
 bettermemory sync push|pull   # git-based cross-host sync
+bettermemory sync quarantine  # pulled files admission refused; --release
 ```
 
 `bettermemory <command> --help` for flags; `reindex`, `ingest`,
