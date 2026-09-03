@@ -1099,16 +1099,22 @@ async def memory_search(
                 now=now,
                 stale_after_days=deps.config.behavior.verification_stale_days,
             )
-            out[0]["staleness_verdict"] = compute_staleness_verdict(
-                verification=top_verification,
-                # Claim-anchored subset, matching every other verdict
-                # site. The full report — prose misses included — is
-                # already in `out[0]["path_drift"]` above, so nothing the
-                # caller could see before disappeared; only the tier
-                # narrowed. See `verdict_from_signals`.
-                path_drift_missing=expanded_claim_anchored_missing,
-                commit_drift_count=commit_drift_count_for_verdict,
-            )
+            # Unless the trust rule already demoted the hit: a `synced`
+            # record whose stamp this host never made reads "remote" and
+            # spot_check_required (`ResponseBuilder.apply_trust`, applied
+            # by `attach_provenance` above), and the file's stamp must
+            # not put a verdict back that the rule took away.
+            if out[0].get("verification", {}).get("status") != "remote":
+                out[0]["staleness_verdict"] = compute_staleness_verdict(
+                    verification=top_verification,
+                    # Claim-anchored subset, matching every other verdict
+                    # site. The full report — prose misses included — is
+                    # already in `out[0]["path_drift"]` above, so nothing
+                    # the caller could see before disappeared; only the
+                    # tier narrowed. See `verdict_from_signals`.
+                    path_drift_missing=expanded_claim_anchored_missing,
+                    commit_drift_count=commit_drift_count_for_verdict,
+                )
             expanded_id = memory.id
 
     # Issue use-tokens after every other field is in place so the

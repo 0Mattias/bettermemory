@@ -44,6 +44,7 @@ from .verify import (
     _quiescent_drift_applicable,
     commit_drift_anchor_paths,
     compute_staleness_verdict,
+    remote_verification_status,
     compute_verification_status,
     detect_path_drift,
     resolve_commit_drift,
@@ -465,27 +466,70 @@ class ResponseBuilder:
 
     def attach_provenance(self, out: list[dict[str, Any]], *, root: Path) -> None:
         """Mutate `out` in-place, adding `provenance` to each row whose id
-        the index has classified.
+        the index has classified, and applying the trust rule
+        (`apply_trust`) to each.
 
         The label is index-resident (schema v7; `provenance.py` carries
         the derivation) and is read here in one batched lookup per
-        response: one SQLite query, no git, no file reads, so it rides
-        every search and every listing at no per-row cost. Omitted (key
-        absent, not null) when the index has no row for the id or an
-        unclassified one: a rebuild is what classifies, and a missing
-        key says "not derived yet" without inventing a tier. Read from
-        the index and never from the file, so a hand-written frontmatter
-        field cannot supply it."""
+        response, beside the local-verification stamp (schema v8): one
+        SQLite query, no git, no file reads, so it rides every search and
+        every listing at no per-row cost. Omitted (key absent, not null)
+        when the index has no row for the id or an unclassified one: a
+        rebuild is what classifies, and a missing key says "not derived
+        yet" without inventing a tier. Read from the index and never from
+        the file, so a hand-written frontmatter field cannot supply it.
+
+        Call it LAST in a response's assembly: the trust rule rewrites
+        `verification` and `staleness_verdict`, and a later recompute
+        from the file's stamp would put a remote stamp back."""
         ids = [row["id"] for row in out if isinstance(row.get("id"), str)]
         if not ids:
             return
         from . import index as _index
 
-        labels = _index.provenance_for(root, ids)
+        rows = _index.trust_for(root, ids)
         for row in out:
-            label = labels.get(row.get("id", ""))
-            if label is not None:
-                row["provenance"] = label
+            trust = rows.get(row.get("id", ""))
+            if trust is not None:
+                self.apply_trust(
+                    row,
+                    provenance=trust.provenance,
+                    verified_locally_at=trust.verified_locally_at,
+                )
+
+    def apply_trust(
+        self,
+        row: dict[str, Any],
+        *,
+        provenance: str | None,
+        verified_locally_at: str | None,
+    ) -> None:
+        """Mutate one response row with the index's trust facts.
+
+        Sets `provenance` when known. Then the rule (6.6.0): a `synced`
+        row whose file carries a `last_verified_at` this host never made
+        (`verified_locally_at` is None) reports the remote verification
+        status and `spot_check_required`, whatever the file's stamp and
+        the drift legs said. The stamp arrived in the file, by `sync
+        pull`, and the frontmatter cannot say who wrote it; a local
+        `memory_verify` stamps the row and lifts the rule. Rows without a
+        stamp already read `never`; local, untracked and unaccounted rows
+        are untouched (unaccounted is flagged by the label itself).
+        """
+        if provenance is not None:
+            row["provenance"] = provenance
+        if provenance != "synced" or verified_locally_at is not None:
+            return
+        raw = row.get("last_verified_at")
+        if not isinstance(raw, str) or not raw:
+            return
+        stamp = parse_event_ts(raw)
+        if stamp is None:
+            return
+        row["verification"] = remote_verification_status(
+            stamp, stale_after_days=self._stale_after_days
+        ).to_dict()
+        row["staleness_verdict"] = "spot_check_required"
 
     def attach_commit_drift_counts(  # type: ignore[no-untyped-def]
         self,

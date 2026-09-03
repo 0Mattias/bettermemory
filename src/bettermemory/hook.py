@@ -729,7 +729,12 @@ _RECALL_BLOCK_CAP_CHARS = 1_200
 _RECALL_SCOPES_CAP_CHARS = 200
 
 
-def _render_recall_block(report: MissReport, *, provenance: str | None = None) -> str:
+def _render_recall_block(
+    report: MissReport,
+    *,
+    provenance: str | None = None,
+    remote_stamp: bool = False,
+) -> str:
     """Render the injected context block for a miss-verdict report.
 
     `provenance` is the index's label for the top hit (schema v7). It is
@@ -737,9 +742,13 @@ def _render_recall_block(report: MissReport, *, provenance: str | None = None) -
     when it is known and not `local`: this block is the one delivery that
     reaches the model without a tool call, so a record that did not enter
     through the store's own paths announces itself here, while a local
-    record adds nothing to the common case. The suffix lives in the frame
-    the snippet math measures around, so the snippet absorbs its few
-    bytes under the block cap.
+    record adds nothing to the common case. `remote_stamp` (schema v8)
+    adds `unverified here` inside the same bracket when the record is
+    synced, carries a verification stamp, and this host never verified
+    it: the trust rule `memory_show` will report as `"remote"`, named at
+    the pointer so the model reads the fetch it is told to make. The
+    suffix lives in the frame the snippet math measures around, so the
+    snippet absorbs its few bytes under the block cap.
 
     One hit only — the verdict reads only rank 1 (`THRESHOLD_RULE_V1`),
     so rank 1 is the only hit the ~2%-of-turns fire rate was measured
@@ -768,7 +777,8 @@ def _render_recall_block(report: MissReport, *, provenance: str | None = None) -
     snippet = " ".join(hit.snippet.split())
     pointer = f"- {hit.id} [{scopes}]"
     if provenance is not None and provenance != "local":
-        pointer += f" [provenance: {provenance}]"
+        qualifier = ", unverified here" if remote_stamp else ""
+        pointer += f" [provenance: {provenance}{qualifier}]"
     frame = (
         "bettermemory recall (score-gated: a stored memory ranks high for "
         "this prompt; most turns get no injection):\n"
@@ -784,6 +794,17 @@ def _render_recall_block(report: MissReport, *, provenance: str | None = None) -
     if len(snippet) > room:
         snippet = snippet[: max(room - 1, 0)].rstrip() + "…"
     return frame.replace("{snippet}", snippet)
+
+
+def _carries_a_stamp(store: Store, memory_id: str) -> bool:
+    """Whether the file behind `memory_id` carries a `last_verified_at`.
+    One file read, paid only on a delivery whose top hit is `synced` with
+    no local verification (the trust rule's remaining condition); a
+    record that vanished or cannot be read reads as unstamped."""
+    try:
+        return store.load_one(memory_id).last_verified_at is not None
+    except Exception:
+        return False
 
 
 def run_prompt_recall(
@@ -880,9 +901,18 @@ def run_prompt_recall(
     # module is only needed once a delivery is actually happening.
     from . import index as _index
 
-    top_id = report.top_hits[0].id
-    provenance = _index.provenance_for(root, [top_id]).get(top_id)
-    block = _render_recall_block(report, provenance=provenance)
+    top_hit = report.top_hits[0]
+    trust = _index.trust_for(root, [top_hit.id]).get(top_hit.id)
+    provenance = trust.provenance if trust is not None else None
+    remote_stamp = (
+        trust is not None
+        and trust.provenance == "synced"
+        and trust.verified_locally_at is None
+        and _carries_a_stamp(store, top_hit.id)
+    )
+    block = _render_recall_block(
+        report, provenance=provenance, remote_stamp=remote_stamp
+    )
     recorder = Recorder(
         root=root,
         session_id=session_id,

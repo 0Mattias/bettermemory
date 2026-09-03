@@ -7571,3 +7571,119 @@ async def test_memory_proposals_accept_handler_converts_oserror_to_value_error(
     assert _oserror_wrapped_as_value_error(excinfo, "failed to accept proposal"), (
         f"regression: bare OSError leaked past memory_proposals accept. Got: {excinfo.value!r}"
     )
+
+
+async def test_a_synced_stamp_this_host_never_made_reads_remote_on_every_surface(
+    server: Any, memory_dir: Path
+) -> None:
+    """The trust rule (6.6.0). A `synced` record whose file carries a
+    `last_verified_at` but whose row has no local verification reads
+    `verification.status: "remote"` and `spot_check_required` on the
+    search hit (expanded or not), on `memory_show` and on both list
+    shapes; a local `memory_verify` lifts it. The row is put into that
+    state directly here: the same shape `sync pull` produces (the label
+    from the pull event, the local stamp cleared), without the git
+    round-trip the sync suite already covers."""
+    from bettermemory import index as _index
+
+    written = await _call(
+        server,
+        "memory_write",
+        content="The staging cluster runs postgres sixteen behind pgbouncer.",
+        scopes=["infrastructure"],
+    )
+    await _call(server, "memory_verify", id=written["id"])
+    store = Store(memory_dir)
+    memory = store.load_one(written["id"])
+    name = next(p.name for p in memory_dir.glob("*.md"))
+    _index.upsert(memory_dir, memory, filename=name, provenance="synced")
+    assert _index.clear_local_verification(memory_dir, [name]) == 1
+
+    hits = await _call(
+        server, "memory_search", query="staging cluster postgres", auto_scope=False
+    )
+    hits = hits.get("result", hits) if isinstance(hits, dict) else hits
+    (hit,) = hits
+    assert hit["provenance"] == "synced"
+    assert hit["verification"]["status"] == "remote"
+    assert hit["verification"]["age_days"] is None
+    assert hit["verification"]["last_verified_at"] is not None
+    assert "another host" in hit["verification"]["recommendation"]
+    assert hit["staleness_verdict"] == "spot_check_required"
+    assert hit["last_verified_at"] is not None
+
+    expanded = await _call(
+        server,
+        "memory_search",
+        query="staging cluster postgres",
+        auto_scope=False,
+        expand_top=True,
+    )
+    expanded = (
+        expanded.get("result", expanded) if isinstance(expanded, dict) else expanded
+    )
+    assert "body" in expanded[0]
+    assert expanded[0]["verification"]["status"] == "remote"
+    assert expanded[0]["staleness_verdict"] == "spot_check_required"
+
+    shown = await _call(server, "memory_show", id=written["id"])
+    assert shown["provenance"] == "synced"
+    assert shown["verification"]["status"] == "remote"
+    assert shown["staleness_verdict"] == "spot_check_required"
+
+    for with_bodies in (False, True):
+        rows = await _call(server, "memory_list", with_bodies=with_bodies)
+        rows = rows.get("result", rows) if isinstance(rows, dict) else rows
+        (row,) = rows
+        assert row["provenance"] == "synced"
+        assert row["verification"]["status"] == "remote"
+        assert row["staleness_verdict"] == "spot_check_required"
+
+    # A verify on this host is the one thing that lifts the rule.
+    await _call(server, "memory_verify", id=written["id"])
+    shown = await _call(server, "memory_show", id=written["id"])
+    assert shown["provenance"] == "synced"
+    assert shown["verification"]["status"] == "fresh"
+    assert shown["staleness_verdict"] == "fresh"
+    hits = await _call(
+        server, "memory_search", query="staging cluster postgres", auto_scope=False
+    )
+    hits = hits.get("result", hits) if isinstance(hits, dict) else hits
+    assert hits[0]["verification"]["status"] == "fresh"
+
+
+async def test_the_trust_rule_leaves_unstamped_and_local_records_alone(
+    server: Any, memory_dir: Path
+) -> None:
+    """A synced record with no stamp already reads `never`; a local record
+    with a stamp reads `fresh`. Neither is the rule's business."""
+    from bettermemory import index as _index
+
+    unstamped = await _call(
+        server,
+        "memory_write",
+        content="The warm standby replays WAL from the primary.",
+        scopes=["infrastructure"],
+    )
+    stamped_local = await _call(
+        server,
+        "memory_write",
+        content="The primary vacuums nightly at two.",
+        scopes=["infrastructure"],
+    )
+    await _call(server, "memory_verify", id=stamped_local["id"])
+    store = Store(memory_dir)
+    memory = store.load_one(unstamped["id"])
+    name = next(
+        p.name for p in memory_dir.glob("*.md") if unstamped["id"].lower() in p.name
+    )
+    _index.upsert(memory_dir, memory, filename=name, provenance="synced")
+
+    shown = await _call(server, "memory_show", id=unstamped["id"])
+    assert shown["provenance"] == "synced"
+    assert shown["verification"]["status"] == "never"
+    assert shown["staleness_verdict"] == "spot_check_required"
+    shown = await _call(server, "memory_show", id=stamped_local["id"])
+    assert shown["provenance"] == "local"
+    assert shown["verification"]["status"] == "fresh"
+    assert shown["staleness_verdict"] == "fresh"

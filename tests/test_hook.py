@@ -3102,3 +3102,84 @@ def test_prompt_main_swallows_unexpected_errors(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "synthetic recall failure" in captured.err
+
+
+def test_render_recall_block_names_a_remote_stamp() -> None:
+    """`unverified here` rides inside the provenance bracket when the
+    record is synced, stamped, and never verified on this host; a local
+    record shows nothing even if the flag is set, because the label gate
+    comes first."""
+    from bettermemory.audit import MissHit, MissReport, THRESHOLD_RULE_V1
+    from bettermemory.models import utcnow
+
+    hit = MissHit(
+        id="01TESTRECALLREMOTE0000000",
+        score=1.0,
+        relevance="high",
+        scopes=("tools",),
+        snippet="pulled body",
+        matched_unique=2,
+        query_unique=2,
+        relevance_v2="high",
+    )
+    report = MissReport(
+        verdict="miss",
+        checked_at=utcnow(),
+        session_id="transcript-remote",
+        lookback_seconds=600,
+        recent_retrieval_count=0,
+        threshold_rule=THRESHOLD_RULE_V1,
+        top_hits=(hit,),
+        probe_query="remote probe",
+    )
+    flagged = _render_recall_block(report, provenance="synced", remote_stamp=True)
+    assert f"- {hit.id} [tools] [provenance: synced, unverified here]" in flagged
+    plain = _render_recall_block(report, provenance="synced")
+    assert f"- {hit.id} [tools] [provenance: synced]" in plain
+    assert "provenance" not in _render_recall_block(
+        report, provenance="local", remote_stamp=True
+    )
+
+
+def test_run_prompt_recall_names_a_remote_stamp_on_the_pointer(tmp_path: Path) -> None:
+    """End to end: the top hit's row is synced with a stamp this host never
+    made (the shape a pull leaves), so the pointer says so. After a local
+    verify the qualifier is gone."""
+    from bettermemory import index as _index
+
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    memory_id = _write_miss_memory(mem_dir)
+    store = Store(mem_dir)
+    store.mark_verified(memory_id)
+    name = next(p.name for p in mem_dir.glob("*.md"))
+    _index.upsert(
+        mem_dir, store.load_one(memory_id), filename=name, provenance="synced"
+    )
+    assert _index.clear_local_verification(mem_dir, [name]) == 1
+
+    block = run_prompt_recall(
+        prompt=_MISS_QUERY,
+        session_id="transcript-remote",
+        config=_miss_config(mem_dir),  # type: ignore[arg-type]
+    )
+    assert block is not None
+    assert (
+        f"- {memory_id} [infrastructure] [provenance: synced, unverified here]" in block
+    )
+
+    store.mark_verified(memory_id)
+    # The first delivery recorded a `prompt_recall`, and the hook
+    # self-suppresses within its window; clear the log so the second
+    # probe is judged on the store alone (the stamp lives in the index,
+    # not in the events).
+    for path in mem_dir.glob(".events*"):
+        path.unlink()
+    block = run_prompt_recall(
+        prompt=_MISS_QUERY,
+        session_id="transcript-remote-two",
+        config=_miss_config(mem_dir),  # type: ignore[arg-type]
+    )
+    assert block is not None
+    assert f"- {memory_id} [infrastructure] [provenance: synced]" in block
+    assert "unverified here" not in block

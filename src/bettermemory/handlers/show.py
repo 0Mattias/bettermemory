@@ -129,23 +129,12 @@ async def memory_show(
     # surface. Read on the index open the links query already holds, so
     # the no-inbound show stays at two connections.
     index_reads = _links_payload(deps, memory)
+    verified_locally_at = index_reads.pop("_verified_locally_at")
     # Issue a use-token for this show before returning so the
     # auto-`record_use` flow has something to commit on the next
     # turn if the model doesn't override.
     token_map = state.issue_use_tokens([memory.id])
-    deps.recorder.record(
-        "show",
-        id=memory.id,
-        path_drift_checked=len(drift.checked),
-        path_drift_missing=len(drift.missing),
-        verification_status=verification.status,
-        staleness_verdict=verdict,
-        commit_drift_status=(commit_drift.status if commit_drift is not None else None),
-        commits_since_verify=(
-            commit_drift.commits_since_verify if commit_drift is not None else None
-        ),
-    )
-    return {
+    response: dict[str, Any] = {
         "id": memory.id,
         "scopes": memory.scopes,
         "confidence": memory.confidence.value,
@@ -183,6 +172,28 @@ async def memory_show(
         "claims": list(memory.claims),
         **index_reads,
     }
+    # The trust rule (6.6.0), applied to the assembled response and
+    # before the event so the log records what the caller was told: a
+    # synced record whose stamp this host never made reads
+    # `verification.status: "remote"` and spot_check_required.
+    deps.responses.apply_trust(
+        response,
+        provenance=response["provenance"],
+        verified_locally_at=verified_locally_at,
+    )
+    deps.recorder.record(
+        "show",
+        id=memory.id,
+        path_drift_checked=len(drift.checked),
+        path_drift_missing=len(drift.missing),
+        verification_status=response["verification"]["status"],
+        staleness_verdict=response["staleness_verdict"],
+        commit_drift_status=(commit_drift.status if commit_drift is not None else None),
+        commits_since_verify=(
+            commit_drift.commits_since_verify if commit_drift is not None else None
+        ),
+    )
+    return response
 
 
 def _links_payload(deps: "ToolHandlers", memory: Any) -> dict[str, Any]:
@@ -280,12 +291,17 @@ def _links_payload(deps: "ToolHandlers", memory: Any) -> dict[str, Any]:
             for link in memory.links
         ]
     try:
-        # The sixth element (the row's local-verification stamp, schema
-        # v8) is read here so the show path stays one index open; the
-        # trust rule that consumes it lands with the response side.
-        outbound, inbound, indexed_count, needs_rebuild, provenance, _ = (
-            _index.links_for_with_status(deps.store.root, memory.id)
-        )
+        # The sixth element is the row's local-verification stamp (schema
+        # v8), read on the same open so the show path stays one index
+        # open; `apply_trust` below consumes it.
+        (
+            outbound,
+            inbound,
+            indexed_count,
+            needs_rebuild,
+            provenance,
+            verified_locally_at,
+        ) = _index.links_for_with_status(deps.store.root, memory.id)
     except (OSError, ValueError, sqlite3.DatabaseError, _index.IndexVersionError):
         # A torn/truncated index raises DatabaseError; an on-disk
         # schema_version newer than this reader raises
@@ -307,8 +323,13 @@ def _links_payload(deps: "ToolHandlers", memory: Any) -> dict[str, Any]:
         # corruption-swallowing `index.status()`. `outbound`
         # is unused downstream (only `inbound` + `indexed_count` +
         # `needs_rebuild` drive the fallback), so it's dropped here.
-        inbound, indexed_count, needs_rebuild, provenance = [], 0, False, None
+        inbound, indexed_count, needs_rebuild = [], 0, False
+        provenance = verified_locally_at = None
     out["provenance"] = provenance
+    # Carried to the handler under a private key: the trust rule
+    # (`ResponseBuilder.apply_trust`) needs the assembled response, with
+    # its `verification` block, not this links payload.
+    out["_verified_locally_at"] = verified_locally_at
     if needs_rebuild:
         # Rebuild-pending window: a schema migration dropped the data
         # tables and the incremental hooks have refilled only touched
