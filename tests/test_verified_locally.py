@@ -21,6 +21,12 @@ from bettermemory.store import Store
 from bettermemory.time_utils import parse_event_ts
 
 
+def _ts(value: str) -> datetime:
+    parsed = parse_event_ts(value)
+    assert parsed is not None
+    return parsed
+
+
 def _filename(store: Store, memory_id: str) -> str:
     return next(p.name for p in store.root.glob("*.md") if memory_id.lower() in p.name)
 
@@ -169,8 +175,7 @@ def test_a_verify_event_after_the_pull_re_establishes_the_stamp(
     _rebuild(store)
     stamp = index.trust_for(memory_dir, [memory.id])[memory.id].verified_locally_at
     assert stamp is not None
-    assert parse_event_ts(stamp) is not None
-    assert datetime.now(timezone.utc) - parse_event_ts(stamp) < timedelta(minutes=5)
+    assert datetime.now(timezone.utc) - _ts(stamp) < timedelta(minutes=5)
 
 
 def test_a_stale_verify_event_establishes_nothing(
@@ -253,24 +258,21 @@ def test_the_stamp_survives_a_tokenizer_drop_through_the_stash(
         )
 
 
-def test_classify_trust_takes_the_later_of_prior_and_event() -> None:
-    class _Stub:
-        id = "01ZZZZZZZZZZZZZZZZZZZZZZZZ"
-
-    stub = _Stub()
+def test_classify_trust_takes_the_later_of_prior_and_event(store: Store) -> None:
+    memory = store.write(content="a memory for the trust derivation", scopes=["tools"])
     evidence = provenance.Evidence(
         has_events=True,
         oldest_event_at=None,
         local_ids=frozenset(),
         pulled_files=frozenset(),
         tracked_files=None,
-        verified_at={stub.id: parse_event_ts(LATER)},
+        verified_at={memory.id: _ts(LATER)},
         pulled_at={},
     )
     assert (
-        provenance.classify_trust(stub, "a.md", evidence, STAMP)
-        == parse_event_ts(LATER).isoformat()
-    )  # type: ignore[arg-type]
+        provenance.classify_trust(memory, "a.md", evidence, STAMP)
+        == _ts(LATER).isoformat()
+    )
     pulled_between = provenance.Evidence(
         has_events=True,
         oldest_event_at=None,
@@ -278,8 +280,23 @@ def test_classify_trust_takes_the_later_of_prior_and_event() -> None:
         pulled_files=frozenset({"a.md"}),
         tracked_files=None,
         verified_at={},
-        pulled_at={"a.md": parse_event_ts(LATER)},
+        pulled_at={"a.md": _ts(LATER)},
     )
-    assert provenance.classify_trust(stub, "a.md", pulled_between, STAMP) is None  # type: ignore[arg-type]
-    assert provenance.classify_trust(stub, "a.md", pulled_between, None) is None  # type: ignore[arg-type]
-    assert provenance.classify_trust(stub, "a.md", pulled_between, "garbage") is None  # type: ignore[arg-type]
+    assert provenance.classify_trust(memory, "a.md", pulled_between, STAMP) is None
+    assert provenance.classify_trust(memory, "a.md", pulled_between, None) is None
+    assert provenance.classify_trust(memory, "a.md", pulled_between, "garbage") is None
+    # A prior later than the pull stands; an event earlier than the pull does not.
+    after = provenance.Evidence(
+        has_events=True,
+        oldest_event_at=None,
+        local_ids=frozenset(),
+        pulled_files=frozenset({"a.md"}),
+        tracked_files=None,
+        verified_at={memory.id: _ts(STAMP)},
+        pulled_at={"a.md": _ts(STAMP)},
+    )
+    assert (
+        provenance.classify_trust(memory, "a.md", after, LATER)
+        == _ts(LATER).isoformat()
+    )
+    assert provenance.classify_trust(memory, "a.md", after, None) is None

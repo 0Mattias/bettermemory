@@ -15,6 +15,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -123,6 +124,13 @@ def _push_forged_and_honest(other: Path) -> tuple[str, str]:
     return forged_id, honest_id
 
 
+def _quarantined(result: dict[str, object]) -> list[dict[str, Any]]:
+    """The pull result's `quarantined` list, typed for the assertions."""
+    entries = result["quarantined"]
+    assert isinstance(entries, list)
+    return entries
+
+
 def _run_cli(
     argv: list[str], *, monkeypatch: pytest.MonkeyPatch, directory: Path
 ) -> None:
@@ -146,8 +154,8 @@ def test_pull_quarantines_a_credential_bearing_file_and_admits_the_rest(
     recorder = Recorder(root=memory_dir, session_id="sess-pull")
     result = sync.pull(memory_dir, recorder=recorder)
 
-    assert [e["file"] for e in result["quarantined"]] == [FORGED]
-    refusal = result["quarantined"][0]
+    assert [e["file"] for e in _quarantined(result)] == [FORGED]
+    refusal = _quarantined(result)[0]
     assert refusal["reason"] == "credential"
     assert refusal["detail"] and TOKEN not in refusal["detail"]
     assert result["flagged"] == []
@@ -201,7 +209,7 @@ def test_pull_quarantines_an_oversize_file_without_a_digest(
 
     result = sync.pull(memory_dir)
 
-    (refusal,) = result["quarantined"]
+    (refusal,) = _quarantined(result)
     assert refusal["reason"] == "oversize"
     assert refusal["sha256"] is None
     assert refusal["size"] > 1024 * 1024
@@ -221,7 +229,7 @@ def test_pull_quarantines_an_unparseable_file(
 
     result = sync.pull(memory_dir)
 
-    (refusal,) = result["quarantined"]
+    (refusal,) = _quarantined(result)
     assert refusal["reason"] == "unparseable"
     assert refusal["detail"]
     assert {m.id for m in store.load_all()} == {legit_id}
@@ -250,7 +258,7 @@ def test_pull_quarantines_an_id_alias_and_the_local_file_keeps_the_id(
 
     result = sync.pull(memory_dir)
 
-    (refusal,) = result["quarantined"]
+    (refusal,) = _quarantined(result)
     assert refusal["reason"] == "id_alias"
     assert legit_name in refusal["detail"]
     assert store.load_one(legit_id).body.startswith("the deploy helper")
@@ -383,7 +391,7 @@ def test_a_hostile_update_of_an_indexed_memory_is_refused_even_without_a_reindex
 
     result = sync.pull(memory_dir, reindex=False)
 
-    assert [e["file"] for e in result["quarantined"]] == [legit_name]
+    assert [e["file"] for e in _quarantined(result)] == [legit_name]
     assert result["indexed_count"] is None
     assert index.filenames_for_ids(memory_dir, [legit_id]) == {legit_id: legit_name}
     assert store_module._indexed_path_for_id(memory_dir, legit_id) is None

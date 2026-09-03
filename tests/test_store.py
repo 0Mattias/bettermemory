@@ -2468,6 +2468,7 @@ def test_mark_verified_stamps_the_local_verification_in_the_index(
     )
 
     verified = store.mark_verified(memory.id)
+    assert verified.last_verified_at is not None
     row = index.trust_for(memory_dir, [memory.id])[memory.id]
     assert row.verified_locally_at is not None
     assert row.verified_locally_at == verified.last_verified_at.isoformat()
