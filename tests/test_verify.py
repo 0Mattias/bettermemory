@@ -4391,3 +4391,56 @@ def test_no_verdict_site_escalates_on_the_full_missing_set() -> None:
         f"prose-scraped absences: {offenders}. Pass "
         "len(drift.claim_anchored_missing) — see PathDriftReport."
     )
+
+
+# ---------------------------------------------------------------------------
+# The remote verification status (6.6.0)
+# ---------------------------------------------------------------------------
+
+
+def test_remote_verification_status_carries_the_stamp_and_no_local_age() -> None:
+    from datetime import datetime, timezone
+
+    from bettermemory.verify import remote_verification_status
+
+    stamp = datetime(2026, 9, 1, tzinfo=timezone.utc)
+    status = remote_verification_status(stamp, stale_after_days=30)
+    assert status.status == "remote"
+    assert status.last_verified_at == stamp
+    assert status.age_days is None
+    assert status.stale_after_days == 30
+    assert status.recommendation is not None
+    assert "another host" in status.recommendation
+    assert "2026-09-01T00:00:00Z" in status.recommendation
+    assert "memory_verify" in status.recommendation
+    payload = status.to_dict()
+    assert payload["status"] == "remote"
+    assert payload["last_verified_at"] == "2026-09-01T00:00:00Z"
+    assert payload["age_days"] is None
+
+
+def test_remote_verification_status_treats_a_naive_stamp_as_utc() -> None:
+    from datetime import datetime, timezone
+
+    from bettermemory.verify import remote_verification_status
+
+    status = remote_verification_status(datetime(2026, 9, 1), stale_after_days=-3)
+    assert status.last_verified_at is not None
+    assert status.last_verified_at.tzinfo == timezone.utc
+    assert status.stale_after_days == 0
+
+
+def test_verdict_reads_remote_like_never() -> None:
+    from bettermemory.verify import verdict_from_signals
+
+    for missing, drift in ((0, None), (0, 0), (2, 0), (0, 7)):
+        assert (
+            verdict_from_signals(
+                status="remote", path_drift_missing=missing, commit_drift_count=drift
+            )
+            == "spot_check_required"
+        )
+    assert (
+        verdict_from_signals(status="fresh", path_drift_missing=0, commit_drift_count=0)
+        == "fresh"
+    )

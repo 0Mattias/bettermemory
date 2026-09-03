@@ -1965,9 +1965,15 @@ class VerificationStatus:
       last spot-check.
     - ``"fresh"``: verified within the staleness window. No action
       needed beyond the usual path-drift triage.
+    - ``"remote"`` (6.6.0): the file carries a `last_verified_at`, but it
+      arrived by `sync pull` and this host has never verified the record
+      since (`index.verified_locally_at` is NULL on a `synced` row). The
+      stamp is another host's, or an attacker's; on this host it is not
+      evidence. Built by `remote_verification_status`, applied by
+      `_response.ResponseBuilder.apply_trust`.
 
     `age_days` is the integer day count since the last verification, or
-    None when status is ``"never"``. `recommendation` is a short
+    None when status is ``"never"`` or ``"remote"``. `recommendation` is a short
     actionable string aimed at the retrieving model — non-None for
     ``"never"`` and ``"stale"``, None for ``"fresh"``. Putting the
     recommendation in the payload (rather than only in the prose system
@@ -2024,6 +2030,44 @@ def _stale_recommendation(age_days: int) -> str:
         "Re-confirm at least one verifiable claim (path, commit, version, "
         "config, list) and call memory_verify(id, note=...) to refresh, or "
         "memory_update if a claim has drifted."
+    )
+
+
+def _remote_recommendation(last_verified_at: datetime) -> str:
+    stamp = last_verified_at.isoformat().replace("+00:00", "Z")
+    return (
+        f"This memory arrived by sync pull and its verification stamp ({stamp}) "
+        "was written on another host; this host has not checked it, so the "
+        "stamp is not evidence here. Confirm at least one claim against "
+        "ground truth on this machine and call memory_verify(id, note=..., "
+        "verified_paths=[...]) with paths that resolve here to adopt it, or "
+        "memory_update if a claim has drifted."
+    )
+
+
+def remote_verification_status(
+    last_verified_at: datetime,
+    *,
+    stale_after_days: int = DEFAULT_VERIFICATION_STALE_DAYS,
+) -> VerificationStatus:
+    """The verification block for a synced record whose stamp this host
+    never made (see the ``"remote"`` status on `VerificationStatus`).
+
+    `last_verified_at` is the stamp the file carries, kept in the block
+    for transparency; `age_days` is None because the calendar leg
+    measures distance from a local check and there was none.
+    `verdict_from_signals` reads ``"remote"`` like ``"never"``: no local
+    anchor, so the verdict is `spot_check_required` whatever the drift
+    legs say.
+    """
+    if last_verified_at.tzinfo is None:
+        last_verified_at = last_verified_at.replace(tzinfo=timezone.utc)
+    return VerificationStatus(
+        status="remote",
+        last_verified_at=last_verified_at,
+        age_days=None,
+        recommendation=_remote_recommendation(last_verified_at),
+        stale_after_days=max(0, stale_after_days),
     )
 
 
@@ -3062,9 +3106,11 @@ def verdict_from_signals(
     `tests/test_verify.py`.
     """
     drifty = path_drift_missing > 0 or _commit_leg_escalates(commit_drift_count)
-    if status == "never":
+    if status in ("never", "remote"):
         # No anchor was ever laid down, so there is no "since when" to
         # measure against and nothing can stand the calendar leg down.
+        # "remote" is the same absence seen from this host: the stamp in
+        # the file was laid down elsewhere (`remote_verification_status`).
         return _VERDICT_REQUIRED
     if drifty:
         if status in _VERDICT_RAISE_STATUSES:
