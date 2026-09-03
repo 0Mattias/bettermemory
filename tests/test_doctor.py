@@ -7382,3 +7382,95 @@ def test_mcp_client_configs_non_utf8_config_is_that_files_finding(
     )
     diag = _check_mcp_client_configs()
     assert diag.status != "fail"
+
+
+# ---------------------------------------------------------------------------
+# sync_quarantine: pulled files the admission chain holds out of the store
+# ---------------------------------------------------------------------------
+
+
+def _quarantine_entry(
+    name: str, reason: str = "credential", pulled_at: str = "2026-09-03T01:00:00+00:00"
+):
+    from bettermemory.quarantine import QuarantineEntry
+
+    return QuarantineEntry(
+        filename=name,
+        reason=reason,
+        detail="github-token" if reason == "credential" else "ValueError",
+        remote="origin",
+        pulled_at=pulled_at,
+        size=100,
+        sha256="ab" * 32,
+    )
+
+
+def test_sync_quarantine_reads_ok_when_nothing_is_held(tmp_path: Path) -> None:
+    from bettermemory.doctor import _check_sync_quarantine
+
+    assert _check_sync_quarantine(tmp_path / "missing").status == "ok"
+    diag = _check_sync_quarantine(tmp_path)
+    assert diag.status == "ok"
+    assert diag.details == {"count": 0}
+
+
+def test_sync_quarantine_warns_and_names_the_oldest_refusal(tmp_path: Path) -> None:
+    from bettermemory.doctor import _check_sync_quarantine
+    from bettermemory.quarantine import save_quarantine
+
+    save_quarantine(
+        tmp_path,
+        {
+            "2026-08-31-later.md": _quarantine_entry(
+                "2026-08-31-later.md", "unparseable", "2026-09-03T02:00:00+00:00"
+            ),
+            "2026-08-30-forged.md": _quarantine_entry("2026-08-30-forged.md"),
+        },
+    )
+    diag = _check_sync_quarantine(tmp_path)
+    assert diag.status == "warn"
+    assert "2 pulled files are quarantined" in diag.message
+    assert "First: 2026-08-30-forged.md (credential: github-token)" in diag.message
+    assert diag.fix_hint is not None
+    assert "bettermemory sync quarantine" in diag.fix_hint
+    assert "--release NAME" in diag.fix_hint
+    assert diag.details["count"] == 2
+    assert [f["file"] for f in diag.details["files"]] == [
+        "2026-08-30-forged.md",
+        "2026-08-31-later.md",
+    ]
+
+
+def test_sync_quarantine_warns_on_an_unreadable_sidecar(tmp_path: Path) -> None:
+    from bettermemory.doctor import _check_sync_quarantine
+    from bettermemory.quarantine import QUARANTINE_FILENAME
+
+    (tmp_path / QUARANTINE_FILENAME).write_text("{not json")
+    diag = _check_sync_quarantine(tmp_path)
+    assert diag.status == "warn"
+    assert "unreadable" in diag.message
+    assert "being served" in diag.message
+    assert diag.fix_hint is not None
+    assert "bettermemory sync pull" in diag.fix_hint
+    assert diag.details["error"]
+
+
+def test_doctor_report_includes_sync_quarantine_after_the_tracked_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bettermemory.doctor import run_diagnostics
+    from bettermemory.quarantine import save_quarantine
+    from bettermemory.store import Store
+
+    root = tmp_path / "store"
+    Store(root).write(content="a memory so the store exists", scopes=["tools"])
+    save_quarantine(
+        root, {"2026-08-30-forged.md": _quarantine_entry("2026-08-30-forged.md")}
+    )
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(root))
+    report = run_diagnostics()
+    names = [c.name for c in report.checks]
+    assert "sync_quarantine" in names
+    assert names.index("sync_quarantine") == names.index("sync_tracked_ignored") + 1
+    quarantine = next(c for c in report.checks if c.name == "sync_quarantine")
+    assert quarantine.status == "warn"

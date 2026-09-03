@@ -2495,6 +2495,86 @@ def _check_sync_tracked_ignored(directory: Path) -> Diagnosis:
     )
 
 
+def _check_sync_quarantine(directory: Path) -> Diagnosis:
+    """Are pulled files being held out of the store by the admission chain?
+
+    `sync pull` quarantines a file that fails the size cap, the parser,
+    the id-alias check or the credential gate (`quarantine.py`): the
+    file stays on disk under git and every active walk skips it. A
+    non-empty quarantine is a finding the user should look at, either
+    because the remote carried something hostile or because a
+    legitimate memory was refused (a credential-shaped example string, a
+    hand-edit with a YAML typo) and waits for a fix upstream or a release
+    here. An unreadable sidecar is its own warning: `load_quarantine`
+    reads it as empty, which admits every file it named.
+    """
+    from .quarantine import load_quarantine, quarantine_path, sidecar_unreadable
+
+    if not directory.exists():
+        return Diagnosis(
+            name="sync_quarantine",
+            status="ok",
+            message="Storage dir does not exist yet — nothing quarantined.",
+        )
+    problem = sidecar_unreadable(directory)
+    if problem is not None:
+        sidecar = quarantine_path(directory)
+        return Diagnosis(
+            name="sync_quarantine",
+            status="warn",
+            message=(
+                f"The quarantine sidecar at {sidecar} is unreadable ({problem}); "
+                "it reads as empty, so every file it named is being served."
+            ),
+            fix_hint=(
+                f"Restore {sidecar.name} from a backup or delete it, then run "
+                "`bettermemory sync pull`: admission judges every pulled file "
+                "again and rewrites the sidecar."
+            ),
+            details={"sidecar": str(sidecar), "error": problem},
+        )
+    entries = sorted(
+        load_quarantine(directory).values(), key=lambda e: (e.pulled_at, e.filename)
+    )
+    if not entries:
+        return Diagnosis(
+            name="sync_quarantine",
+            status="ok",
+            message="No pulled files are quarantined.",
+            details={"count": 0},
+        )
+    first = entries[0]
+    noun = "file is" if len(entries) == 1 else "files are"
+    detail = f": {first.detail}" if first.detail else ""
+    return Diagnosis(
+        name="sync_quarantine",
+        status="warn",
+        message=(
+            f"{len(entries)} pulled {noun} quarantined and excluded from the "
+            f"store. First: {first.filename} ({first.reason}{detail})."
+        ),
+        fix_hint=(
+            "`bettermemory sync quarantine` lists them. Fix a file on the host "
+            "that wrote it and pull again, or `bettermemory sync quarantine "
+            "--release NAME` after correcting it here; `--force` admits a "
+            "credential refusal as it is."
+        ),
+        details={
+            "count": len(entries),
+            "files": [
+                {
+                    "file": e.filename,
+                    "reason": e.reason,
+                    "detail": e.detail,
+                    "remote": e.remote,
+                    "pulled_at": e.pulled_at,
+                }
+                for e in entries
+            ],
+        },
+    )
+
+
 def _enclosing_worktree_levels(
     start_dir: Path, store_root: Path, *, seen: set[Path]
 ) -> list[tuple[Path, str]]:
@@ -4237,6 +4317,12 @@ def run_diagnostics() -> DoctorReport:
             _safe(
                 "sync_tracked_ignored",
                 lambda: _check_sync_tracked_ignored(directory),
+            )
+        )
+        checks.append(
+            _safe(
+                "sync_quarantine",
+                lambda: _check_sync_quarantine(directory),
             )
         )
         checks.append(
