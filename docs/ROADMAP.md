@@ -50,38 +50,26 @@ and an entry leaves this file when it lands there.
   before that are counted as not-replayable, never approximated, so
   the replay clauses read only exact evidence and "fewer changed
   turns" resolves as the declared hold.
-- **Provenance on the read surface.** Nothing distinguishes a memory
-  the model wrote through the gates from a file that arrived by hand,
-  by `sync pull`, or through a code path that records no event, and a
-  hand-written `last_verified_at` reads fresh on every surface. The
-  next unit derives one label per memory at index build, from the
-  write-side event log and the sync repo's history: `local`, `synced`,
-  `untracked` (the log cannot speak to it) or `unaccounted` (the log
-  covers its creation and nothing wrote it). The label rides search
-  hits, `memory_show`, `memory_list`, a `memory_health` bucket with its
-  `curation_pending` counter, a doctor check and the hook pointer, and
-  the event-less write paths close in the same unit so the derivation
-  is complete from that release on. Frontmatter never carries it:
-  frontmatter is attacker-writable, so the label is derived, not
-  declared. What this cannot see is an injection-driven legitimate
-  write; cause provenance, what source material was in context at
-  write time (`groundedness_check` / `source_transcript` are the
-  seed), stays open behind it.
 - **Sync-pull admission and the security model.** `sync pull` runs
   `git pull --rebase` and rebuilds the index with no content
-  validation, records no event, and `SECURITY.md` names no
-  remote-writer attacker. After provenance: run the write gates over
-  the files a pull changed before the rebuild, quarantine refusals,
-  treat trust fields on pulled files as unverified until a local
-  verify re-stamps them, and rewrite `SECURITY.md` around the attacker
-  who can write to the store or to its remote.
+  validation, and `SECURITY.md` names no remote-writer attacker. With
+  the 6.5.0 provenance label in place: run the write gates over the
+  files a pull changed before the rebuild, quarantine refusals, treat
+  trust fields on pulled files as unverified until a local verify
+  re-stamps them, and rewrite `SECURITY.md` around the attacker who
+  can write to the store or to its remote.
 - **Delivery on a stored stamp alone.** The standing tier
   (`[behavior] standing_tier`) delivers whole bodies gated by a verdict
   a hand-written `last_verified_at` passes, and `episode_handoff`
-  delivers whole bodies with no check beyond worktree equality. After
-  provenance: require a local label plus a fresh live verdict, or
-  deliver pointers; hand off takeaways by default and bodies on
-  request.
+  delivers whole bodies with no check beyond worktree equality. With
+  the 6.5.0 provenance label in place: require a local label plus a
+  fresh live verdict, or deliver pointers; hand off takeaways by
+  default and bodies on request.
+- **Cause provenance.** The 6.5.0 label says how a file entered the
+  store, not what was in context when the model wrote it, so an
+  injection-driven legitimate write reads `local`. A write-time record
+  of the source material (`groundedness_check` / `source_transcript`
+  are the seed) is the open question behind the label.
 - **Write-path hardening, remaining items.** `apply_write_gates` is the
   shared chain (3.31.0) and ingest runs the caps and the scope
   allowlist through it (3.39.0). Two paths still keep their own copies,
