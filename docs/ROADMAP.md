@@ -50,14 +50,6 @@ and an entry leaves this file when it lands there.
   before that are counted as not-replayable, never approximated, so
   the replay clauses read only exact evidence and "fewer changed
   turns" resolves as the declared hold.
-- **Sync-pull admission and the security model.** `sync pull` runs
-  `git pull --rebase` and rebuilds the index with no content
-  validation, and `SECURITY.md` names no remote-writer attacker. With
-  the 6.5.0 provenance label in place: run the write gates over the
-  files a pull changed before the rebuild, quarantine refusals, treat
-  trust fields on pulled files as unverified until a local verify
-  re-stamps them, and rewrite `SECURITY.md` around the attacker who
-  can write to the store or to its remote.
 - **Delivery on a stored stamp alone.** The standing tier
   (`[behavior] standing_tier`) delivers whole bodies gated by a verdict
   a hand-written `last_verified_at` passes, and `episode_handoff`
