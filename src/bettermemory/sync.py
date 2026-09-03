@@ -2349,13 +2349,19 @@ def pull(
             for name in admission.released:
                 recorder.record("sync_admit", file=name, forced=False, via="pull")
 
+        # The bytes of every file the rebase landed changed under this
+        # host, so whatever it verified before was the old ones and
+        # whatever stamp the file carries now came from elsewhere. The
+        # rebuild below re-derives the column from the `sync_pull` event;
+        # this direct clear is what stands when telemetry is off or the
+        # rebuild is deferred. Lazy import — same pattern the Store hooks
+        # use.
+        from . import index as _index
+
+        _index.clear_local_verification(root, pulled)
+
         indexed: int | None = None
         if reindex:
-            # Lazy import — same pattern the Store hooks use. Avoids
-            # paying the SQLite import cost on sync runs that pass
-            # --no-reindex.
-            from . import index as _index
-
             indexed = _index.rebuild(root, store.iter_active())
 
     return {

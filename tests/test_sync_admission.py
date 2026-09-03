@@ -598,3 +598,77 @@ def test_cli_sync_quarantine_lists_and_releases(
 
     _run_cli(["sync", "quarantine"], monkeypatch=monkeypatch, directory=memory_dir)
     assert "No quarantined files." in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# Remote stamps are not local evidence
+# ---------------------------------------------------------------------------
+
+
+def test_pull_clears_the_local_verification_of_the_files_it_lands(
+    memory_dir: Path, bare_remote: Path, tmp_path: Path
+) -> None:
+    """A verify on this host stamps the row; a pull that rewrites the
+    file clears it, with the rebuild and without it. A file the pull did
+    not touch keeps its stamp."""
+    store, legit_id, legit_name = _seeded(memory_dir, bare_remote)
+    untouched = store.write(
+        content="a second memory this host verified", scopes=["tools"]
+    )
+    store.mark_verified(legit_id)
+    store.mark_verified(untouched.id)
+    sync.push(memory_dir)
+    rows = index.trust_for(memory_dir, [legit_id, untouched.id])
+    assert rows[legit_id].verified_locally_at is not None
+    assert rows[untouched.id].verified_locally_at is not None
+
+    other = _clone(bare_remote, tmp_path)
+    (other / legit_name).write_text(
+        _memory_text(
+            "the deploy helper lives at tools/deploy.sh and now takes --force",
+            memory_id=legit_id,
+            extra_frontmatter="last_verified_at: 2026-09-01T00:00:00+00:00\n",
+        )
+    )
+    _push(other)
+
+    sync.pull(memory_dir, reindex=False)
+    rows = index.trust_for(memory_dir, [legit_id, untouched.id])
+    assert rows[legit_id].verified_locally_at is None
+    assert rows[untouched.id].verified_locally_at is not None
+
+    index.rebuild(memory_dir, store.iter_active())
+    rows = index.trust_for(memory_dir, [legit_id, untouched.id])
+    assert rows[legit_id].verified_locally_at is None
+    assert rows[untouched.id].verified_locally_at is not None
+    # The stamp the other host wrote is in the file; the row says this
+    # host never checked it.
+    assert store.load_one(legit_id).last_verified_at is not None
+
+
+def test_a_local_verify_after_the_pull_re_establishes_the_stamp(
+    memory_dir: Path, bare_remote: Path, tmp_path: Path
+) -> None:
+    store, legit_id, legit_name = _seeded(memory_dir, bare_remote)
+    other = _clone(bare_remote, tmp_path)
+    (other / legit_name).write_text(
+        _memory_text(
+            "the deploy helper lives at tools/deploy.sh; verified over there",
+            memory_id=legit_id,
+            extra_frontmatter="last_verified_at: 2026-09-01T00:00:00+00:00\n",
+        )
+    )
+    _push(other)
+    sync.pull(memory_dir)
+    assert index.trust_for(memory_dir, [legit_id])[legit_id].verified_locally_at is None
+
+    store.mark_verified(legit_id)
+    assert (
+        index.trust_for(memory_dir, [legit_id])[legit_id].verified_locally_at
+        is not None
+    )
+    index.rebuild(memory_dir, store.iter_active())
+    assert (
+        index.trust_for(memory_dir, [legit_id])[legit_id].verified_locally_at
+        is not None
+    )
