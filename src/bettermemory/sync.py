@@ -54,8 +54,10 @@ import logging
 import re
 import shutil
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING, Iterable
 
 from ._fsutil import atomic_write_bytes, flock_excl
 from .conflicts import CONFLICTS_FILENAME
@@ -67,8 +69,22 @@ from .index import INDEX_FILENAME
 from .ingest import INGEST_WATERMARK_FILENAME
 from .patterns import PATTERNS_FILENAME
 from .proposals import PROPOSALS_FILENAME
-from .quarantine import QUARANTINE_FILENAME
+from .quarantine import (
+    QUARANTINE_FILENAME,
+    REASON_CREDENTIAL,
+    REASON_ID_ALIAS,
+    REASON_OVERSIZE,
+    REASON_UNPARSEABLE,
+    QuarantineEntry,
+    file_digest,
+    load_quarantine,
+    save_quarantine,
+)
 from .session import PENDING_WRITES_FILENAME
+
+if TYPE_CHECKING:
+    from .config import Config
+    from .store import Store
 
 # Coarse store-wide lock for push/pull. The git operations the sync
 # wrapper invokes (`git add -A`, `git commit-tree`, `git pull --rebase`)
@@ -444,6 +460,10 @@ class SyncStatus:
     remote_url: str | None
     ahead: int
     behind: int
+    # Pulled files the admission chain refused and this host excludes
+    # (`quarantine.py`). Read off the sidecar whether or not the
+    # directory is a repo: the sidecar governs the store, not git.
+    quarantined: int = 0
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -455,6 +475,7 @@ class SyncStatus:
             "remote_url": self.remote_url,
             "ahead": self.ahead,
             "behind": self.behind,
+            "quarantined": self.quarantined,
         }
 
 
@@ -990,6 +1011,7 @@ def status(root: Path) -> SyncStatus:
     raises; structural problems are surfaced as `is_repo=False`
     plus empty fields."""
     root = Path(root).expanduser().resolve()
+    quarantined = len(load_quarantine(root))
     if not _is_repo(root):
         return SyncStatus(
             is_repo=False,
@@ -1000,6 +1022,7 @@ def status(root: Path) -> SyncStatus:
             remote_url=None,
             ahead=0,
             behind=0,
+            quarantined=quarantined,
         )
 
     branch_result = _run_git(root, ["branch", "--show-current"], check=False)
@@ -1043,6 +1066,7 @@ def status(root: Path) -> SyncStatus:
         remote_url=remote_url,
         ahead=ahead,
         behind=behind,
+        quarantined=quarantined,
     )
 
 
@@ -1793,25 +1817,226 @@ def _pulled_files(root: Path, before_sha: str | None) -> list[str]:
     )
 
 
+@dataclass
+class _Admission:
+    """What the admission chain decided for one pull.
+
+    `admitted` and `quarantined` cover the files this pull brought down;
+    `released` names files an earlier pull had quarantined that pass
+    now (fixed upstream); `flagged` carries the advisory hits on
+    admitted files (`{file, gates}`), never a refusal.
+    """
+
+    admitted: list[str] = field(default_factory=list)
+    quarantined: list[QuarantineEntry] = field(default_factory=list)
+    flagged: list[dict[str, object]] = field(default_factory=list)
+    released: list[str] = field(default_factory=list)
+
+
+def _active_id_owners(root: Path) -> dict[str, list[str]]:
+    """`{memory id: [filenames]}` over the active set, reading only the
+    frontmatter. One walk per pull that has files to judge; a file that
+    fails to parse owns nothing."""
+    from . import _frontmatter as frontmatter
+    from .store import iter_active_memory_paths
+
+    owners: dict[str, list[str]] = {}
+    for candidate in iter_active_memory_paths(root):
+        try:
+            post = frontmatter.load(candidate)
+        except Exception:
+            continue
+        memory_id = post.metadata.get("id")
+        if isinstance(memory_id, str) and memory_id:
+            owners.setdefault(memory_id, []).append(candidate.name)
+    return owners
+
+
+def _admit_pulled_files(
+    store: Store,
+    config: Config,
+    names: Iterable[str],
+    *,
+    remote: str,
+    quarantine: dict[str, QuarantineEntry],
+) -> _Admission:
+    """Judge every file this pull brought down, and re-judge every file
+    an earlier pull quarantined, updating `quarantine` in place.
+
+    The chain, in order, per file: a size cap (a file the store would
+    refuse to read is not read here either); the store's own parser; an
+    id-alias check (a pulled file whose id is already carried by another
+    active file is refused, and the file already here keeps the id, so a
+    hostile push cannot shadow a memory by sorting later in the
+    directory); then `ADMISSION_GATES`, the credential gate alone. Why
+    that is the whole gate list is written beside the constant in
+    `handlers.write`. Transient and user-claim hits are detected on
+    admitted files and reported as `flagged`, advisory, because the
+    writing host's acknowledgement or pending confirmation does not
+    travel with the file.
+
+    A refusal is a `QuarantineEntry` keyed by filename with the sha256
+    of the refused bytes. A quarantined file whose bytes changed or that
+    was fixed upstream is judged again on the next pull and released
+    when it passes; one that vanished upstream drops out. `detail` never
+    quotes the body.
+    """
+    from ._frontmatter import _MAX_FILE_BYTES
+    from .durability import find_transient_markers
+    from .handlers.write import (
+        ADMISSION_GATES,
+        GateBundle,
+        GateContext,
+        Reject,
+        _find_user_claims,
+        apply_write_gates,
+    )
+
+    report = _Admission()
+    root = store.root
+    pulled_at = datetime.now(timezone.utc).isoformat()
+    owners: dict[str, list[str]] | None = None
+    deps: GateBundle | None = None
+
+    def refuse(
+        name: str, reason: str, detail: str, size: int, digest: str | None
+    ) -> None:
+        entry = QuarantineEntry(
+            filename=name,
+            reason=reason,
+            detail=detail,
+            remote=remote,
+            pulled_at=pulled_at,
+            size=size,
+            sha256=digest,
+        )
+        quarantine[name] = entry
+        if name in incoming:
+            report.quarantined.append(entry)
+
+    incoming = set(names)
+    for name in sorted(incoming | set(quarantine)):
+        path = root / name
+        was_held = name in quarantine
+        if not path.is_file() or path.is_symlink():
+            # Deleted upstream (or never a regular file): nothing to
+            # hold. Symlinks are refused by the active walk itself.
+            if was_held:
+                del quarantine[name]
+            continue
+        size, digest = file_digest(path, max_bytes=_MAX_FILE_BYTES)
+        if digest is None:
+            refuse(
+                name,
+                REASON_OVERSIZE,
+                f"{size} bytes; the store reads at most {_MAX_FILE_BYTES}",
+                size,
+                None,
+            )
+            continue
+        try:
+            memory = store._load_path(path)
+        except Exception as exc:
+            refuse(name, REASON_UNPARSEABLE, type(exc).__name__, size, digest)
+            continue
+        if owners is None:
+            owners = _active_id_owners(root)
+        others = [other for other in owners.get(memory.id, []) if other != name]
+        if others:
+            refuse(
+                name,
+                REASON_ID_ALIAS,
+                f"id {memory.id} is carried by {others[0]}",
+                size,
+                digest,
+            )
+            continue
+        if deps is None:
+            deps = GateBundle.for_store(store, config)
+        gc = GateContext(
+            payload={"content": memory.body, "scopes": list(memory.scopes)},
+            force=False,
+            acknowledge_transient=False,
+            acknowledge_scope_mismatch=False,
+            acknowledge_ungrounded=False,
+            acknowledge_credential=False,
+            groundedness_check=False,
+            source_transcript=None,
+        )
+        decision = apply_write_gates(deps, gc, gates=ADMISSION_GATES)
+        if isinstance(decision, Reject):
+            kinds = sorted({hit.kind for hit in gc.credential_hits})
+            refuse(
+                name,
+                REASON_CREDENTIAL,
+                ", ".join(kinds) or str(decision.response.get("status", "refused")),
+                size,
+                digest,
+            )
+            continue
+        gates: list[str] = []
+        if find_transient_markers(memory.body):
+            gates.append("transient")
+        if _find_user_claims(memory.body):
+            gates.append("user_claim")
+        if gates:
+            report.flagged.append({"file": name, "gates": gates})
+        if was_held:
+            del quarantine[name]
+            report.released.append(name)
+        if name in incoming:
+            report.admitted.append(name)
+    return report
+
+
+def _default_config() -> Config:
+    """The defaults, for library callers that pass no config. The CLI
+    passes the loaded one; reading the user's TOML from inside a library
+    call would be a side channel the caller did not ask for."""
+    from .config import Config
+
+    return Config()
+
+
 def pull(
     root: Path,
     *,
     remote: str = "origin",
     reindex: bool = True,
     recorder: Recorder | None = None,
+    config: Config | None = None,
 ) -> dict[str, object]:
-    """Rebase-pull from the remote, then rebuild the FTS5 index
-    (which the Store hooks bypassed during the file-level merge).
+    """Rebase-pull from the remote, run admission over the files it
+    brought down, then rebuild the FTS5 index (which the Store hooks
+    bypassed during the file-level merge).
+
+    Admission (`_admit_pulled_files`) sits between the pull and the
+    rebuild: a file that fails the size cap, the parser, the id-alias
+    check or the credential gate is quarantined (`quarantine.py`), which
+    means it stays where git put it and this host's store skips it, so
+    the rebuild never indexes it and no read surface serves it. `config`
+    feeds the gate chain; the CLI passes its loaded config and library
+    callers get the defaults.
 
     Set `reindex=False` to skip the post-pull rebuild — useful in
     scripts that batch multiple sync operations and want to defer
     the index rebuild to the end.
 
     `recorder`, when supplied, receives one `sync_pull` event naming the
-    memory files the pull brought down, recorded BEFORE the rebuild so
-    the provenance derivation at `index.rebuild` reads them as `synced`
-    on that very rebuild. A pull that recorded nothing left pulled
-    files indistinguishable from hand-planted ones.
+    memory files the pull brought down (quarantined ones included, so a
+    later release still reads `synced`), the files it quarantined with
+    their reasons, and the advisory flags, recorded BEFORE the rebuild so
+    the provenance derivation at `index.rebuild` reads the files as
+    `synced` on that very rebuild. A pull that recorded nothing left
+    pulled files indistinguishable from hand-planted ones. Each file an
+    earlier pull had quarantined that passes now records one
+    `sync_admit` event (`forced: false`, `via: "pull"`).
+
+    The result carries `quarantined` (this pull's refusals, each
+    `{file, reason, detail, ...}`), `flagged` (`{file, gates}` for
+    admitted files with transient or user-claim hits), `released` and
+    `quarantined_total` (the sidecar's size after this pull) beside the
+    keys it always carried.
 
     Raises `SyncError` NAMING THE FILES when the worktree has
     uncommitted changes to tracked memories AND git would have refused
@@ -1971,18 +2196,46 @@ def pull(
                 f"the markers into your memories."
             )
 
+        pulled = _pulled_files(root, before_sha)
+
+        # Admission runs on the files the rebase landed, before anything
+        # records or indexes them. The Store is constructed here rather
+        # than under `reindex` because the chain needs it (the parser,
+        # the gate bundle) whether or not the index is rebuilt now; the
+        # sidecar is saved before the event so a crash between the two
+        # leaves the store excluding the refused files and the audit
+        # trail one event short, never the reverse.
+        from .store import Store
+
+        store = Store(root)
+        quarantine = load_quarantine(root)
+        admission = _admit_pulled_files(
+            store,
+            config if config is not None else _default_config(),
+            pulled,
+            remote=remote,
+            quarantine=quarantine,
+        )
+        save_quarantine(root, quarantine)
+
         # The event goes down before the rebuild, inside the same lock,
         # so the rebuild's evidence pass sees it. Recorded even when the
         # list is empty: "a pull ran and brought nothing" is a fact the
         # audit trail should carry, and an empty `files` joins nothing.
-        pulled = _pulled_files(root, before_sha)
         if recorder is not None:
             recorder.record(
                 "sync_pull",
                 remote=remote,
                 files=pulled,
                 count=len(pulled),
+                quarantined=[
+                    {"file": entry.filename, "reason": entry.reason}
+                    for entry in admission.quarantined
+                ],
+                flagged=admission.flagged,
             )
+            for name in admission.released:
+                recorder.record("sync_admit", file=name, forced=False, via="pull")
 
         indexed: int | None = None
         if reindex:
@@ -1990,9 +2243,7 @@ def pull(
             # paying the SQLite import cost on sync runs that pass
             # --no-reindex.
             from . import index as _index
-            from .store import Store
 
-            store = Store(root)
             indexed = _index.rebuild(root, store.iter_active())
 
     return {
@@ -2001,6 +2252,13 @@ def pull(
         "pulled": True,
         "reindexed": reindex,
         "indexed_count": indexed,
+        "quarantined": [
+            {"file": entry.filename, **entry.to_dict()}
+            for entry in admission.quarantined
+        ],
+        "flagged": admission.flagged,
+        "released": admission.released,
+        "quarantined_total": len(quarantine),
     }
 
 
@@ -2009,10 +2267,12 @@ def auto(
     *,
     remote: str = "origin",
     recorder: Recorder | None = None,
+    config: Config | None = None,
 ) -> dict[str, object]:
     """Commit local edits, pull-rebase, then push. The shell-alias /
     cron one-shot for "sync everything". Returns the combined status of
-    all three steps. `recorder` is handed to the pull step (see `pull`).
+    all three steps. `recorder` and `config` are handed to the pull step
+    (see `pull`).
 
     THE COMMIT COMES FIRST, and that ordering is the fix for a bug that
     made this command unusable on a live store. `auto` used to pull
@@ -2047,7 +2307,7 @@ def auto(
         )
 
     committed_before_pull = _commit_local_changes(root, DEFAULT_COMMIT_MESSAGE)
-    pull_result = pull(root, remote=remote, recorder=recorder)
+    pull_result = pull(root, remote=remote, recorder=recorder, config=config)
     push_result = push(root, remote=remote)
     return {
         "root": str(root),

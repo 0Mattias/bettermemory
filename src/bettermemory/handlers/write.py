@@ -820,6 +820,32 @@ CONTENT_GATES: tuple[WriteGate, ...] = tuple(
 )
 
 
+# The gates `sync pull` runs over every memory file a rebase brought down
+# (`sync._admit_pulled_files`), before the rebuild that would index them.
+# The narrowest subset in this module, and narrow for a reason that is
+# not the batch callers' reason: a pulled file was written on ANOTHER
+# host, through that host's own gates, with that host's user in the
+# loop. `TransientGate` and `UserClaimGate` are soft locally (an
+# acknowledgement or the pending handshake lifts them), and neither the
+# acknowledgement nor the confirmation travels with the file, so running
+# them here would refuse files the same user already admitted, which is
+# the one-user-many-machines case the sync exists for. The dedup gates
+# would score an update pull against the record's own stored copy (the
+# `find_similar` exclusion problem `memory_update` documents) and a pull
+# is not this host's write to refuse as a duplicate; `ScopeMismatchGate`
+# judges the caller's checkout, which a pull has none of;
+# `GroundednessGate` needs a transcript; `PendingGate` needs the user.
+# What is left is the one gate whose refusal is a property of the bytes
+# alone: a secret-shaped token is a leak wherever the file came from.
+# The size cap, the parser and the id-alias check run beside it in the
+# admission chain itself; they are structural, not policy. Transient and
+# user-claim hits are still detected there and reported as advisory
+# flags, never as refusals.
+ADMISSION_GATES: tuple[WriteGate, ...] = tuple(
+    g for g in _WRITE_GATES if isinstance(g, CredentialGate)
+)
+
+
 # The gates `memory_write_confirm` re-runs against a staged payload before
 # it commits. A pending write can sit for an hour, and the store is not
 # frozen while it does: the duplicate it is now a duplicate OF may have been

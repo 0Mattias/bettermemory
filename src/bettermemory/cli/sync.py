@@ -266,6 +266,11 @@ def _cli_sync_status(*, json_out: bool) -> None:
     sys.stdout.write(
         f"  untracked: {len(st.untracked)}  modified: {len(st.modified)}\n"
     )
+    if st.quarantined:
+        sys.stdout.write(
+            f"  quarantined: {st.quarantined} (pulled files the admission "
+            "chain refused; `bettermemory sync quarantine` lists them)\n"
+        )
     if st.modified:
         sys.stdout.write("  modified files:\n")
         for path in st.modified[:10]:
@@ -315,6 +320,7 @@ def _cli_sync_pull(*, remote: str, reindex: bool, json_out: bool) -> None:
             remote=remote,
             reindex=reindex,
             recorder=cli_recorder(ctx, attribution="cli_sync_pull"),
+            config=ctx.config,
         )
     except _sync.SyncError as exc:
         sys.stderr.write(f"sync pull failed: {exc}\n")
@@ -331,6 +337,41 @@ def _cli_sync_pull(*, remote: str, reindex: bool, json_out: bool) -> None:
         sys.stdout.write(
             "  --no-reindex passed: run `bettermemory reindex` when ready\n"
         )
+    _write_admission_lines(result)
+
+
+def _write_admission_lines(result: dict[str, object]) -> None:
+    """The admission outcome of one pull, one line per file. Quarantined
+    files are named with their reason because the user's only other
+    signals are `sync status` and doctor; flagged files are named so a
+    transient or user-claim body that was admitted is not mistaken for
+    one that was checked."""
+    quarantined = result.get("quarantined")
+    if isinstance(quarantined, list):
+        for entry in quarantined:
+            if isinstance(entry, dict):
+                detail = f": {entry['detail']}" if entry.get("detail") else ""
+                sys.stdout.write(
+                    f"  quarantined {entry.get('file')} ({entry.get('reason')}{detail})\n"
+                )
+        if quarantined:
+            sys.stdout.write(
+                "  quarantined files stay on disk and out of the store; "
+                "`bettermemory sync quarantine` lists them\n"
+            )
+    flagged = result.get("flagged")
+    if isinstance(flagged, list):
+        for entry in flagged:
+            if isinstance(entry, dict):
+                gates = entry.get("gates")
+                joined = ", ".join(gates) if isinstance(gates, list) else str(gates)
+                sys.stdout.write(
+                    f"  flagged {entry.get('file')} ({joined}); admitted\n"
+                )
+    released = result.get("released")
+    if isinstance(released, list):
+        for name in released:
+            sys.stdout.write(f"  released {name} from quarantine\n")
 
 
 def _cli_sync_auto(*, remote: str, json_out: bool) -> None:
@@ -346,6 +387,7 @@ def _cli_sync_auto(*, remote: str, json_out: bool) -> None:
             directory,
             remote=remote,
             recorder=cli_recorder(ctx, attribution="cli_sync_auto"),
+            config=ctx.config,
         )
     except _sync.SyncError as exc:
         sys.stderr.write(f"sync auto failed: {exc}\n")
@@ -356,3 +398,6 @@ def _cli_sync_auto(*, remote: str, json_out: bool) -> None:
         return
 
     sys.stdout.write(f"Auto-sync complete (remote={remote}).\n")
+    pull_result = result.get("pull")
+    if isinstance(pull_result, dict):
+        _write_admission_lines(pull_result)
