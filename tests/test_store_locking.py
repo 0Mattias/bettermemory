@@ -199,9 +199,11 @@ def test_restore_index_upsert_under_active_lock(
             yield
         events.append(f"lock_exit:{path.name}")
 
-    def traced_upsert(root, mem, *, filename, provenance=None):
+    def traced_upsert(root, mem, *, filename, provenance=None, **kwargs):
         events.append(f"upsert:{filename}")
-        return original_upsert(root, mem, filename=filename, provenance=provenance)
+        return original_upsert(
+            root, mem, filename=filename, provenance=provenance, **kwargs
+        )
 
     monkeypatch.setattr(store_module, "_locked", traced_locked)
     monkeypatch.setattr(store_module, "_index_upsert_quietly", traced_upsert)

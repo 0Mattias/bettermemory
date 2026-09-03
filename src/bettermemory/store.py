@@ -780,7 +780,8 @@ class Store:
             # attestations, so the chokepoint argument that justified
             # `apply_write_gates` does not apply: there is no second
             # attesting caller to bypass the handler.
-            update: dict[str, object] = {"last_verified_at": utcnow()}
+            verified_now = utcnow()
+            update: dict[str, object] = {"last_verified_at": verified_now}
             if verified_paths is not None:
                 update["verified_paths"] = list(verified_paths)
             if verified_commits is not None:
@@ -847,7 +848,15 @@ class Store:
                     f"so the record stays removable and restorable ({exc})."
                 ) from exc
             # perf: index upsert under lock is intentional — see audit H1.
-            _index_upsert_quietly(self.root, new_memory, filename=existing_path.name)
+            # The local-verification stamp (schema v8) rides this upsert:
+            # a stamp written by this host's own verify path is the one
+            # fact about `last_verified_at` the file cannot forge.
+            _index_upsert_quietly(
+                self.root,
+                new_memory,
+                filename=existing_path.name,
+                verified_locally_at=verified_now.isoformat(),
+            )
         return new_memory
 
     def record_corroboration(self, memory_id: str) -> Memory:
@@ -2731,6 +2740,7 @@ def _index_upsert_quietly(
     *,
     filename: str,
     provenance: str | None = None,
+    verified_locally_at: str | None = None,
 ) -> None:
     """Update the FTS5 index for one memory. Best-effort: a failure
     here (corrupt index, locked database, missing SQLite extension)
@@ -2752,6 +2762,12 @@ def _index_upsert_quietly(
     the event, is what keeps every in-process creation covered when
     telemetry is off; the event log re-derives the same label at rebuild.
 
+    `verified_locally_at` (schema v8) is the same shape for the trust
+    column: only `mark_verified` passes one, stamping the instant this
+    host verified the memory at the upsert it already performs, so the
+    stamp exists with telemetry off; `sync pull` clears it for the files
+    it lands and the rebuild re-derives it from events.
+
     Lazy import so this module loads cleanly even when callers don't
     actually use the index (e.g. pure-Python tests against the file
     store directly). The ``@best_effort`` wrapper supplies the
@@ -2759,7 +2775,13 @@ def _index_upsert_quietly(
     happy-path call."""
     from . import index as _index
 
-    _index.upsert(root, memory, filename=filename, provenance=provenance)
+    _index.upsert(
+        root,
+        memory,
+        filename=filename,
+        provenance=provenance,
+        verified_locally_at=verified_locally_at,
+    )
 
 
 @best_effort(

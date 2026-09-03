@@ -2452,3 +2452,31 @@ def test_mark_verified_skips_unanchored_relative_attestation(store: Store) -> No
     assert memory.origin is None or memory.origin.worktree_root is None
     verified = store.mark_verified(memory.id, verified_paths=["src/pkg/mod.py"])
     assert verified.last_verified_at is not None
+
+
+def test_mark_verified_stamps_the_local_verification_in_the_index(
+    store: Store, memory_dir: Path
+) -> None:
+    """`verified_locally_at` (schema v8) is set at the verify upsert and
+    only there: a write leaves it NULL, an update keeps whatever the row
+    carries, and a verify stamps the instant it wrote `last_verified_at`."""
+    from bettermemory import index
+
+    memory = store.write(content="a memory to verify on this host", scopes=["tools"])
+    assert (
+        index.trust_for(memory_dir, [memory.id])[memory.id].verified_locally_at is None
+    )
+
+    verified = store.mark_verified(memory.id)
+    row = index.trust_for(memory_dir, [memory.id])[memory.id]
+    assert row.verified_locally_at is not None
+    assert row.verified_locally_at == verified.last_verified_at.isoformat()
+
+    current = store.load_one(memory.id)
+    store.update(
+        current.model_copy(update={"scopes": ["tools", "infrastructure"]}),
+        preserve_verification=True,
+    )
+    assert index.trust_for(memory_dir, [memory.id])[memory.id].verified_locally_at == (
+        row.verified_locally_at
+    )
