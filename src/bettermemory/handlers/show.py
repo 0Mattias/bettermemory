@@ -280,7 +280,10 @@ def _links_payload(deps: "ToolHandlers", memory: Any) -> dict[str, Any]:
             for link in memory.links
         ]
     try:
-        outbound, inbound, indexed_count, needs_rebuild, provenance = (
+        # The sixth element (the row's local-verification stamp, schema
+        # v8) is read here so the show path stays one index open; the
+        # trust rule that consumes it lands with the response side.
+        outbound, inbound, indexed_count, needs_rebuild, provenance, _ = (
             _index.links_for_with_status(deps.store.root, memory.id)
         )
     except (OSError, ValueError, sqlite3.DatabaseError, _index.IndexVersionError):

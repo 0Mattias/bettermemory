@@ -71,7 +71,7 @@ import time
 from collections.abc import Iterable, Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, NamedTuple
 
 from ._fsutil import flock_excl
 from .models import Memory
@@ -167,7 +167,22 @@ log = logging.getLogger("bettermemory.index")
 # them in `meta.provenance_carry`, which `meta` keeps across the drop);
 # `meta.provenance_classified` records that a classified rebuild has
 # run, the baseline rule 5 of the derivation reads.
-SCHEMA_VERSION = 7
+#
+# Version 8 (verified_locally_at column): `memories` gains
+# `verified_locally_at`, the instant THIS host last stamped the memory
+# through `Store.mark_verified`, or NULL. A pulled file carries whatever
+# `last_verified_at` the other host (or the attacker) wrote, and the
+# frontmatter cannot say who wrote it; this column can, because only the
+# local stamp path sets it and `sync pull` clears it for every file it
+# brought down (`clear_local_verification`). The read surfaces report a
+# `synced` row with a stamp but no local verification as
+# `verification.status: "remote"` (`verify.remote_verification_status`).
+# The column is carried across rebuilds and across the drop a later
+# version or tokenizer bump performs exactly as the labels are
+# (`_stash_provenance` parks it in `meta.trust_carry`), and the rebuild
+# derives it from `verify` and `sync_pull` events as well
+# (`provenance.classify_trust`).
+SCHEMA_VERSION = 8
 
 # Pinned `search.tokenizer_fingerprint()` digest for the current
 # SCHEMA_VERSION. Consumed only by the ratchet test
@@ -226,7 +241,12 @@ CREATE TABLE IF NOT EXISTS memories (
     -- a label (an update on a memory the index had not classified yet);
     -- the next rebuild classifies it. Read surfaces omit the field when
     -- NULL rather than guess.
-    provenance TEXT
+    provenance TEXT,
+    -- Schema v8. When this host last stamped the memory through its own
+    -- verify path (ISO-8601), or NULL: never, or not since a `sync pull`
+    -- brought the file down. Read beside `provenance` to tell a local
+    -- stamp from one that arrived in the file.
+    verified_locally_at TEXT
 );
 
 -- The FTS table indexes the PREPROCESSED columns (schema v4): body_fts /
@@ -796,6 +816,7 @@ def _rebuild_data(
 
     with conn:
         prior, baseline = _read_prior_provenance(conn)
+        prior_trust = _read_prior_trust(conn)
         conn.execute("DELETE FROM memories")
         count = 0
         seen: set[str] = set()
@@ -816,7 +837,16 @@ def _rebuild_data(
             label = _provenance.classify(
                 memory, entry_path.name, evidence, prior, baseline=baseline
             )
-            _upsert_memory(conn, memory, entry_path.name, provenance=label)
+            verified_locally_at = _provenance.classify_trust(
+                memory, entry_path.name, evidence, prior_trust.get(memory.id)
+            )
+            _upsert_memory(
+                conn,
+                memory,
+                entry_path.name,
+                provenance=label,
+                verified_locally_at=verified_locally_at,
+            )
             if memory.id not in seen:
                 seen.add(memory.id)
                 count += 1
@@ -829,6 +859,7 @@ def _rebuild_data(
         # is what lets the next rebuild treat an id it has never seen as
         # new rather than as pre-existing.
         conn.execute("DELETE FROM meta WHERE key = 'provenance_carry'")
+        conn.execute("DELETE FROM meta WHERE key = 'trust_carry'")
         conn.execute(
             "INSERT OR REPLACE INTO meta(key, value) "
             "VALUES ('provenance_classified', '1')"
@@ -853,6 +884,7 @@ def upsert(
     *,
     filename: str,
     provenance: str | None = None,
+    verified_locally_at: str | None = None,
 ) -> None:
     """Insert or replace one memory in the index. Called by Store hooks
     on write / update. Safe to call before the index file exists — the
@@ -874,7 +906,13 @@ def upsert(
     try:
         _ensure_schema(conn, path, inflight_filename=filename)
         with conn:
-            _upsert_memory(conn, memory, filename, provenance=provenance)
+            _upsert_memory(
+                conn,
+                memory,
+                filename,
+                provenance=provenance,
+                verified_locally_at=verified_locally_at,
+            )
             _bump_count(conn)
     finally:
         conn.close()
@@ -1035,6 +1073,89 @@ def provenance_for(root: Path, ids: list[str]) -> dict[str, str]:
         return out
     except (sqlite3.Error, ValueError, IndexVersionError, OSError):
         return {}
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+class TrustRow(NamedTuple):
+    """One row's trust facts the file cannot supply: how it entered the
+    store and when this host last verified it (None: never, or not since
+    a pull brought the file down)."""
+
+    provenance: str
+    verified_locally_at: str | None
+
+
+def trust_for(root: Path, ids: list[str]) -> dict[str, TrustRow]:
+    """`{id: TrustRow}` for every id whose row carries a classified
+    label. The read `_response.attach_provenance` pays once per
+    response; same omissions and the same never-raises degrade as
+    `provenance_for`."""
+    if not ids:
+        return {}
+    path = index_path(root)
+    if not path.exists():
+        return {}
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = _connect(path)
+        _ensure_schema(conn, path)
+        out: dict[str, TrustRow] = {}
+        for start in range(0, len(ids), _PROVENANCE_BATCH):
+            batch = ids[start : start + _PROVENANCE_BATCH]
+            placeholders = ",".join("?" * len(batch))
+            rows = conn.execute(
+                "SELECT id, provenance, verified_locally_at FROM memories "
+                f"WHERE id IN ({placeholders}) AND provenance IS NOT NULL",
+                batch,
+            ).fetchall()
+            for row in rows:
+                out[row["id"]] = TrustRow(row["provenance"], row["verified_locally_at"])
+        return out
+    except (sqlite3.Error, ValueError, IndexVersionError, OSError):
+        return {}
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def clear_local_verification(root: Path, filenames: Iterable[str]) -> int:
+    """Set `verified_locally_at` to NULL on the rows at `filenames`.
+
+    `sync pull` calls this for every file the rebase brought down: the
+    bytes changed under this host, so whatever it verified before is no
+    longer what is on disk, and whatever stamp the file now carries came
+    from elsewhere. Deliberately an UPDATE and not an upsert with None,
+    because the upsert's COALESCE treats None as "no claim". Never
+    raises; returns the rows changed, 0 when the index is absent or
+    unusable (the rebuild that follows a pull derives the column from
+    the `sync_pull` event instead)."""
+    names = [name for name in filenames if name]
+    if not names:
+        return 0
+    path = index_path(root)
+    if not path.exists():
+        return 0
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = _connect(path)
+        _ensure_schema(conn, path)
+        changed = 0
+        with conn:
+            for start in range(0, len(names), _PROVENANCE_BATCH):
+                batch = names[start : start + _PROVENANCE_BATCH]
+                placeholders = ",".join("?" * len(batch))
+                cursor = conn.execute(
+                    "UPDATE memories SET verified_locally_at = NULL "
+                    f"WHERE filename IN ({placeholders}) "
+                    "AND verified_locally_at IS NOT NULL",
+                    batch,
+                )
+                changed += max(cursor.rowcount, 0)
+        return changed
+    except (sqlite3.Error, ValueError, IndexVersionError, OSError):
+        return 0
     finally:
         if conn is not None:
             conn.close()
@@ -1562,17 +1683,19 @@ def links_for_with_status(
     int,
     bool,
     str | None,
+    str | None,
 ]:
     """Like `links_for`, but also returns `meta.indexed_count`, the
-    `meta.needs_rebuild` flag and the row's provenance label, all read
-    on the SAME connection. Returns
-    `(outbound, inbound, indexed_count, needs_rebuild, provenance)`.
+    `meta.needs_rebuild` flag and the row's trust facts, all read on
+    the SAME connection. Returns `(outbound, inbound, indexed_count,
+    needs_rebuild, provenance, verified_locally_at)`.
 
     `provenance` is the row's index-resident label (schema v7), or None
     when the file is absent, the row is missing, or no rebuild has
-    classified it yet. It rides this open so `memory_show` carries the
-    label without a third connection: the two-open guard in
-    tests/test_server_links.py counts every `_connect` on the
+    classified it yet; `verified_locally_at` (schema v8) is the row's
+    local verification stamp on the same terms. They ride this open so
+    `memory_show` carries them without a third connection: the two-open
+    guard in tests/test_server_links.py counts every `_connect` on the
     no-inbound path, and a separate `provenance_for` call tripped it.
 
     The handler (`_links_payload`) needs three facts to build
@@ -1608,7 +1731,7 @@ def links_for_with_status(
     empty reverse_links with NO fallback scan."""
     path = index_path(root)
     if not path.exists():
-        return [], [], 0, False, None
+        return [], [], 0, False, None, None
     conn = _connect(path)
     try:
         _ensure_schema(conn, path)
@@ -1629,15 +1752,17 @@ def links_for_with_status(
         rebuild_row = conn.execute(
             "SELECT value FROM meta WHERE key = 'needs_rebuild'"
         ).fetchone()
-        provenance_row = conn.execute(
-            "SELECT provenance FROM memories WHERE id = ?", (memory_id,)
+        trust_row = conn.execute(
+            "SELECT provenance, verified_locally_at FROM memories WHERE id = ?",
+            (memory_id,),
         ).fetchone()
         return (
             [(row["type"], row["target_id"], row["note"]) for row in outbound],
             [(row["type"], row["source_id"], row["note"]) for row in inbound],
             indexed_count,
             bool(rebuild_row and rebuild_row[0] == "1"),
-            provenance_row[0] if provenance_row else None,
+            trust_row[0] if trust_row else None,
+            trust_row[1] if trust_row else None,
         )
     finally:
         conn.close()
@@ -1815,6 +1940,7 @@ def _upsert_memory(
     filename: str,
     *,
     provenance: str | None = None,
+    verified_locally_at: str | None = None,
 ) -> None:
     """INSERT OR REPLACE on the id key. Trigger logic keeps the FTS
     virtual table in sync — the AFTER UPDATE trigger handles the
@@ -1839,13 +1965,19 @@ def _upsert_memory(
     because how a memory entered the store does not change when its
     body is edited. A label the caller does vouch for replaces whatever
     was there (a rebuild reclassifying, or the Store stamping `local`
-    on a restore)."""
+    on a restore).
+
+    `verified_locally_at` (schema v8) takes the same COALESCE: None keeps
+    the row's stamp, a value replaces it. Only `Store.mark_verified`
+    passes one on the incremental path; clearing is a separate,
+    deliberate UPDATE (`clear_local_verification`), never an upsert with
+    None."""
     conn.execute(
         "INSERT INTO memories("
         "id, created, updated, last_verified_at, confidence, category, "
         "body, body_fts, scopes_text, scopes_fts, scopes_json, filename, "
-        "origin_repo, origin_worktree, provenance) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "origin_repo, origin_worktree, provenance, verified_locally_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(id) DO UPDATE SET "
         "created = excluded.created, "
         "updated = excluded.updated, "
@@ -1864,7 +1996,9 @@ def _upsert_memory(
         # admission on the pre-repair value.
         "origin_repo = excluded.origin_repo, "
         "origin_worktree = excluded.origin_worktree, "
-        "provenance = COALESCE(excluded.provenance, memories.provenance)",
+        "provenance = COALESCE(excluded.provenance, memories.provenance), "
+        "verified_locally_at = COALESCE(excluded.verified_locally_at, "
+        "memories.verified_locally_at)",
         (
             memory.id,
             memory.created.isoformat(),
@@ -1881,6 +2015,7 @@ def _upsert_memory(
             memory.origin.repo if memory.origin else None,
             memory.origin.worktree_root if memory.origin else None,
             provenance,
+            verified_locally_at,
         ),
     )
     _sync_links(conn, memory)
@@ -1937,19 +2072,40 @@ def _stash_provenance(conn: sqlite3.Connection) -> None:
     and a stash that outlives an aborted drop is reconciled by
     `_read_prior_provenance` (the table wins over the stash)."""
     columns = {row[1] for row in conn.execute("PRAGMA table_info(memories)")}
-    if "provenance" not in columns:
-        return
-    rows = conn.execute(
-        "SELECT id, provenance FROM memories WHERE provenance IS NOT NULL"
-    ).fetchall()
-    if not rows:
-        return
-    payload = json.dumps({row[0]: row[1] for row in rows}, separators=(",", ":"))
-    conn.execute(
-        "INSERT OR REPLACE INTO meta(key, value) VALUES ('provenance_carry', ?)",
-        (payload,),
-    )
-    conn.commit()
+    stashed = False
+    if "provenance" in columns:
+        rows = conn.execute(
+            "SELECT id, provenance FROM memories WHERE provenance IS NOT NULL"
+        ).fetchall()
+        if rows:
+            payload = json.dumps(
+                {row[0]: row[1] for row in rows}, separators=(",", ":")
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO meta(key, value) "
+                "VALUES ('provenance_carry', ?)",
+                (payload,),
+            )
+            stashed = True
+    # Schema v8: the local-verification stamps ride the same drop under
+    # their own key, so a version bump cannot turn every synced memory's
+    # local stamp back into a remote one.
+    if "verified_locally_at" in columns:
+        rows = conn.execute(
+            "SELECT id, verified_locally_at FROM memories "
+            "WHERE verified_locally_at IS NOT NULL"
+        ).fetchall()
+        if rows:
+            payload = json.dumps(
+                {row[0]: row[1] for row in rows}, separators=(",", ":")
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO meta(key, value) VALUES ('trust_carry', ?)",
+                (payload,),
+            )
+            stashed = True
+    if stashed:
+        conn.commit()
 
 
 def _read_prior_provenance(conn: sqlite3.Connection) -> tuple[dict[str, str], bool]:
@@ -1989,6 +2145,38 @@ def _read_prior_provenance(conn: sqlite3.Connection) -> tuple[dict[str, str], bo
         is not None
     )
     return prior, baseline
+
+
+def _read_prior_trust(conn: sqlite3.Connection) -> dict[str, str]:
+    """The `verified_locally_at` stamps this index carried before a
+    rebuild: the `meta.trust_carry` stash (parked ahead of a drop) under
+    the live column, the live table winning. Values that do not parse
+    as timestamps are dropped, for the same reason
+    `_read_prior_provenance` drops unknown labels."""
+    from .time_utils import parse_event_ts
+
+    prior: dict[str, str] = {}
+    stash = conn.execute("SELECT value FROM meta WHERE key = 'trust_carry'").fetchone()
+    if stash is not None:
+        try:
+            parked = json.loads(stash[0])
+        except (TypeError, ValueError):
+            parked = None
+        if isinstance(parked, dict):
+            for memory_id, stamp in parked.items():
+                if (
+                    isinstance(memory_id, str)
+                    and isinstance(stamp, str)
+                    and parse_event_ts(stamp) is not None
+                ):
+                    prior[memory_id] = stamp
+    for row in conn.execute(
+        "SELECT id, verified_locally_at FROM memories "
+        "WHERE verified_locally_at IS NOT NULL"
+    ):
+        if isinstance(row[1], str) and parse_event_ts(row[1]) is not None:
+            prior[row[0]] = row[1]
+    return prior
 
 
 def _bump_count(conn: sqlite3.Connection) -> None:

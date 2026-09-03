@@ -68,7 +68,7 @@ import logging
 import shutil
 import subprocess
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -153,6 +153,11 @@ class Evidence:
     local_ids: frozenset[str]
     pulled_files: frozenset[str]
     tracked_files: frozenset[str] | None
+    # Schema v8 (`verified_locally_at`): the latest local `verify` event
+    # per memory id and the latest `sync_pull` event per file, the two
+    # instants `classify_trust` compares.
+    verified_at: Mapping[str, datetime] = field(default_factory=dict)
+    pulled_at: Mapping[str, datetime] = field(default_factory=dict)
 
 
 def gather_evidence(root: Path) -> Evidence:
@@ -161,24 +166,83 @@ def gather_evidence(root: Path) -> Evidence:
     oldest: datetime | None = None
     local_ids: set[str] = set()
     pulled: set[str] = set()
+    verified_at: dict[str, datetime] = {}
+    pulled_at: dict[str, datetime] = {}
     for event in iter_all_events(root):
         has_events = True
+        ts = parse_event_ts(event.get("ts"))
         if oldest is None:
             # `iter_all_events` is chronological, so the first parseable
             # stamp is the oldest surviving one.
-            oldest = parse_event_ts(event.get("ts"))
+            oldest = ts
         memory_id = creation_id(event)
         if memory_id is not None:
             local_ids.add(memory_id)
+        verified_id = local_verify_id(event)
+        if verified_id is not None and ts is not None:
+            previous = verified_at.get(verified_id)
+            if previous is None or ts > previous:
+                verified_at[verified_id] = ts
         for name in pulled_files(event):
-            pulled.add(Path(name).name)
+            base = Path(name).name
+            pulled.add(base)
+            if ts is not None:
+                previous = pulled_at.get(base)
+                if previous is None or ts > previous:
+                    pulled_at[base] = ts
     return Evidence(
         has_events=has_events,
         oldest_event_at=oldest,
         local_ids=frozenset(local_ids),
         pulled_files=frozenset(pulled),
         tracked_files=_tracked_files(root),
+        verified_at=verified_at,
+        pulled_at=pulled_at,
     )
+
+
+def local_verify_id(event: Mapping[str, Any]) -> str | None:
+    """The memory id a `verify` event says this host stamped, or None.
+    A `status: stale` verify is a refused stamp (the optimistic
+    concurrency check lost) and establishes nothing."""
+    if event.get("kind") != "verify":
+        return None
+    if event.get("status") == "stale":
+        return None
+    return _id_field(event, "id")
+
+
+def classify_trust(
+    memory: Memory,
+    filename: str,
+    evidence: Evidence,
+    prior: str | None,
+) -> str | None:
+    """The `verified_locally_at` a rebuild writes for one memory.
+
+    Two things can establish a local stamp: the value the index already
+    carried (`Store.mark_verified` stamps it at its upsert, with or
+    without telemetry) and the latest `verify` event naming the id. The
+    later of the two stands, unless a `sync_pull` event naming the file
+    is at or after it: the pull brought new bytes down, and whatever this
+    host verified before was the old ones. `sync pull` also clears the
+    column directly for the files it lands, so the two paths agree with
+    telemetry on and the direct clear stands alone with it off.
+    """
+    candidates: list[datetime] = []
+    prior_at = parse_event_ts(prior) if prior else None
+    if prior_at is not None:
+        candidates.append(prior_at)
+    event_at = evidence.verified_at.get(memory.id)
+    if event_at is not None:
+        candidates.append(event_at)
+    if not candidates:
+        return None
+    latest = max(candidates)
+    pulled = evidence.pulled_at.get(filename)
+    if pulled is not None and pulled >= latest:
+        return None
+    return latest.isoformat()
 
 
 def classify(
@@ -261,8 +325,10 @@ __all__ = [
     "UNTRACKED",
     "Evidence",
     "classify",
+    "classify_trust",
     "creation_id",
     "gather_evidence",
     "is_sync_repo",
+    "local_verify_id",
     "pulled_files",
 ]

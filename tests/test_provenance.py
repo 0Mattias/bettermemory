@@ -86,15 +86,16 @@ def _git(memory_dir: Path, *args: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_schema_is_seven_with_the_provenance_column(
+def test_schema_is_eight_with_the_provenance_and_trust_columns(
     store: Store, memory_dir: Path
 ) -> None:
     store.write(content="a memory that opens the index", scopes=["tools"])
     status = index.status(memory_dir)
-    assert status["schema_version"] == index.SCHEMA_VERSION == 7
+    assert status["schema_version"] == index.SCHEMA_VERSION == 8
     with sqlite3.connect(index.index_path(memory_dir)) as conn:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(memories)")}
     assert "provenance" in columns
+    assert "verified_locally_at" in columns
 
 
 def test_creation_id_reads_only_write_side_kinds() -> None:
