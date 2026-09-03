@@ -7474,3 +7474,40 @@ def test_doctor_report_includes_sync_quarantine_after_the_tracked_check(
     assert names.index("sync_quarantine") == names.index("sync_tracked_ignored") + 1
     quarantine = next(c for c in report.checks if c.name == "sync_quarantine")
     assert quarantine.status == "warn"
+
+
+def test_sync_admit_is_classified_admin(tmp_path: Path) -> None:
+    """`sync_admit` is recorded by `sync pull` (a quarantined file found
+    fixed) and by `sync quarantine --release`, both CLI surfaces under a
+    throwaway session id, so it must be admin by kind like `sync_pull`:
+    a session observed only through it never existed as a client
+    session, and the cadence census must not count one."""
+    from datetime import datetime, timezone
+
+    from bettermemory.eval import (
+        ADMIN_RECORDED_EVENT_KINDS,
+        _IN_SESSION_SIDE_EFFECT_KINDS,
+        _KNOWN_SIDE_EFFECT_KINDS,
+    )
+
+    assert "sync_admit" in _KNOWN_SIDE_EFFECT_KINDS
+    assert "sync_admit" in ADMIN_RECORDED_EVENT_KINDS
+    assert "sync_admit" not in _IN_SESSION_SIDE_EFFECT_KINDS
+
+    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    _write_event(tmp_path, "search", ts=now_iso, session="the-real-one")
+    _write_event(
+        tmp_path,
+        "sync_admit",
+        ts=now_iso,
+        session="cli-throwaway",
+        file="2026-08-30-forged.md",
+        forced=False,
+        via="pull",
+    )
+    diag = _check_audit_turn_cadence(tmp_path)
+    assert diag.details["sessions"] == 1
+    assert diag.details["total_events"] == 1, (
+        "the admit event was counted in the census — it is being read as a "
+        "client-session event, which also invents a phantom session"
+    )

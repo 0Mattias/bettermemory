@@ -3275,7 +3275,9 @@ TOOLS_WITHOUT_TELEMETRY: tuple[str, ...] = ("memory_health",)
 # files a ``bettermemory sync pull`` brought down, and the ids a
 # ``migrate origin`` rewrote. Written so the provenance derivation at
 # ``index.rebuild`` can account for records no tool call created or
-# touched; never a tool invocation, so admin by kind.
+# touched; never a tool invocation, so admin by kind. ``sync_admit`` is
+# the same shape: a quarantined pulled file admitted into the store, by
+# a later pull that found it fixed or by ``sync quarantine --release``.
 #
 # ``consolidate_write`` / ``consolidate_update`` name the memory an
 # applied consolidation pass created or rewrote, for the same
@@ -3297,6 +3299,7 @@ _KNOWN_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
         "use_token_expired",
         "prompt_recall",
         "sync_pull",
+        "sync_admit",
         "migrate",
         "consolidate_write",
         "consolidate_update",
