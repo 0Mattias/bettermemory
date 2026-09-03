@@ -56,7 +56,10 @@ fresh on every surface.
 - `3499125` feat(response): `provenance` on search hits and
   `memory_list` rows (present once the index has classified the row)
   and on `memory_show` (always, `null` until classified), read from
-  the index in one batched query per response.
+  the index in one batched query per response. The full gate's
+  two-open guard on `memory_show` caught the first cut taking a third
+  index connection for the label; the fix reads provenance on the
+  links open the handler already holds.
 - `f63fafb` feat(hook): the prompt-recall pointer carries a
   `[provenance: <label>]` suffix for anything not `local`, at the one
   delivery that reaches the model without a tool call.

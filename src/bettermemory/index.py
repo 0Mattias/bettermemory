@@ -1561,10 +1561,19 @@ def links_for_with_status(
     list[tuple[str, str, str | None]],
     int,
     bool,
+    str | None,
 ]:
-    """Like `links_for`, but also returns `meta.indexed_count` and the
-    `meta.needs_rebuild` flag read on the SAME connection. Returns
-    `(outbound, inbound, indexed_count, needs_rebuild)`.
+    """Like `links_for`, but also returns `meta.indexed_count`, the
+    `meta.needs_rebuild` flag and the row's provenance label, all read
+    on the SAME connection. Returns
+    `(outbound, inbound, indexed_count, needs_rebuild, provenance)`.
+
+    `provenance` is the row's index-resident label (schema v7), or None
+    when the file is absent, the row is missing, or no rebuild has
+    classified it yet. It rides this open so `memory_show` carries the
+    label without a third connection: the two-open guard in
+    tests/test_server_links.py counts every `_connect` on the
+    no-inbound path, and a separate `provenance_for` call tripped it.
 
     The handler (`_links_payload`) needs three facts to build
     `reverse_links` correctly: this id's inbound links, whether the
@@ -1599,7 +1608,7 @@ def links_for_with_status(
     empty reverse_links with NO fallback scan."""
     path = index_path(root)
     if not path.exists():
-        return [], [], 0, False
+        return [], [], 0, False, None
     conn = _connect(path)
     try:
         _ensure_schema(conn, path)
@@ -1620,11 +1629,15 @@ def links_for_with_status(
         rebuild_row = conn.execute(
             "SELECT value FROM meta WHERE key = 'needs_rebuild'"
         ).fetchone()
+        provenance_row = conn.execute(
+            "SELECT provenance FROM memories WHERE id = ?", (memory_id,)
+        ).fetchone()
         return (
             [(row["type"], row["target_id"], row["note"]) for row in outbound],
             [(row["type"], row["source_id"], row["note"]) for row in inbound],
             indexed_count,
             bool(rebuild_row and rebuild_row[0] == "1"),
+            provenance_row[0] if provenance_row else None,
         )
     finally:
         conn.close()

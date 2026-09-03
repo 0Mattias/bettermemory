@@ -121,14 +121,14 @@ async def memory_show(
         path_drift_missing=len(drift.claim_anchored_missing),
         commit_drift_count=commit_drift_count_for_verdict,
     )
-    # How the record entered the store, from the index (schema v7) and
-    # never from the file: a hand-written frontmatter field cannot
-    # supply it. Null until a rebuild has classified the row, the same
-    # null-when-no-signal contract `path_drift` and `commit_drift` keep
-    # on this surface.
-    from .. import index as _index
-
-    provenance = _index.provenance_for(deps.store.root, [memory.id]).get(memory.id)
+    # The links payload carries `provenance` too: how the record entered
+    # the store, from the index (schema v7) and never from the file,
+    # since a hand-written frontmatter field cannot supply it. Null
+    # until a rebuild has classified the row, the same null-when-no-
+    # signal contract `path_drift` and `commit_drift` keep on this
+    # surface. Read on the index open the links query already holds, so
+    # the no-inbound show stays at two connections.
+    index_reads = _links_payload(deps, memory)
     # Issue a use-token for this show before returning so the
     # auto-`record_use` flow has something to commit on the next
     # turn if the model doesn't override.
@@ -156,7 +156,7 @@ async def memory_show(
         "last_verified_at": isoformat_optional(memory.last_verified_at),
         "verification": verification.to_dict(),
         "staleness_verdict": verdict,
-        "provenance": provenance,
+        "provenance": index_reads.pop("provenance"),
         "body": memory.body,
         "origin": deps.responses.origin_to_dict(memory.origin),
         "path_drift": (
@@ -181,7 +181,7 @@ async def memory_show(
         "verified_versions": list(memory.verified_versions),
         "verified_absent_paths": list(memory.verified_absent_paths),
         "claims": list(memory.claims),
-        **_links_payload(deps, memory),
+        **index_reads,
     }
 
 
@@ -261,6 +261,11 @@ def _links_payload(deps: "ToolHandlers", memory: Any) -> dict[str, Any]:
     rather than hard-crash for every id until reindex — mirroring the
     corruption tolerance `_handlers.load_search_candidates` already gets
     from the tolerant `index.status()`.
+
+    The dict also carries `provenance`, always present and None whenever
+    the index cannot answer, read on the same open as the inbound query.
+    `memory_show` lifts it into its own slot; it rides here so the label
+    costs no extra connection on the hot path.
     """
     from .. import index as _index
 
@@ -275,8 +280,8 @@ def _links_payload(deps: "ToolHandlers", memory: Any) -> dict[str, Any]:
             for link in memory.links
         ]
     try:
-        outbound, inbound, indexed_count, needs_rebuild = _index.links_for_with_status(
-            deps.store.root, memory.id
+        outbound, inbound, indexed_count, needs_rebuild, provenance = (
+            _index.links_for_with_status(deps.store.root, memory.id)
         )
     except (OSError, ValueError, sqlite3.DatabaseError, _index.IndexVersionError):
         # A torn/truncated index raises DatabaseError; an on-disk
@@ -299,7 +304,8 @@ def _links_payload(deps: "ToolHandlers", memory: Any) -> dict[str, Any]:
         # corruption-swallowing `index.status()`. `outbound`
         # is unused downstream (only `inbound` + `indexed_count` +
         # `needs_rebuild` drive the fallback), so it's dropped here.
-        inbound, indexed_count, needs_rebuild = [], 0, False
+        inbound, indexed_count, needs_rebuild, provenance = [], 0, False, None
+    out["provenance"] = provenance
     if needs_rebuild:
         # Rebuild-pending window: a schema migration dropped the data
         # tables and the incremental hooks have refilled only touched
