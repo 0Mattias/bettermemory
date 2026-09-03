@@ -7,6 +7,116 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 6.6.0 - 2026-09-02
+
+A minor by the [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract):
+additive result keys and event kinds, a fourth `verification.status`
+value, one host-local sidecar, one CLI subcommand, an index schema bump
+with an automatic rebuild, no removals. The integrity lane's third step,
+after the 6.5.0 provenance tier: `sync pull` copied whatever the remote
+held into the store, and a verification stamp that arrived in a pulled
+file read as this host's own. Verified at the tag by re-running the
+2026-09-01 recon's sync probe: the credential-bearing forged file is
+quarantined and unreachable from every surface; a manipulative file with
+no secret in it is admitted, flagged, and reads `remote` and
+`spot_check_required` until a local verify. The tamper steps of that
+probe (a file-write attacker editing a body or appending an event line)
+remain open and SECURITY.md now says so.
+
+### Added
+
+**Sync admission and quarantine.** Every memory file a pull brings down
+is judged before it is recorded or indexed.
+
+- `ea90428` feat(quarantine): the sidecar and the store's active-set
+  exclusion. A quarantined file stays on disk and under git, so the
+  worktree stays clean and no deletion propagates to other hosts; the
+  host-local `.quarantine.json` names it and every active-file walk
+  skips it: the Store's iteration, the Store-free counters doctor and
+  the startup warning read, the indexed id fast path, and so the index
+  rebuild that feeds on `iter_active`. The sidecar joins the sync
+  gitignore list, which the structural sidecar test enforces.
+- `89af192` feat(sync): admission on pull, refusals quarantined. The
+  chain, in order: a size cap (an oversize file is refused without being
+  read), the store's own parser, an id-alias check (a pulled file
+  carrying an id another active file already carries is refused, and the
+  file already here keeps the id, so a push cannot shadow a memory by
+  sorting later in the directory), and `ADMISSION_GATES`, the credential
+  gate alone. Transient and user-claim hits on admitted files are
+  reported as advisory flags, never refused: the writing host's
+  acknowledgement or pending confirmation does not travel with the file.
+  This narrows the roadmap entry's "run the write gates", deliberately,
+  and the reasoning is written beside the constant in `handlers/write.py`.
+  A refusal is bound to the sha256 of the refused bytes; every later pull
+  judges the quarantined files again, releases one fixed upstream and
+  drops one deleted upstream. The `sync_pull` event gains `quarantined`
+  and `flagged`; the result and the CLI name every refused, flagged and
+  released file; `sync status` carries the count; `pull` and `auto` take
+  the config the gates read, which the CLI passes.
+- `28d91bb` feat(cli): `sync quarantine` lists the refused files and
+  releases one. `--release NAME` runs the same chain by hand and admits
+  on a pass, rebuilding the index and recording `sync_admit`; `--force`
+  admits a credential refusal as it is. The structural refusals
+  (oversize, unparseable, id alias) cannot be forced, because the store
+  could not serve the file as it is or would put two active files behind
+  one id.
+- `71a8186` feat(doctor): the `sync_quarantine` check, warning while any
+  pulled file is held (naming the oldest refusal and the release path)
+  or while the sidecar is unreadable, since an unreadable sidecar reads
+  as empty and serves every file it named.
+- `0c98ea2` feat(eval): the event rosters classify `sync_admit` as admin
+  by kind, beside `sync_pull` and `migrate`.
+
+**Remote stamps read as unverified.** A pulled file carries whatever
+`last_verified_at` the other host, or the attacker, wrote, and the
+frontmatter cannot say who wrote it.
+
+- `8e757a2` feat(index): schema 8, the local verification column.
+  `memories` gains `verified_locally_at`, when this host last stamped
+  the memory through its own verify path, or NULL. Carried across
+  rebuilds and across the drop a later bump performs through
+  `meta.trust_carry`; derived at rebuild from the value the index
+  carried and the latest local `verify` event, cleared by a `sync_pull`
+  event at or after it; read beside the label in one batched query
+  (`trust_for`) and as a sixth element of the show path's links read.
+- `25f0726` feat(store): `mark_verified` stamps the local verification
+  at the upsert it already performs, so the stamp exists with telemetry
+  off. Writes leave it NULL and updates keep whatever the row carries.
+- `5f2e3ef` feat(sync): pull clears the local verification of the files
+  it lands, with the rebuild and without it; a local verify after the
+  pull re-establishes the stamp.
+- `5514b39` feat(verify): the remote verification status.
+  `verification.status: "remote"` for a synced record whose stamp this
+  host never made: the file's stamp kept for transparency, no local age,
+  and a recommendation naming the other host's stamp and the local
+  `memory_verify` that adopts it. `verdict_from_signals` reads it like
+  `never`: no local anchor, so `spot_check_required` whatever the drift
+  legs say.
+- `74ec343` feat(response): remote stamps read as unverified on every
+  surface. `ResponseBuilder.apply_trust` is the rule, applied last:
+  `attach_provenance` reads the label and the local stamp in the one
+  batched query it already paid and applies it to search hits and list
+  rows; `memory_show` applies it to the assembled response and records
+  what it told the caller; the expanded top hit keeps the demotion
+  instead of recomputing the verdict from the file's stamp; the recall
+  pointer says `unverified here` inside its provenance bracket.
+
+### Changed
+
+- `43359ac` docs: SECURITY.md is rewritten around one question, who can
+  write into the store directory and to its remote, and what the store
+  believes when they do. It names the remote writer beside the same-user
+  process, states what admission, provenance and the remote-stamp rule
+  defend, and states plainly what they do not: tamper evidence,
+  signature verification, remote deletions, tombstones, hand-cloned
+  stores, a merely false body. api.md documents the fourth verification
+  status and where the rule applies; internals.md gains the sync
+  admission section and the quarantine subcommand.
+- `verification.status` takes four values from this release: `never`,
+  `stale`, `fresh` and `remote`. A client that branches on the set
+  should treat `remote` as `never` for its own freshness logic; the
+  recommendation string carries the action either way.
+
 ## 6.5.0 - 2026-09-02
 
 A minor by the [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract):
