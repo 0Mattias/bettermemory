@@ -33,6 +33,31 @@ HONEST = "2026-08-30-honest-cluster-note.md"
 
 
 @pytest.fixture
+def memory_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """The store directory, with git's global config redirected to a
+    per-test file that carries a test identity. `sync.push` commits
+    through `git commit-tree`, which needs an author; a developer's
+    machine guesses one from user@host, a CI runner cannot and fails
+    with "Author identity unknown". Same shape as the sync suite's
+    fixture, so the two modules share one convention. To reproduce the
+    CI condition locally: `GIT_CONFIG_GLOBAL=<a file holding
+    [user] useConfigOnly = true>`."""
+    d = tmp_path / "memories"
+    d.mkdir()
+    global_config = tmp_path / "test.gitconfig"
+    global_config.touch()
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(global_config))
+    for key, value in (("user.email", "test@example.com"), ("user.name", "Test")):
+        subprocess.run(
+            ["git", "config", "--global", key, value],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+    return d
+
+
+@pytest.fixture
 def bare_remote(tmp_path: Path) -> Path:
     bare = tmp_path / "remote.git"
     subprocess.run(
