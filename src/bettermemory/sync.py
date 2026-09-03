@@ -67,6 +67,7 @@ from .index import INDEX_FILENAME
 from .ingest import INGEST_WATERMARK_FILENAME
 from .patterns import PATTERNS_FILENAME
 from .proposals import PROPOSALS_FILENAME
+from .quarantine import QUARANTINE_FILENAME
 from .session import PENDING_WRITES_FILENAME
 
 # Coarse store-wide lock for push/pull. The git operations the sync
@@ -162,6 +163,14 @@ _GITIGNORE_LINES = [
     # rewritten on every decision. Host-local by construction, like the
     # event log it was deliberately decoupled from.
     AUTO_CONSOLIDATE_CLOCK_FILENAME,
+    # Quarantine sidecar: the pulled files THIS host's admission chain
+    # refused, keyed by filename (`quarantine.py`). Host-local by
+    # construction. The refused files themselves stay tracked and are
+    # already on the remote; what must not travel is one host's
+    # verdicts, which would exclude files from another host's store
+    # that host never judged, and the entries name detector kinds and
+    # exception classes that describe the refused content.
+    QUARANTINE_FILENAME,
     # Episode tier — host-local BY DESIGN (decided 2026-07-11; before this
     # line it synced only by omission). Episodes are the transient sibling of
     # memory: session run-state whose bodies carry host-absolute

@@ -58,6 +58,7 @@ from .models import (
     utcnow,
 )
 from .origin import Origin
+from .quarantine import quarantined_names
 
 
 # ---------------------------------------------------------------------------
@@ -245,18 +246,12 @@ class Store:
     # ---- iteration --------------------------------------------------------
 
     def _iter_active_paths(self) -> Iterator[Path]:
-        # `is_file()` follows symlinks; we explicitly reject them. With
-        # `sync pull`, the memory directory is a worktree that a remote
-        # can push to — a hostile remote pushing `something.md` that's
-        # a symlink to `/etc/passwd` (or any other readable file) would
-        # otherwise have its target loaded and parsed as frontmatter on
-        # the next `load_all`. The parse would fail and `load_all` would
-        # swallow it, so this isn't an exfiltration primitive today, but
-        # the narrower contract — memories are regular files in this
-        # directory, full stop — is what we want to enforce.
-        for entry in self.root.iterdir():
-            if entry.is_file() and not entry.is_symlink() and entry.suffix == ".md":
-                yield entry
+        # The one definition of "active memory file on disk" lives in
+        # the module-level `iter_active_memory_paths`, shared with the
+        # Store-free counters (`active_memory_filenames`,
+        # `scan_active_memory_ids`) so a file this walk skips is a file
+        # they skip too.
+        yield from iter_active_memory_paths(self.root)
 
     def _iter_tombstone_paths(self) -> Iterator[Path]:
         if not self.tombstone_dir.exists():
@@ -2295,11 +2290,36 @@ def active_memory_filenames(root: Path) -> set[str]:
     (`_upsert_memory` threads the caller's actual filename through), so
     the two sides compare without either one re-deriving the other's
     spelling. Propagates OSError from an unlistable directory."""
-    return {
-        entry.name
-        for entry in root.iterdir()
-        if entry.is_file() and not entry.is_symlink() and entry.suffix == ".md"
-    }
+    return {entry.name for entry in iter_active_memory_paths(root)}
+
+
+def iter_active_memory_paths(root: Path) -> Iterator[Path]:
+    """The active memory files under `root`: regular, non-symlink,
+    top-level `.md` files that are not quarantined. The single filter
+    every disk walk shares, Store-bound (`Store._iter_active_paths`) and
+    Store-free (`active_memory_filenames`, `scan_active_memory_ids`), so
+    "yielded here" and "counted there" cannot drift apart.
+
+    `is_file()` follows symlinks; symlinks are rejected explicitly. With
+    `sync pull` the memory directory is a worktree a remote can push to,
+    and a remote pushing `something.md` as a symlink to `/etc/passwd`
+    (or any other readable file) would otherwise have its target loaded
+    and parsed as frontmatter on the next `load_all`. The parse would
+    fail and `load_all` would swallow it, so this is not an exfiltration
+    primitive today, but the narrower contract, memories are regular
+    files in this directory and nothing else, is the one to enforce.
+
+    Quarantined names (`quarantine.quarantined_names`: the pulled files
+    the admission chain refused) are skipped for the same reason the
+    symlink is: the file is on disk, git tracks it, and it is not a
+    memory this host serves. Propagates OSError from an unlistable
+    directory; callers pick their own degraded answer."""
+    excluded = quarantined_names(root)
+    for entry in root.iterdir():
+        if entry.is_file() and not entry.is_symlink() and entry.suffix == ".md":
+            if entry.name in excluded:
+                continue
+            yield entry
 
 
 def count_unparseable_memory_files(root: Path) -> int:
@@ -2352,18 +2372,17 @@ def scan_active_memory_ids(root: Path) -> tuple[dict[str, Path], int]:
     degraded answer."""
     ids: dict[str, Path] = {}
     unparseable = 0
-    for entry in root.iterdir():
-        if entry.is_file() and not entry.is_symlink() and entry.suffix == ".md":
-            try:
-                ids[_parse_memory_file(entry).id] = entry
-            except PARSE_SKIP_EXCEPTIONS:
-                # Any parse failure counts as unparseable — never a
-                # crash: this walk runs at every Store construction
-                # (via `_warn_on_index_divergence`), so a missed type
-                # would brick server boot on one weird file. The
-                # readers skip on the same width, keeping "counted
-                # here" == "skipped there".
-                unparseable += 1
+    for entry in iter_active_memory_paths(root):
+        try:
+            ids[_parse_memory_file(entry).id] = entry
+        except PARSE_SKIP_EXCEPTIONS:
+            # Any parse failure counts as unparseable — never a
+            # crash: this walk runs at every Store construction
+            # (via `_warn_on_index_divergence`), so a missed type
+            # would brick server boot on one weird file. The
+            # readers skip on the same width, keeping "counted
+            # here" == "skipped there".
+            unparseable += 1
     return ids, unparseable
 
 
@@ -2790,6 +2809,11 @@ def _indexed_path_for_id(root: Path, memory_id: str) -> Path | None:
 
     fname = _index.filenames_for_ids(root, [memory_id]).get(memory_id)
     if fname is None:
+        return None
+    # A quarantined file can still have a row until the next rebuild
+    # (a pull with `--no-reindex`): the hint must not resolve to a file
+    # the active walk refuses to yield.
+    if fname in quarantined_names(root):
         return None
     candidate = root / fname
     return candidate if _id_still_at_path(candidate, memory_id) else None
