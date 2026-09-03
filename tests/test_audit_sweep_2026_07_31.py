@@ -163,7 +163,9 @@ def test_a_constraint_violation_never_unlinks_a_healthy_index(
     size_before = index_file.stat().st_size
     assert size_before > 0
 
-    def _boom(conn: object, memory: object, filename: str) -> None:
+    def _boom(
+        conn: object, memory: object, filename: str, *, provenance: str | None = None
+    ) -> None:
         raise sqlite3.IntegrityError("UNIQUE constraint failed: memories.id")
 
     monkeypatch.setattr(index, "_upsert_memory", _boom)
