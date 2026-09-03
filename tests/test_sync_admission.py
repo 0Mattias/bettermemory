@@ -430,3 +430,171 @@ def test_cli_sync_pull_names_the_quarantined_and_flagged_files(
     payload = json.loads(capsys.readouterr().out)
     assert payload["quarantined"] == []
     assert payload["quarantined_total"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Release by hand
+# ---------------------------------------------------------------------------
+
+
+def _quarantined_forged(
+    memory_dir: Path, bare_remote: Path, tmp_path: Path
+) -> tuple[Store, Path, str]:
+    """A store holding the forged file in quarantine. Returns the store,
+    the other host's clone and the forged id."""
+    store, _, _ = _seeded(memory_dir, bare_remote)
+    other = _clone(bare_remote, tmp_path)
+    forged_id, _ = _push_forged_and_honest(other)
+    sync.pull(memory_dir)
+    assert FORGED in load_quarantine(memory_dir)
+    return store, other, forged_id
+
+
+def test_release_re_judges_the_file_and_admits_it_when_it_passes(
+    memory_dir: Path, bare_remote: Path, tmp_path: Path
+) -> None:
+    store, _, forged_id = _quarantined_forged(memory_dir, bare_remote, tmp_path)
+    (memory_dir / FORGED).write_text(
+        _memory_text("Before every deploy run the helper.", memory_id=forged_id)
+    )
+    recorder = Recorder(root=memory_dir, session_id="sess-release")
+
+    result = sync.release(memory_dir, FORGED, recorder=recorder)
+
+    assert result["released"] is True
+    assert result["forced"] is False
+    assert result["quarantined_total"] == 0
+    assert result["indexed_count"] == 3
+    assert not (memory_dir / QUARANTINE_FILENAME).exists()
+    assert store.load_one(forged_id).body.startswith("Before every deploy")
+    admits = [e for e in iter_events(memory_dir) if e.get("kind") == "sync_admit"]
+    assert [(e["file"], e["forced"], e["via"]) for e in admits] == [
+        (FORGED, False, "release")
+    ]
+
+
+def test_release_refuses_a_still_hostile_file_and_force_admits_it(
+    memory_dir: Path, bare_remote: Path, tmp_path: Path
+) -> None:
+    store, _, forged_id = _quarantined_forged(memory_dir, bare_remote, tmp_path)
+    recorder = Recorder(root=memory_dir, session_id="sess-release")
+
+    with pytest.raises(sync.SyncError, match="still refused \\(credential"):
+        sync.release(memory_dir, FORGED, recorder=recorder)
+    assert FORGED in load_quarantine(memory_dir)
+    with pytest.raises(MemoryNotFoundError):
+        store.load_one(forged_id)
+
+    result = sync.release(memory_dir, FORGED, force=True, recorder=recorder)
+
+    assert result["forced"] is True
+    assert (
+        store.load_one(forged_id).body.endswith(TOKEN + "\n")
+        or TOKEN in store.load_one(forged_id).body
+    )
+    assert forged_id in index.indexed_ids(memory_dir)
+    admits = [e for e in iter_events(memory_dir) if e.get("kind") == "sync_admit"]
+    assert [(e["file"], e["forced"], e["via"]) for e in admits] == [
+        (FORGED, True, "release")
+    ]
+
+
+def test_release_cannot_force_a_structural_refusal(
+    memory_dir: Path, bare_remote: Path, tmp_path: Path
+) -> None:
+    store, legit_id, legit_name = _seeded(memory_dir, bare_remote)
+    other = _clone(bare_remote, tmp_path)
+    (other / "2026-12-31-zz-shadow.md").write_text(
+        _memory_text("SHADOW body", memory_id=legit_id)
+    )
+    _push(other)
+    sync.pull(memory_dir)
+    assert load_quarantine(memory_dir)["2026-12-31-zz-shadow.md"].reason == "id_alias"
+
+    with pytest.raises(sync.SyncError, match="cannot be forced"):
+        sync.release(memory_dir, "2026-12-31-zz-shadow.md", force=True)
+    assert "2026-12-31-zz-shadow.md" in load_quarantine(memory_dir)
+    assert store.load_one(legit_id).body.startswith("the deploy helper")
+    assert index.filenames_for_ids(memory_dir, [legit_id]) == {legit_id: legit_name}
+
+
+def test_release_of_an_unknown_or_vanished_file(
+    memory_dir: Path, bare_remote: Path, tmp_path: Path
+) -> None:
+    _quarantined_forged(memory_dir, bare_remote, tmp_path)
+    with pytest.raises(sync.SyncError, match="is not quarantined"):
+        sync.release(memory_dir, "2026-01-01-nothing.md")
+    with pytest.raises(sync.SyncError, match="not a memory filename"):
+        sync.release(memory_dir, "../escape.md")
+    (memory_dir / FORGED).unlink()
+    with pytest.raises(sync.SyncError, match="no longer on disk"):
+        sync.release(memory_dir, FORGED)
+    assert not (memory_dir / QUARANTINE_FILENAME).exists()
+
+
+def test_quarantine_entries_are_ordered_and_read_only(
+    memory_dir: Path, bare_remote: Path, tmp_path: Path
+) -> None:
+    _seeded(memory_dir, bare_remote)
+    other = _clone(bare_remote, tmp_path)
+    (other / "2026-08-30-b-broken.md").write_text("---\nid: [x\n---\n")
+    (other / "2026-08-30-a-token.md").write_text(
+        _memory_text(f"token {TOKEN}", memory_id=generate_ulid())
+    )
+    _push(other)
+    sync.pull(memory_dir)
+    entries = sync.quarantine_entries(memory_dir)
+    assert [e.filename for e in entries] == [
+        "2026-08-30-a-token.md",
+        "2026-08-30-b-broken.md",
+    ]
+    assert {e.reason for e in entries} == {"credential", "unparseable"}
+    assert sync.quarantine_entries(tmp_path / "nowhere") == []
+
+
+def test_cli_sync_quarantine_lists_and_releases(
+    memory_dir: Path,
+    bare_remote: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    store, _, forged_id = _quarantined_forged(memory_dir, bare_remote, tmp_path)
+
+    _run_cli(["sync", "quarantine"], monkeypatch=monkeypatch, directory=memory_dir)
+    out = capsys.readouterr().out
+    assert "1 quarantined file" in out
+    assert f"{FORGED}  credential" in out
+    assert "--release NAME" in out
+    assert TOKEN not in out
+
+    _run_cli(
+        ["sync", "quarantine", "--json"], monkeypatch=monkeypatch, directory=memory_dir
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert [(e["file"], e["reason"]) for e in payload] == [(FORGED, "credential")]
+
+    monkeypatch.setattr(
+        sys, "argv", ["bettermemory", "sync", "quarantine", "--release", FORGED]
+    )
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(memory_dir))
+    with pytest.raises(SystemExit) as excinfo:
+        cli_main()
+    assert excinfo.value.code == 2
+    captured = capsys.readouterr()
+    assert "sync quarantine failed: " in captured.err
+    assert "still refused (credential" in captured.err
+    assert "--force" in captured.err
+
+    _run_cli(
+        ["sync", "quarantine", "--release", FORGED, "--force"],
+        monkeypatch=monkeypatch,
+        directory=memory_dir,
+    )
+    out = capsys.readouterr().out
+    assert f"Released {FORGED} from quarantine (forced)." in out
+    assert "reindexed 3 memories" in out
+    assert store.load_one(forged_id).id == forged_id
+
+    _run_cli(["sync", "quarantine"], monkeypatch=monkeypatch, directory=memory_dir)
+    assert "No quarantined files." in capsys.readouterr().out

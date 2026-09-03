@@ -11,14 +11,15 @@ from ._common import cli_context, cli_recorder
 def add_subparser(
     sub: "argparse._SubParsersAction[argparse.ArgumentParser]",
 ) -> argparse.ArgumentParser:
-    """Register the ``sync`` subparser (with init/status/push/pull/auto)."""
+    """Register the ``sync`` subparser (init/status/push/pull/auto/quarantine)."""
     help_text = (
         "Sync the memory directory across hosts via git. Subcommands: "
         "init (set up the dir as a git repo + sensible .gitignore), "
         "status (show pending changes and remote tracking), "
-        "push (commit + push), pull (rebase-pull + rebuild the index), "
-        "auto (commit, pull-rebase, then push — the shell-alias / cron "
-        "one-shot)."
+        "push (commit + push), pull (rebase-pull, admission, then rebuild "
+        "the index), auto (commit, pull-rebase, then push — the shell-alias "
+        "/ cron one-shot), quarantine (list the pulled files admission "
+        "refused, or release one)."
     )
     # `description=` gets the longer form: it is what `sync --help` prints,
     # while `help=` is the one-liner in the top-level subcommand table.
@@ -167,6 +168,40 @@ def add_subparser(
         action="store_true",
         help="Emit JSON instead of human-readable text.",
     )
+
+    sync_quarantine_help = (
+        "List the pulled files the admission chain refused, or release one."
+    )
+    sync_quarantine_parser = sync_sub.add_parser(
+        "quarantine",
+        help=sync_quarantine_help,
+        description=(
+            sync_quarantine_help + " A pull judges every memory file it brings "
+            "down (size cap, parser, id alias, credential gate) and quarantines "
+            "a refusal: the file stays on disk under git, and this host's store "
+            "skips it. Every later pull judges the quarantined files again and "
+            "releases one that passes. `--release NAME` runs the same chain by "
+            "hand; `--force` admits a credential refusal as it is. Structural "
+            "refusals (oversize, unparseable, id alias) cannot be forced."
+        ),
+    )
+    sync_quarantine_parser.add_argument(
+        "--release",
+        type=str,
+        default=None,
+        metavar="NAME",
+        help="Admit this quarantined file (its filename in the memory directory).",
+    )
+    sync_quarantine_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="With --release: admit the file even if the credential gate still refuses it.",
+    )
+    sync_quarantine_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit JSON instead of human-readable text.",
+    )
     return parser
 
 
@@ -206,6 +241,9 @@ def run(
         return
     if args.sync_cmd == "auto":
         _cli_sync_auto(remote=args.remote, json_out=args.json)
+        return
+    if args.sync_cmd == "quarantine":
+        _cli_sync_quarantine(release=args.release, force=args.force, json_out=args.json)
         return
     sub_parser.print_help()
 
@@ -401,3 +439,55 @@ def _cli_sync_auto(*, remote: str, json_out: bool) -> None:
     pull_result = result.get("pull")
     if isinstance(pull_result, dict):
         _write_admission_lines(pull_result)
+
+
+def _cli_sync_quarantine(*, release: str | None, force: bool, json_out: bool) -> None:
+    """`bettermemory sync quarantine` — list the refused files, or
+    release one through the same admission chain a pull runs."""
+    import json as _json
+
+    from .. import sync as _sync
+
+    ctx = cli_context()
+    directory = ctx.directory
+    if release is None:
+        entries = _sync.quarantine_entries(directory)
+        if json_out:
+            payload = [{"file": e.filename, **e.to_dict()} for e in entries]
+            sys.stdout.write(_json.dumps(payload, indent=2) + "\n")
+            return
+        if not entries:
+            sys.stdout.write("No quarantined files.\n")
+            return
+        noun = "file" if len(entries) == 1 else "files"
+        sys.stdout.write(f"{len(entries)} quarantined {noun} in {directory}:\n")
+        for entry in entries:
+            detail = f": {entry.detail}" if entry.detail else ""
+            sys.stdout.write(
+                f"  {entry.filename}  {entry.reason}{detail}  "
+                f"(pulled {entry.pulled_at} from {entry.remote})\n"
+            )
+        sys.stdout.write(
+            "Quarantined files stay on disk and out of the store. Fix one on the "
+            "host that wrote it and pull again, or `bettermemory sync quarantine "
+            "--release NAME` here (`--force` admits a credential refusal as it is).\n"
+        )
+        return
+    try:
+        result = _sync.release(
+            directory,
+            release,
+            force=force,
+            recorder=cli_recorder(ctx, attribution="cli_sync_release"),
+            config=ctx.config,
+        )
+    except _sync.SyncError as exc:
+        sys.stderr.write(f"sync quarantine failed: {exc}\n")
+        raise SystemExit(2) from exc
+    if json_out:
+        sys.stdout.write(_json.dumps(result, indent=2) + "\n")
+        return
+    suffix = " (forced)" if result.get("forced") else ""
+    sys.stdout.write(f"Released {release} from quarantine{suffix}.\n")
+    sys.stdout.write(f"  reindexed {result.get('indexed_count', 0)} memories\n")
+    _write_admission_lines({"flagged": result.get("flagged", [])})

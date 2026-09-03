@@ -1998,6 +1998,118 @@ def _default_config() -> Config:
     return Config()
 
 
+def quarantine_entries(root: Path) -> list[QuarantineEntry]:
+    """The quarantine sidecar's entries, oldest pull first, then by name.
+    Read by `bettermemory sync quarantine` and by doctor; never raises
+    (an unreadable sidecar reads as empty, see `quarantine.py`)."""
+    root = Path(root).expanduser().resolve()
+    return sorted(
+        load_quarantine(root).values(), key=lambda e: (e.pulled_at, e.filename)
+    )
+
+
+# The refusals `release --force` may override. Only the policy refusal
+# qualifies: a credential hit is a judgement about content the user can
+# read and vouch for. The structural refusals cannot be forced into
+# anything useful: an oversize or unparseable file would be skipped by
+# the store's own reader the moment it was admitted, and an id alias
+# would put two active files behind one id, which the rebuild resolves
+# by directory order, the shadowing the check exists to stop.
+_FORCEABLE_REASONS: frozenset[str] = frozenset({REASON_CREDENTIAL})
+
+
+def release(
+    root: Path,
+    filename: str,
+    *,
+    force: bool = False,
+    recorder: Recorder | None = None,
+    config: Config | None = None,
+) -> dict[str, object]:
+    """Admit one quarantined file by hand.
+
+    Runs the chain a pull runs over that one file. On a pass the entry
+    is dropped, the index rebuilt so the memory is served from here on,
+    and `sync_admit` recorded (`forced: false`, `via: "release"`). On a
+    refusal the call raises `SyncError` naming the reason and the entry
+    is refreshed with the current verdict, unless `force` and the reason
+    is one `_FORCEABLE_REASONS` allows, in which case the entry is dropped
+    regardless and the event carries `forced: true`: the user has read
+    the file and takes the bytes as they are. A file that is no longer on
+    disk is dropped with an error saying so.
+
+    Serialised against the other sync operations by the store-wide sync
+    lock, so a concurrent pull cannot rewrite the sidecar under this
+    call.
+    """
+    root = Path(root).expanduser().resolve()
+    if not filename or "/" in filename or "\\" in filename or filename in (".", ".."):
+        raise SyncError(f"{filename!r} is not a memory filename")
+    with flock_excl(root / _SYNC_LOCK_NAME):
+        quarantine = load_quarantine(root)
+        entry = quarantine.get(filename)
+        if entry is None:
+            raise SyncError(
+                f"{filename} is not quarantined in {root}. "
+                "`bettermemory sync quarantine` lists the files that are."
+            )
+        path = root / filename
+        if not path.is_file() or path.is_symlink():
+            del quarantine[filename]
+            save_quarantine(root, quarantine)
+            raise SyncError(
+                f"{filename} is no longer on disk; its quarantine entry was dropped."
+            )
+        from .store import Store
+
+        store = Store(root)
+        trial = {filename: entry}
+        admission = _admit_pulled_files(
+            store,
+            config if config is not None else _default_config(),
+            [],
+            remote=entry.remote,
+            quarantine=trial,
+        )
+        if admission.released:
+            forced = False
+        else:
+            refreshed = trial[filename]
+            quarantine[filename] = refreshed
+            if not force:
+                save_quarantine(root, quarantine)
+                raise SyncError(
+                    f"{filename} is still refused ({refreshed.reason}: "
+                    f"{refreshed.detail}). Fix the file on the host that wrote "
+                    "it and pull again, or pass --force to admit it as it is."
+                )
+            if refreshed.reason not in _FORCEABLE_REASONS:
+                save_quarantine(root, quarantine)
+                raise SyncError(
+                    f"{filename} is refused as {refreshed.reason} "
+                    f"({refreshed.detail}), which cannot be forced: the store "
+                    "could not serve the file as it is. Fix it on the host that "
+                    "wrote it and pull again."
+                )
+            forced = True
+        del quarantine[filename]
+        save_quarantine(root, quarantine)
+        if recorder is not None:
+            recorder.record("sync_admit", file=filename, forced=forced, via="release")
+        from . import index as _index
+
+        indexed = _index.rebuild(root, store.iter_active())
+    return {
+        "root": str(root),
+        "file": filename,
+        "released": True,
+        "forced": forced,
+        "indexed_count": indexed,
+        "flagged": admission.flagged,
+        "quarantined_total": len(quarantine),
+    }
+
+
 def pull(
     root: Path,
     *,
@@ -2326,5 +2438,7 @@ __all__ = [
     "init",
     "pull",
     "push",
+    "quarantine_entries",
+    "release",
     "status",
 ]
