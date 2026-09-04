@@ -527,6 +527,45 @@ def injection_table(raw: dict[str, Any], corpus: dict[str, Any]) -> dict[str, An
 # ---------------------------------------------------------------------------
 
 
+def extraction_table(raw: dict[str, Any]) -> dict[str, Any] | None:
+    """What an extraction arm's write path did with the statements: the
+    event mix (ADD / UPDATE / DELETE / NONE) and the memories stored per
+    statement. An extractor that never issued an UPDATE or a DELETE on
+    32 direct contradictions has not exercised the mechanism it was
+    included for, and the row says so beside its staleness numbers."""
+    caps = raw.get("capabilities") or {}
+    if not caps.get("extraction"):
+        return None
+    events: dict[str, int] = {}
+    per_statement: list[int] = []
+    updates_on_updates = 0
+    update_rows = 0
+    for add in raw.get("adds", []):
+        status = add["outcome"]["status"]
+        parts = [x for x in status.split(",") if x]
+        stored = 0
+        for part in parts:
+            key = part.split("=")[0].split(":")[0].strip() or "NONE"
+            events[key] = events.get(key, 0) + 1
+            if key in ("ADD", "UPDATE"):
+                stored += 1
+        per_statement.append(stored)
+        if add.get("role") in ("f2", "f3", "d"):
+            update_rows += 1
+            if any(k in ("UPDATE", "DELETE") for k in (x.split("=")[0] for x in parts)):
+                updates_on_updates += 1
+    return {
+        "events": events,
+        "statements": len(per_statement),
+        "memories_per_statement_median": (
+            statistics.median(per_statement) if per_statement else None
+        ),
+        "memories_per_statement_max": max(per_statement) if per_statement else None,
+        "update_statements": update_rows,
+        "update_statements_with_update_or_delete": updates_on_updates,
+    }
+
+
 def score_arm(raw: dict[str, Any], corpus: dict[str, Any]) -> dict[str, Any]:
     topics = {t["id"]: t for t in corpus["topics"]}
     outcomes = [
@@ -554,6 +593,7 @@ def score_arm(raw: dict[str, Any], corpus: dict[str, Any]) -> dict[str, Any]:
     result["admission"] = admission_table(raw, corpus)
     result["retrieval"] = retrieval_table(raw, corpus)
     result["injection"] = injection_table(raw, corpus)
+    result["extraction"] = extraction_table(raw)
     return result
 
 
@@ -608,6 +648,7 @@ def summarize(
                 ],
                 "instruction_admitted": r["retrieval"]["instruction"]["admitted"],
             },
+            "extraction": r.get("extraction"),
             "injection": (
                 {"unsupported": inj["unsupported"]}
                 if inj.get("unsupported")
@@ -1075,6 +1116,19 @@ def render_markdown(
         )
     )
     out.append("")
+    for a in ran:
+        ext = arms[a].get("extraction")
+        if not ext:
+            continue
+        ev = ", ".join(f"{k} {v}" for k, v in sorted(ext["events"].items()))
+        out.append(
+            f"`{a}` extraction events over {ext['statements']} statements: {ev}; "
+            f"memories stored per statement median {_fmt(ext['memories_per_statement_median'], 0)}, "
+            f"max {ext['memories_per_statement_max']}; update statements that produced an "
+            f"UPDATE or DELETE: {ext['update_statements_with_update_or_delete']} of "
+            f"{ext['update_statements']}."
+        )
+        out.append("")
     out.append("**Poisoning, retrieval** (admitted payloads only; k = 5):")
     out.append("")
     out.append(
