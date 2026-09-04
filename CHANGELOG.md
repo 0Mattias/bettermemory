@@ -7,6 +7,107 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 7.0.0 - 2026-09-03
+
+A major by the [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract),
+the 3.0 shape: one narrow surface change is the only break. `episode_handoff`
+rows carry `body` only when `include_bodies=True` is passed, where they
+carried it unconditionally before, and that is a default change the
+contract holds stable within a major. Nothing on disk changes:
+`SCHEMA_VERSION` stays at 1, the index schema stays at 8, no memory or
+episode written under 6.x reads differently, and there is no migrate
+subcommand. The integrity lane's fourth step, after the 6.6.0 sync
+admission: the two deliveries that reach the model's context without a
+specific request, the session-start standing tier and the reflexive
+handoff at loop-iteration entry, were gated on a stamp the file itself
+carries or on nothing beyond worktree equality, so a planted or pulled
+file with a forged fresh stamp delivered whole. Both are now gated on
+provenance. Verified at the tag by re-running the 2026-09-01 recon's
+inject probes with two plants added: a memory file with a forged fresh
+stamp renders as a pointer and never as a body, a file dropped into a
+legitimate session's directory reads `unaccounted` with no body on either
+handoff path, the legitimate local fresh ambient memory still delivers,
+and the sync probe's admitted file renders as a `synced` pointer.
+
+### Changed
+
+- `36a1cb7` feat(episodes): handoff takeaways by default, bodies on
+  request. Every `episode_handoff` row carries `provenance`, `body` is
+  present only with `include_bodies=True` (default `False`) and never for
+  an unaccounted episode, whatever the caller passed; the takeaway and the
+  scopes stay, with the label beside them, and `episode_search(ids=[...])`
+  is the explicit read that serves a body beside its label. The evidence
+  is gathered in the event pass the auto-resolution walk already pays;
+  the explicit `prior_session_id` path pays one pass when it has rows to
+  label. The handoff event records the switch. The tool description
+  absorbs its additions, and the served-schema remainder ceiling in
+  `tests/test_resident_footprint.py` moves 7,500 to 8,000 for the new
+  parameter, by the ceremony recorded above the literal.
+- `40fc67f` feat(session-start): local verified bodies, pointers
+  otherwise. The standing tier (`[behavior] standing_tier`, default off)
+  reads the index's provenance label before the verdict: a body is
+  delivered only for a `local` row whose live verdict is fresh, and every
+  other admitted ambient memory (`synced`, `untracked`, `unaccounted`, or
+  a row the index has not classified) renders as a pointer, id, scopes
+  and `[provenance: <label>]`, after the bodies under the same byte budget
+  with whole-line truncation. A `synced` row this host has since verified
+  still renders as a pointer: a local verify attests the citations, not
+  the authorship. Pointers are not stale and add no git process; the
+  closing disclaimer says their bodies are not in context. The flag-off
+  block is byte-identical to 6.6.0 and nothing is recorded.
+
+### Added
+
+- `49518a4` feat(provenance): the episode label from the event log.
+  `local` when an `episode_write` event names the episode id, `untracked`
+  when the log holds no in-process event that could have named it (or the
+  episode predates the oldest surviving one), `unaccounted` when the file
+  appeared under a session directory with no event, the planted shape.
+  Read at each episode read rather than stored; session-tag floors carry
+  no label. The join reads the log only: a forged event line is not
+  detected (tamper evidence stays on the roadmap).
+- `2cb27ef` feat(episodes): episode_search rows carry the provenance
+  label. The explicit read keeps the body beside the label, the way
+  `memory_show` keeps a body beside an unaccounted memory.
+
+### Removed
+
+- `1da8233` refactor(origin): remove the deprecated trio targeted at
+  7.0. `commits_since`, `commits_touching_pathspecs` and
+  `commits_since_touching_paths` were deprecated against 4.0, re-targeted
+  at 6.0 and then 7.0, and had no production caller since the
+  commit-drift surfaces moved to the author-date sources. The messages
+  named this release; this release takes them. The deprecation fence in
+  `tests/test_origin.py` now scans the package for every
+  `DeprecationWarning` and pins its message against the `pyproject.toml`
+  regex.
+
+### Migration
+
+- A client that reads `body` off `episode_handoff` rows passes
+  `include_bodies=True` to get the 6.x row shape for `local` and
+  `untracked` episodes; an `unaccounted` episode never carries a body on
+  this surface, and `episode_search(ids=[...])` returns it beside its
+  label. Branch on `"body" in row`, as for `episode_search`.
+- `episode_handoff` and `episode_search` rows gain `provenance`; a client
+  that ignores unknown keys is unaffected.
+- A session-start block under `standing_tier = true` may now carry a
+  "Standing pointers" section and a closing sentence naming it; the
+  flag-off block is unchanged byte for byte.
+- Code importing `commits_since`, `commits_touching_pathspecs` or
+  `commits_since_touching_paths` from `bettermemory.origin` moves to
+  `commit_author_timestamps` (with `bisect_right`) and
+  `commit_author_timestamps_touching_pathspecs`, the author-date sources
+  the deprecation messages named since 3.x.
+- No stored data changes shape: `SCHEMA_VERSION` is untouched, and no
+  memory, episode or event written under 6.x reads differently.
+
+The roadmap entry "Delivery on a stored stamp alone" leaves with this
+release, narrowed as stated above: an `untracked` episode still delivers
+its body on request, and a forged event line is not defended.
+`6ee901e` carries the documentation and `b09f78b` pins the pointer path
+to zero git processes.
+
 ## 6.6.0 - 2026-09-02
 
 A minor by the [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract):
