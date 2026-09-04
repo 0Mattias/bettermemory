@@ -595,6 +595,17 @@ _ALLOWLIST: dict[tuple[str, str, str], str] = {
     (
         _CHANGELOG,
         "symbol",
+        "commits_since_touching_paths in origin.py",
+    ): (
+        "Frozen history. The entry that introduced the path-filtered "
+        "commit count was accurate when written; the helper was deprecated "
+        "against 4.0, re-targeted twice, and removed in 7.0.0 with the rest "
+        "of the committer-date trio. Accurate release note, since-removed "
+        "surface."
+    ),
+    (
+        _CHANGELOG,
+        "symbol",
         "_FakeCtx in tests/test_session_registry.py",
     ): (
         "Frozen history. The 1.3.3 entry describes a duck-typed Context "
