@@ -162,15 +162,18 @@ prompt_recall = true
 recall_in_project = true
 
 # Standing tier at session start. When true, the plugin's SessionStart
-# hook appends fresh-verified `ambient` memories — bodies, not pointers —
-# to the scope-counts hint it already prints, newest-verified first under
-# a ~1 KB budget that truncates only at whole-memory boundaries. This is
-# the one surface that delivers without being asked: ambient context
-# whose trigger condition is not knowing you need it. Verification is
-# the admission ticket (only a computed-fresh staleness verdict is
-# delivered; stale ambient memories collapse to one aggregate
-# verify-to-restore line), so the tier cannot ship unverified claims
-# into every session. Default OFF: the recall hook's default-on was
+# hook appends the `ambient` memories the index labels local and the
+# verdict reads fresh, bodies, not pointers, to the scope-counts hint it
+# already prints, newest-verified first under a ~1 KB budget that
+# truncates only at whole-memory boundaries, and points at the other
+# ambient memories (id, scopes, provenance label, never the body) under
+# the same budget. This is the one surface that delivers without being
+# asked: ambient context whose trigger condition is not knowing you need
+# it. Provenance and verification are the admission ticket (a body needs
+# a local label and a computed-fresh staleness verdict; stale local
+# ambient memories collapse to one aggregate verify-to-restore line), so
+# the tier cannot ship a planted, pulled or unverified body into every
+# session. Default OFF: the recall hook's default-on was
 # earned by a measured ~2% firing bar, and no equivalent measurement
 # exists for a tier that fires on every session open.
 standing_tier = false

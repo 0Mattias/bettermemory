@@ -216,8 +216,10 @@ the episode is deleted on commit, kept on any rejection).
 
 Loop iteration pattern:
 - At entry: episode_handoff() — the prior session's takeaways,
-  {prior_session_id, episodes: [...]}. prior_session_id=None means
-  no baseline; episodes=[] means it left no journal.
+  {prior_session_id, episodes: [{takeaway, provenance, ...}]}; a body
+  only with include_bodies=True, never for an unaccounted episode.
+  prior_session_id=None means no baseline; episodes=[] means it left
+  no journal.
 - Each iteration: episode_write(body=…, takeaway="one line") — the
   minting moment; no judgement call, write it every time. The
   takeaway is what the next iteration sees first.

@@ -141,7 +141,7 @@ The mirror-image rule matters as much: content that is *still* run-state at clos
 
 A `/loop` iteration (or any agent resuming work in a worktree) should:
 
-1. **At entry**: call `episode_handoff()`. Returns the prior session's recent takeaways with `{prior_session_id, episodes: [{id, created, takeaway, body, scopes}, ...]}`. Distinguish `prior_session_id is None` (no baseline) from `episodes == []` (prior session left no journal).
+1. **At entry**: call `episode_handoff()`. Returns the prior session's recent takeaways with `{prior_session_id, episodes: [{id, created, takeaway, scopes, provenance}, ...]}`; pass `include_bodies=True` when a takeaway needs its body (never delivered for an `unaccounted` episode; `episode_search(ids=[...])` is the explicit read). Distinguish `prior_session_id is None` (no baseline) from `episodes == []` (prior session left no journal).
 2. **Each iteration**: call `episode_write(body=..., takeaway="one-line summary")`. The takeaway is what the next iteration sees first. This is where run-state lives — no judgement call needed, write it every time.
 3. **At session close**: scan what this session concluded, then promote the survivors:
 

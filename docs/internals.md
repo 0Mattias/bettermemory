@@ -48,12 +48,18 @@ declared claims on `memory_write` / `memory_verify` (3.40.0).
   purely opt-in retrieval.
   The session-start standing tier (3.42.0, `[behavior] standing_tier`,
   default off) is the unconditional one: the SessionStart hint appends
-  the caller-scoped `ambient` memories whose staleness verdict
-  computes fresh — whole bodies, newest-verified first, under a small
-  fixed byte budget (the constant lives beside `standing_tier` in
-  config.py), truncating only at memory boundaries — because opt-in
-  retrieval cannot serve knowledge whose trigger condition is not
-  knowing you need it. Admission runs the same verdict chain
+  the caller-scoped `ambient` memories that the index labels `local`
+  and whose staleness verdict computes fresh — whole bodies,
+  newest-verified first, under a small fixed byte budget
+  (`_STANDING_BUDGET_BYTES` in `cli/session_start_cmd.py`), truncating
+  only at memory boundaries — because opt-in retrieval cannot serve
+  knowledge whose trigger condition is not knowing you need it. Since
+  7.0.0 provenance is the first gate: every other admitted ambient
+  memory (`synced`, `untracked`, `unaccounted`, or a row the index has
+  not classified) renders as a pointer, id, scopes and label under the
+  same budget and never the body, because the stamp the verdict reads
+  is frontmatter and a planted or pulled file carries whatever its
+  writer chose. Admission for a local body runs the same verdict chain
   `memory_show` computes (calendar leg, claim-anchored path drift,
   commit drift); anything not fresh collapses to one aggregate
   "verify to restore delivery" line, which converts the tier's
@@ -133,6 +139,17 @@ rides search hits, `memory_show`, `memory_list`, the recall pointer,
 `memory_health` and `bettermemory doctor`. Nothing relabels a record:
 a memory you recognise is re-admitted through the store (remove, then
 restore), and the rest are removed.
+
+Episodes carry a label of their own since 7.0.0, read from the event
+log at each read rather than stored (`provenance.EpisodeEvidence`):
+`local` when an `episode_write` event names the id, `untracked` when
+the log holds no in-process event that could have named it (or the
+episode predates the oldest surviving one), `unaccounted` when the file
+appeared under a session directory with no event, the planted shape.
+Session-tag floors carry no label; the read surfaces filter them first.
+`episode_search` keeps the body beside the label; `episode_handoff`
+delivers takeaways by default, bodies on request (`include_bodies`),
+and never the body of an unaccounted episode.
 
 Cost: one pass over the event log per rebuild and one `git ls-files`
 in a sync repo; nothing per search. What it cannot see: an

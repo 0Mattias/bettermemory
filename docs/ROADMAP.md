@@ -50,13 +50,6 @@ and an entry leaves this file when it lands there.
   before that are counted as not-replayable, never approximated, so
   the replay clauses read only exact evidence and "fewer changed
   turns" resolves as the declared hold.
-- **Delivery on a stored stamp alone.** The standing tier
-  (`[behavior] standing_tier`) delivers whole bodies gated by a verdict
-  a hand-written `last_verified_at` passes, and `episode_handoff`
-  delivers whole bodies with no check beyond worktree equality. With
-  the 6.5.0 provenance label in place: require a local label plus a
-  fresh live verdict, or deliver pointers; hand off takeaways by
-  default and bodies on request.
 - **Cause provenance.** The 6.5.0 label says how a file entered the
   store, not what was in context when the model wrote it, so an
   injection-driven legitimate write reads `local`. A write-time record

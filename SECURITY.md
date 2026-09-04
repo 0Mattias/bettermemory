@@ -6,13 +6,13 @@ bettermemory follows semver from 1.0 onward. The latest minor of the current maj
 
 | Version | Status |
 |---------|--------|
-| 6.x latest | Supported |
-| 6.x earlier minor | Upgrade to latest 6.x |
-| 5.x | Unsupported; upgrade to 6.x (no on-disk migration required, SCHEMA_VERSION stayed at 1) |
-| 4.x and earlier | Unsupported; upgrade to 6.x (no on-disk migration required, SCHEMA_VERSION stayed at 1) |
+| 7.x latest | Supported |
+| 7.x earlier minor | Upgrade to latest 7.x |
+| 6.x | Unsupported; upgrade to 7.x (no on-disk migration required, SCHEMA_VERSION stayed at 1) |
+| 5.x and earlier | Unsupported; upgrade to 7.x (no on-disk migration required, SCHEMA_VERSION stayed at 1) |
 | 0.x | Unsupported (pre-1.0) |
 
-Upgrading across 4.0, 5.0 or 6.0 costs no data migration but does lose surface: 4.0 removed the embedding lane (the `"semantic"` search mode, both embedding extras, `[behavior] semantic_provider` and `semantic_dedup`), 5.0 removed the web UI (`bettermemory ui`, the `[ui]` extra), and 6.0 removed the embedding lane again after its 5.5.0 opt-in reentry (the `[embeddings]` and `[embeddings-fast]` extras). See the release notes for each.
+Upgrading across 4.0, 5.0 or 6.0 costs no data migration but does lose surface: 4.0 removed the embedding lane (the `"semantic"` search mode, both embedding extras, `[behavior] semantic_provider` and `semantic_dedup`), 5.0 removed the web UI (`bettermemory ui`, the `[ui]` extra), and 6.0 removed the embedding lane again after its 5.5.0 opt-in reentry (the `[embeddings]` and `[embeddings-fast]` extras). 7.0 removed nothing and changed one default: `episode_handoff` rows carry `body` only when `include_bodies=True` is passed. See the release notes for each.
 
 ## Reporting a vulnerability
 
@@ -41,7 +41,7 @@ bettermemory is a single-user, local-first tool. The store is a directory of pla
 
 **A process running as the same user with write access to the store directory.** This is the root precondition for every other attack below, and OS filesystem permissions are the access control: the store directory is created `0o700`, memory files `0o600`, and bettermemory does not encrypt at rest or authenticate callers. What has changed since 6.5.0 is what the store believes about a file that appeared under such a writer:
 
-- **Provenance.** The index carries one label per memory, derived at every rebuild from the event log and the sync repo and never from the file: `local` (written through this host's own code path), `synced` (a `sync pull` brought it down), `untracked` (the event log cannot speak to it) or `unaccounted` (the log covers its creation and nothing wrote or pulled it: the hand-planted shape). The label rides every read surface and the recall hook's pointer, `memory_health` lists the unaccounted records and `bettermemory doctor` warns on them. A planted file is detected; it is not silently trusted.
+- **Provenance.** The index carries one label per memory, derived at every rebuild from the event log and the sync repo and never from the file: `local` (written through this host's own code path), `synced` (a `sync pull` brought it down), `untracked` (the event log cannot speak to it) or `unaccounted` (the log covers its creation and nothing wrote or pulled it: the hand-planted shape). The label rides every read surface and the recall hook's pointer, `memory_health` lists the unaccounted records and `bettermemory doctor` warns on them. A planted file is detected; it is not silently trusted. Episodes carry a label of the same kind since 7.0.0, read from the event log at each read: a file dropped into a session directory reads `unaccounted` on `episode_search` and `episode_handoff`.
 - **What is not provided: tamper evidence.** There is no hash, MAC or chain over memory files or the event log. A writer with access can change any body, scope or trust field, or append an event line, and nothing at read time notices; `doctor`'s index reconcile is consistency evidence that a reindex clears. Treat the store directory's integrity as equal to the host account's integrity. Detect-only tamper evidence is on the roadmap.
 
 **A remote writer.** `bettermemory sync` replicates the store over a git remote the user controls. Anyone who can push to that remote, and the remote host itself, can put files into every clone's store directory on its next `sync pull`. Since 6.6.0 a pull is an admission, not a copy:
@@ -53,7 +53,7 @@ bettermemory is a single-user, local-first tool. The store is a directory of pla
 
 **A malicious memory body crafted to exploit a parser bug.** YAML deserialization and frontmatter handling. bettermemory uses `yaml.SafeLoader` exclusively (every `yaml.load` pins `Loader=yaml.SafeLoader`, the dumper subclasses `yaml.SafeDumper`, no unsafe loaders, no pickle, no `eval`). The frontmatter parser caps the YAML region at 64 KB and the file at 1 MiB before parsing, and refuses alias expansion on dump, so a hostile file exhausts a bounded budget and fails cleanly. The vendored parser (`src/bettermemory/_frontmatter.py`) exists in part to pin that behaviour.
 
-**Instructions inside a memory.** A memory body is data the model reads, and a body can contain text shaped like instructions. bettermemory delivers bodies only through tool calls the model makes (`memory_show`, `memory_search`) and through the standing tier, which is off by default; the recall hook injects a pointer and a snippet, never a body. Every delivery carries the verification block and the provenance label beside the text so the model has the signals to weigh it. What no label can see is an injection-driven legitimate write: a memory the model was talked into writing through the gates reads `local`, truthfully. Cause provenance, what was in context when the model wrote, is the open question behind the label and is on the roadmap.
+**Instructions inside a memory.** A memory body is data the model reads, and a body can contain text shaped like instructions. bettermemory delivers bodies through tool calls the model makes (`memory_show`, `memory_search`, `episode_search`, and `episode_handoff` with `include_bodies=True`) and, when the standing tier is on (off by default), at session start. Since 7.0.0 the two deliveries that reach context without a specific request are gated on provenance: the standing tier delivers a body only for a memory the index labels `local` whose live verdict is fresh, and renders every other admitted ambient memory as a pointer (id, scopes, label); `episode_handoff` delivers takeaways by default, bodies only on request, and never the body of an episode the event log did not see written. The recall hook injects a pointer and a snippet, never a body. Every delivery carries the verification block and the provenance label beside the text so the model has the signals to weigh it. What no label can see is an injection-driven legitimate write: a memory the model was talked into writing through the gates reads `local`, truthfully. Cause provenance, what was in context when the model wrote, is the open question behind the label and is on the roadmap.
 
 ### Out of scope
 

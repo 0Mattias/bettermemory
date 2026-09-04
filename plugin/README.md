@@ -31,11 +31,13 @@ The plugin bundles five things:
    index only (never memory bodies), records nothing, prints nothing
    when the store is empty, and always exits 0. With `[behavior]
    standing_tier = true` (default off) the same block additionally
-   carries the repository's fresh-verified `ambient` memories in
-   full — the one delivery that fires without being asked — capped at
-   ~1 KB, truncated only at whole-memory boundaries, with stale
-   ambient memories collapsed to one "verify to restore delivery"
-   line.
+   carries in full the repository's `ambient` memories that the index
+   labels local and the verdict reads fresh (the one delivery that
+   fires without being asked), points at the other ambient memories
+   by id, scopes and provenance label, never the body, capped at ~1 KB
+   together and truncated only at whole-memory boundaries, with stale
+   local ambient memories collapsed to one "verify to restore
+   delivery" line.
 5. **UserPromptSubmit hook** (same file) — runs
    `uvx bettermemory prompt-recall` on each prompt submission. Probes
    the prompt with the same silent-miss predicate the Stop hook
