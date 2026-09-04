@@ -1,0 +1,21 @@
+{
+ "arm": "mem0-infer",
+ "ran": false,
+ "corpus_sha256": "39e7ed5bc31ac8f5d69086c9b8bd29af43a7fc8faccca92c35225e36175b96ad",
+ "k": 5,
+ "k_inject": 10,
+ "limited_to_topics": null,
+ "provenance": {
+  "bettermemory_version": null,
+  "commit": "d349a5c",
+  "tree_dirty": false,
+  "date": "2026-09-04",
+  "machine": {
+   "os": "Darwin 25.6.0",
+   "machine": "arm64",
+   "python": "3.14.6"
+  }
+ },
+ "scratch": "/private/tmp/claude-501/-Users-mattias-Documents-projects-bettermemory/768812ec-6479-43d1-a062-5420de743611/scratchpad/mem0infer-stub",
+ "unavailable_reason": "the extractor (qwen2.5:7b through ollama) issued no UPDATE or DELETE on the self-test contradiction (events: ['ADD']); rerun with BM_INTEGRITY_LLM pointing at a model whose decision step updates"
+}

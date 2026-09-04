@@ -1,0 +1,691 @@
+{
+ "benchmark": "integrity-v0",
+ "corpus_sha256": "39e7ed5bc31ac8f5d69086c9b8bd29af43a7fc8faccca92c35225e36175b96ad",
+ "k": 5,
+ "arms": {
+  "bettermemory": {
+   "ran": true,
+   "version": {
+    "bettermemory": "7.0.0"
+   },
+   "staleness": {
+    "supersession": {
+     "n": 24,
+     "current_served@5": 0.8333,
+     "stale_served@5": 1.0,
+     "stale_unsignaled@5": 1.0,
+     "signaled_given_stale": 0.0,
+     "top1_current": 0.375,
+     "empty_lists": 0
+    },
+    "distractor": {
+     "n": 8,
+     "current_served@5": 1.0,
+     "stale_served@5": 0.0,
+     "stale_unsignaled@5": 0.0,
+     "signaled_given_stale": null,
+     "top1_current": 1.0,
+     "empty_lists": 0
+    },
+    "reversion": {
+     "n": 8,
+     "current_served@5": 1.0,
+     "stale_served@5": 0.75,
+     "stale_unsignaled@5": 0.75,
+     "signaled_given_stale": 0.0,
+     "top1_current": 0.5,
+     "empty_lists": 0
+    },
+    "all": {
+     "n": 40,
+     "current_served@5": 0.9,
+     "stale_served@5": 0.75,
+     "stale_unsignaled@5": 0.75,
+     "signaled_given_stale": 0.0,
+     "top1_current": 0.525,
+     "empty_lists": 0
+    }
+   },
+   "admission": {
+    "per_class": {
+     "false_fact": {
+      "flagged": 0.0,
+      "admitted": 1.0,
+      "variants": {
+       "plain": {
+        "flagged": 0.0
+       }
+      }
+     },
+     "instruction": {
+      "flagged": 0.0,
+      "admitted": 1.0,
+      "variants": {
+       "advice": {
+        "flagged": 0.0
+       },
+       "imperative": {
+        "flagged": 0.0
+       }
+      }
+     },
+     "secret": {
+      "flagged": 0.8,
+      "admitted": 0.2,
+      "variants": {
+       "evasive": {
+        "flagged": 0.5
+       },
+       "plain": {
+        "flagged": 1.0
+       }
+      }
+     }
+    },
+    "legit_flagged": 0.0426,
+    "hard_negatives_flagged": 0.1667,
+    "detector": {
+     "tp": 8,
+     "fn": 22,
+     "fp": 4,
+     "tn": 90,
+     "flag_rate": 0.0968,
+     "tpr": 0.2667,
+     "false_alarm_rate": 0.0426,
+     "precision": 0.6667,
+     "youden_j": 0.2241,
+     "fisher_p": 0.0012,
+     "alerts_per_catch": 1.5
+    }
+   },
+   "retrieval": {
+    "poison_top1_rate": 0.7,
+    "poison_served@5": 1.0,
+    "false_fact_admitted": 10,
+    "injection_served@5": 0.4,
+    "instruction_admitted": 10
+   },
+   "extraction": null,
+   "injection": {
+    "plain": {
+     "detected": 1.0,
+     "median_rank_shift": -1.0,
+     "youden_j": 1.0
+    },
+    "forged_provenance": {
+     "detected": 0.0,
+     "median_rank_shift": -2.0,
+     "youden_j": 0.0
+    }
+   }
+  },
+  "mem0-raw": {
+   "ran": true,
+   "version": {
+    "mem0ai": "2.0.18",
+    "embedder": "sentence-transformers/all-MiniLM-L6-v2",
+    "sentence-transformers": "6.0.0",
+    "qdrant-client": "1.19.0"
+   },
+   "staleness": {
+    "supersession": {
+     "n": 24,
+     "current_served@5": 0.9583,
+     "stale_served@5": 1.0,
+     "stale_unsignaled@5": 1.0,
+     "signaled_given_stale": 0.0,
+     "top1_current": 0.0833,
+     "empty_lists": 0
+    },
+    "distractor": {
+     "n": 8,
+     "current_served@5": 1.0,
+     "stale_served@5": 0.0,
+     "stale_unsignaled@5": 0.0,
+     "signaled_given_stale": null,
+     "top1_current": 1.0,
+     "empty_lists": 0
+    },
+    "reversion": {
+     "n": 8,
+     "current_served@5": 1.0,
+     "stale_served@5": 1.0,
+     "stale_unsignaled@5": 1.0,
+     "signaled_given_stale": 0.0,
+     "top1_current": 0.875,
+     "empty_lists": 0
+    },
+    "all": {
+     "n": 40,
+     "current_served@5": 0.975,
+     "stale_served@5": 0.8,
+     "stale_unsignaled@5": 0.8,
+     "signaled_given_stale": 0.0,
+     "top1_current": 0.425,
+     "empty_lists": 0
+    }
+   },
+   "admission": {
+    "per_class": {
+     "false_fact": {
+      "flagged": 0.0,
+      "admitted": 1.0,
+      "variants": {
+       "plain": {
+        "flagged": 0.0
+       }
+      }
+     },
+     "instruction": {
+      "flagged": 0.0,
+      "admitted": 1.0,
+      "variants": {
+       "advice": {
+        "flagged": 0.0
+       },
+       "imperative": {
+        "flagged": 0.0
+       }
+      }
+     },
+     "secret": {
+      "flagged": 0.0,
+      "admitted": 1.0,
+      "variants": {
+       "evasive": {
+        "flagged": 0.0
+       },
+       "plain": {
+        "flagged": 0.0
+       }
+      }
+     }
+    },
+    "legit_flagged": 0.0,
+    "hard_negatives_flagged": 0.0,
+    "detector": {
+     "tp": 0,
+     "fn": 30,
+     "fp": 0,
+     "tn": 94,
+     "flag_rate": 0.0,
+     "tpr": 0.0,
+     "false_alarm_rate": 0.0,
+     "precision": null,
+     "youden_j": 0.0,
+     "fisher_p": null,
+     "alerts_per_catch": null
+    }
+   },
+   "retrieval": {
+    "poison_top1_rate": 0.5,
+    "poison_served@5": 1.0,
+    "false_fact_admitted": 10,
+    "injection_served@5": 0.4,
+    "instruction_admitted": 10
+   },
+   "extraction": null,
+   "injection": {
+    "plain": {
+     "detected": 0.0,
+     "median_rank_shift": -1.0,
+     "youden_j": 0.0
+    },
+    "forged_provenance": {
+     "detected": 0.0,
+     "median_rank_shift": -1.0,
+     "youden_j": 0.0
+    }
+   }
+  },
+  "mem0-infer": {
+   "ran": false,
+   "unavailable_reason": "the extractor (qwen2.5:7b through ollama) issued no UPDATE or DELETE on the self-test contradiction (events: ['ADD']); rerun with BM_INTEGRITY_LLM pointing at a model whose decision step updates"
+  },
+  "graphiti": {
+   "ran": true,
+   "version": {
+    "graphiti-core": "0.30.1",
+    "neo4j-driver": "6.3.0",
+    "neo4j": "5.26 (docker)",
+    "llm": "qwen2.5:7b at http://localhost:11434/v1",
+    "embedder": "ollama/nomic-embed-text"
+   },
+   "staleness": {
+    "supersession": {
+     "n": 24,
+     "current_served@5": 0.625,
+     "stale_served@5": 0.5417,
+     "stale_unsignaled@5": 0.2917,
+     "signaled_given_stale": 0.4615,
+     "top1_current": 0.2083,
+     "empty_lists": 0
+    },
+    "distractor": {
+     "n": 8,
+     "current_served@5": 0.5,
+     "stale_served@5": 0.0,
+     "stale_unsignaled@5": 0.0,
+     "signaled_given_stale": null,
+     "top1_current": 0.5,
+     "empty_lists": 0
+    },
+    "reversion": {
+     "n": 8,
+     "current_served@5": 0.5,
+     "stale_served@5": 0.5,
+     "stale_unsignaled@5": 0.5,
+     "signaled_given_stale": 0.0,
+     "top1_current": 0.375,
+     "empty_lists": 0
+    },
+    "all": {
+     "n": 40,
+     "current_served@5": 0.575,
+     "stale_served@5": 0.425,
+     "stale_unsignaled@5": 0.275,
+     "signaled_given_stale": 0.3529,
+     "top1_current": 0.3,
+     "empty_lists": 0
+    }
+   },
+   "admission": {
+    "per_class": {
+     "false_fact": {
+      "flagged": 0.0,
+      "admitted": 1.0,
+      "variants": {
+       "plain": {
+        "flagged": 0.0
+       }
+      }
+     },
+     "instruction": {
+      "flagged": 0.0,
+      "admitted": 1.0,
+      "variants": {
+       "advice": {
+        "flagged": 0.0
+       },
+       "imperative": {
+        "flagged": 0.0
+       }
+      }
+     },
+     "secret": {
+      "flagged": 0.0,
+      "admitted": 1.0,
+      "variants": {
+       "evasive": {
+        "flagged": 0.0
+       },
+       "plain": {
+        "flagged": 0.0
+       }
+      }
+     }
+    },
+    "legit_flagged": 0.0,
+    "hard_negatives_flagged": 0.0,
+    "detector": {
+     "tp": 0,
+     "fn": 30,
+     "fp": 0,
+     "tn": 94,
+     "flag_rate": 0.0,
+     "tpr": 0.0,
+     "false_alarm_rate": 0.0,
+     "precision": null,
+     "youden_j": 0.0,
+     "fisher_p": null,
+     "alerts_per_catch": null
+    }
+   },
+   "retrieval": {
+    "poison_top1_rate": 0.2,
+    "poison_served@5": 0.5,
+    "false_fact_admitted": 10,
+    "injection_served@5": 0.2,
+    "instruction_admitted": 10
+   },
+   "extraction": {
+    "style": "relations",
+    "statements": 124,
+    "relations": 136,
+    "statements_without_relation": 43,
+    "legit_statements": 94,
+    "legit_statements_without_relation": 34,
+    "update_statements": 48,
+    "update_statements_with_relation": 29
+   },
+   "injection": {
+    "plain": {
+     "detected": 1.0,
+     "median_rank_shift": 1.0,
+     "youden_j": 1.0
+    },
+    "forged_provenance": {
+     "detected": 0.0,
+     "median_rank_shift": 2.0,
+     "youden_j": 0.0
+    }
+   }
+  },
+  "letta": {
+   "ran": true,
+   "version": {
+    "letta-client": "1.12.1",
+    "letta-server": "0.16.8",
+    "embedder": "ollama/nomic-embed-text"
+   },
+   "staleness": {
+    "supersession": {
+     "n": 24,
+     "current_served@5": 0.9167,
+     "stale_served@5": 1.0,
+     "stale_unsignaled@5": 1.0,
+     "signaled_given_stale": 0.0,
+     "top1_current": 0.1667,
+     "empty_lists": 0
+    },
+    "distractor": {
+     "n": 8,
+     "current_served@5": 1.0,
+     "stale_served@5": 0.0,
+     "stale_unsignaled@5": 0.0,
+     "signaled_given_stale": null,
+     "top1_current": 1.0,
+     "empty_lists": 0
+    },
+    "reversion": {
+     "n": 8,
+     "current_served@5": 1.0,
+     "stale_served@5": 0.875,
+     "stale_unsignaled@5": 0.875,
+     "signaled_given_stale": 0.0,
+     "top1_current": 0.875,
+     "empty_lists": 0
+    },
+    "all": {
+     "n": 40,
+     "current_served@5": 0.95,
+     "stale_served@5": 0.775,
+     "stale_unsignaled@5": 0.775,
+     "signaled_given_stale": 0.0,
+     "top1_current": 0.475,
+     "empty_lists": 0
+    }
+   },
+   "admission": {
+    "per_class": {
+     "false_fact": {
+      "flagged": 0.0,
+      "admitted": 1.0,
+      "variants": {
+       "plain": {
+        "flagged": 0.0
+       }
+      }
+     },
+     "instruction": {
+      "flagged": 0.0,
+      "admitted": 1.0,
+      "variants": {
+       "advice": {
+        "flagged": 0.0
+       },
+       "imperative": {
+        "flagged": 0.0
+       }
+      }
+     },
+     "secret": {
+      "flagged": 0.0,
+      "admitted": 1.0,
+      "variants": {
+       "evasive": {
+        "flagged": 0.0
+       },
+       "plain": {
+        "flagged": 0.0
+       }
+      }
+     }
+    },
+    "legit_flagged": 0.0,
+    "hard_negatives_flagged": 0.0,
+    "detector": {
+     "tp": 0,
+     "fn": 30,
+     "fp": 0,
+     "tn": 94,
+     "flag_rate": 0.0,
+     "tpr": 0.0,
+     "false_alarm_rate": 0.0,
+     "precision": null,
+     "youden_j": 0.0,
+     "fisher_p": null,
+     "alerts_per_catch": null
+    }
+   },
+   "retrieval": {
+    "poison_top1_rate": 0.4,
+    "poison_served@5": 1.0,
+    "false_fact_admitted": 10,
+    "injection_served@5": 0.5,
+    "instruction_admitted": 10
+   },
+   "extraction": null,
+   "injection": {
+    "plain": {
+     "detected": 0.0,
+     "median_rank_shift": 0.0,
+     "youden_j": 0.0
+    },
+    "forged_provenance": {
+     "detected": 0.0,
+     "median_rank_shift": -1.0,
+     "youden_j": 0.0
+    }
+   }
+  }
+ },
+ "staleness_references": {
+  "serve_all_unsignaled": {
+   "supersession": {
+    "n": 24,
+    "current_served@5": 1.0,
+    "stale_served@5": 1.0,
+    "stale_unsignaled@5": 1.0,
+    "signaled_given_stale": 0.0,
+    "top1_current": 0.0,
+    "empty_lists": 0
+   },
+   "distractor": {
+    "n": 8,
+    "current_served@5": 1.0,
+    "stale_served@5": 0.0,
+    "stale_unsignaled@5": 0.0,
+    "signaled_given_stale": null,
+    "top1_current": 1.0,
+    "empty_lists": 0
+   },
+   "reversion": {
+    "n": 8,
+    "current_served@5": 1.0,
+    "stale_served@5": 1.0,
+    "stale_unsignaled@5": 1.0,
+    "signaled_given_stale": 0.0,
+    "top1_current": 1.0,
+    "empty_lists": 0
+   },
+   "all": {
+    "n": 40,
+    "current_served@5": 1.0,
+    "stale_served@5": 0.8,
+    "stale_unsignaled@5": 0.8,
+    "signaled_given_stale": 0.0,
+    "top1_current": 0.4,
+    "empty_lists": 0
+   }
+  },
+  "recency_top1": {
+   "supersession": {
+    "n": 24,
+    "current_served@5": 1.0,
+    "stale_served@5": 0.0,
+    "stale_unsignaled@5": 0.0,
+    "signaled_given_stale": null,
+    "top1_current": 1.0,
+    "empty_lists": 0
+   },
+   "distractor": {
+    "n": 8,
+    "current_served@5": 0.0,
+    "stale_served@5": 0.0,
+    "stale_unsignaled@5": 0.0,
+    "signaled_given_stale": null,
+    "top1_current": 0.0,
+    "empty_lists": 0
+   },
+   "reversion": {
+    "n": 8,
+    "current_served@5": 1.0,
+    "stale_served@5": 0.0,
+    "stale_unsignaled@5": 0.0,
+    "signaled_given_stale": null,
+    "top1_current": 1.0,
+    "empty_lists": 0
+   },
+   "all": {
+    "n": 40,
+    "current_served@5": 0.8,
+    "stale_served@5": 0.0,
+    "stale_unsignaled@5": 0.0,
+    "signaled_given_stale": null,
+    "top1_current": 0.8,
+    "empty_lists": 0
+   }
+  },
+  "oracle_replica": {
+   "supersession": {
+    "n": 24,
+    "current_served@5": 1.0,
+    "stale_served@5": 0.0,
+    "stale_unsignaled@5": 0.0,
+    "signaled_given_stale": null,
+    "top1_current": 1.0,
+    "empty_lists": 0
+   },
+   "distractor": {
+    "n": 8,
+    "current_served@5": 1.0,
+    "stale_served@5": 0.0,
+    "stale_unsignaled@5": 0.0,
+    "signaled_given_stale": null,
+    "top1_current": 1.0,
+    "empty_lists": 0
+   },
+   "reversion": {
+    "n": 8,
+    "current_served@5": 1.0,
+    "stale_served@5": 0.0,
+    "stale_unsignaled@5": 0.0,
+    "signaled_given_stale": null,
+    "top1_current": 1.0,
+    "empty_lists": 0
+   },
+   "all": {
+    "n": 40,
+    "current_served@5": 1.0,
+    "stale_served@5": 0.0,
+    "stale_unsignaled@5": 0.0,
+    "signaled_given_stale": null,
+    "top1_current": 1.0,
+    "empty_lists": 0
+   }
+  }
+ },
+ "admission_references": {
+  "always_flag": {
+   "tp": 30,
+   "fn": 0,
+   "fp": 94,
+   "tn": 0,
+   "flag_rate": 1.0,
+   "tpr": 1.0,
+   "false_alarm_rate": 1.0,
+   "precision": 0.2419,
+   "youden_j": 0.0,
+   "fisher_p": 1.0,
+   "alerts_per_catch": 4.1333
+  },
+  "never_flag": {
+   "tp": 0,
+   "fn": 30,
+   "fp": 0,
+   "tn": 94,
+   "flag_rate": 0.0,
+   "tpr": 0.0,
+   "false_alarm_rate": 0.0,
+   "precision": null,
+   "youden_j": 0.0,
+   "fisher_p": null,
+   "alerts_per_catch": null
+  },
+  "oracle_replica": {
+   "tp": 30,
+   "fn": 0,
+   "fp": 0,
+   "tn": 94,
+   "flag_rate": 0.2419,
+   "tpr": 1.0,
+   "false_alarm_rate": 0.0,
+   "precision": 1.0,
+   "youden_j": 1.0,
+   "fisher_p": 0.0,
+   "alerts_per_catch": 1.0
+  }
+ },
+ "world_grounded": {
+  "source": "bench/rot/results/multirepo-anchored-2026-07-30.json",
+  "sha256": "5e8729a27bd7a454b5ad375bb5fca8a7285b98121a96c74d4a0b32a2547d41ff",
+  "repos": 30,
+  "claims": 37635,
+  "bettermemory": {
+   "file_level_incumbent": {
+    "precision": 0.2945,
+    "youden_j": 0.2875,
+    "alerts_per_catch": 3.4,
+    "flag_rate": 0.7784,
+    "unflagged_stale_rate": 0.0
+   },
+   "claim_level_weak": {
+    "precision": 0.94,
+    "youden_j": 0.9731,
+    "alerts_per_catch": 1.1,
+    "flag_rate": 0.2419,
+    "unflagged_stale_rate": 0.0081
+   }
+  },
+  "rivals": "not measurable: no rival exposes an interface that observes files or git"
+ },
+ "results": [
+  "bench/integrity/results/integrity-v0-bettermemory-2026-09-04.json",
+  "bench/integrity/results/integrity-v0-mem0-raw-2026-09-04.json",
+  "bench/integrity/results/integrity-v0-mem0-infer-2026-09-04.json",
+  "bench/integrity/results/integrity-v0-graphiti-2026-09-04.json",
+  "bench/integrity/results/integrity-v0-letta-2026-09-04.json"
+ ],
+ "provenance": {
+  "bettermemory_version": "7.1.0",
+  "commit": "bf9e9f4",
+  "tree_dirty": false,
+  "date": "2026-09-04",
+  "machine": {
+   "os": "Darwin 25.6.0",
+   "machine": "arm64",
+   "python": "3.13.13"
+  }
+ }
+}
