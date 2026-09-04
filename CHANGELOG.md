@@ -7,6 +7,64 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 7.1.0 - 2026-09-04
+
+The integrity benchmark v0, the measure step of the integrity lane
+after the 7.0.0 delivery gates: poisoning resistance and staleness
+detection measured the same way on bettermemory, mem0 (raw and with
+extraction), Graphiti and Letta, with the losses published. The corpus
+is hand-authored and sealed by sha before any arm was scored; the
+references (`serve_all_unsignaled`, `recency_top1` and `oracle_replica`
+for staleness, `always_flag`, `never_flag` and `oracle_replica` for
+admission) are printed beside every arm; the twelve predictions were
+pre-registered with their MISSED-if thresholds and graded mechanically.
+No product code changes. What it measured, one line each: every store
+serves a superseded fact unsignaled, bettermemory included; the
+credential gate is the only write gate that moves, and the transient
+gate refused three legitimate updates on the phrase "the new"; once
+admitted, a false fact outranks the fact it contradicts on most topics
+on every arm; a record planted around the write API is labelled on
+bettermemory and invisible on the rivals, and a forged event line
+defeats the label. mem0's extraction arm reads unavailable: with
+either local model its decision step re-added every retrieved memory
+and never issued an update on a direct contradiction, so its numbers
+would have measured the model, not mem0. Method in `docs/eval.md`,
+numbers in `docs/eval-results.md`.
+
+### Added
+
+- `05635f4` bench(integrity): the harness, the corpus and the five
+  adapters. One protocol (`reset`, `add`, `search`, `inject`) over
+  bettermemory in-process, mem0ai in two arms, graphiti-core on neo4j
+  and the Letta server; memory-versus-memory supersession scored by
+  value-token containment under the informative-signal rule; write
+  admission and store injection pooled beside the reference
+  classifiers with the rot benchmark's own statistics, loaded from
+  `bench/rot/run.py` by path; the rot artifact carried for the
+  world-grounded leg; a Graphiti self-test that reads the arm
+  unavailable, with the rerun command, when the extractor yields no
+  relation. `tests/test_bench_integrity.py` pins the corpus gates, the
+  classification and informative-signal rules, the reference
+  arithmetic, the bettermemory arm end to end on a scratch store (a
+  plant reads `unaccounted`, a plant with a forged event line reads
+  `local`) and the renderer.
+- `3b590dd` bench(integrity): render the result tables from the
+  summary, so the docs print the artifact rather than transcribe it;
+  `8462982` count the extractor's events per arm; `d349a5c` a
+  contradiction self-test for the extraction arm, the treatment the
+  Graphiti self-test gives an extractor that yields no relation.
+- `b8e3c34` bench(integrity): the v0 results. Raw observations, scored results,
+  the pooled summary and the scorecard for every arm, provenance
+  stamped at a clean tree.
+
+### Changed
+
+- `90dd6de` docs(eval): the integrity benchmark section in
+  `docs/eval.md`; the results section in `docs/eval-results.md`; two
+  roadmap entries the measured losses earn (write-time supersession,
+  the transient marker "the new"); one sentence in SECURITY.md pointing
+  the tamper-evidence paragraph at the measurement.
+
 ## 7.0.0 - 2026-09-03
 
 A major by the [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract),
