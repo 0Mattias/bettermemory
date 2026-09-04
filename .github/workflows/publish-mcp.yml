@@ -118,8 +118,22 @@ jobs:
 
           # The version must be ON PyPI. Ordering makes this true already; the
           # check turns "true by construction" into "observed", which is the
-          # distinction this project keeps having to relearn.
-          META=$(curl -sSf "https://pypi.org/pypi/${PKG}/${VERSION}/json")
+          # distinction this project keeps having to relearn. The JSON
+          # endpoint lags the upload by seconds: the 7.0.0 listing read a 404
+          # one second before the same URL served the release, so the read
+          # retries for up to two minutes before its answer is believed.
+          META=""
+          for attempt in $(seq 1 12); do
+            if META=$(curl -sSf "https://pypi.org/pypi/${PKG}/${VERSION}/json"); then
+              break
+            fi
+            echo "pypi: ${PKG} ${VERSION} not served yet (attempt ${attempt}/12); waiting 10s"
+            sleep 10
+          done
+          if [ -z "$META" ]; then
+            echo "::error::${PKG} ${VERSION} is not on PyPI after two minutes of retries."
+            exit 1
+          fi
           echo "pypi: ${PKG} ${VERSION} is published"
 
           # Ownership verification. The registry looks for `mcp-name: $NAME`

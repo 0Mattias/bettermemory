@@ -164,6 +164,13 @@ release event.
 It is a separate workflow rather than another job in `release.yml` so that a
 registry outage cannot turn a good PyPI release red.
 
+The precondition step reads the version's PyPI JSON endpoint before it calls the
+publisher, and retries that read for up to two minutes: the endpoint lags the
+upload by seconds, and the first 7.0.0 listing attempt read a 404 one second
+before the same URL served the release. A failed listing is re-run with
+`gh run rerun <id> --failed`, which keeps the `workflow_run` context and so
+checks out the tag rather than `main`.
+
 No secret is involved. Authentication is GitHub OIDC (`id-token: write`), and
 the token's repository-owner claim is what authorises the
 `io.github.0Mattias/*` namespace.
