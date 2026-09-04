@@ -287,3 +287,52 @@ def test_render_prints_every_reference_and_the_scorecard(
         assert f"`{reference}`" in text
     assert "**Scorecard**" in text and "| P1 |" in text
     assert "memory versus world" in text
+
+
+def _raw_with(statuses: list[tuple[str, str, str]], extraction: bool = True) -> dict:
+    return {
+        "capabilities": {"extraction": extraction},
+        "adds": [
+            {
+                "stmt_id": sid,
+                "kind": "legit",
+                "role": role,
+                "outcome": {"status": status},
+            }
+            for sid, role, status in statuses
+        ],
+    }
+
+
+def test_extraction_table_reads_event_and_relation_extractors() -> None:
+    events = score.extraction_table(
+        _raw_with(
+            [
+                ("a.f1", "f1", "ADD,ADD"),
+                ("a.f2", "f2", "UPDATE,NONE"),
+                ("b.d", "d", "ADD"),
+            ]
+        )
+    )
+    assert events is not None and events["style"] == "events"
+    assert events["events"] == {"ADD": 3, "UPDATE": 1, "NONE": 1}
+    assert events["update_statements_with_update_or_delete"] == 1
+    assert events["memories_per_statement_max"] == 2
+    relations = score.extraction_table(
+        _raw_with(
+            [
+                ("a.f1", "f1", "episode,edges=2"),
+                ("a.f2", "f2", "episode,edges=0"),
+                ("b.d", "d", "episode,edges=1"),
+            ]
+        )
+    )
+    assert relations is not None and relations["style"] == "relations"
+    assert relations["relations"] == 3 and relations["statements_without_relation"] == 1
+    assert relations["update_statements_with_relation"] == 1
+    assert (
+        score.extraction_table(
+            _raw_with([("a.f1", "f1", "committed")], extraction=False)
+        )
+        is None
+    )

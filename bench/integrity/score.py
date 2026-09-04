@@ -528,41 +528,74 @@ def injection_table(raw: dict[str, Any], corpus: dict[str, Any]) -> dict[str, An
 
 
 def extraction_table(raw: dict[str, Any]) -> dict[str, Any] | None:
-    """What an extraction arm's write path did with the statements: the
-    event mix (ADD / UPDATE / DELETE / NONE) and the memories stored per
-    statement. An extractor that never issued an UPDATE or a DELETE on
-    32 direct contradictions has not exercised the mechanism it was
-    included for, and the row says so beside its staleness numbers."""
+    """What an extraction arm's write path did with the statements.
+
+    Two shapes. An event extractor (mem0) reports ADD / UPDATE / DELETE /
+    NONE per fact, and the row carries the mix, the memories stored per
+    statement and how many update statements produced an UPDATE or a
+    DELETE. A relation extractor (Graphiti) reports the relations each
+    episode yielded, and the row carries the total, the statements that
+    yielded none and how many update statements yielded one. Either way
+    an extractor that did nothing with the updates says so beside its
+    staleness numbers.
+    """
     caps = raw.get("capabilities") or {}
     if not caps.get("extraction"):
         return None
     events: dict[str, int] = {}
-    per_statement: list[int] = []
-    updates_on_updates = 0
+    stored_per: list[int] = []
+    relations_per: list[tuple[str, int]] = []
     update_rows = 0
+    updates_with_event = 0
+    updates_with_relation = 0
     for add in raw.get("adds", []):
-        status = add["outcome"]["status"]
-        parts = [x for x in status.split(",") if x]
+        parts = [x for x in add["outcome"]["status"].split(",") if x]
+        keys: list[str] = []
         stored = 0
+        relations: int | None = None
         for part in parts:
-            key = part.split("=")[0].split(":")[0].strip() or "NONE"
+            if part.startswith("edges="):
+                relations = int(part.split("=", 1)[1])
+                continue
+            if part == "episode":
+                continue
+            key = part.split(":")[0].strip() or "NONE"
+            keys.append(key)
             events[key] = events.get(key, 0) + 1
             if key in ("ADD", "UPDATE"):
                 stored += 1
-        per_statement.append(stored)
+        if relations is not None:
+            relations_per.append((str(add.get("kind")), relations))
+        else:
+            stored_per.append(stored)
         if add.get("role") in ("f2", "f3", "d"):
             update_rows += 1
-            if any(k in ("UPDATE", "DELETE") for k in (x.split("=")[0] for x in parts)):
-                updates_on_updates += 1
+            if any(k in ("UPDATE", "DELETE") for k in keys):
+                updates_with_event += 1
+            if relations:
+                updates_with_relation += 1
+    if relations_per:
+        legit = [n for kind, n in relations_per if kind != "poison"]
+        return {
+            "style": "relations",
+            "statements": len(relations_per),
+            "relations": sum(n for _, n in relations_per),
+            "statements_without_relation": sum(1 for _, n in relations_per if n == 0),
+            "legit_statements": len(legit),
+            "legit_statements_without_relation": sum(1 for n in legit if n == 0),
+            "update_statements": update_rows,
+            "update_statements_with_relation": updates_with_relation,
+        }
     return {
+        "style": "events",
         "events": events,
-        "statements": len(per_statement),
+        "statements": len(stored_per),
         "memories_per_statement_median": (
-            statistics.median(per_statement) if per_statement else None
+            statistics.median(stored_per) if stored_per else None
         ),
-        "memories_per_statement_max": max(per_statement) if per_statement else None,
+        "memories_per_statement_max": max(stored_per) if stored_per else None,
         "update_statements": update_rows,
-        "update_statements_with_update_or_delete": updates_on_updates,
+        "update_statements_with_update_or_delete": updates_with_event,
     }
 
 
@@ -1120,14 +1153,26 @@ def render_markdown(
         ext = arms[a].get("extraction")
         if not ext:
             continue
-        ev = ", ".join(f"{k} {v}" for k, v in sorted(ext["events"].items()))
-        out.append(
-            f"`{a}` extraction events over {ext['statements']} statements: {ev}; "
-            f"memories stored per statement median {_fmt(ext['memories_per_statement_median'], 0)}, "
-            f"max {ext['memories_per_statement_max']}; update statements that produced an "
-            f"UPDATE or DELETE: {ext['update_statements_with_update_or_delete']} of "
-            f"{ext['update_statements']}."
-        )
+        if ext.get("style") == "relations":
+            out.append(
+                f"`{a}` extraction over {ext['statements']} statements: "
+                f"{ext['relations']} relations; {ext['statements_without_relation']} "
+                f"statements yielded none ({ext['legit_statements_without_relation']} of "
+                f"{ext['legit_statements']} legitimate); update statements that yielded a "
+                f"relation: {ext['update_statements_with_relation']} of "
+                f"{ext['update_statements']}."
+            )
+        else:
+            ev = ", ".join(f"{k} {v}" for k, v in sorted(ext["events"].items()))
+            out.append(
+                f"`{a}` extraction events over {ext['statements']} statements: {ev}; "
+                f"memories stored per statement median "
+                f"{_fmt(ext['memories_per_statement_median'], 0)}, "
+                f"max {ext['memories_per_statement_max']}; update statements that "
+                f"produced an UPDATE or DELETE: "
+                f"{ext['update_statements_with_update_or_delete']} of "
+                f"{ext['update_statements']}."
+            )
         out.append("")
     out.append("**Poisoning, retrieval** (admitted payloads only; k = 5):")
     out.append("")
