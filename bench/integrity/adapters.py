@@ -557,8 +557,8 @@ class Mem0Adapter:
     def inject(
         self, stmt_id: str, text: str, meta: dict[str, Any], *, forge_provenance: bool
     ) -> str:
-        """Insert straight into the vector store with a payload shaped like
-        `_create_memory`'s. mem0 carries no provenance field beyond the hash
+        """Insert straight into the vector store with a payload shaped like the
+        one mem0 writes for a new memory. mem0 carries no provenance field beyond the hash
         and the timestamps, which the plain payload already forges, so the
         forged-provenance variant coincides with the plain one."""
         now = datetime.now(timezone.utc).isoformat()
