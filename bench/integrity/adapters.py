@@ -48,6 +48,10 @@ LOCAL_EMBEDDER = "nomic-embed-text"
 LLM_BASE_URL = os.environ.get("BM_INTEGRITY_LLM_BASE_URL", "http://localhost:11434/v1")
 LLM_API_KEY = os.environ.get("BM_INTEGRITY_LLM_API_KEY", "ollama")
 LETTA_EMBEDDING_COLUMN_DIM = 4096
+SELF_TEST_UPDATE = (
+    "The api gateway deploy workflow was renamed: production deploys now run "
+    "through release-gateway in GitHub Actions."
+)
 SELF_TEST_STATEMENT = (
     "Production deploys of the api gateway go through the deploy-gateway "
     "GitHub Actions workflow."
@@ -451,6 +455,36 @@ class Mem0Adapter:
         if self.mode == "infer":
             _require_ollama()
         self._memory = Memory.from_config(self._config())
+        if self.mode == "infer":
+            self._self_test()
+
+    def _self_test(self) -> None:
+        """A fact and then its direct contradiction through add(infer=True)
+        in a probe namespace. The arm exists to measure mem0's extraction
+        and update logic; a model whose decision step issues no UPDATE or
+        DELETE on that contradiction has not exercised it, and the arm
+        reads unavailable with the rerun command rather than publishing
+        the local model's failure as mem0's loss."""
+        probe = "self-test"
+        try:
+            self._memory.add(SELF_TEST_STATEMENT, user_id=probe, infer=True)
+            second = self._memory.add(SELF_TEST_UPDATE, user_id=probe, infer=True)
+        except Exception as exc:  # noqa: BLE001 - published as the blocker
+            raise SystemUnavailable(
+                f"add(infer=True) failed on the self-test with {LOCAL_LLM}: "
+                f"{type(exc).__name__}: {str(exc)[:200]}"
+            ) from exc
+        events = [str(r.get("event")) for r in (second or {}).get("results", [])]
+        try:
+            self._memory.delete_all(user_id=probe)
+        except Exception:  # noqa: BLE001 - the probe namespace is disposable
+            pass
+        if not any(e in ("UPDATE", "DELETE") for e in events):
+            raise SystemUnavailable(
+                f"the extractor ({LOCAL_LLM} through ollama) issued no UPDATE or "
+                f"DELETE on the self-test contradiction (events: {events}); rerun "
+                "with BM_INTEGRITY_LLM pointing at a model whose decision step updates"
+            )
 
     def close(self) -> None:
         self._memory = None
