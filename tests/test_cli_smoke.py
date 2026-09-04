@@ -2274,7 +2274,7 @@ def test_standing_tier_delivers_fresh_verified_ambient_bodies(
     _run_session_start(monkeypatch, tmp_path)
 
     out = capsys.readouterr().out
-    assert "Standing memories (ambient, verified fresh" in out
+    assert "Standing memories (ambient, local, verified fresh" in out
     assert f"- {fresh_ambient.id} (learning-style): " in out
     assert "User prefers code-driven tutorials over prose." in out
     assert "Europe/Stockholm" not in out, "never-verified ambient was delivered"
@@ -2535,3 +2535,162 @@ def test_standing_tier_failure_degrades_to_the_base_block(
         "a failed standing section left the carve-out disclaimer behind"
     )
     assert "standing tier skipped: RuntimeError" in captured.err
+
+
+def _plant_ambient(
+    tmp_path: Path, target_root: Path, body: str, *, tag: str
+) -> tuple[str, str]:
+    """A fresh-verified ambient memory written by a throwaway Store and
+    copied into `target_root` by hand: a valid file with a forged-looking
+    fresh stamp that the target index never saw a local upsert for. The
+    donor lives beside the store, not under it. Returns `(id, filename)`."""
+    import shutil
+
+    from bettermemory.models import Category
+
+    donor_root = tmp_path.parent / f"{tmp_path.name}-donor-{tag}"
+    donor = Store(donor_root)
+    memory = donor.write(content=body, scopes=["x"], category=Category.AMBIENT)
+    donor.mark_verified(memory.id)
+    source = next(p for p in donor_root.glob("*.md"))
+    shutil.copy2(source, target_root / source.name)
+    return memory.id, source.name
+
+
+def _rebuild_index(store: Store) -> None:
+    from bettermemory import index
+
+    index.rebuild(store.root, store.iter_active())
+
+
+def test_standing_tier_planted_file_renders_a_pointer_and_no_body(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Provenance is the first gate (7.0.0).
+
+    A hand-planted ambient file carries a fresh stamp that the verdict
+    chain would pass; after a rebuild the index labels it `unaccounted`,
+    and the tier renders a pointer (id, scopes, label) and never the
+    body. The local fresh memory beside it still delivers, the pointer
+    is not counted as stale, and the closing disclaimer names the
+    pointers as not in context.
+    """
+    from bettermemory.events import Recorder
+    from bettermemory.models import Category
+
+    _standing_tier_config(tmp_path, monkeypatch, "true")
+    store = _seeded_store(tmp_path, monkeypatch)
+    local = store.write(
+        content="Local standing body.", scopes=["x"], category=Category.AMBIENT
+    )
+    store.mark_verified(local.id)
+    # One in-process event, so the log covers the plant's creation window
+    # and the plant reads `unaccounted` rather than `untracked`.
+    Recorder(root=store.root, session_id="a-prior-session").record(
+        "search", query="anything", returned=[]
+    )
+    planted_id, _ = _plant_ambient(
+        tmp_path, store.root, "Planted standing body under a forged stamp.", tag="p"
+    )
+    _rebuild_index(store)
+
+    _run_session_start(monkeypatch, tmp_path)
+
+    out = capsys.readouterr().out
+    assert "Local standing body." in out
+    assert "Planted standing body" not in out, "a non-local body was delivered"
+    assert "Standing pointers (ambient, provenance not local" in out
+    assert f"- {planted_id} (x) [provenance: unaccounted]" in out
+    assert "The standing pointers name memories whose bodies are not in context" in out
+    assert "stale" not in out, "a pointer was counted as stale"
+
+
+def test_standing_tier_synced_row_renders_a_pointer(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A file a `sync pull` brought down reads `synced`; its stamp is the
+    other host's, so the tier points at it instead of delivering it."""
+    from bettermemory.events import Recorder
+
+    _standing_tier_config(tmp_path, monkeypatch, "true")
+    store = _seeded_store(tmp_path, monkeypatch)
+    Recorder(root=store.root, session_id="a-prior-session").record(
+        "search", query="anything", returned=[]
+    )
+    synced_id, name = _plant_ambient(
+        tmp_path, store.root, "Synced standing body from another host.", tag="s"
+    )
+    Recorder(root=store.root, session_id="cli-pull").record(
+        "sync_pull", remote="origin", files=[name], count=1
+    )
+    _rebuild_index(store)
+
+    _run_session_start(monkeypatch, tmp_path)
+
+    out = capsys.readouterr().out
+    assert "Synced standing body" not in out
+    assert f"- {synced_id} (x) [provenance: synced]" in out
+    assert "Standing memories (ambient, local" not in out, (
+        "a header for delivered bodies appeared with nothing delivered"
+    )
+
+
+def test_standing_tier_unclassified_row_renders_a_pointer(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A row the index has not classified (no label yet) is not local by
+    evidence, so it is a pointer too, labelled `unclassified`."""
+    from bettermemory import index
+    from bettermemory.store import _parse_memory_file
+
+    _standing_tier_config(tmp_path, monkeypatch, "true")
+    store = _seeded_store(tmp_path, monkeypatch)
+    planted_id, name = _plant_ambient(
+        tmp_path, store.root, "Unclassified standing body.", tag="u"
+    )
+    # An upsert without a label leaves `provenance` NULL: the row exists,
+    # the counts agree, and `trust_for` does not return it.
+    index.upsert(store.root, _parse_memory_file(store.root / name), filename=name)
+
+    _run_session_start(monkeypatch, tmp_path)
+
+    out = capsys.readouterr().out
+    assert "Unclassified standing body." not in out
+    assert f"- {planted_id} (x) [provenance: unclassified]" in out
+
+
+def test_standing_tier_pointers_share_the_delivery_budget(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Pointer lines spend the same ~1 KB the bodies do, whole lines
+    only. Twenty uniform 58-byte pointers: seventeen fit under 1024, the
+    other three are counted in the overflow line."""
+    from bettermemory.events import Recorder
+
+    _standing_tier_config(tmp_path, monkeypatch, "true")
+    store = _seeded_store(tmp_path, monkeypatch)
+    Recorder(root=store.root, session_id="a-prior-session").record(
+        "search", query="anything", returned=[]
+    )
+    for n in range(20):
+        _plant_ambient(tmp_path, store.root, f"Planted body {n}.", tag=f"b{n}")
+    _rebuild_index(store)
+
+    _run_session_start(monkeypatch, tmp_path)
+
+    out = capsys.readouterr().out
+    pointer_lines = [line for line in out.splitlines() if "[provenance: " in line]
+    assert len(pointer_lines) == 17, pointer_lines
+    assert sum(len(line.encode("utf-8")) for line in pointer_lines) <= 1024
+    assert (
+        "…and 3 more standing pointers over the delivery budget (memory_list)." in out
+    )
+    assert "Planted body" not in out

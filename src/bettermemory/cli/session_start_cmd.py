@@ -54,23 +54,37 @@ deliberate exception to the bodies-stay-on-disk rule above, and it is
 paid only by users who opted in. Opt-in retrieval cannot serve
 knowledge whose trigger condition is not knowing you need it, so when
 the flag is on, the hint carries the caller-scoped `ambient` memories
-whose staleness verdict computes ``fresh`` — bodies, not pointers,
-because a pointer still requires the model to know to dereference it.
-The discipline that protects the surface:
+that are ``local`` by the index's provenance label AND whose staleness
+verdict computes ``fresh`` — bodies, not pointers, because a pointer
+still requires the model to know to dereference it. Every other
+admitted ambient memory renders as a pointer instead: id, scopes and
+the label, never the body. The discipline that protects the surface:
 
-* Verification is the admission ticket. The verdict is computed by the
-  SAME chain a `memory_show` runs — `compute_verification_status` +
-  `detect_path_drift` (claim-anchored subset) + `compute_commit_drift`
-  — no relaxed session-start variant. Anything not ``fresh`` is never
-  delivered; it collapses into one aggregate "N standing memories are
-  stale — verify to restore delivery" line, which converts the tier's
-  verification debt into visible pressure to pay it.
+* Provenance is the first gate (7.0.0). The verdict a body passes is
+  computed from the file's own `last_verified_at`, and a file placed by
+  hand or brought down by `sync pull` carries whatever stamp its writer
+  chose, so a stamp alone must never buy delivery here. The index's
+  label is derived from the event log, not the file
+  (`provenance.py`); one batched `index.trust_for` read answers it for
+  every candidate. A `synced` row this host has since verified still
+  renders as a pointer: a local verify attests the citations, not the
+  authorship, and the pointer costs one `memory_show`.
+* Verification is the admission ticket for a local body. The verdict is
+  computed by the SAME chain a `memory_show` runs —
+  `compute_verification_status` + `detect_path_drift` (claim-anchored
+  subset) + `compute_commit_drift` — no relaxed session-start variant.
+  Anything not ``fresh`` is never delivered; it collapses into one
+  aggregate "N standing memories are stale — verify to restore
+  delivery" line, which converts the tier's verification debt into
+  visible pressure to pay it. Pointers are not stale: they were never
+  candidates for the verdict.
 * Hard byte budget (`_STANDING_BUDGET_BYTES`), whole-memory truncation
   only. Entries go newest-verified first; a body that does not fit is
   counted in the "…and K more" overflow, never split — a truncated
   fact is a different fact. A body larger than the entire budget is
   skipped (it can never fit) so it cannot head-of-line-block smaller
-  memories behind it.
+  memories behind it. Pointer lines follow the bodies under the same
+  budget, whole lines only, newest id first.
 * The candidate read stays index-first: `index.category_rows` names
   the ambient files, and only THOSE are parsed — the flag does not buy
   a `load_all`. The parse re-checks category and admission against the
@@ -94,7 +108,7 @@ otherwise surface as a hook-error banner.
 from __future__ import annotations
 
 import argparse
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     # Type-only so the runtime import cost stays where it belongs: inside
@@ -154,9 +168,11 @@ def add_subparser(
         "`memory_scope_overview` call to get them (or never learning "
         "them at all). Reads the search index, never the memory bodies "
         "— unless `[behavior] standing_tier` is on, which additionally "
-        "delivers the fresh-verified ambient memories for this "
-        "repository (whole bodies, newest-verified first, ~1 KB budget) "
-        "and names the stale remainder in one aggregate line. Records "
+        "delivers the local, fresh-verified ambient memories for this "
+        "repository (whole bodies, newest-verified first, ~1 KB budget), "
+        "points at the ambient memories whose provenance is not local "
+        "(id, scopes and label, never the body) and names the stale "
+        "remainder in one aggregate line. Records "
         "NOTHING either way — no event, no session. Prints nothing "
         "when the store is empty or the index cannot be trusted, and "
         "always exits 0 so a hook misfire never breaks session start."
@@ -459,7 +475,7 @@ def _build_context_block() -> str | None:
         file=sys.stderr,
     )
 
-    standing: str | None = None
+    standing: _Standing | None = None
     if config.behavior.standing_tier:
         # Guarded on its own, narrower than `run`'s catch-all: the scope
         # table above is the proven half of this surface, and the
@@ -474,7 +490,19 @@ def _build_context_block() -> str | None:
                 f"{exc.__class__.__name__}: {exc}",
                 file=sys.stderr,
             )
-    return _render_block(total, scopes, standing=standing)
+    if standing is None:
+        return _render_block(total, scopes)
+    return _render_block(
+        total, scopes, standing=standing.text, pointers=standing.pointers
+    )
+
+
+class _Standing(NamedTuple):
+    """The rendered standing section and how many pointers it names,
+    which the closing disclaimer needs to know to stay truthful."""
+
+    text: str
+    pointers: int
 
 
 def _standing_section(
@@ -482,7 +510,7 @@ def _standing_section(
     config: "Config",
     current: "Origin",
     admit: "Callable[[list[str], Origin | None], bool]",
-) -> str | None:
+) -> "_Standing | None":
     """The standing tier's lines, or None when there is nothing to say.
 
     Candidates come from `index.category_rows` — the index names which
@@ -494,7 +522,15 @@ def _standing_section(
     a scope leaves id, filename and count intact). For a count that
     residue is acceptable; for delivering a body it is not.
 
-    Per admitted memory, the staleness verdict is computed by the same
+    Provenance decides which candidates may carry a body at all (7.0.0).
+    One batched `index.trust_for` read labels the candidates; only a
+    `local` row goes on to the verdict. Every other admitted candidate
+    (`synced`, `untracked`, `unaccounted`, or a row the index has not
+    classified) becomes a pointer, whatever its file's stamp says: the
+    stamp is frontmatter, the label is not, and this surface delivers
+    without a tool call.
+
+    Per local memory, the staleness verdict is computed by the same
     chain `handlers/show.memory_show` runs — calendar leg, claim-anchored
     path drift, commit drift against this caller's checkout — minus that
     handler's `.record()`, which the negative mandate forbids here. The
@@ -502,7 +538,8 @@ def _standing_section(
     memory); it stays because it is the leg that lets a calendar-stale
     memory prove itself still fresh AND the one that catches a
     calendar-fresh memory whose repo moved on — an admission ticket
-    checked at the gate, not a cached stamp.
+    checked at the gate, not a cached stamp. Pointers never reach it, so
+    no git process is added for them.
 
     A row that fails to parse, no longer matches its id, or no longer
     reads ambient/admitted is skipped silently — the same shape
@@ -511,6 +548,7 @@ def _standing_section(
     """
     from .. import index as _index
     from ..models import Category, utcnow
+    from ..provenance import LOCAL
     from ..store import _parse_memory_file
     from ..verify import (
         compute_commit_drift,
@@ -522,9 +560,11 @@ def _standing_section(
     rows = _index.category_rows(directory, category=Category.AMBIENT.value, admit=admit)
     if not rows:
         return None
+    trust = _index.trust_for(directory, [memory_id for memory_id, _ in rows])
 
     now = utcnow()
     fresh: list[Memory] = []
+    pointers: list[tuple[Memory, str]] = []
     stale = 0
     for memory_id, filename in rows:
         if not filename:
@@ -542,6 +582,11 @@ def _standing_section(
             or memory.category is not Category.AMBIENT
             or not admit(memory.scopes, memory.origin)
         ):
+            continue
+        trust_row = trust.get(memory.id)
+        label = trust_row.provenance if trust_row is not None else "unclassified"
+        if label != LOCAL:
+            pointers.append((memory, label))
             continue
         drift = detect_path_drift(
             memory.body,
@@ -576,13 +621,18 @@ def _standing_section(
         else:
             stale += 1
 
-    if not fresh and stale == 0:
+    if not fresh and stale == 0 and not pointers:
         return None
-    return _render_standing(fresh, stale)
+    return _render_standing(fresh, stale, pointers)
 
 
-def _render_standing(fresh: "list[Memory]", stale_count: int) -> str:
-    """Render the standing lines: entries under budget, then pressure.
+def _render_standing(
+    fresh: "list[Memory]",
+    stale_count: int,
+    pointers: "list[tuple[Memory, str]]",
+) -> "_Standing":
+    """Render the standing lines: bodies under budget, pointers under
+    what remains of it, then pressure.
 
     Delivery order is newest-verified first (`last_verified_at`
     descending; every fresh verdict implies the field is set — the
@@ -601,6 +651,14 @@ def _render_standing(fresh: "list[Memory]", stale_count: int) -> str:
     and everything behind a stop, land in the same "…and K more" count:
     undelivered is undelivered, and the model's remedy for all of them
     is the same `memory_list` call.
+
+    Pointers (7.0.0) come after the bodies and spend what is left of the
+    same budget, whole lines only, newest id first; a line that does not
+    fit is counted and the walk continues, since the lines are near
+    uniform and no priority order is being protected. Each names the id,
+    the scopes and `[provenance: <label>]`, and the sub-header names the
+    read (`memory_show`) that carries the body with its verdict and
+    label.
 
     The stale aggregate renders even when nothing else does — it is the
     tier's pressure mechanism, not decoration — but when NOTHING was
@@ -631,10 +689,21 @@ def _render_standing(fresh: "list[Memory]", stale_count: int) -> str:
         delivered.append(entry)
         remaining -= size
 
+    pointer_lines: list[str] = []
+    pointer_overflow = 0
+    for memory, label in sorted(pointers, key=lambda pair: pair[0].id, reverse=True):
+        line = f"- {memory.id} ({', '.join(memory.scopes)}) [provenance: {label}]"
+        size = len(line.encode("utf-8"))
+        if size > remaining:
+            pointer_overflow += 1
+            continue
+        pointer_lines.append(line)
+        remaining -= size
+
     lines: list[str] = []
     if delivered:
         lines.append(
-            "Standing memories (ambient, verified fresh at delivery — "
+            "Standing memories (ambient, local, verified fresh at delivery; "
             "bodies below are already in context, no retrieval needed):"
         )
         lines.extend(delivered)
@@ -650,17 +719,40 @@ def _render_standing(fresh: "list[Memory]", stale_count: int) -> str:
             f"{overflow} fresh standing {noun} exceeded the delivery "
             "budget entirely (memory_list)."
         )
+    if pointer_lines:
+        lines.append(
+            "Standing pointers (ambient, provenance not local; bodies are "
+            "not in context, memory_show(id) carries the body with its "
+            "verdict and label):"
+        )
+        lines.extend(pointer_lines)
+        if pointer_overflow:
+            noun = "pointer" if pointer_overflow == 1 else "pointers"
+            lines.append(
+                f"…and {pointer_overflow} more standing {noun} over the "
+                "delivery budget (memory_list)."
+            )
+    elif pointer_overflow:
+        noun = "pointer" if pointer_overflow == 1 else "pointers"
+        lines.append(
+            f"{pointer_overflow} standing {noun} exceeded the delivery "
+            "budget entirely (memory_list)."
+        )
     if stale_count:
         noun = "memory is" if stale_count == 1 else "memories are"
         lines.append(
             f"{stale_count} standing {noun} stale — verify to restore "
             "delivery (memory_search, then memory_verify)."
         )
-    return "\n".join(lines)
+    return _Standing("\n".join(lines), len(pointer_lines) + pointer_overflow)
 
 
 def _render_block(
-    total: int, scopes: dict[str, int], standing: str | None = None
+    total: int,
+    scopes: dict[str, int],
+    standing: str | None = None,
+    *,
+    pointers: int = 0,
 ) -> str:
     """Format the context block the model actually sees.
 
@@ -677,10 +769,12 @@ def _render_block(
     With a standing section present, the closing disclaimer swaps to a
     wording that carves the delivered bodies out of the "no bodies"
     claim — the two halves of the block must not contradict each other
-    about what is in context. Without one (`standing=None`, the flag-off
-    default), the returned text is byte-identical to what this surface
-    printed before the tier existed;
-    `test_standing_tier_off_keeps_block_byte_identical` holds that pin.
+    about what is in context — and, when the section names pointers
+    (`pointers > 0`), adds one sentence saying their bodies are not.
+    Without one (`standing=None`, the flag-off default), the returned
+    text is byte-identical to what this surface printed before the tier
+    existed; `test_standing_tier_off_keeps_block_byte_identical` holds
+    that pin.
     """
     ordered = sorted(scopes.items(), key=lambda kv: (-kv[1], kv[0]))
     shown = ordered[:_MAX_SCOPES_SHOWN]
@@ -701,12 +795,20 @@ def _render_block(
             "memory_search when a request leans on shared context or is "
             "ambiguous, not for self-contained questions."
         )
+    pointer_note = (
+        " The standing pointers name memories whose bodies are not in "
+        "context; memory_show(id) is the read."
+        if pointers
+        else ""
+    )
     return (
         head
         + standing
         + "\n"
         + "Beyond the standing section above, per-scope counts only — no "
-        "other bodies or ids are in context. This is the cheap half "
+        "other bodies or ids are in context."
+        + pointer_note
+        + " This is the cheap half "
         "of memory_scope_overview; call that tool when you also need the "
         "curation / proposals rollups. Retrieval stays opt-in: reach for "
         "memory_search when a request leans on shared context or is "
