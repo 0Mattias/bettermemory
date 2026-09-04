@@ -456,7 +456,7 @@ def cmd_summary(paths: list[Path], out: Path) -> int:
     return 0
 
 
-def cmd_scorecard(summary_path: Path, out: Path) -> int:
+def cmd_scorecard(summary_path: Path, out: Path, markdown: Path | None = None) -> int:
     import score
 
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
@@ -469,6 +469,10 @@ def cmd_scorecard(summary_path: Path, out: Path) -> int:
             "provenance": _provenance(),
         },
     )
+    if markdown is not None:
+        markdown.write_text(
+            score.render_markdown(summary, rows) + "\n", encoding="utf-8"
+        )
     for row in rows:
         print(
             f"{row['id']:>4} {row['grade']:<10} {row['claim']}  observed={json.dumps(row['observed'])}"
@@ -499,6 +503,7 @@ def main() -> int:
     m.add_argument("results", nargs="+", type=Path)
     m.add_argument("--out", required=True, type=Path)
     g = sub.add_parser("scorecard")
+    g.add_argument("--markdown", type=Path, default=None, help="also render the tables")
     g.add_argument("summary", type=Path)
     g.add_argument("--out", required=True, type=Path)
     args = parser.parse_args()
@@ -511,7 +516,7 @@ def main() -> int:
     if args.cmd == "summary":
         return cmd_summary(args.results, args.out)
     if args.cmd == "scorecard":
-        return cmd_scorecard(args.summary, args.out)
+        return cmd_scorecard(args.summary, args.out, args.markdown)
     return 2
 
 

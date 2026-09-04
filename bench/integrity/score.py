@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import json
 import re
 import statistics
 import sys
@@ -940,3 +941,248 @@ def grade(summary: dict[str, Any]) -> list[dict[str, Any]]:
         missed11,
     )
     return rows
+
+
+# ---------------------------------------------------------------------------
+# markdown rendering (the docs print the artifact rather than transcribe it)
+# ---------------------------------------------------------------------------
+
+
+def _fmt(value: Any, digits: int = 2) -> str:
+    if value is None:
+        return "n/a"
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    if isinstance(value, (int, float)):
+        return f"{value:.{digits}f}"
+    return str(value)
+
+
+def _table(header: list[str], rows: list[list[str]]) -> str:
+    lines = [
+        "| " + " | ".join(header) + " |",
+        "|" + "|".join("---" for _ in header) + "|",
+    ]
+    lines.extend("| " + " | ".join(r) + " |" for r in rows)
+    return "\n".join(lines)
+
+
+def render_markdown(
+    summary: dict[str, Any], scorecard: list[dict[str, Any]] | None
+) -> str:
+    """The tables docs/eval-results.md carries, printed from the summary."""
+    arms = summary["arms"]
+    ran = [a for a, row in arms.items() if row.get("ran")]
+    refs = summary["staleness_references"]
+    out: list[str] = []
+
+    def st_row(name: str, st: dict[str, Any]) -> list[str]:
+        sup, dis, rev = st["supersession"], st["distractor"], st["reversion"]
+        return [
+            name,
+            _fmt(sup["current_served@5"]),
+            _fmt(sup["stale_unsignaled@5"]),
+            _fmt(sup["top1_current"]),
+            _fmt(dis["current_served@5"]),
+            _fmt(dis["top1_current"]),
+            _fmt(rev["current_served@5"]),
+            _fmt(rev["stale_unsignaled@5"]),
+            _fmt(rev["top1_current"]),
+        ]
+
+    out.append(
+        "**Staleness, memory versus memory** (24 supersession, 8 distractor, 8 reversion topics; k = 5):"
+    )
+    out.append("")
+    out.append(
+        _table(
+            [
+                "arm",
+                "sup. current",
+                "sup. stale unsignaled",
+                "sup. top-1 current",
+                "distr. current",
+                "distr. top-1 current",
+                "rev. current",
+                "rev. stale unsignaled",
+                "rev. top-1 current",
+            ],
+            [st_row(a, arms[a]["staleness"]) for a in ran]
+            + [st_row(f"`{r}`", refs[r]) for r in REFERENCES],
+        )
+    )
+    out.append("")
+    adm_refs = summary.get("admission_references") or {}
+
+    def adm_row(
+        name: str, per_class: dict[str, Any] | None, legit: Any, det: dict[str, Any]
+    ) -> list[str]:
+        def cls(c: str, key: str = "flagged") -> str:
+            return _fmt(per_class[c][key]) if per_class else "n/a"
+
+        def var(v: str) -> str:
+            return (
+                _fmt(per_class["secret"]["variants"].get(v, {}).get("flagged"))
+                if per_class
+                else "n/a"
+            )
+
+        return [
+            name,
+            cls("false_fact"),
+            cls("instruction"),
+            var("plain"),
+            var("evasive"),
+            _fmt(legit),
+            _fmt(det.get("precision")),
+            _fmt(det.get("youden_j"), 3),
+            _fmt(det.get("fisher_p"), 4),
+            _fmt(det.get("alerts_per_catch"), 1),
+        ]
+
+    out.append(
+        "**Poisoning, write admission** (30 payloads against 94 legitimate statements; flagged = refused, held pending or stored with a warning):"
+    )
+    out.append("")
+    out.append(
+        _table(
+            [
+                "arm",
+                "false fact flagged",
+                "instruction flagged",
+                "secret plain flagged",
+                "secret evasive flagged",
+                "legit flagged",
+                "precision",
+                "J",
+                "Fisher p",
+                "alerts/catch",
+            ],
+            [
+                adm_row(
+                    a,
+                    arms[a]["admission"]["per_class"],
+                    arms[a]["admission"]["legit_flagged"],
+                    arms[a]["admission"]["detector"],
+                )
+                for a in ran
+            ]
+            + [
+                adm_row(f"`{r}`", None, None, adm_refs[r])
+                for r in ("always_flag", "never_flag", "oracle_replica")
+                if r in adm_refs
+            ],
+        )
+    )
+    out.append("")
+    out.append("**Poisoning, retrieval** (admitted payloads only; k = 5):")
+    out.append("")
+    out.append(
+        _table(
+            [
+                "arm",
+                "false facts admitted",
+                "poison top-1 rate",
+                "poison served",
+                "instructions admitted",
+                "injection served",
+            ],
+            [
+                [
+                    a,
+                    str(arms[a]["retrieval"]["false_fact_admitted"]),
+                    _fmt(arms[a]["retrieval"]["poison_top1_rate"]),
+                    _fmt(arms[a]["retrieval"]["poison_served@5"]),
+                    str(arms[a]["retrieval"]["instruction_admitted"]),
+                    _fmt(arms[a]["retrieval"]["injection_served@5"]),
+                ]
+                for a in ran
+            ],
+        )
+    )
+    out.append("")
+    out.append(
+        "**Poisoning, store injection** (10 false facts inserted around the write API; k = 10; rank shift is injected minus twin, negative when the injected record ranks higher):"
+    )
+    out.append("")
+    rows = []
+    for a in ran:
+        inj = arms[a]["injection"]
+        if "unsupported" in inj:
+            rows.append([a, "unsupported", "n/a", "n/a", "n/a"])
+            continue
+        plain, forged = inj.get("plain", {}), inj.get("forged_provenance", {})
+        rows.append(
+            [
+                a,
+                _fmt(plain.get("detected")),
+                _fmt(plain.get("youden_j"), 3),
+                _fmt(plain.get("median_rank_shift"), 0),
+                _fmt(forged.get("detected")),
+            ]
+        )
+    out.append(
+        _table(
+            [
+                "arm",
+                "plain: detected",
+                "plain: J",
+                "plain: median rank shift",
+                "provenance forged: detected",
+            ],
+            rows,
+        )
+    )
+    out.append("")
+    missing = [a for a, row in arms.items() if not row.get("ran")]
+    if missing:
+        out.append("Arms that did not run:")
+        out.append("")
+        for a in missing:
+            out.append(f"- `{a}`: {arms[a]['unavailable_reason']}")
+        out.append("")
+    world = summary.get("world_grounded") or {}
+    if world and not world.get("missing"):
+        bm = world["bettermemory"]
+        out.append(
+            f"**Staleness, memory versus world** (carried from `{world['source']}`, {world['repos']} repositories, {world['claims']:,} claims; rivals: {world['rivals']}):"
+        )
+        out.append("")
+        out.append(
+            _table(
+                ["detector", "precision", "J", "alerts/catch"],
+                [
+                    [
+                        name,
+                        _fmt(row.get("precision")),
+                        _fmt(row.get("youden_j"), 3),
+                        _fmt(row.get("alerts_per_catch"), 1),
+                    ]
+                    for name, row in (
+                        ("file-level incumbent", bm["file_level_incumbent"]),
+                        ("claim-level weak", bm["claim_level_weak"]),
+                    )
+                ],
+            )
+        )
+        out.append("")
+    if scorecard:
+        out.append("**Scorecard** (pre-registered predictions, graded mechanically):")
+        out.append("")
+        out.append(
+            _table(
+                ["", "arm", "prediction", "observed", "grade"],
+                [
+                    [
+                        r["id"],
+                        r["arm"] or "all",
+                        r["claim"],
+                        "`" + json.dumps(r["observed"], separators=(", ", ": ")) + "`",
+                        f"**{r['grade']}**" if r["grade"] == "MISSED" else r["grade"],
+                    ]
+                    for r in scorecard
+                ],
+            )
+        )
+        out.append("")
+    return "\n".join(out)

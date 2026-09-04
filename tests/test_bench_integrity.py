@@ -272,3 +272,18 @@ def test_unavailable_arm_scores_as_not_run(corpus: dict) -> None:
     }
     result = score.score_arm(raw, corpus)
     assert result["ran"] is False and "staleness" not in result
+
+
+def test_render_prints_every_reference_and_the_scorecard(
+    smoke_raw: dict, corpus: dict
+) -> None:
+    sliced = runner._slice(corpus, 1)
+    result = score.score_arm(smoke_raw, sliced)
+    summary = score.summarize([result], sliced, runner.ROT_ARTIFACT)
+    text = score.render_markdown(summary, score.grade(summary))
+    for reference in score.REFERENCES:
+        assert f"`{reference}`" in text
+    for reference in ("always_flag", "never_flag", "oracle_replica"):
+        assert f"`{reference}`" in text
+    assert "**Scorecard**" in text and "| P1 |" in text
+    assert "memory versus world" in text
