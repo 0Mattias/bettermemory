@@ -1376,8 +1376,8 @@ async def test_memory_search_verified_paths_does_not_resurrect_same_second_commi
     memory_show / the health rollups — the four narrowing sites must gate
     identically) skips the narrowing entirely when the bisect already said
     clean. Historically the narrowing ran through the committer-date
-    INCLUSIVE whole-second `commits_since_touching_paths` (now deprecated,
-    zero production callers), which DID count exactly this commit:
+    INCLUSIVE whole-second `commits_since_touching_paths` (removed in
+    7.0.0), which DID count exactly this commit:
     pre-guard this hit read commit_drift_count=1. With the guard — and the
     author-date unification beneath it — it reads 0 / fresh, in lockstep
     with memory_show.
