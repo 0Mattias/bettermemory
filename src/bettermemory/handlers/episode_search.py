@@ -24,6 +24,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from ._shared import Context, _advance_turn
+from ..provenance import gather_episode_evidence
 from ..time_utils import parse_event_ts
 
 if TYPE_CHECKING:
@@ -288,6 +289,14 @@ async def episode_search(
     # oldest-first within the surfaced subset.
     matched = matched[-max_results:]
 
+    # Provenance (7.0.0): one pass over the event log, paid only when a
+    # row is about to be emitted, labels each episode `local`,
+    # `untracked` or `unaccounted` (`provenance.EpisodeEvidence`). This
+    # is the explicit read, so the body stays beside the label the way
+    # memory_show keeps a body beside an `unaccounted` label; the
+    # reflexive handoff is the surface that withholds it.
+    evidence = gather_episode_evidence(deps.store.root) if matched else None
+
     # `include_bodies=False` OMITS the `body` key rather than emitting it
     # empty. Emitting `""` would save ~11 characters of a row whose body
     # averages ~3,000 — the entire point of the flag is the body — and it
@@ -302,6 +311,7 @@ async def episode_search(
             **({"body": ep.body.strip()} if include_bodies else {}),
             "scopes": ep.scopes,
             "swarm_id": ep.swarm_id,
+            "provenance": evidence.label(ep) if evidence is not None else None,
         }
         for ep in matched
     ]

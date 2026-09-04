@@ -135,7 +135,15 @@ async def test_include_bodies_false_omits_the_key_not_its_value(
     )
     # Every other documented key survives: this is a projection, not a
     # different return shape.
-    assert set(row) == {"id", "session_id", "created", "takeaway", "scopes", "swarm_id"}
+    assert set(row) == {
+        "id",
+        "session_id",
+        "created",
+        "takeaway",
+        "scopes",
+        "swarm_id",
+        "provenance",
+    }
     assert row["takeaway"] == "the conclusion"
 
 
