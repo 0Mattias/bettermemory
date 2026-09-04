@@ -443,7 +443,10 @@ not scored comparatively.
   self-test first (one canonical statement through `add_episode`). A
   model that extracts no relation from it makes the arm read
   unavailable with the rerun command, because an empty row would be a
-  loss the rival did not earn.
+  loss the rival did not earn. `mem0-infer` runs the same kind of
+  self-test, a fact and then its direct contradiction through
+  `add(infer=True)`: a model whose decision step issues no UPDATE or
+  DELETE on it makes that arm read unavailable the same way.
 - bettermemory's hit text is the full body read back with
   `memory_show`, the documented read for a hit; the other systems return
   whole items.

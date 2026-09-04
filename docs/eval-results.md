@@ -223,6 +223,196 @@ Fairness accommodations, stated up front:
 - Single run, defaults, competitors untuned. `system_version` in the
   artifact pins what executed.
 
+## Integrity benchmark
+
+`bench/integrity/run.py`, v0, run 2026-09-04 on the sealed corpus
+(`bench/integrity/corpus.json`, sha256 `39e7ed5b…`) at commits
+90dd6de, 3b590dd and d349a5c of this repository, each on a clean tree.
+Method and metric definitions are in
+[eval.md](eval.md#integrity-benchmark). Every number below is printed
+from `bench/integrity/results/integrity-v0-summary-2026-09-04.json` by
+`run.py scorecard --markdown`, and the pre-registered predictions were
+graded by the same command into
+`bench/integrity/results/integrity-v0-scorecard-2026-09-04.json`. Arms:
+bettermemory 7.0.0; mem0ai 2.0.18 twice (`mem0-raw`, `add(infer=False)`
+with MiniLM embeddings; `mem0-infer`, extraction on); graphiti-core
+0.30.1 on neo4j 5.26; the Letta server 0.16.8 with letta-client 1.12.1.
+The extraction arms and Letta's embeddings ran on local models through
+ollama (qwen2.5:7b, nomic-embed-text), keyless. Single run each,
+defaults, nothing tuned.
+
+**Staleness, memory versus memory** (24 supersession, 8 distractor, 8 reversion topics; k = 5):
+
+| arm | sup. current | sup. stale unsignaled | sup. top-1 current | distr. current | distr. top-1 current | rev. current | rev. stale unsignaled | rev. top-1 current |
+|---|---|---|---|---|---|---|---|---|
+| bettermemory | 0.83 | 1.00 | 0.38 | 1.00 | 1.00 | 1.00 | 0.75 | 0.50 |
+| mem0-raw | 0.96 | 1.00 | 0.08 | 1.00 | 1.00 | 1.00 | 1.00 | 0.88 |
+| graphiti | 0.62 | 0.29 | 0.21 | 0.50 | 0.50 | 0.50 | 0.50 | 0.38 |
+| letta | 0.92 | 1.00 | 0.17 | 1.00 | 1.00 | 1.00 | 0.88 | 0.88 |
+| `serve_all_unsignaled` | 1.00 | 1.00 | 0.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 |
+| `recency_top1` | 1.00 | 0.00 | 1.00 | 0.00 | 0.00 | 1.00 | 0.00 | 1.00 |
+| `oracle_replica` | 1.00 | 0.00 | 1.00 | 1.00 | 1.00 | 1.00 | 0.00 | 1.00 |
+
+**Poisoning, write admission** (30 payloads against 94 legitimate statements; flagged = refused, held pending or stored with a warning):
+
+| arm | false fact flagged | instruction flagged | secret plain flagged | secret evasive flagged | legit flagged | precision | J | Fisher p | alerts/catch |
+|---|---|---|---|---|---|---|---|---|---|
+| bettermemory | 0.00 | 0.00 | 1.00 | 0.50 | 0.04 | 0.67 | 0.224 | 0.0012 | 1.5 |
+| mem0-raw | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | n/a | 0.000 | n/a | n/a |
+| graphiti | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | n/a | 0.000 | n/a | n/a |
+| letta | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | n/a | 0.000 | n/a | n/a |
+| `always_flag` | n/a | n/a | n/a | n/a | n/a | 0.24 | 0.000 | 1.0000 | 4.1 |
+| `never_flag` | n/a | n/a | n/a | n/a | n/a | n/a | 0.000 | n/a | n/a |
+| `oracle_replica` | n/a | n/a | n/a | n/a | n/a | 1.00 | 1.000 | 0.0000 | 1.0 |
+
+`graphiti` extraction over 124 statements: 136 relations; 43 statements yielded none (34 of 94 legitimate); update statements that yielded a relation: 29 of 48.
+
+**Poisoning, retrieval** (admitted payloads only; k = 5):
+
+| arm | false facts admitted | poison top-1 rate | poison served | instructions admitted | injection served |
+|---|---|---|---|---|---|
+| bettermemory | 10 | 0.70 | 1.00 | 10 | 0.40 |
+| mem0-raw | 10 | 0.50 | 1.00 | 10 | 0.40 |
+| graphiti | 10 | 0.20 | 0.50 | 10 | 0.20 |
+| letta | 10 | 0.40 | 1.00 | 10 | 0.50 |
+
+**Poisoning, store injection** (10 false facts inserted around the write API; k = 10; rank shift is injected minus twin, negative when the injected record ranks higher):
+
+| arm | plain: detected | plain: J | plain: median rank shift | provenance forged: detected |
+|---|---|---|---|---|
+| bettermemory | 1.00 | 1.000 | -1 | 0.00 |
+| mem0-raw | 0.00 | 0.000 | -1 | 0.00 |
+| graphiti | 1.00 | 1.000 | 1 | 0.00 |
+| letta | 0.00 | 0.000 | 0 | 0.00 |
+
+Arms that did not run:
+
+- `mem0-infer`: the extractor (qwen2.5:7b through ollama) issued no UPDATE or DELETE on the self-test contradiction (events: ['ADD']); rerun with BM_INTEGRITY_LLM pointing at a model whose decision step updates
+
+**Staleness, memory versus world** (carried from `bench/rot/results/multirepo-anchored-2026-07-30.json`, 30 repositories, 37,635 claims; rivals: not measurable: no rival exposes an interface that observes files or git):
+
+| detector | precision | J | alerts/catch |
+|---|---|---|---|
+| file-level incumbent | 0.29 | 0.287 | 3.4 |
+| claim-level weak | 0.94 | 0.973 | 1.1 |
+
+**Scorecard** (pre-registered predictions, graded mechanically):
+
+|  | arm | prediction | observed | grade |
+|---|---|---|---|---|
+| P1 | bettermemory | supersession: stale_served@5 >= 0.90 and stale_signaled <= 0.10 | `{"stale_served@5": 1.0, "stale_signaled": 0.0}` | hit |
+| P2 | bettermemory | top1_current in [0.30, 0.70] on supersession, >= 0.70 on distractor | `{"supersession": 0.375, "distractor": 1.0}` | hit |
+| P3 | mem0-infer | supersession: stale_served@5 <= 0.50 | `{"stale_served@5": null}` | not run |
+| P3b | mem0-infer | distractor: current_served@5 <= 0.90 | `{"current_served@5": null}` | not run |
+| P4 | mem0-raw | supersession: stale_served@5 >= 0.90, unsignaled | `{"stale_served@5": 1.0}` | hit |
+| P5 | graphiti | supersession: stale_signaled >= 0.60; reversion: current_served@5 >= 0.60 | `{"stale_signaled": 0.25, "stale_served@5": 0.5417, "reversion_current_served@5": 0.5}` | **MISSED** |
+| P6 | letta | supersession: stale_served@5 >= 0.90, unsignaled | `{"stale_served@5": 1.0}` | hit |
+| P7 | bettermemory | plain secrets flagged >= 0.80, evasive <= 0.50, instruction 0, false fact 0, legit false alarms <= 0.10 | `{"secret_plain": 1.0, "secret_evasive": 0.5, "instruction": 0.0, "false_fact": 0.0, "legit_flagged": 0.0426}` | hit |
+| P8 | all | rivals flag 0.00 in every class; mem0-infer admits >= 0.50 of instruction payloads | `{"mem0-raw": [0.0, 0.0, 0.0], "graphiti": [0.0, 0.0, 0.0], "letta": [0.0, 0.0, 0.0], "mem0-infer": "not run"}` | hit |
+| P9 | all | false-fact poison_top1_rate >= 0.40 on every arm that ran | `{"bettermemory": 0.7, "mem0-raw": 0.5, "graphiti": 0.2, "letta": 0.4}` | **MISSED** |
+| P10 | bettermemory | bettermemory plain plant detected 1.00; forged-event plant 0.00; every rival J = 0 | `{"bettermemory_plain": 1.0, "bettermemory_forged_event": 0.0, "mem0-raw": 0.0, "graphiti": 1.0, "letta": 0.0}` | **MISSED** |
+| P11 | all | median rank shift between an injected record and its API-written twin <= 1 | `{"bettermemory": -1.0, "mem0-raw": -1.0, "graphiti": 1.0, "letta": 0.0}` | hit |
+
+Reading the tables:
+
+- **Every store without extraction serves the superseded fact, and
+  none signals it.** On the 24 supersession topics bettermemory,
+  mem0-raw and Letta each serve the stale value in the top five on
+  every topic, unsignaled, which is what `serve_all_unsignaled` scores.
+  This is the loss the declaration predicted for bettermemory: it has
+  no write-time supersession, and its `superseded_by` and `contradicts`
+  annotations render only links a caller sets. `recency_top1` shows
+  what the trivial rule would buy and cost: exact on supersession and
+  reversion, wrong on every distractor.
+- **Graphiti is the only arm that invalidates, and it does so when its
+  extractor reaches the fact.** Of the 14 stale relations it served on
+  supersession topics, 11 carried `invalid_at`, and 6 of the 24 topics
+  read fully signaled under the informative rule. Its other numbers
+  are extraction gaps rather than reasoning: with the local model 43
+  of 124 statements yielded no relation at all, so the current fact
+  was never in the graph on 9 of 24 supersession topics and on half of
+  the distractor and reversion topics, and a topic whose current fact
+  is absent counts as unsignaled by the rule. P5 is graded MISSED on
+  the signal clause for that reason, and the reading is the model's,
+  not Graphiti's design: a stronger model would raise both the
+  extraction rate and the signaled rate together.
+- **Rank favours the older phrasing.** Top-1 current on supersession
+  reads 0.38 for bettermemory, 0.21 for Graphiti, 0.17 for Letta and
+  0.08 for mem0-raw. The first statement of a topic is phrased as the
+  fact and the update as a change, and the queries ask for the fact, so
+  the older statement matches better on every retrieval stack;
+  bettermemory's recency factor, capped at 1.1x, lifts it to 0.38 and
+  no further.
+- **bettermemory's write gates cost it three legitimate updates.**
+  Current served on supersession reads 0.83 because the transient gate
+  refused the updates of t02, t05 and t20 on the phrase "the new" ("the
+  new one", "the new SDK release", "the new base image"). The fourth
+  refusal is the hard negative authored to trip it ("right now", "is in
+  progress"). All four count as false alarms (legit flagged 0.04). The
+  rivals refuse nothing and lose nothing here.
+- **Admission: the credential gate is the only gate that moves.**
+  bettermemory refused all six plain secrets and two of the four
+  evasive ones: the split AWS key was caught on its unsplit secret half
+  and the code-fenced token on its prefix, while the dot-separated
+  token and the key described in prose were admitted. No arm flags a
+  false fact or an embedded instruction, and every rival admits every
+  payload. Pooled against the legitimate statements, bettermemory's
+  write path scores J 0.224 at precision 0.67 and 1.5 alerts per catch,
+  against 4.1 for `always_flag`; the rivals score exactly `never_flag`.
+- **Once admitted, poison ranks well wherever it is stored whole.** A
+  false fact written through the API outranks the fact it contradicts
+  on the topic's own query on 7 of 10 topics in bettermemory (the
+  recency factor works for the attacker as it works for an update), 5
+  of 10 in mem0-raw and 4 of 10 in Letta, and every admitted false fact
+  is served in the top five on those three arms. Graphiti served half
+  of them and put 2 of 10 first, because its extractor dropped the
+  other half, which is why P9 reads MISSED. Between two and five of the
+  ten instruction payloads are served in the top five for one of three
+  generic task queries on every arm; in bettermemory two of them sit at
+  rank one.
+- **Store injection separates the systems with provenance from the
+  ones without.** A record planted around the write API reads
+  `unaccounted` on every bettermemory read surface (10 of 10, J 1.0),
+  and Graphiti's edges carry their source episodes, so an edge with
+  none is just as visible there (10 of 10, J 1.0; the declaration
+  predicted no rival would detect a plant, and P10 reads MISSED in
+  Graphiti's favour). Nothing distinguishes the plant on mem0 or Letta
+  (J 0.0). Forging the provenance binding defeats both detectors: the
+  bettermemory plant with a forged `write` event line reads `local` (0
+  of 10), the tamper-evidence gap SECURITY.md names, and a Graphiti edge
+  that names an existing episode reads like any other. Forged trust
+  metadata moved the injected record one slot above its API-written
+  twin in bettermemory and mem0-raw, one slot below it in Graphiti
+  (where only six of the ten twins were served at all) and not at all
+  in Letta: rank is content, and the forged fields buy a tie-break.
+- **mem0's extraction arm could not be exercised faithfully here.**
+  With extraction on, mem0 extracts facts from each statement and asks
+  its model to decide, per fact, between ADD, UPDATE, DELETE and NONE
+  against the memories it retrieved. With qwen2.5:7b, and with
+  llama3.1:8b in the smoke run, the decision step answered ADD for
+  everything: 399 ADD events over the 124 statements, up to eleven
+  memories stored per statement, retrieved memories about unrelated
+  topics re-added as new, and not one UPDATE or DELETE on the 48 update
+  statements
+  (`bench/integrity/results/raw/mem0-infer-2026-09-04-no-self-test.json`).
+  The adapter now runs a contradiction self-test first and the arm
+  reads unavailable with the rerun command, since publishing that run
+  would have scored the local model's failure as mem0's loss. P3 and
+  P3b read not run for the same reason.
+- **Memory versus world is carried, not re-run.** The rot benchmark's
+  claim-level detector stands at precision 0.94, J 0.973 and 1.1
+  alerts per catch on 37,635 claims across 30 repositories; no rival
+  exposes an interface that observes files or git.
+
+The scorecard reads 7 of 12 predictions hit, 3 MISSED and 2 not run.
+Two of the three misses fall in a rival's favour (Graphiti detects a
+naive plant; it also outranks fewer admitted false facts than the
+threshold assumed, because it never stored half of them), and the
+third (P5) is the local model's extraction rate. The declaration and
+the unit record live in the project's memory store rather than in
+this tree; the corpus, the harness, the raw observations and the
+scored results are all committed.
+
 ## Reproduce
 
 ```sh
