@@ -77,7 +77,7 @@ from .events import iter_all_events
 from .time_utils import ensure_utc, parse_event_ts
 
 if TYPE_CHECKING:
-    from .models import Memory
+    from .models import Episode, Memory
 
 log = logging.getLogger("bettermemory.provenance")
 
@@ -317,16 +317,98 @@ def _tracked_files(root: Path) -> frozenset[str] | None:
     )
 
 
+# ---------------------------------------------------------------------------
+# Episodes
+# ---------------------------------------------------------------------------
+#
+# Episodes get the same question and a smaller answer. One in-process path
+# writes an episode file, the `episode_write` handler, and it records an
+# `episode_write` event carrying the episode id; nothing pulls episodes
+# (`sync` excludes the subtree) and no other code path writes them. So the
+# join is one rule, read at each episode read surface rather than stored in
+# an index: an id the log names is ``local``; an id the log does not name
+# is ``unaccounted`` when the log could have named it, and ``untracked``
+# when it could not (no in-process event at all, or an episode older than
+# the oldest surviving event). Session-tag floors are written without an
+# event by design and carry no label; the read surfaces filter them before
+# a label is asked for. The join reads the log only: a forged event line
+# is tamper evidence, which remains open (SECURITY.md).
+
+
+def episode_written_id(event: Mapping[str, Any]) -> str | None:
+    """The episode id an `episode_write` event says this host journaled."""
+    if event.get("kind") != "episode_write":
+        return None
+    return _id_field(event, "id")
+
+
+@dataclass
+class EpisodeEvidence:
+    """What the in-process event log says about episodes.
+
+    Fed through `observe` from an event stream that has already dropped
+    the client-side hook rows (`hook._OUT_OF_PROCESS_TRIGGERS`): those
+    record under a session-id namespace that never holds episodes, so
+    they say nothing about whether the server's recorder was writing.
+    The handoff's auto-resolution walk feeds this from the pass it
+    already pays; `gather_episode_evidence` is the standalone pass for
+    the explicit handoff path and `episode_search`.
+    """
+
+    has_events: bool = False
+    oldest_event_at: datetime | None = None
+    written_ids: set[str] = field(default_factory=set)
+
+    def observe(self, event: Mapping[str, Any]) -> None:
+        """Fold one in-process event in. `iter_all_events` is
+        chronological, so the first parseable stamp is the oldest."""
+        self.has_events = True
+        if self.oldest_event_at is None:
+            self.oldest_event_at = parse_event_ts(event.get("ts"))
+        episode_id = episode_written_id(event)
+        if episode_id is not None:
+            self.written_ids.add(episode_id)
+
+    def label(self, episode: Episode) -> str:
+        """`local`, `untracked` or `unaccounted` for one episode."""
+        if episode.id in self.written_ids:
+            return LOCAL
+        if not self.has_events:
+            return UNTRACKED
+        created = ensure_utc(episode.created)
+        oldest = self.oldest_event_at
+        if created is not None and oldest is not None and created < oldest:
+            return UNTRACKED
+        return UNACCOUNTED
+
+
+def gather_episode_evidence(root: Path) -> EpisodeEvidence:
+    """One pass over the event log, hook rows skipped."""
+    # Lazy: `hook` imports the store, which imports the index, which
+    # imports this module.
+    from .hook import _OUT_OF_PROCESS_TRIGGERS
+
+    evidence = EpisodeEvidence()
+    for event in iter_all_events(root):
+        if event.get("triggered_from") in _OUT_OF_PROCESS_TRIGGERS:
+            continue
+        evidence.observe(event)
+    return evidence
+
+
 __all__ = [
     "LABELS",
     "LOCAL",
     "SYNCED",
     "UNACCOUNTED",
     "UNTRACKED",
+    "EpisodeEvidence",
     "Evidence",
     "classify",
     "classify_trust",
     "creation_id",
+    "episode_written_id",
+    "gather_episode_evidence",
     "gather_evidence",
     "is_sync_repo",
     "local_verify_id",

@@ -15,7 +15,9 @@ from __future__ import annotations
 import shutil
 import sqlite3
 import subprocess
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -457,3 +459,94 @@ def test_restore_stamps_local(store: Store, memory_dir: Path, tmp_path: Path) ->
     assert index.provenance_for(memory_dir, [b]) == {}
     store.restore(b)
     assert index.provenance_for(memory_dir, [b]) == {b: "local"}
+
+
+# ---------------------------------------------------------------------------
+# Episodes: the label read at each episode read surface (7.0.0)
+# ---------------------------------------------------------------------------
+
+
+def _episode(created: datetime, episode_id: str | None = None) -> Any:
+    from bettermemory.models import Episode, generate_ulid
+
+    return Episode(
+        id=episode_id or generate_ulid(),
+        session_id="sess_episode_label",
+        created=created,
+        body="a journal entry\n",
+        scopes=[],
+        takeaway="a takeaway",
+    )
+
+
+def test_episode_written_id_reads_only_episode_write_events() -> None:
+    assert (
+        provenance.episode_written_id({"kind": "episode_write", "id": "01A"}) == "01A"
+    )
+    assert provenance.episode_written_id({"kind": "episode_write", "id": ""}) is None
+    assert provenance.episode_written_id({"kind": "episode_write"}) is None
+    assert (
+        provenance.episode_written_id({"kind": "episode_promote", "id": "01A"}) is None
+    )
+    assert provenance.episode_written_id({"kind": "write", "id": "01A"}) is None
+
+
+def test_episode_label_local_when_the_log_names_the_id() -> None:
+    from bettermemory.models import generate_ulid
+
+    now = datetime.now(timezone.utc)
+    written = generate_ulid()
+    evidence = provenance.EpisodeEvidence()
+    evidence.observe({"kind": "search", "ts": (now - timedelta(days=1)).isoformat()})
+    evidence.observe({"kind": "episode_write", "id": written, "ts": now.isoformat()})
+    assert evidence.label(_episode(now, written)) == "local"
+
+
+def test_episode_label_unaccounted_when_the_log_covers_it_and_names_nothing() -> None:
+    now = datetime.now(timezone.utc)
+    evidence = provenance.EpisodeEvidence()
+    evidence.observe({"kind": "search", "ts": (now - timedelta(days=1)).isoformat()})
+    assert evidence.label(_episode(now)) == "unaccounted"
+
+
+def test_episode_label_untracked_without_any_in_process_event() -> None:
+    now = datetime.now(timezone.utc)
+    evidence = provenance.EpisodeEvidence()
+    assert not evidence.has_events
+    assert evidence.label(_episode(now)) == "untracked"
+
+
+def test_episode_label_untracked_when_the_episode_predates_the_log() -> None:
+    now = datetime.now(timezone.utc)
+    evidence = provenance.EpisodeEvidence()
+    evidence.observe({"kind": "search", "ts": now.isoformat()})
+    assert evidence.label(_episode(now - timedelta(days=2))) == "untracked"
+    # Same instant as the oldest event: covered, so unaccounted.
+    assert evidence.label(_episode(now)) == "unaccounted"
+
+
+def test_gather_episode_evidence_skips_the_hook_rows(memory_dir: Path) -> None:
+    """A store whose only events are client-side hook rows has no
+    in-process evidence at all: every episode reads `untracked`, never
+    `unaccounted`. The hook rows record under a transcript session id
+    that never holds episodes, so their presence says nothing about the
+    server's recorder."""
+    now = datetime.now(timezone.utc)
+    Recorder(root=memory_dir, session_id="cc-transcript-0001").record(
+        "turn_audited", triggered_from="stop_hook", verdict="ok"
+    )
+    evidence = provenance.gather_episode_evidence(memory_dir)
+    assert not evidence.has_events
+    assert evidence.label(_episode(now)) == "untracked"
+
+    from bettermemory.models import generate_ulid
+
+    written = generate_ulid()
+    _recorder(memory_dir).record("search", query="anything", returned=[])
+    _recorder(memory_dir).record("episode_write", id=written, session="s")
+    evidence = provenance.gather_episode_evidence(memory_dir)
+    assert evidence.has_events
+    assert evidence.written_ids == {written}
+    later = now + timedelta(seconds=1)
+    assert evidence.label(_episode(later, written)) == "local"
+    assert evidence.label(_episode(later)) == "unaccounted"
