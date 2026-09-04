@@ -2595,10 +2595,26 @@ def test_standing_tier_planted_file_renders_a_pointer_and_no_body(
         tmp_path, store.root, "Planted standing body under a forged stamp.", tag="p"
     )
     _rebuild_index(store)
+    # The commit-drift leg (the one git subprocess in the chain) runs for
+    # local candidates only: a pointer never reaches the verdict, so it
+    # adds no git process to session open.
+    from bettermemory import verify as _verify
+
+    drift_calls: list[object] = []
+    real_commit_drift = _verify.compute_commit_drift
+
+    def _counting_commit_drift(*args: object, **kwargs: object) -> object:
+        drift_calls.append(kwargs.get("body"))
+        return real_commit_drift(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(_verify, "compute_commit_drift", _counting_commit_drift)
 
     _run_session_start(monkeypatch, tmp_path)
 
     out = capsys.readouterr().out
+    assert drift_calls == ["Local standing body.\n"], (
+        f"the verdict chain ran for a pointer candidate: {drift_calls!r}"
+    )
     assert "Local standing body." in out
     assert "Planted standing body" not in out, "a non-local body was delivered"
     assert "Standing pointers (ambient, provenance not local" in out
