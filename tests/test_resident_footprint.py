@@ -229,10 +229,21 @@ class Footprint(NamedTuple):
 # itself costs nothing resident — its delivery is hook stdout, which no
 # leg of this table measures (the injected block's size is recorded
 # per-event as `injected_chars` instead).
+# Re-measured 2026-09-04 for the 7.0.0 delivery gates: descriptions
+# 25,888 -> 25,976 (+88) and input_schemas 5,543 -> 5,654 (+111). Of the
+# +88, this commit's edits are +6 (episode_handoff -6 for the
+# takeaways-by-default contract, episode_search +12 for the `provenance`
+# key in its row shape) and the other +82 is drift the table had not
+# recorded since 3.41.0; `_DESC_BASELINE` in tests/test_server.py names
+# the rows. Of the +111, `episode_handoff.include_bodies` measures 52 on
+# the served schema and the other 59 is the same kind of unrecorded
+# drift (5,543 recorded against 5,602 live before this commit). Both
+# repaired here, in the commit that made them visible, per the rule at
+# the top of this file.
 _FOOTPRINT_BASELINE = Footprint(
     instructions=1_608,
-    descriptions=25_888,
-    input_schemas=5_543,
+    descriptions=25_976,
+    input_schemas=5_654,
     output_schemas=1_077,
     skill_frontmatter=759,
     tool_count=18,
@@ -304,7 +315,23 @@ _FOOTPRINT_BASELINE = Footprint(
 # 7,069 + 2,812 = 9,881, which fits under 10,000 and does NOT fit under
 # 7,500. Ratcheting is therefore not only bookkeeping — it is what makes
 # this file able to notice.
-_REMAINDER_CEILING = 7_500
+#
+# MOVED UP, 7,500 -> 8,000, when `episode_handoff` gained `include_bodies`
+# (7.0.0). The arithmetic, re-derived:
+#
+#     remainder before the parameter (live at 6.6.0)   7,438
+#     episode_handoff  include_bodies  bool              +52
+#     remainder now                                     7,490
+#     ceiling (next round 500 above it)                 8,000
+#     headroom                                            510
+#
+# 7,490 sits 10 under the old literal, and the negative test below
+# demands room for at least one more parameter, so the literal moves by
+# the ceremony this block describes: re-measure `_FOOTPRINT_BASELINE` in
+# the same commit, then the next round number. 510 chars is roughly eight
+# boolean flags or five of the widest `ids` shape. The scrub backstop
+# still holds: 7,490 + 2,812 = 10,302 does not fit under 8,000.
+_REMAINDER_CEILING = 8_000
 # Reserve for parameters this plan schedules but has NOT landed. Zero:
 # all three are on the wire (see `_LANDED_PARAMS`), so there is nothing
 # left to hold room for. A future phase that schedules a parameter
@@ -331,6 +358,12 @@ _LANDED_PARAMS: tuple[tuple[str, str], ...] = (
     # `ToolHandlers.memory_update` in `_handlers.py` or it costs nothing
     # here, because it would not be on the wire at all.
     ("memory_update", "acknowledge_truncation"),
+    # Landed 2026-09-04 with the 7.0.0 delivery gates: `episode_handoff`
+    # delivers takeaways by default and bodies on request. Measured 52 on
+    # the served schema. Drawn from the standing headroom, which it
+    # exhausted: the remainder ceiling moved 7,500 -> 8,000 in the same
+    # commit (the paragraph above that literal).
+    ("episode_handoff", "include_bodies"),
 )
 # Re-derived post-scrub: the three measure 203 together (60 + 51 + 92),
 # down from 275, because pydantic's generated `title` was between a third
@@ -349,7 +382,11 @@ _LANDED_PARAMS: tuple[tuple[str, str], ...] = (
 # got more expensive"). Somebody did type something here. A rise with
 # `_LANDED_PARAMS` unchanged still means what that message says it means.
 # Rounded up by the same ~3% the original carried, for the same rename reason.
-_LANDED_PARAM_BUDGET = 270
+#
+# RE-DERIVED 2026-09-04, 270 -> 325: the set grew again.
+# `episode_handoff.include_bodies` landed and measured 52, so the five now
+# cost 315 (60 + 51 + 92 + 60 + 52); rounded up by the same ~3%.
+_LANDED_PARAM_BUDGET = 325
 # Soft line: crossing it warns instead of failing, so the pressure is
 # visible to whoever caused it. Set one `ids`-shaped parameter (the widest
 # measured) below the ceiling — crossing it means the next parameter does

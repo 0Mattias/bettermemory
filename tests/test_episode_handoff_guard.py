@@ -1093,3 +1093,14 @@ async def test_episode_handoff_skips_out_of_process_hook_phantom_sessions(
         f"a hook-phantom candidate must not manufacture the zero-episode "
         f"rewind note; got: {res!r}"
     )
+
+
+def test_desc_episode_handoff_documents_bodies_on_request_and_provenance() -> None:
+    """The description names the 7.0.0 contract: `include_bodies`
+    (default False), the `provenance` key on every row, and the rule
+    that an unaccounted episode never carries a body here."""
+    desc = DESC_EPISODE_HANDOFF
+    assert "include_bodies" in desc
+    assert "provenance" in desc
+    assert "unaccounted" in desc
+    assert "default False" in desc

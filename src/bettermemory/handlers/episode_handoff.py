@@ -90,6 +90,21 @@ Returns `None`-rich shape so the caller can distinguish:
   the slice). No `note` unless the immediately-prior session (a newer
   one the walk rewound past) was floor-only.
 
+Since 7.0.0 every emitted episode carries `provenance`, read from the
+event log rather than the file (`provenance.EpisodeEvidence`): `local`
+when an `episode_write` event names the id, `untracked` when the log
+holds no in-process event that could have named it, `unaccounted` when
+the file appeared under a session directory with no event, the planted
+shape. Bodies are delivered on request only (`include_bodies`, default
+False), and never for an unaccounted episode whatever the caller
+passed: this is the reflexive first call of every loop iteration, so a
+file dropped into a legitimate session's directory must not land whole
+in context at entry. The takeaway and the scopes stay, with the label
+beside them; `episode_search(ids=[...])` is the explicit read that
+serves a body beside its label. The evidence is gathered in the same
+event pass the auto-resolution walk already pays; the explicit
+`prior_session_id` path pays one pass when it has rows to emit.
+
 At handler entry the implementation writes a session-tag FLOOR
 episode for the current session BEFORE doing anything else. The
 floor anchors the current session's worktree on disk so a tick
@@ -107,6 +122,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Literal
 
 from ._shared import Context, _advance_turn
+from ..provenance import UNACCOUNTED, EpisodeEvidence, gather_episode_evidence
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -135,34 +151,32 @@ _PromotionTrace = Literal["promoted", "staged-unresolved", "none"]
 
 DESC_EPISODE_HANDOFF = (
     "Read the most-recent journal takeaways from a prior session in "
-    "this worktree. Call this FIRST at a /loop iteration entry — it "
+    "this worktree. Call this FIRST at a /loop iteration entry: it "
     "answers 'what did the last session conclude here?' without "
-    "needing memory_search. Episodes are the sibling-to-memory "
-    "primitive for journal-shaped writes (see episode_write).\n\n"
-    "When `prior_session_id` is omitted the handler auto-resolves it — "
-    "the most-recent event-log session_id other than this process's "
-    "own — under two implicit filters that mirror the opt-out cascade "
-    "memory_search / memory_list honor: caller-worktree strict "
-    "equality (`None` matches only `None`, so sibling worktrees stay "
-    "isolated) and the `disabled_scopes` cascade (a session whose only "
-    "takeaways are scope-disabled is skipped; surviving episodes are "
-    "scope-filtered). Pass it explicitly to override (e.g. a child "
-    "agent's parent id).\n\n"
+    "memory_search. Episodes are the sibling-to-memory primitive for "
+    "journal-shaped writes (see episode_write).\n\n"
+    "When `prior_session_id` is omitted the handler auto-resolves it "
+    "from the event log under two implicit filters: caller-worktree "
+    "strict equality (`None` matches only `None`) and the "
+    "`disabled_scopes` cascade (a session whose only takeaways are "
+    "scope-disabled is skipped; surviving episodes are scope-filtered). "
+    "Pass it explicitly to override.\n\n"
     "Returns a dict:\n"
     "- `prior_session_id`: the resolved session id, or None when no "
     "prior session exists in the log.\n"
-    "- `episodes`: list of {id, created, takeaway, body, scopes} "
+    "- `episodes`: list of {id, created, takeaway, scopes, provenance} "
     "dicts, oldest first, capped at `max_episodes` (default 5, cap "
-    "50); each surfaces the writer's `takeaway` plus the full "
-    "`body`.\n"
+    "50). `provenance` is read from the event log: `local` (an "
+    "episode_write event names the id), `untracked` (no event could "
+    "have) or `unaccounted` (the file appeared with no event: the "
+    "planted shape). `body` is present only with `include_bodies=True` "
+    "(default False) and never for an unaccounted episode; "
+    "episode_search(ids=[...]) is the explicit read for one body.\n"
     "- `note` (optional `str`): set ONLY when the immediately-prior "
-    "worktree session left nothing visible; names the cause — "
-    "floor-only, zero-episode, promoted-out, or all-scope-hidden. "
-    "The last two DID journal, so a `note` never means 'wrote no "
-    "journal'. `episodes` MAY be non-empty — the walk rewinds to an "
-    "older takeaway.\n\n"
-    "For ad-hoc lookup of an older session's journal, prefer "
-    "`episode_search` with an explicit `parent_session_id`."
+    "worktree session left nothing visible; names the cause: "
+    "floor-only, zero-episode, promoted-out, or all-scope-hidden. The "
+    "last two DID journal, so a `note` never means 'wrote no journal'. "
+    "`episodes` MAY be non-empty: the walk rewinds to an older takeaway."
 )
 
 
@@ -170,6 +184,7 @@ async def episode_handoff(
     deps: "ToolHandlers",
     prior_session_id: str | None = None,
     max_episodes: int | None = None,
+    include_bodies: bool = False,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Handler body for the `episode_handoff` MCP tool.
@@ -177,7 +192,10 @@ async def episode_handoff(
     Auto-resolves the prior session by walking the event log when
     `prior_session_id` is None. Caps `max_episodes` at 50 to keep the
     response bounded; defaults to 5 to match the rest of the read
-    surface (`default_max_results`).
+    surface (`default_max_results`). `include_bodies` (default False,
+    also spelled out on the `_handlers.py` facade the served schema is
+    built from) adds `body` to every row whose provenance is not
+    `unaccounted`; see the module docstring for the rule.
 
     REWIND contract (episode-handoff-chain fix): the walk does not stop
     at the most-recent worktree-matching session when that session is
@@ -341,6 +359,10 @@ async def episode_handoff(
     # deletes the journal source on commit), and the event log can tell.
     note_subject_sid: str | None = None
 
+    # The provenance evidence: filled by the auto-resolution walk from the
+    # event pass it already pays, gathered on demand on the explicit
+    # `prior_session_id` path once there are rows to label.
+    evidence: EpisodeEvidence | None = None
     resolved_session_id: str | None = prior_session_id
     if resolved_session_id is None:
         from ..events import iter_all_events
@@ -371,6 +393,7 @@ async def episode_handoff(
         # keeps the conservative pre-queue-#28 behavior.
         latest_ts_by_session: dict[str, str] = {}
         worktree_by_session: dict[str, str] = {}
+        evidence = EpisodeEvidence()
         for ev in iter_all_events(deps.store.root):
             if ev.get("triggered_from") in _OUT_OF_PROCESS_TRIGGERS:
                 # Client-side hook events (Stop audit, prompt recall)
@@ -383,6 +406,10 @@ async def episode_handoff(
                 # off the shared roster, so the two surfaces agree on
                 # what "in-process" means.
                 continue
+            # The provenance join rides this pass: every in-process
+            # event, the current session's included, before the
+            # candidate bookkeeping below narrows to other sessions.
+            evidence.observe(ev)
             sid = ev.get("session") or ev.get("session_id")
             if not isinstance(sid, str) or sid == deps.recorder.session_id:
                 continue
@@ -624,14 +651,25 @@ async def episode_handoff(
         # the way a reader expects "the prior session's recent
         # takeaways" — chronological within the surfaced window.
         recent = all_eps[-max_episodes:]
+        if recent and evidence is None:
+            evidence = gather_episode_evidence(deps.store.root)
         for ep in recent:
+            assert evidence is not None  # gathered above when rows exist
+            label = evidence.label(ep)
+            # `body` is present only on request and never for an
+            # unaccounted episode: the takeaway and the scopes travel
+            # with the label beside them, the body stays on disk for the
+            # explicit read (`episode_search(ids=[...])`). Omitted, not
+            # emptied, so a caller branches on `"body" in row`.
+            deliver_body = include_bodies and label != UNACCOUNTED
             episodes.append(
                 {
                     "id": ep.id,
                     "created": ep.created.isoformat().replace("+00:00", "Z"),
                     "takeaway": ep.takeaway,
-                    "body": ep.body.strip(),
+                    **({"body": ep.body.strip()} if deliver_body else {}),
                     "scopes": ep.scopes,
+                    "provenance": label,
                 }
             )
 
@@ -661,6 +699,7 @@ async def episode_handoff(
         "episode_handoff",
         prior_session_id=resolved_session_id,
         max_episodes=max_episodes,
+        include_bodies=include_bodies,
         returned=len(episodes),
         prior_crashed_pre_takeaway=note_floor_only,
     )

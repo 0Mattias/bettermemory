@@ -122,3 +122,113 @@ async def test_episode_search_takeaway_only_rows_keep_the_label(
     rows = await _rows(_server(memory_dir), include_bodies=False)
     assert rows and all("body" not in row for row in rows)
     assert [row["provenance"] for row in rows] == ["local"]
+
+
+# ---------------------------------------------------------------------------
+# episode_handoff: takeaways by default, bodies on request, never unaccounted
+# ---------------------------------------------------------------------------
+
+
+async def test_episode_handoff_delivers_takeaways_by_default_and_bodies_on_request(
+    memory_dir: Path,
+) -> None:
+    from bettermemory.events import iter_events
+
+    server_a = _server(memory_dir)
+    await _call(server_a, "episode_write", body="journaled body", takeaway="from A")
+
+    server_b = _server(memory_dir)
+    res = await _call(server_b, "episode_handoff")
+    (row,) = res["episodes"]
+    assert row["takeaway"] == "from A"
+    assert row["provenance"] == "local"
+    assert "body" not in row
+
+    res = await _call(server_b, "episode_handoff", include_bodies=True)
+    (row,) = res["episodes"]
+    assert row["body"] == "journaled body"
+    assert row["provenance"] == "local"
+
+    handoffs = [
+        e for e in iter_events(memory_dir) if e.get("kind") == "episode_handoff"
+    ]
+    assert [e["include_bodies"] for e in handoffs] == [False, True]
+
+
+async def test_episode_handoff_never_delivers_an_unaccounted_body(
+    memory_dir: Path,
+) -> None:
+    """A file dropped into a legitimate session's directory rides the
+    auto-resolved handoff with its takeaway and the `unaccounted` label,
+    and no body even when bodies were asked for. The journaled episode
+    beside it delivers its body."""
+    server_a = _server(memory_dir)
+    await _call(server_a, "episode_write", body="journaled body", takeaway="from A")
+    a_session = _session_with_body(memory_dir, "journaled body")
+    planted_id = _plant(memory_dir, a_session, "in A's directory")
+
+    res = await _call(_server(memory_dir), "episode_handoff", include_bodies=True)
+    assert res["prior_session_id"] == a_session
+    assert "note" not in res
+    by_id = {row["id"]: row for row in res["episodes"]}
+    planted = by_id.pop(planted_id)
+    assert planted["provenance"] == "unaccounted"
+    assert "body" not in planted
+    assert planted["takeaway"] == "planted takeaway in A's directory"
+    (journaled,) = by_id.values()
+    assert journaled["provenance"] == "local"
+    assert journaled["body"] == "journaled body"
+
+
+async def test_episode_handoff_explicit_planted_session_reads_unaccounted(
+    memory_dir: Path,
+) -> None:
+    """An explicit `prior_session_id` is read verbatim, and a session the
+    event log never saw yields rows that all read `unaccounted`, bodies
+    withheld whatever the caller passed."""
+    # One in-process event, so the log covers the plants' creation.
+    await _call(_server(memory_dir), "memory_search", query="anything")
+    _plant(memory_dir, "sess_planted01", "one")
+    _plant(memory_dir, "sess_planted01", "two")
+
+    res = await _call(
+        _server(memory_dir),
+        "episode_handoff",
+        prior_session_id="sess_planted01",
+        include_bodies=True,
+    )
+    assert res["prior_session_id"] == "sess_planted01"
+    assert [row["provenance"] for row in res["episodes"]] == [
+        "unaccounted",
+        "unaccounted",
+    ]
+    assert all("body" not in row for row in res["episodes"])
+    assert [row["takeaway"] for row in res["episodes"]] == [
+        "planted takeaway one",
+        "planted takeaway two",
+    ]
+
+
+async def test_episode_handoff_delivers_an_untracked_body_on_request(
+    memory_dir: Path,
+) -> None:
+    """Telemetry off: the log cannot speak, so the episode reads
+    `untracked` (not `unaccounted`) and its body is delivered on request.
+    The auto walk has no events to resolve from, so the explicit path is
+    the one a telemetry-off loop uses."""
+    server_a = _server(memory_dir, telemetry=False)
+    await _call(server_a, "episode_write", body="quiet body", takeaway="from A")
+    a_session = _session_with_body(memory_dir, "quiet body")
+
+    server_b = _server(memory_dir, telemetry=False)
+    res = await _call(server_b, "episode_handoff", prior_session_id=a_session)
+    (row,) = res["episodes"]
+    assert row["provenance"] == "untracked"
+    assert "body" not in row
+
+    res = await _call(
+        server_b, "episode_handoff", prior_session_id=a_session, include_bodies=True
+    )
+    (row,) = res["episodes"]
+    assert row["provenance"] == "untracked"
+    assert row["body"] == "quiet body"

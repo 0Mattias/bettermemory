@@ -2441,7 +2441,11 @@ async def test_episode_handoff_surfaces_prior_session_takeaways(
     assert res["prior_session_id"].startswith("sess_")
     takeaways = [e["takeaway"] for e in res["episodes"]]
     assert takeaways == ["A blocks on auth header", "B partial; needs retry"]
-    # Body is included alongside the takeaway so the reader can drill in.
+    # Takeaways by default (7.0.0): the body stays on disk unless asked
+    # for, and every row names how the episode entered the store.
+    assert all("body" not in e for e in res["episodes"])
+    assert [e["provenance"] for e in res["episodes"]] == ["local", "local"]
+    res = await _call(server_b, "episode_handoff", include_bodies=True)
     assert "iter 1" in res["episodes"][0]["body"]
 
 
@@ -6452,8 +6456,18 @@ _DESC_BUDGET_PRESSURE = _DESC_BUDGET_CEILING - 100
 # 371 of remainder headroom under `_REMAINDER_CEILING`. Description prose was
 # the whole blocker, which is why reclamation and not a ceiling bump was the
 # right unblock. 481 under `_DESC_BUDGET_PRESSURE` now.
+#
+# Re-measured 2026-09-04 for the 7.0.0 delivery gates. The two rows that
+# commit edits moved: episode_handoff 1,560 -> 1,554 (-6), the
+# takeaways-by-default contract, `include_bodies` and the `provenance` key
+# paid for by cutting the override example and the ad-hoc-lookup sentence;
+# episode_search 2,311 -> 2,323 (+12), the `provenance` key named in the
+# row shape the description enumerates. One row had rotted with no edit:
+# memory_search 3,575 -> 3,444 (-131), repaired here per the rule above.
+# Live total 25,976: 24 under `_DESC_BUDGET_CEILING`, over the pressure
+# line as it has been since 6.6.0 (25,970).
 _DESC_BASELINE = {
-    "episode_handoff": 1560,
+    "episode_handoff": 1554,
     # Re-measured 2026-07-31: 1597 -> 1700 (+103) for the state-channel
     # convention (Phase 7 / G2) — the routing rule (loop/working state
     # goes to episodes) and the minting moment (session close). Only
@@ -6475,7 +6489,7 @@ _DESC_BASELINE = {
     # fixture that asserts it is in tests/test_episode_search_scan_and_fetch.py).
     # NOT the plan's pre-measurement "~28 KB -> ~1 KB" estimate, which
     # this comment carried until the fixture existed to contradict it.
-    "episode_search": 2311,
+    "episode_search": 2323,
     "episode_write": 2350,
     # Re-measured 2026-07-31: 822 -> 798 (-24), the clause " through the MCP
     # channel" removed as false. The shipped Stop hook dispatches the CLI
@@ -6490,7 +6504,7 @@ _DESC_BASELINE = {
     "memory_scope_disable": 231,
     "memory_scope_enable": 55,
     "memory_scope_overview": 2820,
-    "memory_search": 3575,
+    "memory_search": 3444,
     "memory_show": 851,
     # Re-measured 2026-08-04: 2033 -> 1562 (-471). See the reclamation note
     # above — DESC_MEMORY_LINKS_TAIL collapsed to a type index (-658), the

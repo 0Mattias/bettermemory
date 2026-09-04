@@ -477,12 +477,14 @@ class ToolHandlers:
         self,
         prior_session_id: str | None = None,
         max_episodes: int | None = None,
+        include_bodies: bool = False,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         return await _handlers_pkg.episode_handoff(
             self,
             prior_session_id=prior_session_id,
             max_episodes=max_episodes,
+            include_bodies=include_bodies,
             ctx=ctx,
         )
 

@@ -46,7 +46,7 @@ DESC_EPISODE_SEARCH = (
     "loop-iteration-entry case prefer `episode_handoff`, which "
     "auto-resolves the prior session and caps the surface.\n\n"
     "Returns `{id, session_id, created, takeaway, body, scopes, "
-    "swarm_id}` per row, oldest-first inside the most-recent-"
+    "swarm_id, provenance}` per row, oldest-first inside the most-recent-"
     "`max_results` window: over the cap it keeps the MOST-RECENT N, so "
     "'what did I conclude lately?' reads the tail, not the head. "
     "`session_id` is present because this surface spans sessions "
