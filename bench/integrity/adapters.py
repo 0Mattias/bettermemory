@@ -170,7 +170,6 @@ class BetterMemoryAdapter:
         if self.root.exists():
             shutil.rmtree(self.root)
         self.root.mkdir(parents=True)
-        os.environ["BETTERMEMORY_DIR"] = str(self.root)
         cfg_path = self.scratch / "config.toml"
         cfg_path.write_text(
             f'[storage]\ndirectory = "{self.root.as_posix()}"\n', encoding="utf-8"

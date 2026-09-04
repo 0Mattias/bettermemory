@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -189,11 +190,26 @@ def test_rot_stats_are_the_sealed_ones() -> None:
 
 @pytest.fixture(scope="module")
 def smoke_raw(tmp_path_factory: pytest.TempPathFactory) -> dict:
+    """One bettermemory collection on a scratch store. The process
+    environment is snapshotted and restored around it: the arm must not
+    leak its store directory into the tests that run after this module."""
     scratch = tmp_path_factory.mktemp("integrity")
     out = scratch / "raw.json"
-    rc = runner.collect("bettermemory", out, scratch / "arm", 1)
+    before = dict(os.environ)
+    try:
+        rc = runner.collect("bettermemory", out, scratch / "arm", 1)
+    finally:
+        os.environ.clear()
+        os.environ.update(before)
     assert rc == 0
     return json.loads(out.read_text(encoding="utf-8"))
+
+
+def test_the_arm_leaves_the_environment_alone(smoke_raw: dict) -> None:
+    assert smoke_raw["ran"] is True
+    assert "BETTERMEMORY_DIR" not in os.environ or not os.environ[
+        "BETTERMEMORY_DIR"
+    ].startswith(str(Path(smoke_raw["scratch"]).parent))
 
 
 def test_arm_records_provenance_and_corpus_sha(smoke_raw: dict) -> None:
