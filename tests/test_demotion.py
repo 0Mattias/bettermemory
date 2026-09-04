@@ -309,15 +309,15 @@ async def test_e2e_flag_off_is_byte_stable(memory_dir: Path) -> None:
     assert "recent_negative_outcomes" in after[0]
 
 
-@pytest.mark.no_extras
 async def test_e2e_tie_flip_and_update_clears(memory_dir: Path) -> None:
     """A rejected near-tie loses its rank; fixing the memory via
     memory_update makes the rejection stop counting (the judged body no
     longer exists) and the demotion lifts.
 
-    no_extras: the near-tie is a property of the two-leg lexical
-    fusion; a live semantic leg (an installed embeddings extra) breaks
-    the tie on meaning before the demotion has anything to flip."""
+    The near-tie is a property of the two-leg lexical fusion. A live
+    semantic leg would have broken the tie on meaning before the demotion
+    had anything to flip; the embedding lane that carried one left in
+    6.0.0, and with it the `no_extras` marker this test wore."""
     server = _build(memory_dir, outcome_demotion=True)
     a = await _seed(server, "alpha beta gamma delta workflow")
     await _seed(server, "alpha beta gamma epsilon pipeline", force=True)
