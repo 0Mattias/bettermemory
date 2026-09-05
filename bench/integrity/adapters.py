@@ -487,31 +487,45 @@ class Mem0Adapter:
 
     def _self_test(self) -> None:
         """A fact and then its direct contradiction through add(infer=True)
-        in a probe namespace. The arm exists to measure mem0's extraction
-        and update logic; a model whose decision step issues no UPDATE or
-        DELETE on that contradiction has not exercised it, and the arm
-        reads unavailable with the rerun command rather than publishing
-        the local model's failure as mem0's loss."""
+        in a probe namespace. mem0ai 2.0.x's add path is additive by design:
+        ADD-only extraction with entity-level memory links, while UPDATE and
+        DELETE exist only as explicit calls. So the arm is measured on the
+        extractor it ships: the first statement must yield a stored memory
+        and the second must yield one that is not a copy of the first. A
+        model that fails either has not exercised the extractor, and the
+        arm reads unavailable with the rerun command rather than publishing
+        that failure as mem0's loss. The 7.1.0 self-test asked for an
+        UPDATE or DELETE that this version's add path never issues; that
+        the path is additive is itself a published finding."""
         probe = "self-test"
         try:
-            self._memory.add(SELF_TEST_STATEMENT, user_id=probe, infer=True)
+            first = self._memory.add(SELF_TEST_STATEMENT, user_id=probe, infer=True)
             second = self._memory.add(SELF_TEST_UPDATE, user_id=probe, infer=True)
         except Exception as exc:  # noqa: BLE001 - published as the blocker
             raise SystemUnavailable(
                 f"add(infer=True) failed on the self-test with {LOCAL_LLM}: "
                 f"{type(exc).__name__}: {str(exc)[:200]}"
             ) from exc
-        events = [str(r.get("event")) for r in (second or {}).get("results", [])]
+        stored = ("ADD", "UPDATE")
+        first_rows = [
+            r for r in (first or {}).get("results", []) if r.get("event") in stored
+        ]
+        second_rows = [
+            r for r in (second or {}).get("results", []) if r.get("event") in stored
+        ]
         try:
             self._memory.delete_all(user_id=probe)
         except Exception:  # noqa: BLE001 - the probe namespace is disposable
             pass
-        if not any(e in ("UPDATE", "DELETE") for e in events):
+        first_texts = {str(r.get("memory")) for r in first_rows}
+        fresh = [r for r in second_rows if str(r.get("memory")) not in first_texts]
+        if not first_rows or not fresh:
             raise SystemUnavailable(
-                f"the extractor ({LOCAL_LLM} at {LLM_BASE_URL}) issued no UPDATE or "
-                f"DELETE on the self-test contradiction (events: {events}); rerun "
-                "with BM_INTEGRITY_LLM / BM_INTEGRITY_LLM_BASE_URL / "
-                "BM_INTEGRITY_LLM_API_KEY pointing at a model whose decision step updates"
+                f"the extractor ({LOCAL_LLM} at {LLM_BASE_URL}) stored "
+                f"{len(first_rows)} memory(ies) from the self-test statement and "
+                f"{len(fresh)} new one(s) from its update; rerun with "
+                "BM_INTEGRITY_LLM / BM_INTEGRITY_LLM_BASE_URL / "
+                "BM_INTEGRITY_LLM_API_KEY pointing at a model that extracts"
             )
 
     def close(self) -> None:
@@ -535,6 +549,10 @@ class Mem0Adapter:
         else:
             out["embedder"] = "ollama/nomic-embed-text"
             out["llm"] = f"{LOCAL_LLM} at {LLM_BASE_URL}"
+            out["add_mode"] = (
+                "additive: ADD-only extraction with entity-level memory links; "
+                "no UPDATE or DELETE on add (mem0ai 2.0.x)"
+            )
         out["qdrant-client"] = _pkg_version("qdrant-client")
         return out
 
