@@ -182,7 +182,7 @@ log = logging.getLogger("bettermemory.index")
 # (`_stash_provenance` parks it in `meta.trust_carry`), and the rebuild
 # derives it from `verify` and `sync_pull` events as well
 # (`provenance.classify_trust`).
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 # Pinned `search.tokenizer_fingerprint()` digest for the current
 # SCHEMA_VERSION. Consumed only by the ratchet test
@@ -246,7 +246,16 @@ CREATE TABLE IF NOT EXISTS memories (
     -- verify path (ISO-8601), or NULL: never, or not since a `sync pull`
     -- brought the file down. Read beside `provenance` to tell a local
     -- stamp from one that arrived in the file.
-    verified_locally_at TEXT
+    verified_locally_at TEXT,
+    -- Schema v9. SHA-256 of the file's bytes as the store last wrote
+    -- them, stamped by every in-process write path (`Store._write_path`
+    -- and the direct `_atomic_write_post` callers) and by the rebuild,
+    -- which carries a recorded hash FORWARD for a non-pulled file whose
+    -- bytes no longer match it — so a hand edit stays visible across
+    -- `bettermemory reindex`. `doctor`'s `memory_content_evidence`
+    -- compares it with the file. NULL until a write or a rebuild stamps
+    -- the row.
+    content_sha256 TEXT
 );
 
 -- The FTS table indexes the PREPROCESSED columns (schema v4): body_fts /
@@ -817,6 +826,7 @@ def _rebuild_data(
     with conn:
         prior, baseline = _read_prior_provenance(conn)
         prior_trust = _read_prior_trust(conn)
+        prior_hashes = _read_prior_content_hashes(conn)
         conn.execute("DELETE FROM memories")
         count = 0
         seen: set[str] = set()
@@ -840,12 +850,22 @@ def _rebuild_data(
             verified_locally_at = _provenance.classify_trust(
                 memory, entry_path.name, evidence, prior_trust.get(memory.id)
             )
+            try:
+                current_sha: str | None = file_sha256(entry_path)
+            except OSError:
+                current_sha = None
+            content_sha = (
+                carried_content_sha256(label, prior_hashes.get(memory.id), current_sha)
+                if current_sha is not None
+                else prior_hashes.get(memory.id)
+            )
             _upsert_memory(
                 conn,
                 memory,
                 entry_path.name,
                 provenance=label,
                 verified_locally_at=verified_locally_at,
+                content_sha256=content_sha,
             )
             if memory.id not in seen:
                 seen.add(memory.id)
@@ -860,6 +880,7 @@ def _rebuild_data(
         # new rather than as pre-existing.
         conn.execute("DELETE FROM meta WHERE key = 'provenance_carry'")
         conn.execute("DELETE FROM meta WHERE key = 'trust_carry'")
+        conn.execute("DELETE FROM meta WHERE key = 'content_sha_carry'")
         conn.execute(
             "INSERT OR REPLACE INTO meta(key, value) "
             "VALUES ('provenance_classified', '1')"
@@ -885,6 +906,7 @@ def upsert(
     filename: str,
     provenance: str | None = None,
     verified_locally_at: str | None = None,
+    content_sha256: str | None = None,
 ) -> None:
     """Insert or replace one memory in the index. Called by Store hooks
     on write / update. Safe to call before the index file exists — the
@@ -912,10 +934,57 @@ def upsert(
                 filename,
                 provenance=provenance,
                 verified_locally_at=verified_locally_at,
+                content_sha256=content_sha256,
             )
             _bump_count(conn)
     finally:
         conn.close()
+
+
+def stamp_content_sha256(root: Path, memory_id: str, sha: str) -> None:
+    """Record the bytes a writer that bypasses `upsert` just put on disk
+    (`migrate`'s origin backfill and repair rewrite frontmatter through
+    `_atomic_write_post` directly). A row that does not exist yet is
+    left for the next upsert or rebuild to create; nothing is inserted
+    here, because a hash without the row's other columns is not a row."""
+    path = index_path(root)
+    if not path.exists():
+        return
+    conn = _connect(path)
+    try:
+        _ensure_schema(conn, path)
+        with conn:
+            conn.execute(
+                "UPDATE memories SET content_sha256 = ? WHERE id = ?",
+                (sha, memory_id),
+            )
+    finally:
+        conn.close()
+
+
+def content_hashes(root: Path) -> dict[str, tuple[str | None, str | None]] | None:
+    """`{id: (content_sha256, provenance)}` over every indexed row, for
+    `doctor`'s content-evidence check. None (never raises) when the index
+    is absent or unusable, so a caller can tell "nothing changed" from
+    "could not look"."""
+    path = index_path(root)
+    if not path.exists():
+        return None
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = _connect(path)
+        _ensure_schema(conn, path)
+        return {
+            row["id"]: (row["content_sha256"], row["provenance"])
+            for row in conn.execute(
+                "SELECT id, content_sha256, provenance FROM memories"
+            )
+        }
+    except (sqlite3.Error, ValueError, IndexVersionError, OSError):
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 def remove(root: Path, memory_id: str) -> None:
@@ -1941,6 +2010,7 @@ def _upsert_memory(
     *,
     provenance: str | None = None,
     verified_locally_at: str | None = None,
+    content_sha256: str | None = None,
 ) -> None:
     """INSERT OR REPLACE on the id key. Trigger logic keeps the FTS
     virtual table in sync — the AFTER UPDATE trigger handles the
@@ -1976,8 +2046,9 @@ def _upsert_memory(
         "INSERT INTO memories("
         "id, created, updated, last_verified_at, confidence, category, "
         "body, body_fts, scopes_text, scopes_fts, scopes_json, filename, "
-        "origin_repo, origin_worktree, provenance, verified_locally_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "origin_repo, origin_worktree, provenance, verified_locally_at, "
+        "content_sha256) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(id) DO UPDATE SET "
         "created = excluded.created, "
         "updated = excluded.updated, "
@@ -1998,7 +2069,9 @@ def _upsert_memory(
         "origin_worktree = excluded.origin_worktree, "
         "provenance = COALESCE(excluded.provenance, memories.provenance), "
         "verified_locally_at = COALESCE(excluded.verified_locally_at, "
-        "memories.verified_locally_at)",
+        "memories.verified_locally_at), "
+        "content_sha256 = COALESCE(excluded.content_sha256, "
+        "memories.content_sha256)",
         (
             memory.id,
             memory.created.isoformat(),
@@ -2016,6 +2089,7 @@ def _upsert_memory(
             memory.origin.worktree_root if memory.origin else None,
             provenance,
             verified_locally_at,
+            content_sha256,
         ),
     )
     _sync_links(conn, memory)
@@ -2104,8 +2178,77 @@ def _stash_provenance(conn: sqlite3.Connection) -> None:
                 (payload,),
             )
             stashed = True
+    if "content_sha256" in columns:
+        rows = conn.execute(
+            "SELECT id, content_sha256 FROM memories WHERE content_sha256 IS NOT NULL"
+        ).fetchall()
+        if rows:
+            payload = json.dumps(
+                {row[0]: row[1] for row in rows}, separators=(",", ":")
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO meta(key, value) "
+                "VALUES ('content_sha_carry', ?)",
+                (payload,),
+            )
+            stashed = True
     if stashed:
         conn.commit()
+
+
+def _read_prior_content_hashes(conn: sqlite3.Connection) -> dict[str, str]:
+    """The content hashes this index carried before a rebuild: the
+    `meta.content_sha_carry` stash (parked ahead of a drop) under the
+    live column, the live table winning. Only well-formed hex survives,
+    for the reason `_read_prior_provenance` drops unknown labels."""
+    prior: dict[str, str] = {}
+    stash = conn.execute(
+        "SELECT value FROM meta WHERE key = 'content_sha_carry'"
+    ).fetchone()
+    if stash is not None:
+        try:
+            parked = json.loads(stash[0])
+        except (TypeError, ValueError):
+            parked = None
+        if isinstance(parked, dict):
+            for memory_id, sha in parked.items():
+                if isinstance(memory_id, str) and _is_sha256_hex(sha):
+                    prior[memory_id] = sha
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(memories)")}
+    if "content_sha256" in columns:
+        for row in conn.execute(
+            "SELECT id, content_sha256 FROM memories WHERE content_sha256 IS NOT NULL"
+        ):
+            if _is_sha256_hex(row[1]):
+                prior[row[0]] = row[1]
+    return prior
+
+
+def _is_sha256_hex(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(c in "0123456789abcdef" for c in value)
+    )
+
+
+def file_sha256(path: Path) -> str:
+    """SHA-256 of a memory file's bytes — the same digest the store
+    records at each write, computed by the doctor and the rebuild."""
+    import hashlib
+
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def carried_content_sha256(label: str | None, prior: str | None, current: str) -> str:
+    """What a rebuild stamps for a file: the hash it computes now, unless
+    the index recorded a different one for a file no pull brought down —
+    then the RECORDED hash stays, and the mismatch with the file is the
+    evidence `doctor` reports. A `synced` row is anchored at the pull:
+    the pull is the recorded path by which its bytes changed."""
+    if prior is not None and prior != current and label != "synced":
+        return prior
+    return current
 
 
 def _read_prior_provenance(conn: sqlite3.Connection) -> tuple[dict[str, str], bool]:

@@ -170,6 +170,7 @@ def test_a_constraint_violation_never_unlinks_a_healthy_index(
         *,
         provenance: str | None = None,
         verified_locally_at: str | None = None,
+        content_sha256: str | None = None,
     ) -> None:
         raise sqlite3.IntegrityError("UNIQUE constraint failed: memories.id")
 

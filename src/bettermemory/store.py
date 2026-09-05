@@ -7,6 +7,7 @@ objects and get them back.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Iterable
 
 import contextlib
@@ -460,7 +461,7 @@ class Store:
         )
         path = self._path_for(memory)
         with _locked(path):
-            self._write_path(path, memory)
+            content_sha = self._write_path(path, memory)
             # perf: index upsert under lock is intentional — see audit
             # H1. Two concurrent updates on the same id used to release
             # the file lock in order A→B, but their SQLite upserts
@@ -476,7 +477,11 @@ class Store:
             # telemetry off (or through a caller that records nothing)
             # still reads local on every surface.
             _index_upsert_quietly(
-                self.root, memory, filename=path.name, provenance="local"
+                self.root,
+                memory,
+                filename=path.name,
+                provenance="local",
+                content_sha256=content_sha,
             )
         return memory
 
@@ -630,9 +635,14 @@ class Store:
                     }
                 )
             new_memory = new_memory.model_copy(update=carried_over)
-            self._write_path(existing_path, new_memory)
+            content_sha = self._write_path(existing_path, new_memory)
             # perf: index upsert under lock is intentional — see audit H1.
-            _index_upsert_quietly(self.root, new_memory, filename=existing_path.name)
+            _index_upsert_quietly(
+                self.root,
+                new_memory,
+                filename=existing_path.name,
+                content_sha256=content_sha,
+            )
         return new_memory
 
     def mark_verified(
@@ -849,7 +859,7 @@ class Store:
             current_yaml = _serialized_frontmatter_bytes(_memory_metadata(existing))
             verify_yaml_cap = _lifecycle_redump_yaml_cap(current_yaml)
             try:
-                self._write_path(
+                content_sha = self._write_path(
                     existing_path,
                     new_memory,
                     max_file_bytes=verify_cap,
@@ -873,6 +883,7 @@ class Store:
                 new_memory,
                 filename=existing_path.name,
                 verified_locally_at=verified_now.isoformat(),
+                content_sha256=content_sha,
             )
         return new_memory
 
@@ -949,14 +960,19 @@ class Store:
             except OSError:
                 current_size = 0
             current_yaml = _serialized_frontmatter_bytes(_memory_metadata(existing))
-            self._write_path(
+            content_sha = self._write_path(
                 existing_path,
                 new_memory,
                 max_file_bytes=_lifecycle_redump_cap(current_size),
                 max_yaml_bytes=_lifecycle_redump_yaml_cap(current_yaml),
             )
             # perf: index upsert under lock is intentional — see audit H1.
-            _index_upsert_quietly(self.root, new_memory, filename=existing_path.name)
+            _index_upsert_quietly(
+                self.root,
+                new_memory,
+                filename=existing_path.name,
+                content_sha256=content_sha,
+            )
         return new_memory
 
     def tombstone(
@@ -1543,7 +1559,7 @@ class Store:
                 # genuinely unreadable shapes — alias bombs, > read cap —
                 # with their own error, and the tombstone is still on disk
                 # if it does.)
-                _atomic_write_post(
+                content_sha = _atomic_write_post(
                     active_path, post, max_file_bytes=frontmatter._MAX_FILE_BYTES
                 )
                 # Prove the record is re-admittable BEFORE destroying the
@@ -1603,6 +1619,7 @@ class Store:
                     restored,
                     filename=active_path.name,
                     provenance="local",
+                    content_sha256=content_sha,
                 )
         return restored
 
@@ -1729,7 +1746,7 @@ class Store:
                 current_yaml = _serialized_frontmatter_bytes(_memory_metadata(memory))
                 rename_yaml_cap = _lifecycle_redump_yaml_cap(current_yaml)
                 try:
-                    self._write_path(
+                    content_sha = self._write_path(
                         path,
                         refreshed,
                         max_file_bytes=rename_cap,
@@ -1752,7 +1769,9 @@ class Store:
                     failed.append({"id": memory.id, "reason": str(exc)})
                     continue
                 # perf: index upsert under lock is intentional — see audit H1.
-                _index_upsert_quietly(self.root, refreshed, filename=path.name)
+                _index_upsert_quietly(
+                    self.root, refreshed, filename=path.name, content_sha256=content_sha
+                )
                 active_changed.append(refreshed.id)
 
         tombstoned_changed: list[str] = []
@@ -1994,7 +2013,7 @@ class Store:
         *,
         max_file_bytes: int = frontmatter._MAX_WRITE_BYTES,
         max_yaml_bytes: int | None = None,
-    ) -> None:
+    ) -> str:
         # `max_file_bytes` defaults to the headroom-reserved write cap, which is
         # correct for new-content admission (`write`, `update`): a freshly
         # admitted active record must reserve headroom for its own worst-case
@@ -2018,7 +2037,7 @@ class Store:
         _revalidate_before_persist(memory)
         post = frontmatter.Post(memory.body.strip() + "\n")
         post.metadata = _memory_metadata(memory)
-        _atomic_write_post(
+        return _atomic_write_post(
             path, post, max_file_bytes=max_file_bytes, max_yaml_bytes=max_yaml_bytes
         )
 
@@ -2789,6 +2808,7 @@ def _index_upsert_quietly(
     filename: str,
     provenance: str | None = None,
     verified_locally_at: str | None = None,
+    content_sha256: str | None = None,
 ) -> None:
     """Update the FTS5 index for one memory. Best-effort: a failure
     here (corrupt index, locked database, missing SQLite extension)
@@ -2829,7 +2849,23 @@ def _index_upsert_quietly(
         filename=filename,
         provenance=provenance,
         verified_locally_at=verified_locally_at,
+        content_sha256=content_sha256,
     )
+
+
+@best_effort(
+    "index content stamp",
+    logger=_INDEX_LOG,
+    repair_hint=_INDEX_REPAIR_HINT,
+    id_getter=lambda root, memory_id, sha: memory_id,
+)
+def _index_stamp_sha_quietly(root: Path, memory_id: str, sha: str) -> None:
+    """Record the bytes a writer that bypasses the upsert put on disk
+    (`migrate`), so a legitimate rewrite is not read as a change no
+    store path made. Same best-effort contract as the upsert."""
+    from . import index as _index
+
+    _index.stamp_content_sha256(root, memory_id, sha)
 
 
 @best_effort(
@@ -3231,8 +3267,11 @@ def _atomic_write_post(
     *,
     max_file_bytes: int = frontmatter._MAX_WRITE_BYTES,
     max_yaml_bytes: int = frontmatter._MAX_YAML_BYTES,
-) -> None:
+) -> str:
     """Atomic, durable, 0o600 write of a frontmatter Post to `path`.
+    Returns the SHA-256 of the bytes written, the content evidence the
+    index records beside the row (schema v9) so a later change to the
+    file that no store path made is detectable.
 
     Serialises the Post to UTF-8 bytes and delegates to
     `atomic_write_bytes(..., mode_before_rename=0o600)`, which owns the
@@ -3269,13 +3308,11 @@ def _atomic_write_post(
     nothing — `tombstone` (whose removal metadata is adaptively trimmed to fit
     instead), `restore`, and `rename_scope`'s tombstone branch.
     """
-    atomic_write_bytes(
-        path,
-        frontmatter.dumps(
-            post, max_file_bytes=max_file_bytes, max_yaml_bytes=max_yaml_bytes
-        ).encode("utf-8"),
-        mode_before_rename=0o600,
-    )
+    data = frontmatter.dumps(
+        post, max_file_bytes=max_file_bytes, max_yaml_bytes=max_yaml_bytes
+    ).encode("utf-8")
+    atomic_write_bytes(path, data, mode_before_rename=0o600)
+    return hashlib.sha256(data).hexdigest()
 
 
 def _as_dt(value: object) -> datetime:

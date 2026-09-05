@@ -31,6 +31,7 @@ from .origin import Origin, capture, repos_match
 from .store import (
     TOMBSTONE_DIR,
     _atomic_write_post,
+    _index_stamp_sha_quietly,
     _coerce_scopes,
     _lifecycle_redump_cap,
     _lifecycle_redump_yaml_cap,
@@ -564,7 +565,7 @@ def migrate_origin_in_directory(
                     if key != "origin"
                 }
                 current_yaml = _serialized_frontmatter_bytes(pristine_metadata)
-                _atomic_write_post(
+                content_sha = _atomic_write_post(
                     path,
                     post,
                     max_file_bytes=_lifecycle_redump_cap(current_size),
@@ -574,6 +575,7 @@ def migrate_origin_in_directory(
                 log.warning("skipping file that failed to write %s: %s", path, exc)
                 report.malformed.append(path)
                 continue
+            _stamp_rewrite(path, post, content_sha)
 
             # Count only what actually persisted — incrementing before the
             # write would inflate `report.updated` to include files the
@@ -626,7 +628,7 @@ def _write_repaired(
             key: value for key, value in post.metadata.items() if key != "origin"
         }
         current_yaml = _serialized_frontmatter_bytes(pristine_metadata)
-        _atomic_write_post(
+        content_sha = _atomic_write_post(
             path,
             post,
             max_file_bytes=_lifecycle_redump_cap(current_size),
@@ -636,8 +638,20 @@ def _write_repaired(
         log.warning("skipping file that failed to write %s: %s", path, exc)
         report.malformed.append(path)
         return False
+    _stamp_rewrite(path, post, content_sha)
     _note_updated_id(report, post)
     return True
+
+
+def _stamp_rewrite(path: Path, post: "frontmatter.Post", content_sha: str) -> None:
+    """Record the rewritten bytes in the index beside the row, so the
+    content-evidence check reads a migration as the store's own write and
+    not as a change no store path made. The row may not exist yet (the
+    rebuild this migration flags creates it, and computes the hash from
+    the file it just wrote), so a missing row is fine."""
+    memory_id = post.metadata.get("id")
+    if isinstance(memory_id, str) and memory_id:
+        _index_stamp_sha_quietly(path.parent, memory_id, content_sha)
 
 
 def _note_updated_id(report: MigrationReport, post: "frontmatter.Post") -> None:

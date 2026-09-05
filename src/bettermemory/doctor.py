@@ -3538,6 +3538,112 @@ def _check_memory_provenance(directory: Path) -> Diagnosis:
     )
 
 
+def _check_memory_content_evidence(directory: Path) -> Diagnosis:
+    """Did any memory file change without a store write behind it?
+
+    Every store write records the SHA-256 of the bytes it put on disk
+    beside the index row (schema v9), and a rebuild carries a recorded
+    hash forward for a non-pulled file whose bytes no longer match it,
+    so the evidence survives `bettermemory reindex`. This check computes
+    each active file's hash and names the rows where the two disagree:
+    a hand edit, a script writing into the directory, a pull done
+    outside `bettermemory sync`. Detect-only and single-machine (the
+    threat model in SECURITY.md): a writer who also rewrites or deletes
+    the index defeats it. A row with no recorded hash is unanchored, a
+    rebuild away from one, and is counted rather than judged.
+
+    The remedy is the same asymmetry as `memory_provenance`'s: nothing
+    here restamps a file. A change the owner recognises is re-anchored
+    by the store's own paths — `memory_verify` (the stamp rewrites the
+    file) or `memory_update` — and the rest are removed.
+    """
+    from . import index as _index
+    from .store import PARSE_SKIP_EXCEPTIONS, Store
+
+    if not directory.exists():
+        return Diagnosis(
+            name="memory_content_evidence",
+            status="ok",
+            message="Storage dir does not exist yet — nothing to compare.",
+        )
+    recorded = _index.content_hashes(directory)
+    if recorded is None:
+        return Diagnosis(
+            name="memory_content_evidence",
+            status="ok",
+            message=(
+                "No index to read content hashes from; a store that has never "
+                "been indexed records no evidence."
+            ),
+            details={"changed": None},
+        )
+    changed: list[dict[str, str | None]] = []
+    unanchored = 0
+    unreadable = 0
+    checked = 0
+    try:
+        for path, memory in Store(directory).iter_active():
+            checked += 1
+            expected, label = recorded.get(memory.id, (None, None))
+            if expected is None:
+                unanchored += 1
+                continue
+            try:
+                current = _index.file_sha256(path)
+            except OSError:
+                unreadable += 1
+                continue
+            if current != expected:
+                changed.append(
+                    {"id": memory.id, "filename": path.name, "provenance": label}
+                )
+    except PARSE_SKIP_EXCEPTIONS:
+        pass
+    details: dict[str, Any] = {
+        "checked": checked,
+        "changed": changed,
+        "unanchored": unanchored,
+        "unreadable": unreadable,
+    }
+    if changed:
+        noun = "file" if len(changed) == 1 else "files"
+        return Diagnosis(
+            name="memory_content_evidence",
+            status="warn",
+            message=(
+                f"{len(changed)} of {checked} memory {noun} changed since the "
+                "store last wrote, verified or restored them, with no store "
+                "write behind the change. "
+                f"First: {changed[0]['id']} ({changed[0]['filename']})."
+            ),
+            fix_hint=(
+                "memory_show each one. A change you made yourself is "
+                "re-anchored by memory_verify (the stamp rewrites the file) or "
+                "memory_update; remove the rest. `bettermemory reindex` does "
+                "not clear this — the recorded hash is carried across rebuilds."
+            ),
+            details=details,
+        )
+    if unanchored:
+        noun = "row carries" if unanchored == 1 else "rows carry"
+        return Diagnosis(
+            name="memory_content_evidence",
+            status="ok",
+            message=(
+                f"No file changed outside the store; {unanchored} of {checked} "
+                f"{noun} no recorded hash yet."
+            ),
+            fix_hint="Run `bettermemory reindex` to anchor every row.",
+            details=details,
+        )
+    return Diagnosis(
+        name="memory_content_evidence",
+        status="ok",
+        message=f"All {checked} memory files match the bytes the store last wrote.",
+        details=details,
+    )
+
+
 def _check_retrieval_discrimination(directory: Path, cfg: Config) -> Diagnosis:
     """Can this store still be found by the questions a model asks?
 
@@ -4347,6 +4453,12 @@ def run_diagnostics() -> DoctorReport:
             _safe(
                 "memory_provenance",
                 lambda: _check_memory_provenance(directory),
+            )
+        )
+        checks.append(
+            _safe(
+                "memory_content_evidence",
+                lambda: _check_memory_content_evidence(directory),
             )
         )
 

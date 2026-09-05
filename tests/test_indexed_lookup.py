@@ -249,12 +249,13 @@ def test_inflight_write_does_not_report_the_index_as_out_of_sync(
         *,
         filename: str,
         provenance: str | None = None,
+        **extra: object,
     ) -> None:
         # `_write_path` has already returned, so the .md is on disk
         # while the index row is not yet committed — the window.
         file_on_disk.set()
         assert release_upsert.wait(10)
-        real_upsert(idx_root, memory, filename=filename, provenance=provenance)
+        real_upsert(idx_root, memory, filename=filename, provenance=provenance, **extra)
 
     monkeypatch.setattr(_store, "_index_upsert_quietly", _delayed_upsert)
     writer = threading.Thread(
@@ -307,10 +308,11 @@ def test_inflight_write_does_not_burn_the_one_shot_warning_budget(
         *,
         filename: str,
         provenance: str | None = None,
+        **extra: object,
     ) -> None:
         file_on_disk.set()
         assert release_upsert.wait(10)
-        real_upsert(idx_root, memory, filename=filename, provenance=provenance)
+        real_upsert(idx_root, memory, filename=filename, provenance=provenance, **extra)
 
     monkeypatch.setattr(_store, "_index_upsert_quietly", _delayed_upsert)
     writer = threading.Thread(
@@ -423,11 +425,12 @@ def test_inflight_write_stays_silent_however_long_the_writer_holds_it(
         *,
         filename: str,
         provenance: str | None = None,
+        **extra: object,
     ) -> None:
         file_on_disk.set()
         # Released by the timer below, NOT by the check giving up.
         assert release_upsert.wait(30)
-        real_upsert(idx_root, memory, filename=filename, provenance=provenance)
+        real_upsert(idx_root, memory, filename=filename, provenance=provenance, **extra)
 
     monkeypatch.setattr(_store, "_index_upsert_quietly", _held_upsert)
     writer = threading.Thread(
