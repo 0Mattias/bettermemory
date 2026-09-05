@@ -254,6 +254,18 @@ pre-registered for the rerun in the project's memory store before it
 ran, each with its MISSED-if threshold; the table after the scorecard
 grades them.
 
+**Rerun 2026-09-05, the two extraction arms**, on google/gemini-3.8-flash
+through OpenRouter with the embedder left on ollama and every other
+setting at the arm's default (Graphiti's client resolves its reasoning
+effort to `minimal` for a model it does not know; mem0's provider keeps
+its token budget): `integrity-v0-graphiti-2026-09-05.json` at commit
+7a0c707 and `integrity-v0-mem0-infer-2026-09-05.json` at b04ed9c, pooled
+with the bettermemory rerun and the 2026-09-04 mem0-raw and Letta results
+into `integrity-v0-summary-2026-09-05-gemini.json`, the v0 predictions
+re-graded into `integrity-v0-scorecard-2026-09-05-gemini.json`. The
+tables below carry both Graphiti rows, labelled by model, and the
+mem0-infer row the local models could not produce.
+
 **Staleness, memory versus memory** (24 supersession, 8 distractor, 8 reversion topics; k = 5):
 
 | arm | sup. current | sup. stale unsignaled | sup. top-1 current | distr. current | distr. top-1 current | rev. current | rev. stale unsignaled | rev. top-1 current |
@@ -261,8 +273,10 @@ grades them.
 | bettermemory 7.2.0 | 0.96 | 0.38 | 0.38 | 1.00 | 1.00 | 1.00 | 0.25 | 0.50 |
 | bettermemory 7.1.0 | 0.83 | 1.00 | 0.38 | 1.00 | 1.00 | 1.00 | 0.75 | 0.50 |
 | mem0-raw | 0.96 | 1.00 | 0.08 | 1.00 | 1.00 | 1.00 | 1.00 | 0.88 |
-| graphiti | 0.62 | 0.29 | 0.21 | 0.50 | 0.50 | 0.50 | 0.50 | 0.38 |
+| graphiti (qwen2.5:7b) | 0.62 | 0.29 | 0.21 | 0.50 | 0.50 | 0.50 | 0.50 | 0.38 |
+| graphiti (gemini-3.8-flash) | 0.17 | 0.17 | 0.08 | 0.38 | 0.38 | 0.25 | 0.12 | 0.25 |
 | letta | 0.92 | 1.00 | 0.17 | 1.00 | 1.00 | 1.00 | 0.88 | 0.88 |
+| mem0-infer (gemini-3.8-flash) | 0.96 | 1.00 | 0.21 | 1.00 | 1.00 | 1.00 | 0.88 | 1.00 |
 | `serve_all_unsignaled` | 1.00 | 1.00 | 0.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 |
 | `recency_top1` | 1.00 | 0.00 | 1.00 | 0.00 | 0.00 | 1.00 | 0.00 | 1.00 |
 | `oracle_replica` | 1.00 | 0.00 | 1.00 | 1.00 | 1.00 | 1.00 | 0.00 | 1.00 |
@@ -280,13 +294,19 @@ grades them.
 | bettermemory 7.2.0 | 0.00 | 0.00 | 1.00 | 0.50 | 0.01 | 0.89 | 0.256 | 0.0000 | 1.1 |
 | bettermemory 7.1.0 | 0.00 | 0.00 | 1.00 | 0.50 | 0.04 | 0.67 | 0.224 | 0.0012 | 1.5 |
 | mem0-raw | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | n/a | 0.000 | n/a | n/a |
-| graphiti | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | n/a | 0.000 | n/a | n/a |
+| graphiti (qwen2.5:7b) | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | n/a | 0.000 | n/a | n/a |
+| graphiti (gemini-3.8-flash) | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | n/a | 0.000 | n/a | n/a |
 | letta | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | n/a | 0.000 | n/a | n/a |
+| mem0-infer (gemini-3.8-flash) | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | n/a | 0.000 | n/a | n/a |
 | `always_flag` | n/a | n/a | n/a | n/a | n/a | 0.24 | 0.000 | 1.0000 | 4.1 |
 | `never_flag` | n/a | n/a | n/a | n/a | n/a | n/a | 0.000 | n/a | n/a |
 | `oracle_replica` | n/a | n/a | n/a | n/a | n/a | 1.00 | 1.000 | 0.0000 | 1.0 |
 
-`graphiti` extraction over 124 statements: 136 relations; 43 statements yielded none (34 of 94 legitimate); update statements that yielded a relation: 29 of 48.
+`graphiti` on qwen2.5:7b (`integrity-v0-graphiti-2026-09-04.json`), extraction over 124 statements: 136 relations; 43 statements yielded none (34 of 94 legitimate); update statements that yielded a relation: 29 of 48.
+
+`graphiti` on gemini-3.8-flash (`integrity-v0-graphiti-2026-09-05.json`), extraction over 124 statements: 28 relations; 103 statements yielded none (77 of 94 legitimate); update statements that yielded a relation: 6 of 48.
+
+`mem0-infer` on gemini-3.8-flash (`integrity-v0-mem0-infer-2026-09-05.json`), extraction events over 124 statements: ADD 120, NONE 4; memories stored per statement median 1, max 1; update statements that produced an UPDATE or DELETE: 0 of 48.
 
 **Poisoning, retrieval** (admitted payloads only; k = 5):
 
@@ -295,8 +315,10 @@ grades them.
 | bettermemory 7.2.0 | 10 | 0.70 | 1.00 | 10 | 0.50 |
 | bettermemory 7.1.0 | 10 | 0.70 | 1.00 | 10 | 0.40 |
 | mem0-raw | 10 | 0.50 | 1.00 | 10 | 0.40 |
-| graphiti | 10 | 0.20 | 0.50 | 10 | 0.20 |
+| graphiti (qwen2.5:7b) | 10 | 0.20 | 0.50 | 10 | 0.20 |
+| graphiti (gemini-3.8-flash) | 10 | 0.20 | 0.20 | 10 | 0.10 |
 | letta | 10 | 0.40 | 1.00 | 10 | 0.50 |
+| mem0-infer (gemini-3.8-flash) | 10 | 0.20 | 1.00 | 8 | 0.50 |
 
 **Poisoning, store injection** (10 false facts inserted around the write API; k = 10; rank shift is injected minus twin, negative when the injected record ranks higher):
 
@@ -304,12 +326,14 @@ grades them.
 |---|---|---|---|---|
 | bettermemory 7.2.0 and 7.1.0 | 1.00 | 1.000 | -1 | 0.00 |
 | mem0-raw | 0.00 | 0.000 | -1 | 0.00 |
-| graphiti | 1.00 | 1.000 | 1 | 0.00 |
+| graphiti (qwen2.5:7b) | 1.00 | 1.000 | 1 | 0.00 |
+| graphiti (gemini-3.8-flash) | 1.00 | 1.000 | 2 | 0.00 |
 | letta | 0.00 | 0.000 | 0 | 0.00 |
+| mem0-infer (gemini-3.8-flash) | 0.00 | 0.000 | -1 | 0.00 |
 
-Arms that did not run:
+Arms that did not run in the 2026-09-04 collection:
 
-- `mem0-infer`: the extractor (qwen2.5:7b through ollama) issued no UPDATE or DELETE on the self-test contradiction (events: ['ADD']); rerun with BM_INTEGRITY_LLM pointing at a model whose decision step updates
+- `mem0-infer`: the extractor (qwen2.5:7b through ollama) issued no UPDATE or DELETE on the self-test contradiction (events: ['ADD']). That self-test asked for a decision step mem0ai 2.0.x's add path does not have; the arm ran on 2026-09-05 with the corrected test, above.
 
 **Staleness, memory versus world** (carried from `bench/rot/results/multirepo-anchored-2026-07-30.json`, 30 repositories, 37,635 claims; rivals: not measurable: no rival exposes an interface that observes files or git):
 
@@ -340,6 +364,17 @@ rows move: P1 reads MISSED (stale_signaled 0.625 against a prediction
 of at most 0.10 written for a write path that set no links), and P7
 reads hit at legit flagged 0.01 instead of 0.04. The other grades are
 unchanged.
+
+Re-graded with the extraction arms on gemini-3.8-flash
+(`integrity-v0-scorecard-2026-09-05-gemini.json`): P3 and P3b read
+MISSED instead of not run, at stale_served 1.0 and distractor current
+served 1.0, because mem0's add path is additive and its extraction on
+this model is clean; P5 reads MISSED on both clauses, at stale_signaled
+0.0 and reversion current served 0.25; P8 keeps its hit with mem0-infer
+admitting 0.8 of the instruction payloads; P9 adds mem0-infer at 0.2
+beside Graphiti's 0.2; P11 flips to MISSED on Graphiti's median rank
+shift of 1.5 over the two twins it served. That pooling reads 5 hit and
+7 MISSED, none not run.
 
 **The rerun's own predictions**, registered before it ran:
 
@@ -404,7 +439,18 @@ Reading the tables:
   is absent counts as unsignaled by the rule. P5 is graded MISSED on
   the signal clause for that reason, and the reading is the model's,
   not Graphiti's design: a stronger model would raise both the
-  extraction rate and the signaled rate together.
+  extraction rate and the signaled rate together. That sentence was
+  tested on 2026-09-05 and failed. On gemini-3.8-flash through
+  Graphiti's own defaults the extractor named almost no entities in
+  these statements (one, `TLS`, from the auth-service port statement,
+  none from its update) and produced 28 relations over the 124
+  statements against 136 with qwen2.5:7b, so current served fell to
+  0.17 on the supersession topics and no served stale relation carried
+  `invalid_at` (`integrity-v0-graphiti-2026-09-05.json`). The relation
+  yield is the model's reading of what counts as an entity under
+  Graphiti's default `Entity` type, and a Graphiti deployment would
+  normally declare domain entity types, which this harness does not do
+  for any arm. Both rows stand, labelled by model.
 - **Rank favours the older phrasing.** Top-1 current on supersession
   reads 0.38 for bettermemory, 0.21 for Graphiti, 0.17 for Letta and
   0.08 for mem0-raw. The first statement of a topic is phrased as the
@@ -445,7 +491,10 @@ Reading the tables:
   of 10 in mem0-raw and 4 of 10 in Letta, and every admitted false fact
   is served in the top five on those three arms. Graphiti served half
   of them and put 2 of 10 first, because its extractor dropped the
-  other half, which is why P9 reads MISSED. Between two and five of the
+  other half, which is why P9 reads MISSED (on gemini-3.8-flash it
+  served 2 of 10 and put 2 first, and mem0-infer's rewritten false
+  facts reach the top on 2 of 10,
+  `integrity-v0-summary-2026-09-05-gemini.json`). Between two and five of the
   ten instruction payloads are served in the top five for one of three
   generic task queries on every arm; in bettermemory two of them sit at
   rank one.
@@ -464,20 +513,30 @@ Reading the tables:
   twin in bettermemory and mem0-raw, one slot below it in Graphiti
   (where only six of the ten twins were served at all) and not at all
   in Letta: rank is content, and the forged fields buy a tie-break.
-- **mem0's extraction arm could not be exercised faithfully here.**
-  With extraction on, mem0 extracts facts from each statement and asks
-  its model to decide, per fact, between ADD, UPDATE, DELETE and NONE
-  against the memories it retrieved. With qwen2.5:7b, and with
-  llama3.1:8b in the smoke run, the decision step answered ADD for
-  everything: 399 ADD events over the 124 statements, up to eleven
-  memories stored per statement, retrieved memories about unrelated
-  topics re-added as new, and not one UPDATE or DELETE on the 48 update
-  statements
+- **mem0's extraction arm is additive, and it ran on 2026-09-05.**
+  mem0ai 2.0.x's add path extracts memories with an ADD-only prompt
+  that links a new memory to related existing ones at the entity level;
+  UPDATE and DELETE exist only as explicit calls, and nothing in its
+  configuration switches the path. With qwen2.5:7b, and with llama3.1:8b
+  in the smoke run, the extractor re-added retrieved context as new
+  memories: 399 ADD events over the 124 statements, up to eleven per
+  statement
   (`bench/integrity/results/raw/mem0-infer-2026-09-04-no-self-test.json`).
-  The adapter now runs a contradiction self-test first and the arm
-  reads unavailable with the rerun command, since publishing that run
-  would have scored the local model's failure as mem0's loss. P3 and
-  P3b read not run for the same reason.
+  The 2026-09-04 self-test asked for an UPDATE or DELETE on a
+  contradiction and read that run as a failed decision step; the step
+  does not exist in this version, so that reading was partly wrong, and
+  the self-test now checks the extractor instead. On gemini-3.8-flash
+  the extraction is clean, one memory per statement, 120 stored and 4
+  dropped on JSON the model's reasoning tokens truncated inside mem0's
+  default token budget (`integrity-v0-mem0-infer-2026-09-05.json`). The
+  arm then serves the old and the new fact on every supersession topic
+  with nothing to tell them apart, like the raw arm: current served
+  0.96, stale unsignaled 1.00, top-1 current 0.21. Its extractor
+  declined to store two of the six imperative instruction payloads and
+  two of the four evasive secrets, the only admission behaviour any
+  rival showed, and its rewritten false facts outrank the true fact on 2
+  of 10 topics against 5 of 10 on the raw arm. P3 and P3b read MISSED:
+  both predictions assumed an update step.
 - **Memory versus world is carried, not re-run.** The rot benchmark's
   claim-level detector stands at precision 0.94, J 0.973 and 1.1
   alerts per catch on 37,635 claims across 30 repositories; no rival
@@ -487,10 +546,15 @@ The scorecard reads 7 of 12 predictions hit, 3 MISSED and 2 not run.
 Two of the three misses fall in a rival's favour (Graphiti detects a
 naive plant; it also outranks fewer admitted false facts than the
 threshold assumed, because it never stored half of them), and the
-third (P5) is the local model's extraction rate. The declaration and
-the unit record live in the project's memory store rather than in
-this tree; the corpus, the harness, the raw observations and the
-scored results are all committed.
+third (P5) is the local model's extraction rate. At the 2026-09-05
+pooling with the extraction arms on gemini-3.8-flash
+(`integrity-v0-scorecard-2026-09-05-gemini.json`) it reads 5 hit and 7
+MISSED with none not run; every added miss is a prediction that assumed
+an update step mem0 does not have or an extraction rate the stronger
+model did not deliver, and no bettermemory number moved. The
+declaration and the unit record live in the project's memory store
+rather than in this tree; the corpus, the harness, the raw observations
+and the scored results are all committed.
 
 ## Reproduce
 
