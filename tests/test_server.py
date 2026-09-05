@@ -6348,7 +6348,7 @@ async def _lean_descriptions(tmp_path: Path) -> dict[str, str]:
 # The budget, as named constants: the failure text, the pressure warning and
 # the recorded measurement all read the same numbers, so none can drift from
 # what the assert enforces.
-_DESC_BUDGET_CEILING = 26_000
+_DESC_BUDGET_CEILING = 26_500
 # Soft line. Crossing it warns instead of failing, so the pressure is visible
 # to whoever caused it rather than only to whoever trips the ratchet later.
 _DESC_BUDGET_PRESSURE = _DESC_BUDGET_CEILING - 100
@@ -6503,7 +6503,12 @@ _DESC_BASELINE = {
     "memory_remove": 463,
     "memory_scope_disable": 231,
     "memory_scope_enable": 55,
-    "memory_scope_overview": 2820,
+    # Re-measured 2026-09-05 with the 26,500 recalibration (rule 2): the
+    # three rows below had moved across the 7.0.0 and 7.1.0 windows
+    # without this table following — the total stayed under the ceiling,
+    # so nothing asked for a re-measure — and their drift is what spent
+    # the slack the write-time supersession bullet then had to earn back.
+    "memory_scope_overview": 2819,
     "memory_search": 3444,
     "memory_show": 851,
     # Re-measured 2026-08-04: 2033 -> 1562 (-471). See the reclamation note
@@ -6522,8 +6527,8 @@ _DESC_BASELINE = {
     # Total lands at 25,857: 43 under the pressure line, no reclamation
     # spent — the slack the 2026-08-04 links-tail collapse bought is
     # what absorbed the feature.
-    "memory_update": 1594,
-    "memory_verify": 1810,
+    "memory_update": 1686,
+    "memory_verify": 1919,
     # Re-measured 2026-09-05 for write-time supersession: 2998 -> 3020
     # (+22 net). The `supersedes` parameter bullet and the `committed`
     # status clause cost 300; the rest of the description paid for them —
@@ -6636,13 +6641,23 @@ async def test_default_on_descriptions_fit_budget(tmp_path: Path) -> None:
     #             records the +238, and four published surfaces had to be
     #             corrected for the same snapshot. Then -> 25,749
     #             (memory_audit_turn's false clause) -> 25,890, measured
-    #             live 2026-08-02 and equal to `_DESC_BASELINE`'s sum.
+    #             live 2026-08-02 and equal to `_DESC_BASELINE`'s sum ->
+    #             25,985, measured live 2026-09-05 (write-time
+    #             supersession's `supersedes` bullet, net +22 on
+    #             memory_write after the trims recorded on its row, over
+    #             the +200 the memory_verify and memory_update rows had
+    #             drifted since 2026-08-04) and equal to the re-measured
+    #             `_DESC_BASELINE`'s sum.
     #   ceilings: 27,800 -> 27,100 (3.6.4 ratcheted the sweep in) -> 27,250
     #             (3.8.0, for one field-pin: the credential gate's
     #             `credential_warning` status and its `acknowledge_credential`
     #             override, added to DESC_MEMORY_WRITE symmetrically with the
-    #             existing transient pair) -> 27,500 -> `_DESC_BUDGET_CEILING`
-    #             (the footprint phase ratcheted the cuts in, rule 3).
+    #             existing transient pair) -> 27,500 -> 26,000 (the
+    #             footprint phase ratcheted the cuts in, rule 3) ->
+    #             `_DESC_BUDGET_CEILING` (2026-09-05, rule 2: the total
+    #             did not move in the commit, the baseline was re-measured
+    #             in it, and 26,500 is the next round number; the 26,000
+    #             ceiling had 15 characters of slack at 25,985).
     # Slack held deliberately constant across the last two recalibrations —
     # 452 chars at 27,500, 465 here (the same pre-follow-up snapshot as the
     # 25,535 above; 227 against the 25,773 that actually landed, and 110
