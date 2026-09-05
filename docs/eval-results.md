@@ -342,6 +342,15 @@ Arms that did not run in the 2026-09-04 collection:
 | file-level incumbent | 0.29 | 0.287 | 3.4 |
 | claim-level weak | 0.94 | 0.973 | 1.1 |
 
+**Commit drift, author-date against reachability** (carried from `bench/rot/results/multirepo-reachability-2026-09-05.json`, the same 30 repositories and 37,635 claims, the shipped `compute_commit_drift` on each axis for a memory stamped at t0's commit instant and read at t1; rivals: not measurable, as above):
+
+| arm | unflagged stale | precision | J | alerts/catch |
+|---|---|---|---|---|
+| author-date (through 7.3.0) | 324 of 8,627 (3.8%) | 0.29 | 0.256 | 3.5 |
+| reachability (7.4.0, `verified_head..HEAD`) | 0 of 8,627 | 0.29 | 0.288 | 3.4 |
+
+The 324 are dbt-core's, whose 180-day window holds 1,482 commits authored before t0 and merged inside it — the rebase workflow the author-date count cannot see. Twelve repositories hold such commits; in six of them the author-date arm reads zero on a claim the reachability arm counts (498 claims pooled: the 324 falsified ones, and 174 still true in setuptools, scipy, cffi, pytest and browser-use — file-level alerts on the reachability axis that the claim-level tier removes). The reachability arm reproduces the file-level incumbent's row to the digit, the check that the shipped range is the one the harness has always graded. P1 of the 7.4.0 unit — reachability J at least the author-date arm's, and at least one repository where the author-date arm reads zero on a claim the reachability arm counts — is a hit.
+
 **Scorecard** (pre-registered predictions, graded mechanically):
 
 |  | arm | prediction | observed | grade |
