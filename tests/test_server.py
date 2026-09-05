@@ -7163,10 +7163,20 @@ async def test_memory_proposals_accept_writes_memory_and_removes(
         proposal_id="p1",
         scopes=["learning-style"],
     )
-    assert res["status"] == "accepted"
-    assert res["category"] == "user-inference"
-    # Proposal consumed; a real memory now exists with that body.
+    # A user-inference accept from a session goes through the user's veto
+    # (7.3.0): the proposal leaves the queue at staging and the memory lands
+    # on confirm.
+    assert res["status"] == "pending"
+    assert res["pending_reason"] == "user-inference"
+    assert res["preview"]["category"] == "user-inference"
     assert ProposalQueue(memory_dir).load() == []
+    assert Store(memory_dir).load_all() == []
+    confirmed = await _call(
+        server, "memory_write_confirm", pending_id=res["pending_id"]
+    )
+    assert confirmed["status"] == "committed"
+    assert confirmed["category"] == "user-inference"
+    # Proposal consumed; a real memory now exists with that body.
     bodies = [m.body for m in Store(memory_dir).load_all()]
     assert any("terse explanations" in b for b in bodies)
 
