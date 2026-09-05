@@ -156,7 +156,11 @@ class BetterMemoryAdapter:
     name = "bettermemory"
 
     def __init__(self, scratch: Path) -> None:
-        self.scratch = Path(scratch)
+        # Resolved, because the guard in `reset` compares this root with
+        # the config's `resolved_directory()`, and a `tempfile.mkdtemp`
+        # path on macOS reaches the same store through a symlink
+        # (`/var` -> `/private/var`) that the config layer follows.
+        self.scratch = Path(scratch).resolve()
         self.root = self.scratch / "store"
         self._deps: Any = None
         self._loop: Any = None
