@@ -50,28 +50,6 @@ and an entry leaves this file when it lands there.
   before that are counted as not-replayable, never approximated, so
   the replay clauses read only exact evidence and "fewer changed
   turns" resolves as the declared hold.
-- **Write-time supersession.** The integrity benchmark v0
-  (`bench/integrity`, results in `docs/eval-results.md`) measured it:
-  on every supersession topic bettermemory serves the superseded value
-  in the top five with nothing to tell it apart, the same as a store
-  with no memory model at all, because `superseded_by` and
-  `contradicts` render only links a caller sets and no write path sets
-  one. The fix is at write time: detect that a new statement supersedes
-  a stored one about the same subject and attribute (the conflict
-  scan's polarity and numeric-divergence signals in `consolidate` are
-  the seed) and either set the `supersedes` link the read surfaces
-  already render or file the pair for `memory_conflicts`. The
-  benchmark's supersession row is the gate: `stale_unsignaled@5` below
-  the 1.00 that `serve_all_unsignaled` scores, with distractor
-  `current_served@5` held at 1.00, since `recency_top1` shows the
-  trivial rule fails every distractor.
-- **The transient marker "the new".** The same benchmark's admission
-  row refused three legitimate updates ("the new one", "the new SDK
-  release", "the new base image") on that marker, three of the write
-  path's four false alarms on 94 legitimate statements. A precision
-  item for `TRANSIENT_PHRASE_MARKERS` in `src/bettermemory/durability.py`,
-  gated on the benchmark's legit-flagged rate and on the existing
-  transient-gate tests.
 - **Cause provenance.** The 6.5.0 label says how a file entered the
   store, not what was in context when the model wrote it, so an
   injection-driven legitimate write reads `local`. A write-time record

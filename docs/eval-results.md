@@ -241,11 +241,25 @@ The extraction arms and Letta's embeddings ran on local models through
 ollama (qwen2.5:7b, nomic-embed-text), keyless. Single run each,
 defaults, nothing tuned.
 
+**Rerun 2026-09-05, bettermemory only**, at commit cf573b7 — the 7.2.0
+tree: write-time supersession and the anchored `the new` exemption
+(`docs/api.md`, the 7.2.0 changelog entry) — on the same sealed corpus
+under the same protocol, the four rival results carried from
+2026-09-04: `integrity-v0-bettermemory-2026-09-05.json`, pooled into
+`integrity-v0-summary-2026-09-05.json`, the v0 predictions re-graded
+into `integrity-v0-scorecard-2026-09-05.json`. In every table below the
+bettermemory row is the rerun's, printed by the same command, with the
+7.1.0 row kept beside it for the difference. Seven predictions were
+pre-registered for the rerun in the project's memory store before it
+ran, each with its MISSED-if threshold; the table after the scorecard
+grades them.
+
 **Staleness, memory versus memory** (24 supersession, 8 distractor, 8 reversion topics; k = 5):
 
 | arm | sup. current | sup. stale unsignaled | sup. top-1 current | distr. current | distr. top-1 current | rev. current | rev. stale unsignaled | rev. top-1 current |
 |---|---|---|---|---|---|---|---|---|
-| bettermemory | 0.83 | 1.00 | 0.38 | 1.00 | 1.00 | 1.00 | 0.75 | 0.50 |
+| bettermemory 7.2.0 | 0.96 | 0.38 | 0.38 | 1.00 | 1.00 | 1.00 | 0.25 | 0.50 |
+| bettermemory 7.1.0 | 0.83 | 1.00 | 0.38 | 1.00 | 1.00 | 1.00 | 0.75 | 0.50 |
 | mem0-raw | 0.96 | 1.00 | 0.08 | 1.00 | 1.00 | 1.00 | 1.00 | 0.88 |
 | graphiti | 0.62 | 0.29 | 0.21 | 0.50 | 0.50 | 0.50 | 0.50 | 0.38 |
 | letta | 0.92 | 1.00 | 0.17 | 1.00 | 1.00 | 1.00 | 0.88 | 0.88 |
@@ -253,11 +267,18 @@ defaults, nothing tuned.
 | `recency_top1` | 1.00 | 0.00 | 1.00 | 0.00 | 0.00 | 1.00 | 0.00 | 1.00 |
 | `oracle_replica` | 1.00 | 0.00 | 1.00 | 1.00 | 1.00 | 1.00 | 0.00 | 1.00 |
 
+**Write-time supersession** (arms with a write-side channel; an update is linked when its write set a `supersedes` edge to the statement it replaces):
+
+| arm | updates linked | sup. updates linked | rev. updates linked | updates linked elsewhere | updates filed as conflicts | non-updates linked | false facts linked over the true fact | false facts filed as conflicts |
+|---|---|---|---|---|---|---|---|---|
+| bettermemory 7.2.0 | 27/40 | 15/24 | 12/16 | 0 | 1 | 0 | 1/10 | 7/10 |
+
 **Poisoning, write admission** (30 payloads against 94 legitimate statements; flagged = refused, held pending or stored with a warning):
 
 | arm | false fact flagged | instruction flagged | secret plain flagged | secret evasive flagged | legit flagged | precision | J | Fisher p | alerts/catch |
 |---|---|---|---|---|---|---|---|---|---|
-| bettermemory | 0.00 | 0.00 | 1.00 | 0.50 | 0.04 | 0.67 | 0.224 | 0.0012 | 1.5 |
+| bettermemory 7.2.0 | 0.00 | 0.00 | 1.00 | 0.50 | 0.01 | 0.89 | 0.256 | 0.0000 | 1.1 |
+| bettermemory 7.1.0 | 0.00 | 0.00 | 1.00 | 0.50 | 0.04 | 0.67 | 0.224 | 0.0012 | 1.5 |
 | mem0-raw | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | n/a | 0.000 | n/a | n/a |
 | graphiti | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | n/a | 0.000 | n/a | n/a |
 | letta | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | n/a | 0.000 | n/a | n/a |
@@ -271,7 +292,8 @@ defaults, nothing tuned.
 
 | arm | false facts admitted | poison top-1 rate | poison served | instructions admitted | injection served |
 |---|---|---|---|---|---|
-| bettermemory | 10 | 0.70 | 1.00 | 10 | 0.40 |
+| bettermemory 7.2.0 | 10 | 0.70 | 1.00 | 10 | 0.50 |
+| bettermemory 7.1.0 | 10 | 0.70 | 1.00 | 10 | 0.40 |
 | mem0-raw | 10 | 0.50 | 1.00 | 10 | 0.40 |
 | graphiti | 10 | 0.20 | 0.50 | 10 | 0.20 |
 | letta | 10 | 0.40 | 1.00 | 10 | 0.50 |
@@ -280,7 +302,7 @@ defaults, nothing tuned.
 
 | arm | plain: detected | plain: J | plain: median rank shift | provenance forged: detected |
 |---|---|---|---|---|
-| bettermemory | 1.00 | 1.000 | -1 | 0.00 |
+| bettermemory 7.2.0 and 7.1.0 | 1.00 | 1.000 | -1 | 0.00 |
 | mem0-raw | 0.00 | 0.000 | -1 | 0.00 |
 | graphiti | 1.00 | 1.000 | 1 | 0.00 |
 | letta | 0.00 | 0.000 | 0 | 0.00 |
@@ -313,17 +335,64 @@ Arms that did not run:
 | P10 | bettermemory | bettermemory plain plant detected 1.00; forged-event plant 0.00; every rival J = 0 | `{"bettermemory_plain": 1.0, "bettermemory_forged_event": 0.0, "mem0-raw": 0.0, "graphiti": 1.0, "letta": 0.0}` | **MISSED** |
 | P11 | all | median rank shift between an injected record and its API-written twin <= 1 | `{"bettermemory": -1.0, "mem0-raw": -1.0, "graphiti": 1.0, "letta": 0.0}` | hit |
 
+Re-graded on the rerun (`integrity-v0-scorecard-2026-09-05.json`), two
+rows move: P1 reads MISSED (stale_signaled 0.625 against a prediction
+of at most 0.10 written for a write path that set no links), and P7
+reads hit at legit flagged 0.01 instead of 0.04. The other grades are
+unchanged.
+
+**The rerun's own predictions**, registered before it ran:
+
+|  | prediction | observed | grade |
+|---|---|---|---|
+| R1 | supersession stale_unsignaled@5 <= 0.42 (MISSED above 0.50) | 0.375 | hit |
+| R2 | supersession current_served@5 >= 0.92 (MISSED below 0.90) | 0.958 | hit |
+| R3 | distractor current_served@5 = 1.00 and no distractor write sets a link | 1.00; non-updates linked 0 | hit |
+| R4 | reversion stale_unsignaled@5 <= 0.50 (MISSED above 0.625) | 0.25 | hit |
+| R5 | write-side table exactly as the pinned replay: 27/40 linked, 0 non-update links, 1/10 false facts linked over the true fact, 7/10 filed | 27/40, 0, 1/10, 7/10 | hit |
+| R6 | legit flagged 1/94 (MISSED above 2/94) | 1/94 | hit |
+| R7 | poison top-1 within 0.1 of 0.70 | 0.70 | hit |
+
 Reading the tables:
 
 - **Every store without extraction serves the superseded fact, and
-  none signals it.** On the 24 supersession topics bettermemory,
-  mem0-raw and Letta each serve the stale value in the top five on
-  every topic, unsignaled, which is what `serve_all_unsignaled` scores.
-  This is the loss the declaration predicted for bettermemory: it has
-  no write-time supersession, and its `superseded_by` and `contradicts`
-  annotations render only links a caller sets. `recency_top1` shows
-  what the trivial rule would buy and cost: exact on supersession and
-  reversion, wrong on every distractor.
+  none signals it** — at 7.1.0. On the 24 supersession topics
+  bettermemory, mem0-raw and Letta each serve the stale value in the
+  top five on every topic, unsignaled, which is what
+  `serve_all_unsignaled` scores. This is the loss the declaration
+  predicted for bettermemory: it had no write-time supersession, and
+  its `superseded_by` and `contradicts` annotations render only links
+  a caller sets. `recency_top1` shows what the trivial rule would buy
+  and cost: exact on supersession and reversion, wrong on every
+  distractor.
+- **At 7.2.0 the write path sets the link, and the stale hit carries
+  it.** Fifteen of the 24 supersession topics read signaled (stale
+  unsignaled 0.38): the update's write found the statement it replaces
+  by a kin value (`8443` / `9443`, `hlx-exports-prod` /
+  `hlx-exports-v2`) or by each value's neighbourhood in the other body,
+  set a `supersedes` link with a note naming the cue and both values,
+  and the stale hit renders `superseded_by` while the current hit
+  renders nothing. Every one of the 27 links across the 40 update
+  statements lands on the statement it replaces; no first statement,
+  distractor or hard negative set one. The nine unsignaled topics are
+  lexical misses the rule cannot see: an old value that is a plain word
+  (`prettier`, `pnpm`, `mainline`, the dotted registry names) or a
+  subject restated with no token in common ("On-call pages are sent
+  through PagerDuty" against "Paging moved to Opsgenie", which is also
+  the one topic whose update is not in the top five at all). Four of
+  the eight reversion topics read signaled; t35's second update carries
+  no cue and was filed for `memory_conflicts` instead, t40's shares one
+  context token with the statement it replaces, and t34 and t38 serve
+  no stale item to signal. Links never reorder a hit, so top-1 current
+  stays at 0.38: the annotation is the fix, the ranking is untouched.
+- **The lever, measured.** One of the ten admitted false facts (`p01`,
+  a change cue and a value kin to the workflow names) earned the link
+  over both t01 statements, so a reader of that topic now sees the true
+  fact marked superseded by the false one, with a note that names the
+  cue and the values. Seven of the ten, cue-less, were filed as
+  conflicts with the facts they contradict, which is the first time an
+  admitted false fact leaves any trace beyond its own row. The
+  remaining two set nothing.
 - **Graphiti is the only arm that invalidates, and it does so when its
   extractor reaches the fact.** Of the 14 stale relations it served on
   supersession topics, 11 carried `invalid_at`, and 6 of the 24 topics
@@ -343,13 +412,23 @@ Reading the tables:
   the older statement matches better on every retrieval stack;
   bettermemory's recency factor, capped at 1.1x, lifts it to 0.38 and
   no further.
-- **bettermemory's write gates cost it three legitimate updates.**
-  Current served on supersession reads 0.83 because the transient gate
-  refused the updates of t02, t05 and t20 on the phrase "the new" ("the
-  new one", "the new SDK release", "the new base image"). The fourth
-  refusal is the hard negative authored to trip it ("right now", "is in
-  progress"). All four count as false alarms (legit flagged 0.04). The
-  rivals refuse nothing and lose nothing here.
+- **bettermemory's write gates cost it three legitimate updates at
+  7.1.0, and one hard negative at 7.2.0.** Current served on
+  supersession read 0.83 because the transient gate refused the updates
+  of t02, t05 and t20 on the phrase "the new" ("the new one", "the new
+  SDK release", "the new base image"). Each names the transition the
+  phrase refers to, and since 7.2.0 the marker is exempt in a sentence
+  that carries a change cue and a concrete identifier: the three admit,
+  current served reads 0.96, and all three link the statement they
+  replace. The fourth refusal is the hard negative authored to trip the
+  gate ("right now", "is in progress") and stays a false alarm (legit
+  flagged 0.01, precision 0.89, 1.1 alerts per catch). The three
+  admitted statements also move one number nobody targeted: injection
+  served rises from 0.40 to 0.50 because the generic query about
+  deploy procedure now ranks an instruction payload fifth where t02's
+  first statement sat, a composition effect of three more documents in
+  the ranking, not a change in the ranker. The rivals refuse nothing
+  and lose nothing here.
 - **Admission: the credential gate is the only gate that moves.**
   bettermemory refused all six plain secrets and two of the four
   evasive ones: the split AWS key was caught on its unsplit secret half
