@@ -7,6 +7,96 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 7.4.0 - 2026-09-05
+
+Commit drift counted in reachability space. The commit-drift leg
+counted the commits AUTHORED after `last_verified_at`, so a branch
+authored before a verify and merged after it counted zero: a memory
+read `clean` while the tree had changed under it, on exactly the merge
+workflows — squash, rebase, a long-lived branch — where the work that
+lands is older than the stamp. `memory_verify` now records the commit
+the origin checkout stands at as `verified_head`, and every drift
+surface counts the commits in `verified_head..HEAD` from it, falling
+back to the author-date count, labelled, for a record with no anchor or
+one a rewritten history no longer reaches. One index schema bump (v10),
+rebuilt on first use; one additive frontmatter field; no new parameter.
+
+### Added
+
+- `633a9f2` feat(models): verified_head, the commit a stamp was checked
+  at. `Memory.verified_head`, optional and additive
+  (`models.SCHEMA_VERSION` unchanged), written whole on every stamp by
+  `Store.mark_verified` and refused unless it is a full commit hash,
+  since the read side hands it to git as a revision; the loaders drop a
+  hand-written value that is not one. A body edit clears it with
+  `last_verified_at`, a tombstone keeps it and `Store.restore` can drop
+  it. Index schema 10 mirrors it in a `verified_head` column straight
+  off the record, never COALESCEd, so a curation pass can read every
+  anchor from one query.
+- `fe13a62` feat(origin): the reachable walk from a recorded anchor.
+  `commits_since_anchor` lists the commits in `<anchor>..HEAD` with the
+  paths each one changed, from one `git log --boundary --name-only`
+  process per distinct (root, anchor, head), memoised; the boundary
+  marks settle ancestry without a second process, and every failure
+  reads None so the caller keeps the author-date count.
+  `repo_toplevel_and_head` reads the root and the head from one
+  `rev-parse`, `head_sha` is what a stamp records and `commit_reachable`
+  is the restore re-check's question.
+- `06d4945` feat(verify): count commit drift in reachability space.
+  `compute_commit_drift` counts from `verified_head` when the record
+  carries one and the caller's HEAD still descends from it — the
+  anchored count read off the walk in Python, the claim-governed files
+  through the weak tier over the range's own patches — and every block
+  names its axis: `basis` on the `commit_drift` block and the health
+  rollup's rows, `commit_drift_basis` beside the search hit's count,
+  all through the one core `resolve_commit_drift`. The applicability
+  rules are unchanged; a range that touched no anchor pays the phantom
+  classification before it may read clean/0. The per-search cost keeps
+  the shape `2 + <hits that fork>`: the walk is paid once per distinct
+  anchor across the search.
+- `fc876fc` feat(verify): stamp the origin checkout's HEAD at
+  memory_verify. The handler reads the head of the memory's live origin
+  worktree (or the caller's checkout for a legacy record naming its
+  repository without a worktree); the response and the verify event
+  carry `verified_head`. `memory_restore` re-checks the anchor: when
+  the origin tree is live and its HEAD no longer descends from it, the
+  anchor is dropped and reported as `verified_head_dropped` while the
+  stamp stays.
+- `e56c974` feat(show): the record's verified_head on memory_show.
+
+### Measured
+
+- `c84ff3a` bench(rot): the author-date and reachability arms. Two
+  arms appended to `bench/rot`: the same claims, the same oracle, the
+  count from the shipped function on each axis for a memory stamped at
+  t0's commit instant and read at t1. `ffd745c` records the run on
+  the sealed 30-repository corpus
+  (`bench/rot/results/multirepo-reachability-2026-09-05.json`). P1 of
+  the unit is a hit — pooled Youden's J 0.2559 on the author-date arm
+  against 0.2875 on the reachability arm, the author-date arm
+  leaving 324 of the 8,627 falsified claims unflagged (3.8%, every one
+  in dbt-core, whose window holds 1,482 commits authored before t0 and
+  merged inside it) and the reachability arm none, at 3.4 alerts per
+  catch against 3.5; in six of the twelve repositories whose windows
+  hold such commits the author-date arm reads zero on a claim the
+  reachability arm counts (498 claims pooled). The reachability arm's
+  row equals the file-level incumbent's, and the incumbent detectors
+  and the seven published predictions reproduce the 2026-07-30 artifact
+  to the digit; `b2b5960` carries the table in `docs/eval-results.md`.
+- The integrity benchmark's extraction arms rerun on
+  google/gemini-3.8-flash, on main since 7.3.0: `7a0c707` the
+  extraction arms take a remote LLM endpoint, `b04ed9c` mem0's
+  extraction measured as the additive path it is, `9e3bd1e` and
+  `921421f` the eval notes and results, `34c2b3a` the rerun itself
+  (`docs/eval-results.md`).
+
+### Changed
+
+- The `memory_verify` description grows one sentence naming
+  `verified_head` and the basis the drift leg counts on from it (+191,
+  under the 26,500 ceiling; `22d4f19` carries the API, internals,
+  security and contributing notes).
+
 ## 7.3.0 - 2026-09-05
 
 The integrity lane's remaining hardening items after the 7.2.0
