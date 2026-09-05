@@ -7,6 +7,81 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 7.2.0 - 2026-09-05
+
+Write-time supersession, the integrity lane's first product change
+after the 7.1.0 benchmark measured the gap: on every supersession topic
+the store served the superseded value beside the current one with
+nothing to tell them apart, because `superseded_by` rendered only links
+a caller set and no write path set one. A claim-sized write that
+carries a change cue and diverges on a value from a stored claim about
+the same subject now gets a `supersedes` link to it, so the stale hit
+renders `superseded_by` and the current one renders nothing; the same
+divergence with no cue is filed for `memory_conflicts` instead of being
+guessed at. The rule is lexical and deterministic, was measured on the
+sealed corpus before it shipped, and the benchmark rerun on the shipped
+tree reads 0.38 stale unsignaled on the supersession topics against
+1.00 at 7.1.0, with distractors held at 1.00 and every link on the
+statement it replaces (`docs/eval-results.md`). The durability marker
+"the new" no longer refuses a sentence that names the transition it
+refers to, which returns the three updates the 7.1.0 run lost.
+`memory_write` takes `supersedes=[ids]` for a writer that knows what it
+replaces.
+
+### Added
+
+- `08608ce` feat(write): link an update to the claim it replaces at
+  write time. `bettermemory.supersession.detect_supersession` asks three
+  questions per stored memory — same subject (pairwise Jaccard at least
+  0.10), different value (a number, a joined compound, a proper noun or
+  the token after a change cue on each side that the other lacks), same
+  slot (kin values, or each value's neighbourhood present in the other
+  body) — and the write path sets the link with a note naming the cue
+  and both values, or files the cue-less pair (detector `value`,
+  `numeric` for two numbers). Both bodies must be single claims; five
+  links and five filings per write at most. `Store.write` takes `links`
+  so the record and its index rows land in one locked write; the direct
+  commit and `memory_write_confirm` share `_persist`;
+  `ConflictQueue.file_pair` queues one pair without collecting.
+  `[behavior] write_supersession` (default true) turns the detector off.
+  Pinned in `tests/test_supersession.py`: 27 of the corpus's 40 update
+  statements link to the statement each replaces, one cue-less reversion
+  is filed, nothing false fires, and a 339-memory live store yields no
+  decision. A false fact with a change cue and a kin value earns the link
+  over the true fact; `SECURITY.md` records the lever, the event log
+  carries every detector-set link under `supersedes_detected`, and
+  `memory_update(links=[])` clears one.
+- `02a509b` bench(integrity): the write-side supersession table. The
+  adapter declares the channel and captures the `supersedes` and
+  `conflicts_filed` rows a write returns; `score.supersession_table`
+  reads them off the adds and the renderer prints the table after the
+  staleness one. Corpus and predictions untouched. `cf573b7` resolves
+  the adapter's scratch root before the store guard compares it, so a
+  `collect` without `--scratch` runs on macOS.
+
+### Fixed
+
+- `e09f51f` fix(durability): anchor "the new" to a named transition. A
+  lowercase `the new` whose sentence carries a change cue and a concrete
+  identifier (a number, a proper noun, a compound with a digit or three
+  parts) is anchored and no longer fires; "The new schema replaces the
+  old layout" keeps firing. A dot between digits is a version, not a
+  sentence end. Live override rate 0.16 over 21 fires when it landed.
+
+### Measured
+
+- The bettermemory arm rerun at cf573b7 on the sealed v0 corpus
+  (`bench/integrity/results/integrity-v0-bettermemory-2026-09-05.json`,
+  the summary and the re-graded scorecard beside it): supersession
+  stale unsignaled 0.38 (1.00 at 7.1.0), current served 0.96 (0.83),
+  reversion stale unsignaled 0.25 (0.75), distractors 1.00; 27 of 40
+  updates linked to the statement they replace, none elsewhere, no
+  first statement, distractor or hard negative linked; one of ten false
+  facts linked over the true fact and seven filed as conflicts; legit
+  flagged 0.01 (0.04); poison top-1 0.70 unchanged. Seven predictions
+  pre-registered for the rerun all hit. The v0 prediction P1, written
+  for a write path that set no links, now reads MISSED by construction.
+
 ## 7.1.0 - 2026-09-04
 
 The integrity benchmark v0, the measure step of the integrity lane
