@@ -1008,13 +1008,21 @@ def test_the_basis_arms_part_on_a_branch_authored_before_t0(tmp_path: Path) -> N
     _commit_dated(
         tmp_path, "src/mod.py", "X = 1\n", "base", "2025-01-01T00:00:00+00:00"
     )
+    # `_git_repo` inits without `--initial-branch`, so the trunk is whatever
+    # the host's git defaults to (`master` on the runners); read it back.
+    trunk = subprocess.run(
+        ["git", "-C", str(tmp_path), "rev-parse", "--abbrev-ref", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
     subprocess.run(
         ["git", "-C", str(tmp_path), "checkout", "-q", "-b", "feat"], check=True
     )
     _commit_dated(
         tmp_path, "src/mod.py", "X = 2\n", "old feature", "2025-01-02T00:00:00+00:00"
     )
-    subprocess.run(["git", "-C", str(tmp_path), "checkout", "-q", "main"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "checkout", "-q", trunk], check=True)
     t0 = _commit_dated(
         tmp_path, "src/other.py", "Y = 1\n", "main work", "2025-02-01T00:00:00+00:00"
     )

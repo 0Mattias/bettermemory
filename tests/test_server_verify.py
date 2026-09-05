@@ -327,8 +327,14 @@ async def test_the_stamp_records_the_origin_checkouts_head(
     assert event["verified_head"] == head
 
     (root / "notes.md").write_text("moved on\n", encoding="utf-8")
+    # The runners carry no git identity: both halves, every commit.
     env = os.environ.copy()
-    env.update(GIT_COMMITTER_NAME="Test", GIT_COMMITTER_EMAIL="test@example.com")
+    env.update(
+        GIT_AUTHOR_NAME="Test",
+        GIT_AUTHOR_EMAIL="test@example.com",
+        GIT_COMMITTER_NAME="Test",
+        GIT_COMMITTER_EMAIL="test@example.com",
+    )
     subprocess.run(
         ["git", "commit", "-q", "-am", "later"], cwd=root, check=True, env=env
     )

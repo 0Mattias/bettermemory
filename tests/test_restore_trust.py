@@ -277,7 +277,12 @@ async def test_an_anchor_the_origin_tree_no_longer_resolves_is_dropped(
     mid = _seed_anchored(store, root, head)
     stamp = store.load_tombstone(mid).last_verified_at
     env = os.environ.copy()
-    env.update(GIT_COMMITTER_NAME="Test", GIT_COMMITTER_EMAIL="test@example.com")
+    env.update(
+        GIT_AUTHOR_NAME="Test",
+        GIT_AUTHOR_EMAIL="test@example.com",
+        GIT_COMMITTER_NAME="Test",
+        GIT_COMMITTER_EMAIL="test@example.com",
+    )
     subprocess.run(
         ["git", "commit", "-q", "--amend", "-m", "anchor, rewritten"],
         cwd=root,
