@@ -171,6 +171,11 @@ async def memory_show(
         "verified_versions": list(memory.verified_versions),
         "verified_absent_paths": list(memory.verified_absent_paths),
         "claims": list(memory.claims),
+        # The stamp's commit anchor, beside the attestations it was
+        # stamped with; `null` on a record verified without a checkout
+        # or before the field existed (the `commit_drift` block's
+        # `basis` says which count that record gets).
+        "verified_head": memory.verified_head,
         **index_reads,
     }
     # The trust rule (6.6.0), applied to the assembled response and

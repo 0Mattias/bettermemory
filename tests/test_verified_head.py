@@ -194,6 +194,20 @@ def test_a_tombstone_carries_the_anchor_and_a_restore_can_drop_it(
     assert dropped.last_verified_at is not None
 
 
+async def test_memory_show_carries_the_anchor_beside_the_attestations(
+    memory_dir: Path,
+) -> None:
+    store = Store(memory_dir)
+    memory = _seed(store)
+    server = _build(memory_dir)
+    shown = await _call(server, "memory_show", id=memory.id)
+    assert shown["verified_head"] is None
+    store.mark_verified(memory.id, verified_head=_SHA)
+    shown = await _call(server, "memory_show", id=memory.id)
+    assert shown["verified_head"] == _SHA
+    assert shown["last_verified_at"] is not None
+
+
 def test_the_index_row_mirrors_the_anchor_and_a_rebuild_reads_it_back(
     memory_dir: Path,
 ) -> None:
