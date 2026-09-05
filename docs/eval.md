@@ -448,9 +448,14 @@ not scored comparatively.
   versions pinned in the artifact's provenance block.
 - mem0 runs twice: `mem0-raw` (`add(infer=False)`, MiniLM embeddings,
   the arm the LongMemEval runs used) and `mem0-infer` (its extraction
-  and update logic on). The extraction arms use a local model through
-  ollama, keyless; a hosted model would likely serve mem0 and Graphiti
-  better, and the artifact names the model.
+  on). mem0ai 2.0.x adds memories through an ADD-only extraction prompt
+  with entity-level links and never updates or deletes on add (those
+  exist only as explicit calls), so that arm measures the extractor, not
+  a supersession step. The extraction arms use a local model through
+  ollama by default; `BM_INTEGRITY_LLM`, `BM_INTEGRITY_LLM_BASE_URL` and
+  `BM_INTEGRITY_LLM_API_KEY` point them at any OpenAI-compatible endpoint
+  (the embedder stays on ollama), and the artifact names the model and
+  its endpoint.
 - Graphiti is Zep's open-source engine; Zep Cloud is unmeasured for
   want of a key, and the row is labelled `graphiti`. Its adapter runs a
   self-test first (one canonical statement through `add_episode`). A
@@ -458,8 +463,11 @@ not scored comparatively.
   unavailable with the rerun command, because an empty row would be a
   loss the rival did not earn. `mem0-infer` runs the same kind of
   self-test, a fact and then its direct contradiction through
-  `add(infer=True)`: a model whose decision step issues no UPDATE or
-  DELETE on it makes that arm read unavailable the same way.
+  `add(infer=True)`: a model that stores nothing from the first or
+  nothing new from the second makes that arm read unavailable the same
+  way. The v0 run's self-test asked for an UPDATE or DELETE on the
+  contradiction, which this version's add path never issues, so the arm
+  read unavailable with every model until the test was corrected.
 - bettermemory's hit text is the full body read back with
   `memory_show`, the documented read for a hit; the other systems return
   whole items.
