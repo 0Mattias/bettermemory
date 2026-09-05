@@ -7,6 +7,64 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 7.3.0 - 2026-09-05
+
+The integrity lane's remaining hardening items after the 7.2.0
+supersession release, the four the 2026-09-01 recon ranked fifth to
+eighth: a verify stamp now has to name what it checked, a user-inference
+proposal accepted by the model goes through the user's veto, a restored
+tombstone comes back without the trust it cannot re-prove, and every
+memory file carries content evidence that a change made outside the
+store is detectable and survives a reindex. No ranking change and no
+new tool; one index schema bump (v9), rebuilt on first use.
+
+### Added
+
+- `ff72a3e` feat(index): content evidence for a file changed outside
+  the store. `_atomic_write_post` returns the SHA-256 of the bytes it
+  writes and every store path that writes an active file records it
+  beside the index row (schema v9, `content_sha256`); `migrate` stamps
+  its own rewrites. The rebuild computes each file's hash and, for a
+  file no pull brought down whose bytes no longer match the recorded
+  one, keeps the recorded hash, so the mismatch survives `bettermemory
+  reindex` and a tokenizer drop through the `content_sha_carry` stash.
+  `bettermemory doctor` gains `memory_content_evidence`, which names
+  the files that changed with no store write behind the change and
+  counts unanchored rows rather than judging them. Detect-only and
+  single-machine; `SECURITY.md` says what it does and does not defend.
+- `7042ed1` feat(verify): refuse a stamp that names nothing it checked.
+  A `memory_verify` that attests no paths, attests no absence and
+  declares no claims — and preserves none from the record — is refused
+  on a memory whose cited paths resolve (an absolute citation that
+  exists here, a relative one anchored in the memory's live worktree),
+  with the resolved citations listed, repo-relative under the worktree,
+  as the list to attest. A memory with no resolving citation keeps the
+  no-arg re-verify; an explicit `[]` on every list is a clear, not
+  evidence.
+- `cfe36a5` feat(proposals): stage a user-inference accept for the
+  user's veto. `memory_proposals(action="accept")` on a `user-inference`
+  proposal stages the write through the session's pending machinery
+  and answers `pending` with a `pending_id`; `memory_write_confirm`
+  commits it and `memory_write_cancel` drops it. The CLI's accept still
+  commits directly, the human typing it being the confirmation. The
+  staged accept records a `memory_proposals` event with `status:
+  pending` and no memory id; the provenance join skips it.
+- `70694bc` feat(restore): re-check a tombstone's trust on the way
+  back. `memory_restore` and `bettermemory tombstones restore` judge the
+  tombstone the way the verify handler judges a stored record: a claim
+  the origin tree now contradicts or an attested path that no longer
+  exists is dropped under the restore's own lock and `last_verified_at`
+  cleared with it, reported under `trust_stripped` and on the `restore`
+  event. A restore that strips nothing preserves the stamp as before.
+
+### Changed
+
+- `7fd3b4d` test(server): recalibrate the description ceiling to
+  26,500 with the total unchanged at 25,985 and the per-tool baseline
+  re-measured, per the budget test's own rule for a raise; the
+  `memory_verify` description then grew 122 for the refusal's one
+  sentence, under the new ceiling.
+
 ## 7.2.0 - 2026-09-05
 
 Write-time supersession, the integrity lane's first product change
