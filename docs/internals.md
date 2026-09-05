@@ -14,12 +14,28 @@ What the model acts on, as it appears on a search hit:
   "relevance": "high",
   "staleness_verdict": "spot_check_recommended",
   "path_drift": { "missing": ["src/auth/middleware.py"] },  // file moved
-  "commit_drift_count": 12   // commits since the fact was last verified
+  "commit_drift_count": 12,  // commits since the fact was last verified
+  "commit_drift_basis": "reachability"  // counted in verified_head..HEAD
 }
 ```
 
 The model repoints the path with `memory_update`, attests the rest
 with `memory_verify`, and answers from the corrected memory.
+
+The commit count has two bases and says which it used (7.4.0).
+`memory_verify` records the origin checkout's HEAD on the record as
+`verified_head`; the leg then counts the commits in
+`verified_head..HEAD` that touch the memory's anchors
+(`basis: "reachability"`) — one `git log --boundary --name-only` walk
+per distinct anchor and HEAD, memoised, the anchored count read off the
+walk in Python. A record with no anchor (verified before 7.4.0, or from
+a checkout with no HEAD) or one whose anchor a rewritten history no
+longer reaches keeps the older count, the commits authored after
+`last_verified_at` (`basis: "author-date"`). The difference is a merge:
+a branch authored before the stamp and merged after it is inside the
+range and outside the author-date window, so the author-date count
+reads zero on exactly the work that landed. `bench/rot`'s two basis
+arms measure that gap on the corpus.
 
 The verdict's accuracy is measured, not asserted:
 `bench/rot` grades the shipped staleness code

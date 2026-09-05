@@ -66,12 +66,6 @@ and an entry leaves this file when it lands there.
   user-claim gates by hand because `find_similar` takes no exclusion
   id, so the dedup gates would score an edited body against the
   record's own stored copy and report it as its own duplicate.
-- **Commit-drift counting in reachability space.** The commit-drift leg
-  counts in author-date space, so a branch authored before a verify and
-  merged after it counts zero: a silent false-fresh on merge workflows.
-  The fix records the HEAD sha at verify and counts
-  `rev-list <anchor>..HEAD` (`verify.py`, `origin.py`); it wants its
-  own unit, since the index and every verify surface take the anchor.
 - **Event-time on the memory record.** Every timestamp on `Memory`
   (`created`, `updated`, `last_verified_at`, `last_corroborated`) is
   storage time; nothing represents when a fact is *about*, or when it
