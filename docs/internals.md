@@ -72,6 +72,12 @@ declared claims on `memory_write` / `memory_verify` (3.40.0).
   state), credential check (rejects secret-shaped tokens), duplicate
   and tombstone dedup, scope-mismatch check, optional groundedness
   check against the source transcript.
+- Write-time supersession (`supersession.py`): a claim-sized write that
+  carries a change cue and diverges on a value from a stored claim about
+  the same subject gets a `supersedes` link to it, so the stale hit
+  renders `superseded_by`; the same divergence with no cue is filed for
+  `memory_conflicts`. Lexical and deterministic, measured on the
+  integrity benchmark's sealed corpus before it shipped.
 - Usage telemetry: `memory_record_use` logs which sentence of a reply
   each memory shaped; a turn-end probe flags retrievals the model
   should have made but didn't; `memory_health` and `memory_curate`
@@ -92,7 +98,9 @@ declared claims on `memory_write` / `memory_verify` (3.40.0).
   (bench/retrieval), net-negative on conversational ones
   (bench/longmemeval carries the kill and the ablations).
 - Typed inter-memory links (`supersedes`, `contradicts`, `extends`,
-  `depends_on`), surfaced as trust signals at retrieval.
+  `depends_on`), surfaced as trust signals at retrieval; `supersedes`
+  is also set by the write path (declared or detected), `contradicts`
+  by a `memory_conflicts` verdict.
 - Auto-scoping by repo and worktree; explicit cross-project queries.
 - Episodes: a sibling journal tier for run-state that never pollutes
   durable search, with promotion when a takeaway hardens into a fact.

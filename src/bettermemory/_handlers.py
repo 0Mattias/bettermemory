@@ -425,6 +425,7 @@ class ToolHandlers:
         groundedness_check: bool = False,
         source_transcript: str | None = None,
         claims: list[str] | None = None,
+        supersedes: list[str] | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         return await _handlers_pkg.memory_write(
@@ -443,6 +444,7 @@ class ToolHandlers:
             groundedness_check=groundedness_check,
             source_transcript=source_transcript,
             claims=claims,
+            supersedes=supersedes,
             ctx=ctx,
         )
 

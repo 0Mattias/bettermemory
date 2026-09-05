@@ -39,12 +39,13 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
+from ..conflicts import ConflictCandidate, ConflictQueue, _pair_id
 from ..credentials import find_credential_markers
 from ..durability import find_transient_markers
-from ..models import Category, SimilarHit
+from ..models import Category, Memory, SimilarHit, is_valid_ulid, snippet_for, utcnow
 from ..proposals import (
     _HARD_WRAP_RE,
     _LIST_PREFIX_RE,
@@ -59,6 +60,8 @@ from ..scope_match import (
 )
 from ..search import find_similar, find_similar_tombstones
 from ..session import GATE_FLAG_KEYS, PendingWrite, SessionState
+from ..store import MemoryNotFoundError, TombstonedError
+from ..supersession import SupersessionMatch, detect_supersession
 from ._shared import (
     Context,
     _AMBIENT_LONG_BODY_WORDS,
@@ -84,14 +87,13 @@ log = logging.getLogger("bettermemory.handlers.write")
 
 DESC_MEMORY_WRITE = (
     "Create a new memory. Call PROACTIVELY when something durable "
-    "enters the conversation — aggressive writing is safe; the "
-    "guardrails below catch bad writes. Trigger→category mapping: "
-    "the server `instructions` block.\n\n"
+    "enters the conversation — aggressive writing is safe; the gates "
+    "below catch bad writes.\n\n"
     "Parameters:\n"
     "- `content`: the memory body.\n"
     "- `scopes`: non-empty list. Avoid the catch-all 'general'; "
     "prefer narrow tags like `tools`, `infrastructure`, "
-    "`projects:<name>`, `learning-style`.\n"
+    "`projects:<name>`.\n"
     "- `category` (default 'fact'): one of `fact`, "
     "`user-inference`, `ambient`.\n"
     "  - `fact`: project / infra / reference / tooling. Commits "
@@ -101,10 +103,10 @@ DESC_MEMORY_WRITE = (
     "the user in plain language, then memory_write_confirm or "
     "memory_write_cancel. Misattribution sticks; user gets the "
     "veto.\n"
-    "  - `ambient`: atmospheric context that shapes replies "
-    "without being cited. Commits like fact but excluded from "
-    "dead-weight curation; long bodies (>500 words) attach a "
-    "non-blocking `ambient_body_long` warning.\n"
+    "  - `ambient`: context that shapes replies without being "
+    "cited. Commits like fact, excluded from dead-weight curation; "
+    "a body over 500 words gets a non-blocking `ambient_body_long` "
+    "warning.\n"
     "- `confidence` ('low' / 'medium' / 'high'), `source` "
     "('explicit-statement' / 'inferred').\n"
     "- `claims` (optional): claims the body makes about this repo — "
@@ -115,20 +117,24 @@ DESC_MEMORY_WRITE = (
     "- `groundedness_check=True` + `source_transcript`: optional "
     "gate. Sentences with <30% token overlap to the transcript "
     "return {status:'ungrounded', claims:[…]}. Override via "
-    "`acknowledge_ungrounded=True` when you have grounding sources "
-    "outside the transcript (file reads, tool results). Off by "
-    "default; opt in for a paper trail.\n\n"
+    "`acknowledge_ungrounded=True` when grounding came from outside "
+    "the transcript (file reads, tool results).\n"
+    "- `supersedes` (optional): ids of active memories this write "
+    "replaces (each gets a `supersedes` link, `superseded_by` on the "
+    "stale hit). Also set unasked when a claim-sized body updates a "
+    "stored claim — a change cue plus a diverging value; with no cue "
+    "the pair is filed for memory_conflicts.\n\n"
     "Return statuses:\n"
-    "- `committed` — write succeeded; payload carries the new id "
-    "and `related` medium-overlap matches.\n"
+    "- `committed` — write succeeded; payload carries the new id, "
+    "`related` matches, and any `supersedes` / `conflicts_filed` "
+    "rows.\n"
     "- `duplicate` — content dedup fired; the matched memory is "
     "credited a corroboration (`corroboration_recorded: true`, once "
-    "per session) — recurrence is evidence; the `hint` carries the "
-    "remedy.\n"
+    "per session); the `hint` carries the remedy.\n"
     "- `transient_warning` / `credential_warning` / "
-    "`previously_removed` / `scope_mismatch` — gate rejects. Each "
-    "returns what matched and a `hint` carrying the remedy "
-    "and its `acknowledge_*` / `force=True` override.\n"
+    "`previously_removed` / `scope_mismatch` — gate rejects; each "
+    "returns what matched and a `hint` with the remedy and its "
+    "`acknowledge_*` / `force=True` override.\n"
     "- `user_claim_warning` — the body reads as a claim ABOUT THE "
     "USER but `category` isn't `user-inference`. Re-issue as that "
     "(the user gets the veto) or pass `acknowledge_user_claim=True` "
@@ -136,13 +142,11 @@ DESC_MEMORY_WRITE = (
     "- `pending` — `category='user-inference'` or "
     "`require_write_confirmation`. `pending_reason` distinguishes.\n"
     "- `ungrounded` — groundedness gate fired.\n\n"
-    "A `committed` or `memory_write_confirm` response may inline a "
-    "one-shot per-session `curation_hint` block when "
-    "`dead_weight + drifted + cold_endorsement_memories` pressure "
-    "crosses the configured threshold. Shape: `{pressure, threshold, "
-    "counts: {dead_weight, drifted, cold_endorsement_memories}, "
-    "message}`. Passive notification — call `memory_health` for "
-    "full buckets, `memory_remove` / `memory_verify` to resolve."
+    "A `committed` or confirm response may carry a one-shot per-session "
+    "`curation_hint` block (`{pressure, threshold, counts, message}`) "
+    "when curation pressure (`dead_weight + drifted + "
+    "cold_endorsement_memories`) crosses the configured threshold; "
+    "`memory_health` has the full buckets."
 )
 
 
@@ -206,6 +210,10 @@ class GateContext:
     user_claim_hits: list[Any] = None  # type: ignore[assignment]
     related: list[SimilarHit] = None  # type: ignore[assignment]
     removed_related: list[SimilarHit] = None  # type: ignore[assignment]
+    # The active set `DedupActiveGate` loaded, kept so the persist step's
+    # supersession detection reads the same snapshot instead of paying a
+    # second `load_all`. None when the gate did not run (`force=True`).
+    active_snapshot: list[Memory] | None = None
 
     def __post_init__(self) -> None:
         if self.credential_hits is None:
@@ -568,10 +576,9 @@ class DedupActiveGate(WriteGate):
     def evaluate(self, deps: "GateDeps", gc: GateContext) -> GateResult:
         if gc.force:
             return Continue()
-        similar = find_similar(
-            gc.payload["content"],
-            deps.store.load_all(),
-        )
+        existing = deps.store.load_all()
+        gc.active_snapshot = existing
+        similar = find_similar(gc.payload["content"], existing)
         high = [h for h in similar if h.relevance == "high"]
         if high:
             return Reject(
@@ -968,6 +975,7 @@ async def memory_write(
     groundedness_check: bool = False,
     source_transcript: str | None = None,
     claims: list[str] | None = None,
+    supersedes: list[str] | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Validate the payload, run the gate chain, and either commit or
@@ -1011,6 +1019,13 @@ async def memory_write(
             worktree_root=origin.worktree_root if origin else None,
             surface="memory_write",
         )
+
+    # A declared `supersedes` list is checked here, ahead of the gates,
+    # for the same reason claims are: a target that is not an active
+    # memory is a defect the writer can only fix now, and the link dicts
+    # ride the payload through staging so a confirm sets them unchanged.
+    if supersedes:
+        payload["links"] = _validate_declared_supersedes(deps, supersedes)
 
     gc = GateContext(
         payload=payload,
@@ -1092,6 +1107,7 @@ async def memory_write(
         acknowledged=acknowledged,
         credentials_acknowledged=credentials_acknowledged,
         user_claims_acknowledged=user_claims_acknowledged,
+        active_snapshot=gc.active_snapshot,
     )
     _maybe_attach_curation_hint(response, deps, state)
     return response
@@ -1167,6 +1183,196 @@ def _stage_pending(
     return response
 
 
+# ---------------------------------------------------------------------------
+# Write-time supersession
+# ---------------------------------------------------------------------------
+
+
+# A writer consolidating several stale notes into one may name them all;
+# the detector's own cap (`supersession.MAX_LINKS_PER_WRITE`) is lower
+# because it has no such intent to read.
+MAX_DECLARED_SUPERSEDES = 16
+
+_CONFLICTS_FILED_HINT = (
+    "Each pair under `conflicts_filed` disagrees with this write on a value "
+    "and nothing in the body says which side is current. memory_conflicts "
+    "lists them; confirm or dismiss there."
+)
+
+
+@dataclass
+class SupersessionOutcome:
+    """What the persist step did about supersession, for the event and
+    the response. `declared` holds the targets the writer named in
+    `supersedes=`; `detected` the matches `supersession.detect_supersession`
+    linked on its own; `conflicts` the `(pair id, match)` rows filed for
+    `memory_conflicts`."""
+
+    declared: list[str] = field(default_factory=list)
+    detected: list[SupersessionMatch] = field(default_factory=list)
+    conflicts: list[tuple[str, SupersessionMatch]] = field(default_factory=list)
+
+    def event_fields(self) -> dict[str, Any]:
+        """Conditional, so a write that set nothing keeps the event's
+        shape. `supersedes` is every target linked; `supersedes_detected`
+        the subset the detector chose on its own, which is the telemetry
+        a detector-set link removed by a later `memory_update(links=[])`
+        is judged against."""
+        out: dict[str, Any] = {}
+        if self.declared or self.detected:
+            out["supersedes"] = self.declared + [m.memory_id for m in self.detected]
+        if self.detected:
+            out["supersedes_detected"] = [m.memory_id for m in self.detected]
+        if self.conflicts:
+            out["conflicts_filed"] = [pair_id for pair_id, _ in self.conflicts]
+        return out
+
+    def response_fields(self) -> dict[str, Any]:
+        rows = [{"id": target, "evidence": "declared"} for target in self.declared]
+        rows += [_match_row(m) for m in self.detected]
+        out: dict[str, Any] = {}
+        if rows:
+            out["supersedes"] = rows
+        if self.conflicts:
+            out["conflicts_filed"] = [
+                {"pair_id": pair_id, **_match_row(m)} for pair_id, m in self.conflicts
+            ]
+            out["hint"] = _CONFLICTS_FILED_HINT
+        return out
+
+
+def _match_row(match: SupersessionMatch) -> dict[str, Any]:
+    row: dict[str, Any] = {
+        "id": match.memory_id,
+        "summary": match.summary,
+        "evidence": match.evidence,
+        "new_value": match.new_value,
+        "old_value": match.old_value,
+    }
+    if match.cue is not None:
+        row["cue"] = match.cue
+    return row
+
+
+def _validate_declared_supersedes(
+    deps: "ToolHandlers", ids: Any
+) -> list[dict[str, Any]]:
+    """The writer's `supersedes=` list as link dicts for the payload.
+
+    Each id must be a ULID naming an ACTIVE memory: a declared edge to a
+    tombstone or a typo would render nothing and sit in the frontmatter
+    unread, so it is refused at the one moment the writer can fix it.
+    Dicts rather than `MemoryLink`s because the pending-write sidecar is
+    JSON and stages the payload as-is; `Store.write` validates them.
+    """
+    if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
+        raise ValueError("supersedes must be a list of memory ids")
+    unique: list[str] = []
+    for memory_id in ids:
+        if memory_id not in unique:
+            unique.append(memory_id)
+    if len(unique) > MAX_DECLARED_SUPERSEDES:
+        raise ValueError(
+            f"supersedes lists at most {MAX_DECLARED_SUPERSEDES} ids (got {len(unique)})"
+        )
+    links: list[dict[str, Any]] = []
+    for memory_id in unique:
+        if not is_valid_ulid(memory_id):
+            raise ValueError(f"supersedes entry {memory_id!r} is not a memory id")
+        try:
+            deps.store.load_one(memory_id)
+        except (MemoryNotFoundError, TombstonedError) as exc:
+            raise ValueError(
+                f"supersedes entry {memory_id!r} is not an active memory: {exc}"
+            ) from exc
+        links.append(
+            {
+                "type": "supersedes",
+                "target_id": memory_id,
+                "note": "declared at write time",
+            }
+        )
+    return links
+
+
+def _persist(
+    deps: "ToolHandlers",
+    payload: dict[str, Any],
+    *,
+    active_snapshot: list[Memory] | None = None,
+) -> tuple[Memory, SupersessionOutcome]:
+    """Detect supersession, write the record with its links in one locked
+    write, file the cue-less disagreements. Shared by the direct commit
+    and the confirm path so the two cannot drift on what a write sets.
+
+    `active_snapshot` is the `load_all` the dedup gate already paid for
+    on the direct path; the confirm path has none and loads. A target
+    the writer declared is excluded from detection. `OSError` from the
+    write propagates so each caller can name its own remedy.
+    """
+    payload = dict(payload)
+    declared_links = list(payload.pop("links", None) or [])
+    declared_ids = [str(link["target_id"]) for link in declared_links]
+    detected: list[SupersessionMatch] = []
+    disagreements: list[SupersessionMatch] = []
+    if deps.config.behavior.write_supersession:
+        existing = (
+            active_snapshot if active_snapshot is not None else deps.store.load_all()
+        )
+        report = detect_supersession(
+            payload["content"], existing, exclude_ids=declared_ids
+        )
+        detected, disagreements = report.supersedes, report.conflicts
+    links = declared_links + [
+        {"type": "supersedes", "target_id": m.memory_id, "note": m.note()}
+        for m in detected
+    ]
+    memory = deps.store.write(**payload, links=links)
+    return memory, SupersessionOutcome(
+        declared=declared_ids,
+        detected=detected,
+        conflicts=_file_conflicts(deps, memory, disagreements),
+    )
+
+
+def _file_conflicts(
+    deps: "ToolHandlers", memory: Memory, matches: list[SupersessionMatch]
+) -> list[tuple[str, SupersessionMatch]]:
+    """Queue each cue-less disagreement for `memory_conflicts`.
+    Best-effort by contract: the memory is already on disk, and a
+    queue-file failure must not turn a committed write into an error —
+    it logs, and the response omits the pair."""
+    if not matches:
+        return []
+    queue = ConflictQueue(deps.store.root)
+    created = utcnow().isoformat()
+    filed: list[tuple[str, SupersessionMatch]] = []
+    for match in matches:
+        candidate = ConflictCandidate(
+            id=_pair_id(memory.id, match.memory_id),
+            a_id=memory.id,
+            b_id=match.memory_id,
+            summary_a=snippet_for(memory.body, max_chars=100),
+            summary_b=match.summary,
+            similarity=match.similarity,
+            method="jaccard",
+            detector=match.detector(),
+            created=created,
+        )
+        try:
+            queue.file_pair(candidate)
+        except OSError as exc:
+            log.warning(
+                "conflict filing for %s / %s failed: %s",
+                memory.id,
+                match.memory_id,
+                exc,
+            )
+            continue
+        filed.append((candidate.id, match))
+    return filed
+
+
 def _commit_write(
     deps: "ToolHandlers",
     *,
@@ -1177,13 +1383,14 @@ def _commit_write(
     acknowledged: list[str],
     credentials_acknowledged: list[str],
     user_claims_acknowledged: list[str],
+    active_snapshot: list[Memory] | None = None,
 ) -> dict[str, Any]:
     """Persist the memory, record the commit event, return the
     committed response. Surfaces the ambient long-body warning as a
     non-blocking advisory when applicable."""
     category_enum: Category = payload["category"]
     try:
-        memory = deps.store.write(**payload)
+        memory, supersession = _persist(deps, payload, active_snapshot=active_snapshot)
     except OSError as exc:
         # Disk-level failure (ENOSPC/EIO/EACCES) in the durable write.
         # Translate to ValueError so the MCP boundary returns a clean
@@ -1217,12 +1424,14 @@ def _commit_write(
         # declared, which is the only telemetry the backfill pass and a
         # future coverage measurement can be built from.
         **({"claims": list(memory.claims)} if memory.claims else {}),
+        **supersession.event_fields(),
     )
     return deps.responses.committed(
         memory,
         related=related,
         removed_related=removed_related,
         warnings=warnings,
+        **supersession.response_fields(),
     )
 
 
@@ -1341,7 +1550,7 @@ async def memory_write_confirm(
     # pop, the caller's confirm still refers to the write it asked about.
     state.take_pending(pending_id)
     try:
-        memory = deps.store.write(**pending.payload)
+        memory, supersession = _persist(deps, pending.payload)
     except OSError as exc:
         # Disk-level failure after the staged write was consumed a few lines
         # above. Translate to a clean ValueError at the MCP boundary instead
@@ -1386,8 +1595,9 @@ async def memory_write_confirm(
         id=memory.id,
         scopes=memory.scopes,
         episode_id=promoted_episode_id,
+        **supersession.event_fields(),
     )
-    response = deps.responses.committed(memory)
+    response = deps.responses.committed(memory, **supersession.response_fields())
     _maybe_attach_curation_hint(response, deps, state)
     return response
 

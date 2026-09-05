@@ -377,6 +377,7 @@ def test_handlers_write_direct_import() -> None:
         ("groundedness_check", False),
         ("source_transcript", None),
         ("claims", None),
+        ("supersedes", None),
         ("ctx", None),
     ]
     confirm_cancel_expected = [

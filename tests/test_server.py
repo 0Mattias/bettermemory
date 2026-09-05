@@ -6524,7 +6524,17 @@ _DESC_BASELINE = {
     # what absorbed the feature.
     "memory_update": 1594,
     "memory_verify": 1810,
-    "memory_write": 2998,
+    # Re-measured 2026-09-05 for write-time supersession: 2998 -> 3020
+    # (+22 net). The `supersedes` parameter bullet and the `committed`
+    # status clause cost 300; the rest of the description paid for them —
+    # the trigger→category pointer (the `instructions` block is resident
+    # anyway), a scope example, the curation-hint shape restated as its
+    # one-line form, and four connective phrases. The ceiling had 37
+    # characters of slack before the feature, spent by rows that drifted
+    # after the last recalibration (memory_verify +109, memory_update
+    # +92 against this table); those are re-measured with the next
+    # ceiling recalibration, not here.
+    "memory_write": 3020,
     "memory_write_cancel": 216,
     "memory_write_confirm": 515,
 }

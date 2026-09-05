@@ -131,6 +131,19 @@ outcome_demotion = false
 # record itself.
 corroboration_boost = false
 
+# Write-time supersession. When a claim-sized memory_write carries a
+# change cue (moved, switched, renamed, raised, no longer, the previous,
+# ...) and diverges on a value from a stored claim about the same
+# subject, the new memory gets a `supersedes` link to the stored one,
+# which memory_search renders as `superseded_by` on the stale hit and
+# on nothing else. The same divergence with no cue files the pair for
+# memory_conflicts instead of guessing which side is current. Measured
+# on bench/integrity's sealed corpus: 27 of the 40 update statements
+# link to the statement they replace and nothing links a distractor,
+# a hard negative or a cross-topic pair (docs/eval-results.md). Set
+# false to leave links to the writer's explicit `supersedes=` list.
+write_supersession = true
+
 # Score-gated recall at prompt time. The plugin's UserPromptSubmit hook
 # probes every submitted prompt with the SAME predicate the Stop hook's
 # silent-miss audit uses (same pool, ranker, threshold, shields); where
@@ -418,6 +431,15 @@ class BehaviorConfig:
     # Recurrence-fed ranking nudge (bounded ≤ +10%) reading the persisted
     # `corroborations` rollup. Opt-in — see DEFAULT_CONFIG.
     corroboration_boost: bool = False
+    # Write-time supersession (`supersession.detect_supersession`): a
+    # claim-sized write that carries a change cue and diverges on a value
+    # from a stored claim about the same subject gets a `supersedes` link
+    # to it; the same divergence without a cue files the pair for
+    # memory_conflicts. Default ON — the link is annotation only (never
+    # reorders a hit) and the rule set nothing false on the benchmark
+    # corpus or the maintainer's store. False leaves links to the
+    # writer's explicit `supersedes=` parameter.
+    write_supersession: bool = True
     # Score-gated recall at prompt time (`hook.run_prompt_recall`,
     # wired to the plugin's UserPromptSubmit hook). Default ON — the
     # delivery is gated by the silent-miss predicate itself (v1 top-1
@@ -1134,6 +1156,9 @@ def load_config(path: Path | None = None) -> Config:
             outcome_demotion=_coerce_bool(behavior_raw.get("outcome_demotion"), False),
             corroboration_boost=_coerce_bool(
                 behavior_raw.get("corroboration_boost"), False
+            ),
+            write_supersession=_coerce_bool(
+                behavior_raw.get("write_supersession"), True
             ),
             prompt_recall=_coerce_bool(behavior_raw.get("prompt_recall"), True),
             recall_in_project=_coerce_bool(behavior_raw.get("recall_in_project"), True),

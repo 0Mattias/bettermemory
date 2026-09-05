@@ -142,9 +142,13 @@ def _pair_id(a_id: str, b_id: str) -> str:
 class ConflictCandidate:
     """One suspected memory-vs-memory contradiction awaiting (or past)
     judgment. `detector` says WHY the pair was flagged: ``"polarity"``
-    (negation flip between near-identical bodies) or ``"numeric"``
+    (negation flip between near-identical bodies), ``"numeric"``
     (near-identical bodies whose number-bearing tokens diverge — ports,
-    versions, dates).
+    versions, dates), or ``"value"`` (filed by `memory_write` when the
+    new body and a stored claim share a subject and diverge on a value
+    with no change cue to say which is current — see `supersession`;
+    that path labels a pair of numbers ``"numeric"`` too, so a port or
+    version pair reads the same whichever producer queued it).
 
     `verdict_hash_a` / `verdict_hash_b` are `_body_hash` of each member
     as the verdict judged it — the resurrect rule's key on a dismissed
@@ -329,6 +333,28 @@ class ConflictQueue:
 
     def pending(self) -> list[ConflictCandidate]:
         return [c for c in self.load() if c.status == "pending"]
+
+    def file_pair(self, cand: ConflictCandidate) -> str:
+        """Queue one pair found at write time, without collecting.
+
+        The write path detects a disagreement between the body it just
+        persisted and one stored claim (`supersession.detect_supersession`,
+        with no change cue to say which side is current) and files it
+        here, so `memory_conflicts` lists it the way a scan's candidates
+        are listed and the model rules on it the same way. A single-pair
+        upsert cannot rule on liveness — that takes the full snapshot
+        `upsert_scan` demands — so it drops nothing, and it never
+        overwrites a verdict: an existing row keeps its status, and the
+        return value says which. A new pair lands `pending`, which is
+        the only case a freshly minted id can produce.
+        """
+        with flock_excl(self.path):
+            current = self.load()
+            for row in current:
+                if row.id == cand.id:
+                    return row.status
+            self._write_all_locked(current + [cand])
+            return cand.status
 
     def upsert_scan(
         self,

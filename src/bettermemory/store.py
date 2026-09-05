@@ -415,8 +415,17 @@ class Store:
         origin: Origin | None = None,
         category: Category | None = None,
         claims: list[str] | None = None,
+        links: list[Any] | None = None,
     ) -> Memory:
         """Create a new memory. Generates ID, slug, filename.
+
+        `links` are the record's outbound edges at birth — `MemoryLink`
+        instances or their `{type, target_id, note}` dicts (the staged
+        pending-write payload carries dicts, being JSON). The write path
+        sets `supersedes` edges here rather than through a second
+        `update` so the record and its index rows land in one locked
+        write. Validated by the `Memory` constructor like every other
+        field; a self-link is impossible because the id is minted below.
 
         `category` is persisted on the record. Legacy callers that don't
         pass it land with `category=None`, which the runtime treats as
@@ -440,6 +449,12 @@ class Store:
             origin=origin,
             category=category,
             claims=list(claims) if claims else [],
+            links=[
+                entry
+                if isinstance(entry, MemoryLink)
+                else MemoryLink.model_validate(entry)
+                for entry in (links or [])
+            ],
         )
         path = self._path_for(memory)
         with _locked(path):

@@ -369,8 +369,17 @@ class ResponseBuilder:
         related: list[SimilarHit] | None = None,
         removed_related: list[SimilarHit] | None = None,
         warnings: list[str] | None = None,
+        supersedes: list[dict[str, Any]] | None = None,
+        conflicts_filed: list[dict[str, Any]] | None = None,
+        hint: str | None = None,
     ) -> dict[str, Any]:
         """Serialise a freshly-written Memory into the tool response shape.
+
+        `supersedes` and `conflicts_filed` are the write-time supersession
+        rows the handler rendered (`handlers.write.SupersessionOutcome`):
+        the stored memories this record now supersedes, and the pairs
+        filed for `memory_conflicts`. `hint` rides with the latter and
+        names the remedy. All three are omitted when empty.
 
         `related` carries any medium-overlap matches that didn't block the
         write — surfaced so the caller can still consider memory_update on a
@@ -408,6 +417,12 @@ class ResponseBuilder:
             out["removed_related"] = [self.similar_to_dict(h) for h in removed_related]
         if warnings:
             out["warnings"] = list(warnings)
+        if supersedes:
+            out["supersedes"] = list(supersedes)
+        if conflicts_filed:
+            out["conflicts_filed"] = list(conflicts_filed)
+        if hint:
+            out["hint"] = hint
         return out
 
     # ---- minor row shapes ----------------------------------------------

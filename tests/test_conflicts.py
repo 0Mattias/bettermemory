@@ -307,10 +307,10 @@ def memory_dir(tmp_path: Path) -> Path:
     return tmp_path / "memories"
 
 
-def _build(memory_dir: Path) -> Any:
+def _build(memory_dir: Path, **behavior: Any) -> Any:
     cfg = Config(
         storage=StorageConfig(directory=str(memory_dir)),
-        behavior=BehaviorConfig(full_tool_surface=True),
+        behavior=BehaviorConfig(full_tool_surface=True, **behavior),
     )
     state = SessionState()
     rec = Recorder(root=memory_dir, session_id=state.session_id, enabled=True)
@@ -362,8 +362,12 @@ async def test_e2e_scan_list_and_confirm_contradiction(memory_dir: Path) -> None
     server = _build(memory_dir)
     a_id, b_id = await _seed_conflicting_pair(server)
 
+    # The forced write filed the pair itself — write-time supersession
+    # reads a cue-less numeric divergence as a conflict — so the scan
+    # finds it queued and refreshes it rather than adding it.
     res = _unwrap(await _call(server, "memory_conflicts", scan=True))
-    assert res["scan"]["added"] == 1
+    assert res["scan"]["added"] == 0
+    assert res["scan"]["refreshed"] == 1
     assert res["pending_total"] == 1
     row = res["pending"][0]
     assert {row["a"]["id"], row["b"]["id"]} == {a_id, b_id}
@@ -551,7 +555,9 @@ async def test_scope_overview_conflicts_delta_excludes_dead_member_rows(
     curation, so a phantom there costs a whole prompted pass that finds
     nothing.
     """
-    session_a = _build(memory_dir)
+    # Write-time supersession off in session A: with it on, the forced
+    # write files the pair itself and the candidate predates session B.
+    session_a = _build(memory_dir, write_supersession=False)
     await _seed_conflicting_pair(session_a)
 
     # Second session: detection runs now, so the candidate's `created`
@@ -1003,8 +1009,9 @@ async def test_e2e_compatible_verdict_is_recorded_in_the_event_log(
 
 async def test_e2e_applying_curate_feeds_queue(memory_dir: Path) -> None:
     """The Stop-hook / memory_curate apply path persists conflict-shaped
-    skips automatically; dry-run stays side-effect free."""
-    server = _build(memory_dir)
+    skips automatically; dry-run stays side-effect free. Write-time
+    supersession is off so the seed write does not file the pair first."""
+    server = _build(memory_dir, write_supersession=False)
     await _seed_conflicting_pair(server)
 
     await _call(server, "memory_curate", dry_run=True)

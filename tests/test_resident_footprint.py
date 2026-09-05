@@ -364,6 +364,11 @@ _LANDED_PARAMS: tuple[tuple[str, str], ...] = (
     # exhausted: the remainder ceiling moved 7,500 -> 8,000 in the same
     # commit (the paragraph above that literal).
     ("episode_handoff", "include_bodies"),
+    # Landed 2026-09-05 with write-time supersession: `memory_write`
+    # takes the ids a write replaces. Measured 99 on the served schema —
+    # the `ids`-shaped list price, like `episode_search.ids`. Drawn from
+    # the standing headroom (7,589 of 8,000 before it landed).
+    ("memory_write", "supersedes"),
 )
 # Re-derived post-scrub: the three measure 203 together (60 + 51 + 92),
 # down from 275, because pydantic's generated `title` was between a third
@@ -386,7 +391,11 @@ _LANDED_PARAMS: tuple[tuple[str, str], ...] = (
 # RE-DERIVED 2026-09-04, 270 -> 325: the set grew again.
 # `episode_handoff.include_bodies` landed and measured 52, so the five now
 # cost 315 (60 + 51 + 92 + 60 + 52); rounded up by the same ~3%.
-_LANDED_PARAM_BUDGET = 325
+#
+# RE-DERIVED 2026-09-05, 325 -> 430: `memory_write.supersedes` landed and
+# measured 99, so the six now cost 414 (60 + 51 + 92 + 60 + 52 + 99);
+# rounded up by the same ~3%.
+_LANDED_PARAM_BUDGET = 430
 # Soft line: crossing it warns instead of failing, so the pressure is
 # visible to whoever caused it. Set one `ids`-shaped parameter (the widest
 # measured) below the ceiling — crossing it means the next parameter does
