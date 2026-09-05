@@ -214,10 +214,13 @@ def _cli_tombstones_restore(
 
     from ..store import MemoryNotFoundError, NotTombstonedError
 
+    from ..handlers.restore import restore_with_trust_check
+
     ctx = cli_context()
     store = ctx.store
     try:
-        memory = store.restore(memory_id)
+        # The same trust re-check the `memory_restore` MCP tool runs.
+        memory, strip = restore_with_trust_check(store, memory_id)
     except (MemoryNotFoundError, NotTombstonedError, ValueError, OSError) as exc:
         if parser is not None:
             parser.error(str(exc))
@@ -230,18 +233,22 @@ def _cli_tombstones_restore(
         "restore",
         id=memory.id,
         scopes=list(memory.scopes),
+        **strip.event_fields(),
     )
 
     if json_out:
-        sys.stdout.write(
-            _json.dumps(
-                {"id": memory.id, "scopes": memory.scopes},
-                indent=2,
-            )
-            + "\n"
-        )
+        payload: dict[str, Any] = {"id": memory.id, "scopes": memory.scopes}
+        if strip.any:
+            payload["trust_stripped"] = strip.to_dict()
+        sys.stdout.write(_json.dumps(payload, indent=2) + "\n")
         return
     sys.stdout.write(f"Restored {memory.id} [{','.join(memory.scopes)}]\n")
+    if strip.any:
+        sys.stdout.write(
+            f"  dropped {len(strip.claims)} claim(s) and "
+            f"{len(strip.verified_paths)} attested path(s) that no longer hold; "
+            "verification cleared\n"
+        )
 
 
 def _cli_tombstones_prune(

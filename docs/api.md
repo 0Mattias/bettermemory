@@ -142,7 +142,7 @@ Two producers set `supersedes` links without a `memory_update`: the `supersedes`
 
 - `id: str`. Must reference a tombstone.
 
-Strips removal frontmatter; preserves `created`, `updated`, `last_verified_at`.
+Strips removal frontmatter; preserves `created` and `updated`. The trust fields are re-checked on the way back (7.3.0), the way `memory_verify` checks a stored record before it re-stamps one: a stored claim the origin worktree now contradicts, or an attested `verified_paths` entry that no longer exists here, is dropped, and `last_verified_at` is cleared whenever anything was — the stamp asserted the whole record, and the record that comes back is not the one that was verified. Scoping matches the verify handler's: claims and relative attestations are judged only against a live origin worktree, absolute attestations always. A restore that strips something carries `trust_stripped: {claims, verified_paths, verification_cleared}` and a `hint`; the `restore` event carries `claims_dropped`, `attestations_dropped` and `verification_cleared`. `bettermemory tombstones restore` runs the same check. A restore that strips nothing preserves `last_verified_at` as before.
 
 Failure surface (W7, since 3.2.1). The handler translates `MemoryNotFoundError`, `NotTombstonedError`, and bare `OSError` from the store layer into `ValueError` at the MCP boundary — a structured callers-of-MCP boundary error rather than a leaked store-layer exception. A failed restore arrives in one of two message shapes:
 

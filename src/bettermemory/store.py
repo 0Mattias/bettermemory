@@ -7,6 +7,8 @@ objects and get them back.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 import contextlib
 import errno
 import logging as _logging
@@ -1324,9 +1326,24 @@ class Store:
 
     # ---- restore ---------------------------------------------------------
 
-    def restore(self, memory_id: str) -> Memory:
+    def restore(
+        self,
+        memory_id: str,
+        *,
+        drop_claims: Iterable[str] = (),
+        drop_verified_paths: Iterable[str] = (),
+        clear_verification: bool = False,
+    ) -> Memory:
         """Move a tombstone back to the active set, stripping removal
-        frontmatter. The body and timestamps are preserved as-is — the
+        frontmatter — and, when the caller says so, the trust the record
+        could not re-prove: `drop_claims` and `drop_verified_paths` name
+        stored entries to leave behind and `clear_verification` drops
+        `last_verified_at`. Judging them is the handler's job
+        (`handlers.restore.trust_strip_for`); this primitive applies the
+        drops under the same lock as the write, so the record never
+        exists active with a field its restorer judged false.
+
+        The body and timestamps are preserved as-is — the
         body didn't change while it was tombstoned, and bumping
         `updated` on restore would let a freshly-restored ten-year-old
         memory rank like a new write in the recency boost.
@@ -1432,6 +1449,22 @@ class Store:
             post.metadata.pop("removed", None)
             post.metadata.pop("removed_reason", None)
             post.metadata.pop("removed_session", None)
+            if drop_claims:
+                gone = set(drop_claims)
+                post.metadata["claims"] = [
+                    c
+                    for c in _load_str_list(post.metadata.get("claims"))
+                    if c not in gone
+                ]
+            if drop_verified_paths:
+                gone = set(drop_verified_paths)
+                post.metadata["verified_paths"] = [
+                    v
+                    for v in _load_str_list(post.metadata.get("verified_paths"))
+                    if v not in gone
+                ]
+            if clear_verification:
+                post.metadata.pop("last_verified_at", None)
 
             # Mirror `_path_for`'s always-suffix discipline so the restore
             # lands at the same shape a fresh `write()` would produce —
