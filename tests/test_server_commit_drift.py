@@ -1717,3 +1717,475 @@ async def test_a_sha_citing_fresh_memory_reads_fresh_on_both_surfaces(
         "route is a leg added only to ResponseBuilder."
         "attach_commit_drift_counts, which this equality exists to catch."
     )
+
+
+# ---------------------------------------------------------------------------
+# Reachability space — the count from the stamp's recorded HEAD
+# ---------------------------------------------------------------------------
+
+
+def _git_env(when: datetime) -> dict[str, str]:
+    iso = when.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    env = os.environ.copy()
+    env.update(
+        GIT_AUTHOR_DATE=iso,
+        GIT_COMMITTER_DATE=iso,
+        GIT_AUTHOR_NAME="Test",
+        GIT_AUTHOR_EMAIL="test@example.com",
+        GIT_COMMITTER_NAME="Test",
+        GIT_COMMITTER_EMAIL="test@example.com",
+    )
+    return env
+
+
+def _head(repo: Path) -> str:
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def _branch_authored_before_the_anchor(
+    repo: Path, *, filename: str = "notes.md"
+) -> str:
+    """The shape the author-date count misses. Returns the anchor.
+
+        * after       (other.md)         2025-03-02
+        *   merge feat                   2025-03-01
+        |\\
+        | * old feature (<filename>)     2025-01-02   <- authored BEFORE
+        * | main work  (other.md)        2025-02-01   <- the ANCHOR
+        |/
+        * base        (<filename>)       2025-01-01
+
+    The caller stamps the memory at the anchor (verified NOW, so every
+    author date here predates the stamp) and merges afterwards with
+    `_merge_feature`. Between the two calls the branch exists but is not
+    reachable from main.
+    """
+    _commit_touching(
+        repo, "base", when=datetime(2025, 1, 1, tzinfo=timezone.utc), filename=filename
+    )
+    subprocess.run(["git", "checkout", "-q", "-b", "feat"], cwd=repo, check=True)
+    _commit_touching(
+        repo,
+        "old feature",
+        when=datetime(2025, 1, 2, tzinfo=timezone.utc),
+        filename=filename,
+    )
+    subprocess.run(["git", "checkout", "-q", "main"], cwd=repo, check=True)
+    _commit_touching(
+        repo,
+        "main work",
+        when=datetime(2025, 2, 1, tzinfo=timezone.utc),
+        filename="other.md",
+    )
+    return _head(repo)
+
+
+def _merge_feature(repo: Path) -> None:
+    subprocess.run(
+        ["git", "merge", "-q", "--no-ff", "feat", "-m", "merge feat"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        env=_git_env(datetime(2025, 3, 1, tzinfo=timezone.utc)),
+    )
+    _commit_touching(
+        repo,
+        "after",
+        when=datetime(2025, 3, 2, tzinfo=timezone.utc),
+        filename="other.md",
+    )
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+async def test_a_branch_authored_before_the_stamp_and_merged_after_it_counts(
+    server_with_fake_origin, memory_dir: Path, tmp_path: Path
+) -> None:
+    """The defect the anchor exists for, on every surface at once.
+
+    Two memories cite the same file. One is stamped WITH the checkout's
+    HEAD recorded, one without. A branch authored before either stamp is
+    then merged: in reachability space the branch's commit is inside
+    ``anchor..HEAD`` and touches the cited file, so the anchored memory
+    reads drift 1 on memory_show, on the search hit, in the health
+    rollup and in the curation count — every block naming the basis.
+    The unanchored memory reads the author-date count, zero, and says so:
+    the fallback is labelled, never silent.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    anchor = _branch_authored_before_the_anchor(repo)
+
+    origin = Origin(cwd=str(repo), repo=_REMOTE, branch="main")
+    server = server_with_fake_origin(origin)
+    store = Store(memory_dir)
+
+    anchored = await _call(
+        server,
+        "memory_write",
+        content="durable thing about widgets in notes.md",
+        scopes=["tools"],
+    )
+    unanchored = await _call(
+        server,
+        "memory_write",
+        content="durable widgets lore also in notes.md",
+        scopes=["tools"],
+    )
+    untethered = await _call(
+        server,
+        "memory_write",
+        content="durable widgets preference with no path at all",
+        scopes=["tools"],
+    )
+    store.mark_verified(anchored["id"], verified_head=anchor)
+    store.mark_verified(unanchored["id"])
+    store.mark_verified(untethered["id"])
+
+    _merge_feature(repo)
+
+    show_count, search_count, health_count = await _drift_counts_for(
+        server, anchored["id"]
+    )
+    assert (show_count, search_count, health_count) == (1, 1, 1)
+    shown = await _call(server, "memory_show", id=anchored["id"])
+    assert shown["commit_drift"]["status"] == "drift"
+    assert shown["commit_drift"]["basis"] == "reachability"
+    assert shown["staleness_verdict"] == "spot_check_recommended"
+
+    show_count, search_count, health_count = await _drift_counts_for(
+        server, unanchored["id"]
+    )
+    assert (show_count, search_count, health_count) == (0, 0, 0)
+    shown = await _call(server, "memory_show", id=unanchored["id"])
+    assert shown["commit_drift"]["status"] == "clean"
+    assert shown["commit_drift"]["basis"] == "author-date"
+
+    raw = await _call(
+        server, "memory_search", query="widgets durable", expand_top=False
+    )
+    by_id = {hit["id"]: hit for hit in _unwrap(raw)}
+    assert by_id[anchored["id"]]["commit_drift_basis"] == "reachability"
+    assert by_id[unanchored["id"]]["commit_drift_basis"] == "author-date"
+    assert "commit_drift_count" not in by_id[untethered["id"]]
+    assert "commit_drift_basis" not in by_id[untethered["id"]]
+
+    report = await _call(server, "memory_health")
+    rows = {r["id"]: r for r in report["commit_drift_debt"]["rows"]}
+    assert set(rows) == {anchored["id"]}
+    assert rows[anchored["id"]]["basis"] == "reachability"
+    overview = await _call(server, "memory_scope_overview")
+    assert overview["curation_pending"]["drifted"] == 1
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+async def test_a_rewritten_anchor_falls_back_to_the_author_date_count(
+    server_with_fake_origin, memory_dir: Path, tmp_path: Path
+) -> None:
+    """An anchor HEAD no longer descends from (the stamped commit was
+    amended away) is not a range anyone can count; the author-date
+    count stands, labelled, and the three surfaces still agree."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    _commit_touching(repo, "anchor", when=datetime(2025, 1, 1, tzinfo=timezone.utc))
+
+    origin = Origin(cwd=str(repo), repo=_REMOTE, branch="main")
+    server = server_with_fake_origin(origin)
+    written = await _call(
+        server,
+        "memory_write",
+        content="durable thing about widgets in notes.md",
+        scopes=["tools"],
+    )
+    Store(memory_dir).mark_verified(written["id"], verified_head=_head(repo))
+
+    subprocess.run(
+        ["git", "commit", "--amend", "-q", "-m", "anchor, rewritten"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        env=_git_env(datetime(2025, 1, 1, tzinfo=timezone.utc)),
+    )
+    _commit_touching(repo, "post", when=datetime(2099, 1, 1, tzinfo=timezone.utc))
+
+    show_count, search_count, health_count = await _drift_counts_for(
+        server, written["id"]
+    )
+    assert (show_count, search_count, health_count) == (1, 1, 1)
+    shown = await _call(server, "memory_show", id=written["id"])
+    assert shown["commit_drift"]["basis"] == "author-date"
+    raw = await _call(
+        server, "memory_search", query="widgets durable", expand_top=False
+    )
+    hit = next(h for h in _unwrap(raw) if h["id"] == written["id"])
+    assert hit["commit_drift_basis"] == "author-date"
+    report = await _call(server, "memory_health")
+    row = next(
+        r for r in report["commit_drift_debt"]["rows"] if r["id"] == written["id"]
+    )
+    assert row["basis"] == "author-date"
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+async def test_an_anchor_at_head_reads_clean_in_reachability_space(
+    server_with_fake_origin, memory_dir: Path, tmp_path: Path
+) -> None:
+    """Nothing landed since the stamp: an empty range, clean/0, and the
+    block still says which axis measured it. Where a commit lands that
+    touches nothing the memory cites, the range is non-empty and the
+    count is still an honest zero on the same axis."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    _commit_touching(repo, "anchor", when=datetime(2025, 1, 1, tzinfo=timezone.utc))
+
+    origin = Origin(cwd=str(repo), repo=_REMOTE, branch="main")
+    server = server_with_fake_origin(origin)
+    written = await _call(
+        server,
+        "memory_write",
+        content="durable thing about widgets in notes.md",
+        scopes=["tools"],
+    )
+    Store(memory_dir).mark_verified(written["id"], verified_head=_head(repo))
+
+    shown = await _call(server, "memory_show", id=written["id"])
+    assert shown["commit_drift"] == {
+        "status": "clean",
+        "commits_since_verify": 0,
+        "recommendation": None,
+        "basis": "reachability",
+    }
+    assert shown["staleness_verdict"] == "fresh"
+    raw = await _call(
+        server, "memory_search", query="widgets durable", expand_top=False
+    )
+    hit = next(h for h in _unwrap(raw) if h["id"] == written["id"])
+    assert hit["commit_drift_count"] == 0
+    assert hit["commit_drift_basis"] == "reachability"
+
+    _commit_touching(
+        repo,
+        "elsewhere",
+        when=datetime(2099, 1, 1, tzinfo=timezone.utc),
+        filename="other.md",
+    )
+    assert await _drift_counts_for(server, written["id"]) == (0, 0, 0)
+    shown = await _call(server, "memory_show", id=written["id"])
+    assert shown["commit_drift"]["status"] == "clean"
+    assert shown["commit_drift"]["basis"] == "reachability"
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+async def test_claim_governed_narrowing_runs_over_the_reachable_range(
+    server_with_fake_origin, memory_dir: Path, tmp_path: Path
+) -> None:
+    """The weak tier reads the RANGE's patches. A branch authored before
+    the stamp edits one binding in the claimed file; merged after it,
+    the memory claiming the untouched binding reads clean and the one
+    claiming the edited binding reads drift, both in reachability space,
+    and the search hit agrees with memory_show on the whole block."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    _commit_file(
+        repo,
+        "pkg/mod.py",
+        _CLAIMED_MODULE,
+        "initial",
+        when=datetime(2025, 1, 1, tzinfo=timezone.utc),
+    )
+    subprocess.run(["git", "checkout", "-q", "-b", "feat"], cwd=repo, check=True)
+    # The binding line itself moves (a signature reflow fires the weak
+    # tier); a body-only edit would implicate nothing, by design.
+    _commit_file(
+        repo,
+        "pkg/mod.py",
+        _CLAIMED_MODULE.replace("def other():", "def other(flag=False):"),
+        "widen other",
+        when=datetime(2025, 1, 2, tzinfo=timezone.utc),
+    )
+    subprocess.run(["git", "checkout", "-q", "main"], cwd=repo, check=True)
+    _commit_touching(
+        repo,
+        "main work",
+        when=datetime(2025, 2, 1, tzinfo=timezone.utc),
+        filename="other.md",
+    )
+    anchor = _head(repo)
+
+    origin = Origin(cwd=str(repo), repo=_REMOTE, branch="main", worktree_root=str(repo))
+    server = server_with_fake_origin(origin)
+    store = Store(memory_dir)
+    handler = await _call(
+        server,
+        "memory_write",
+        content="quagga durable widgets ritual anchored in pkg/mod.py",
+        scopes=["tools"],
+        claims=["pkg/mod.py::handler"],
+    )
+    other = await _call(
+        server,
+        "memory_write",
+        content="zebra note: the other binding is exported from pkg/mod.py",
+        scopes=["tools"],
+        claims=["pkg/mod.py::other"],
+    )
+    assert other["status"] == "committed", other
+    store.mark_verified(handler["id"], verified_head=anchor)
+    store.mark_verified(other["id"], verified_head=anchor)
+    _merge_feature(repo)
+
+    shown = await _call(server, "memory_show", id=handler["id"])
+    assert shown["commit_drift"]["status"] == "clean"
+    assert shown["commit_drift"]["basis"] == "reachability"
+    assert shown["commit_drift"]["claim_drift"] == {"checked": 1, "drifted": []}
+    assert shown["staleness_verdict"] == "fresh"
+
+    shown_other = await _call(server, "memory_show", id=other["id"])
+    assert shown_other["commit_drift"]["status"] == "drift"
+    assert shown_other["commit_drift"]["basis"] == "reachability"
+    assert shown_other["commit_drift"]["commits_since_verify"] == 1
+    assert shown_other["commit_drift"]["claim_drift"] == {
+        "checked": 1,
+        "drifted": ["pkg/mod.py::other"],
+    }
+
+    raw = await _call(
+        server, "memory_search", query="zebra binding exported", expand_top=True
+    )
+    top = _unwrap(raw)[0]
+    assert top["id"] == other["id"]
+    assert top["commit_drift"] == shown_other["commit_drift"]
+    assert top["commit_drift_basis"] == "reachability"
+    assert top["staleness_verdict"] == shown_other["staleness_verdict"]
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_commit_drift_count_git_cost_shape_for_reachability_hits(
+    memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The reachability sibling of the cost pin: the per-hit fork is the
+    walk from the hit's anchor, paid once per DISTINCT anchor, plus the
+    phantom classification for a hit whose range touched none of its
+    anchors. Three hits at one anchor, all touched: ``2 + 1``. The same
+    three hits stamped at three anchors: ``2 + 3``. One of them citing a
+    real file the range never touched: one classification log more.
+    """
+    from bettermemory import origin as origin_module
+    from bettermemory._response import ResponseBuilder
+    from bettermemory.search import search as run_search
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    anchors = [repo / f"notes{i}.md" for i in range(3)]
+    for path in anchors:
+        path.write_text("anchor\n", encoding="utf-8")
+        subprocess.run(
+            ["git", "add", path.name], cwd=repo, check=True, capture_output=True
+        )
+    _commit_at(repo, "seed", when=datetime(2025, 1, 1, tzinfo=timezone.utc))
+    (repo / "quiet.md").write_text("quiet\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "add", "quiet.md"], cwd=repo, check=True, capture_output=True
+    )
+    _commit_at(repo, "quiet", when=datetime(2025, 1, 2, tzinfo=timezone.utc))
+
+    origin = Origin(cwd=str(repo), repo=_REMOTE, branch="main")
+    store = Store(memory_dir)
+
+    def count_git_calls(query: str) -> tuple[int, dict[str, tuple[int, str]]]:
+        origin_module._WALK_MEMO.clear()
+        memories = store.load_all()
+        hits = run_search(memories, query, max_results=50)
+        builder = ResponseBuilder(stale_after_days=30)
+        now = datetime.now(timezone.utc)
+        out = [builder.hit_to_dict(h, now=now) for h in hits]
+        calls: list[tuple[str, ...]] = []
+        real_git = origin_module._git
+
+        def spy(cwd: Path, *args: str, **kwargs: Any) -> Any:
+            calls.append(args)
+            return real_git(cwd, *args, **kwargs)
+
+        monkeypatch.setattr(origin_module, "_git", spy)
+        try:
+            builder.attach_commit_drift_counts(
+                out, hits, memories, caller_origin=origin
+            )
+        finally:
+            monkeypatch.setattr(origin_module, "_git", real_git)
+        # The two per-search calls, in order: the unfiltered author-date log
+        # and the one repo-root-plus-head resolution the walks are keyed on.
+        assert calls[0][:2] == ("log", "--format=%aI")
+        assert calls[1][:3] == ("rev-parse", "--show-toplevel", "HEAD")
+        annotated = {
+            hit["id"]: (hit["commit_drift_count"], hit["commit_drift_basis"])
+            for hit in out
+            if "commit_drift_count" in hit
+        }
+        return len(calls), annotated
+
+    # One anchor for all three, every cited file touched afterwards.
+    ids = []
+    for i, path in enumerate(anchors):
+        memory = store.write(
+            content=f"widget rule number {i} lives in {path}",
+            scopes=["tools"],
+            origin=origin,
+        )
+        ids.append(memory.id)
+        store.mark_verified(memory.id, verified_head=_head(repo))
+    for path in anchors:
+        path.write_text("changed\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True)
+    _commit_touching(
+        repo,
+        "post",
+        when=datetime(2099, 1, 1, tzinfo=timezone.utc),
+        filename="extra.md",
+    )
+    forks, annotated = count_git_calls("widget rule")
+    assert {annotated[i] for i in ids} == {(1, "reachability")}
+    assert forks == 2 + 1, "three hits at one anchor: one walk"
+
+    # Three distinct anchors: a stamp, then a commit, three times over.
+    for i, memory_id in enumerate(ids):
+        store.mark_verified(memory_id, verified_head=_head(repo))
+        _commit_touching(
+            repo,
+            f"after {i}",
+            when=datetime(2099, 2, 1 + i, tzinfo=timezone.utc),
+            filename=anchors[i].name,
+        )
+    forks, annotated = count_git_calls("widget rule")
+    # Each range holds the later commits too, but only the one touching
+    # the hit's own file escalates: three ranges, one anchored commit each.
+    assert {annotated[i] for i in ids} == {(1, "reachability")}
+    assert forks == 2 + 3, "three anchors: three walks"
+
+    # A hit citing a real file the range never touched pays the phantom
+    # classification on top of its walk.
+    quiet = store.write(
+        content=f"widget rule number 9 lives in {repo / 'quiet.md'}",
+        scopes=["tools"],
+        origin=origin,
+    )
+    store.mark_verified(quiet.id, verified_head=_head(repo))
+    _commit_touching(
+        repo,
+        "after all",
+        when=datetime(2099, 3, 1, tzinfo=timezone.utc),
+        filename="extra.md",
+    )
+    forks, annotated = count_git_calls("widget rule")
+    assert annotated[quiet.id] == (0, "reachability")
+    assert forks == 2 + 4 + 1, "four anchors walked, one classification log"

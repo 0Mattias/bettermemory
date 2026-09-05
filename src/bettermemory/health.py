@@ -52,12 +52,16 @@ from .origin import (
     Origin,
     capture,
     commit_author_timestamps,
-    repo_toplevel,
+    commits_since_anchor,
+    repo_toplevel_and_head,
     repos_match,
 )
 from .claims import load_claims
 from .verify import (
+    BASIS_AUTHOR_DATE,
+    BASIS_REACHABILITY,
     commit_drift_anchor_paths,
+    resolve_commit_drift,
     resolve_commit_drift_count,
 )
 from .time_utils import (
@@ -761,6 +765,10 @@ class CommitDriftRow:
     summary: str
     last_verified_at: datetime | None
     commits_since_verify: int
+    # The axis the count was measured on (`verify.CommitDriftStatus.basis`):
+    # the reachable range from the stamp's recorded HEAD, or the
+    # author-date count for a record with no usable anchor.
+    basis: str = BASIS_AUTHOR_DATE
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -771,6 +779,7 @@ class CommitDriftRow:
                 _iso(self.last_verified_at) if self.last_verified_at else None
             ),
             "commits_since_verify": self.commits_since_verify,
+            "basis": self.basis,
         }
 
 
@@ -1992,6 +2001,7 @@ def compute_health(
     anchor_paths_by_id: dict[str, tuple[str, ...]] = {}
     origin_worktree_by_id: dict[str, str | None] = {}
     claims_by_id: dict[str, tuple[str, ...]] = {}
+    verified_head_by_id: dict[str, str | None] = {}
     for m in memories:
         by_id[m.id] = MemoryStats(
             id=m.id,
@@ -2007,6 +2017,7 @@ def compute_health(
         origin_worktree_by_id[m.id] = m.origin.worktree_root if m.origin else None
         anchor_paths_by_id[m.id] = commit_drift_anchor_paths(m.body, m.verified_paths)
         claims_by_id[m.id] = tuple(m.claims)
+        verified_head_by_id[m.id] = m.verified_head
 
     accumulator = _StatsAccumulator(by_id=by_id, tombstoned_ids=tombstoned_ids)
     for ev in events:
@@ -2240,6 +2251,7 @@ def compute_health(
         origin_repo_by_id=origin_repo_by_id,
         anchor_paths_by_id=anchor_paths_by_id,
         claims_by_id=claims_by_id,
+        verified_head_by_id=verified_head_by_id,
         caller_origin=caller_origin,
     )
 
@@ -2249,6 +2261,7 @@ def compute_health(
         origin_worktree_by_id=origin_worktree_by_id,
         anchor_paths_by_id=anchor_paths_by_id,
         claims_by_id=claims_by_id,
+        verified_head_by_id=verified_head_by_id,
         caller_origin=caller_origin,
     )
 
@@ -2511,12 +2524,20 @@ def _drift_rows_for_candidates(
     toplevel: Path | None,
     anchor_paths_by_id: dict[str, tuple[str, ...]],
     claims_by_id: dict[str, tuple[str, ...]] | None,
+    verified_head_by_id: dict[str, str | None] | None = None,
+    head: str | None = None,
 ) -> list[CommitDriftRow]:
-    """The per-candidate bisect-and-narrow loop, shared between the
+    """The per-candidate count-and-narrow loop, shared between the
     caller-repo rollup and the cross-repo estate check — one loop so
     the two cannot compute different drift policies for the same
     memory. Returns drifting rows sorted heaviest-first; the caller
     owns capping and the empty-vs-None distinction.
+
+    `verified_head_by_id` and `head` (the commit `root`'s HEAD names,
+    resolved once by the caller) select the basis per candidate, the
+    same way `verify.compute_commit_drift` does: a candidate whose stamp
+    recorded an anchor HEAD still descends from is counted over the
+    reachable walk from it, the rest over the author-date bisect.
     """
     rows: list[CommitDriftRow] = []
     for stats in candidates:
@@ -2524,13 +2545,30 @@ def _drift_rows_for_candidates(
         assert since is not None  # callers filter on this
         if since.tzinfo is None:
             since = since.replace(tzinfo=timezone.utc)
-        # bisect_right gives us the first index strictly greater than
-        # `since`; len - idx is then the count of timestamps after that
-        # cut. Equal timestamps fall before the cut on bisect_right
-        # semantics, which is what we want — a verify call that lands
-        # at the same instant as a commit doesn't count as drift.
-        idx = bisect.bisect_right(timestamps, since)
-        count = len(timestamps) - idx
+        stored_claims = claims_by_id.get(stats.id, ()) if claims_by_id else ()
+        parsed_claims = load_claims(list(stored_claims)) if stored_claims else []
+        # The basis, per memory: the reachable walk from the stamp's
+        # recorded HEAD when the record carries one and the anchor is
+        # still an ancestor of this root's HEAD (memoised per anchor,
+        # so a store verified at one commit walks once for the whole
+        # rollup); the author-date bisect otherwise — the rule
+        # `verify.compute_commit_drift` applies on memory_show.
+        walk = None
+        anchor = verified_head_by_id.get(stats.id) if verified_head_by_id else None
+        if anchor is not None and head is not None:
+            walk = commits_since_anchor(root, anchor, toplevel=toplevel, head=head)
+        if walk is not None:
+            count = len(walk.commits)
+            basis = BASIS_REACHABILITY
+        else:
+            # bisect_right gives us the first index strictly greater than
+            # `since`; len - idx is then the count of timestamps after that
+            # cut. Equal timestamps fall before the cut on bisect_right
+            # semantics, which is what we want — a verify call that lands
+            # at the same instant as a commit doesn't count as drift.
+            idx = bisect.bisect_right(timestamps, since)
+            count = len(timestamps) - idx
+            basis = BASIS_AUTHOR_DATE
         # Narrow to commits that actually touched the memory's claim
         # anchors — mirrors memory_show and the memory_search top-hit
         # surface (_response.py). Without this the rollup nagged on
@@ -2545,19 +2583,23 @@ def _drift_rows_for_candidates(
         # rows for `count > 0` only, so a caught-up memory contributes
         # nothing whether or not the signal applies to it, and there is
         # no affirmative 0 here for the escape/phantom rules to correct.
+        # The richer entry point over the same core as
+        # `resolve_commit_drift_count`, so the row can carry the basis
+        # the narrowing settled on.
         if count > 0:
-            stored_claims = claims_by_id.get(stats.id, ()) if claims_by_id else ()
-            resolved = resolve_commit_drift_count(
+            resolved = resolve_commit_drift(
                 cwd=root,
                 since=since,
                 unfiltered=count,
                 anchors=anchor_paths_by_id.get(stats.id, ()),
-                claims=load_claims(list(stored_claims)) if stored_claims else (),
+                claims=parsed_claims,
                 toplevel=toplevel,
+                walk=walk,
             )
             if resolved is None:
                 continue
-            count = resolved
+            count = resolved.count
+            basis = resolved.basis
         if count > 0:
             rows.append(
                 CommitDriftRow(
@@ -2566,6 +2608,7 @@ def _drift_rows_for_candidates(
                     summary=stats.summary,
                     last_verified_at=stats.last_verified_at,
                     commits_since_verify=count,
+                    basis=basis,
                 )
             )
     rows.sort(key=lambda r: r.commits_since_verify, reverse=True)
@@ -2579,6 +2622,7 @@ def _compute_cross_repo_drift(
     origin_worktree_by_id: dict[str, str | None],
     anchor_paths_by_id: dict[str, tuple[str, ...]],
     claims_by_id: dict[str, tuple[str, ...]] | None,
+    verified_head_by_id: dict[str, str | None] | None = None,
     caller_origin: Origin | None,
 ) -> CrossRepoDrift | None:
     """The estate check: drift for memories anchored in repos the
@@ -2674,13 +2718,16 @@ def _compute_cross_repo_drift(
                 }
             )
             continue
+        located = repo_toplevel_and_head(root)
         rows = _drift_rows_for_candidates(
             candidates,
             root=root,
             timestamps=timestamps,
-            toplevel=repo_toplevel(root),
+            toplevel=located[0] if located is not None else None,
             anchor_paths_by_id=anchor_paths_by_id,
             claims_by_id=claims_by_id,
+            verified_head_by_id=verified_head_by_id,
+            head=located[1] if located is not None else None,
         )
         out_groups.append(
             CrossRepoDriftGroup(
@@ -2706,6 +2753,7 @@ def _compute_commit_drift_debt(
     origin_repo_by_id: dict[str, str | None],
     anchor_paths_by_id: dict[str, tuple[str, ...]],
     claims_by_id: dict[str, tuple[str, ...]] | None = None,
+    verified_head_by_id: dict[str, str | None] | None = None,
     caller_origin: Origin | None,
 ) -> CommitDriftDebt | None:
     """Build the optional commit-drift rollup, or None when not applicable.
@@ -2738,8 +2786,11 @@ def _compute_commit_drift_debt(
         return None
     # Resolve the repo root once for the whole rollup — the per-memory
     # anchor resolution below would otherwise pay a `git rev-parse`
-    # fork+exec per drifting memory.
-    toplevel = repo_toplevel(cwd_path)
+    # fork+exec per drifting memory — and the head beside it, which the
+    # reachable walks are keyed on.
+    located = repo_toplevel_and_head(cwd_path)
+    toplevel = located[0] if located is not None else None
+    head = located[1] if located is not None else None
 
     # Two-pass: filter by repo match first, then run the bisect. Lets us
     # short-circuit the "no matching memories" case before any per-row
@@ -2773,6 +2824,8 @@ def _compute_commit_drift_debt(
         toplevel=toplevel,
         anchor_paths_by_id=anchor_paths_by_id,
         claims_by_id=claims_by_id,
+        verified_head_by_id=verified_head_by_id,
+        head=head,
     )
 
     if not rows:
@@ -3705,9 +3758,12 @@ def curation_counts(
         cwd_path = Path(caller_origin.cwd)
         timestamps = commit_author_timestamps(cwd_path)
         if timestamps is not None:
-            # One rev-parse for the whole pass; the per-memory anchor
-            # resolution below reuses it.
-            toplevel = repo_toplevel(cwd_path)
+            # One rev-parse for the whole pass — the root the per-memory
+            # anchor resolution reuses, and the head the reachable walks
+            # are keyed on.
+            located = repo_toplevel_and_head(cwd_path)
+            toplevel = located[0] if located is not None else None
+            head = located[1] if located is not None else None
             for m in mem_list:
                 if m.last_verified_at is None:
                     continue
@@ -3734,8 +3790,21 @@ def curation_counts(
                 parsed_claims = load_claims(m.claims) if m.claims else []
                 if not anchors and not parsed_claims:
                     continue
-                idx = bisect.bisect_right(timestamps, verified_at)
-                count = len(timestamps) - idx
+                # The basis rule every other surface applies
+                # (`verify.compute_commit_drift`): the reachable walk
+                # from the stamp's anchor when the record carries one
+                # HEAD still descends from, the author-date bisect
+                # otherwise. The count is an integer either way.
+                walk = None
+                if m.verified_head is not None and head is not None:
+                    walk = commits_since_anchor(
+                        cwd_path, m.verified_head, toplevel=toplevel, head=head
+                    )
+                if walk is not None:
+                    count = len(walk.commits)
+                else:
+                    idx = bisect.bisect_right(timestamps, verified_at)
+                    count = len(timestamps) - idx
                 if count > 0:
                     resolved = resolve_commit_drift_count(
                         cwd=cwd_path,
@@ -3744,6 +3813,7 @@ def curation_counts(
                         anchors=anchors,
                         claims=parsed_claims,
                         toplevel=toplevel,
+                        walk=walk,
                     )
                     if resolved is None:
                         continue

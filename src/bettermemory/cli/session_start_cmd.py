@@ -606,6 +606,7 @@ def _standing_section(
             verified_paths=memory.verified_paths,
             body=memory.body,
             claims=memory.claims,
+            verified_head=memory.verified_head,
         )
         verdict = compute_staleness_verdict(
             verification=verification,

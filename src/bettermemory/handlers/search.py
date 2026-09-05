@@ -1069,6 +1069,7 @@ async def memory_search(
                 verified_paths=memory.verified_paths,
                 body=memory.body,
                 claims=memory.claims,
+                verified_head=memory.verified_head,
             )
             commit_drift_count_for_verdict: int | None = None
             if commit_drift is not None:

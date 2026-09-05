@@ -1808,6 +1808,8 @@ def test_commit_drift_to_dict_shape_clean(tmp_path: Path) -> None:
         "status": "clean",
         "commits_since_verify": 0,
         "recommendation": None,
+        # No `verified_head` on the call: the author-date axis, named.
+        "basis": "author-date",
     }
 
 

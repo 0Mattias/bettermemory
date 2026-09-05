@@ -106,6 +106,7 @@ async def memory_show(
         verified_paths=memory.verified_paths,
         body=memory.body,
         claims=memory.claims,
+        verified_head=memory.verified_head,
     )
     commit_drift_count_for_verdict: int | None = (
         commit_drift.commits_since_verify if commit_drift is not None else None
