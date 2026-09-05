@@ -116,7 +116,9 @@ def creation_id(event: Mapping[str, Any]) -> str | None:
     if kind in _CREATION_KINDS:
         return _id_field(event, "id")
     if kind == "memory_proposals":
-        if event.get("action") == "accept":
+        # A staged accept (`status: pending`) carries a pending id and no
+        # memory id; the `write_confirm` that commits it is the creation.
+        if event.get("action") == "accept" and event.get("status") != "pending":
             return _id_field(event, "id")
         return None
     if kind == "episode_promote":

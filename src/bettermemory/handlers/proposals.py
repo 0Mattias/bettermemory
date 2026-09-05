@@ -23,6 +23,7 @@ from .write import (
 )
 from ..models import Confidence, Source
 from ..proposals import ProposalQueue
+from ..session import GATE_FLAG_KEYS, SessionState
 
 if TYPE_CHECKING:
     from .._handlers import ToolHandlers
@@ -57,11 +58,14 @@ DESC_MEMORY_PROPOSALS = (
     "memory_write escape hatch — `acknowledge_credential`, "
     "`acknowledge_transient`, `acknowledge_scope_mismatch`, or "
     "`force=True` for the two dedup refusals (prefer memory_update on "
-    "the matched id, or memory_restore on the tombstone).\n"
+    "the matched id, or memory_restore on the tombstone). A "
+    "`user-inference` accept stages the write instead and returns "
+    "`pending` with a `pending_id` (the proposal leaves the queue): ask "
+    "the user, then memory_write_confirm or memory_write_cancel.\n"
     "- `dismiss`: drop the proposal from the queue without writing it. "
     "Requires `proposal_id`. Use for anything not worth remembering.\n\n"
     "Returns `{status, action, ...}`; `status` is one of `ok` (list), "
-    "`accepted`, `dismissed`, `not_found`, or a gate refusal "
+    "`accepted`, `pending`, `dismissed`, `not_found`, or a gate refusal "
     "(`credential_warning`, `transient_warning`, `scope_mismatch`, "
     "`duplicate`, `previously_removed`)."
 )
@@ -120,6 +124,7 @@ def accept_proposal(
     acknowledge_credential: bool = False,
     acknowledge_transient: bool = False,
     acknowledge_scope_mismatch: bool = False,
+    state: SessionState | None = None,
 ) -> dict[str, Any]:
     """Validate, atomically claim, and write one proposal as a durable memory.
 
@@ -164,6 +169,18 @@ def accept_proposal(
        gate that DOES run only READS the store (``load_all`` /
        ``load_tombstones``), so the module invariant — nothing writes until
        an accept lands — survives the addition.
+       A ``user-inference`` accept from a SESSION (``state`` given — the
+       MCP tool's path) does not commit: after the chain and the claim the
+       write is STAGED through the session's pending machinery, exactly as
+       ``memory_write`` stages that category, and the result is
+       ``pending`` with a ``pending_id`` for ``memory_write_confirm`` /
+       ``memory_write_cancel`` — the user's veto, which an accept on the
+       model's own say-so had bypassed (the integrity recon's fifth weak
+       point: the extractor stamps first-person preferences
+       ``user-inference`` by default). A cancel or the TTL drops the claim;
+       the extractor re-proposes it on its next capture. Without a session
+       (the CLI) the accept commits directly: the human typing it is the
+       confirmation.
     4. Atomically CLAIM the proposal — ``ProposalQueue.remove`` re-checks it
        still exists under the queue's per-file flock and hands it to the single
        racer that wins, so a concurrent double-accept can't write twice.
@@ -177,8 +194,8 @@ def accept_proposal(
        layer its own event on top — the CLI did exactly that before the
        recording moved here. Callers must NOT record a second accept event.
 
-    Returns a result dict (``status`` in ``{"accepted", "not_found"}`` or
-    any gate refusal status: ``credential_warning``, ``transient_warning``,
+    Returns a result dict (``status`` in ``{"accepted", "pending",
+    "not_found"}`` or any gate refusal status: ``credential_warning``, ``transient_warning``,
     ``scope_mismatch``, ``duplicate``, ``previously_removed``). No event is
     recorded on the ``not_found`` paths or on a gate refusal — only when the
     write actually lands. Raises ``ValueError`` on a bad payload (it bubbles
@@ -235,7 +252,56 @@ def accept_proposal(
         # Lost the race: another accept already claimed and wrote this
         # proposal. Do not write a duplicate.
         return {"status": "not_found", "action": "accept", "proposal_id": proposal_id}
-    memory = store.write(**payload, origin=_h.capture_origin())
+    origin = _h.capture_origin()
+    if cat_value == "user-inference" and state is not None:
+        # The staged accept's audit fields, computed the same way the
+        # committed accept computes them below.
+        pending = state.stage_write(
+            {**payload, "origin": origin},
+            gate_flags={key: getattr(gc, key) for key in GATE_FLAG_KEYS},
+        )
+        recorder.record(
+            "memory_proposals",
+            action="accept",
+            status="pending",
+            proposal_id=proposal_id,
+            pending_id=pending.pending_id,
+            scopes=payload["scopes"],
+            category=cat_value,
+            forced=force,
+            credentials_acknowledged=(
+                [h.kind for h in gc.credential_hits]
+                if gc.credential_hits and acknowledge_credential
+                else []
+            ),
+            markers_acknowledged=(
+                [h.marker for h in gc.transient_hits]
+                if gc.transient_hits and acknowledge_transient
+                else []
+            ),
+        )
+        return {
+            "status": "pending",
+            "action": "accept",
+            "proposal_id": proposal_id,
+            "pending_id": pending.pending_id,
+            "pending_reason": "user-inference",
+            "preview": {
+                "content": payload["content"],
+                "scopes": payload["scopes"],
+                "confidence": payload["confidence"].value,
+                "source": payload["source"].value,
+                "category": cat_value,
+            },
+            "hint": (
+                "User-inference category — the proposal has left the queue "
+                "and the write is staged. Ask the user in plain language "
+                "('want me to remember that you prefer X?'), then "
+                "memory_write_confirm(pending_id), or "
+                "memory_write_cancel(pending_id) if they decline."
+            ),
+        }
+    memory = store.write(**payload, origin=origin)
     cat_written = memory.category.value if memory.category is not None else cat_value
     # Kind only, never the value: the detector kinds a forced
     # `acknowledge_credential` override bypassed (empty when none) — a
@@ -316,6 +382,10 @@ async def memory_proposals(
 ) -> dict[str, Any]:
     """Handler body for the `memory_proposals` MCP tool."""
     state = deps.sessions.for_request(ctx)
+    # Bound before the turn advances, as `memory_write` binds it: a
+    # `user-inference` accept stages a pending write, and the sidecar has
+    # to be attached for that staging to survive a restart.
+    state.bind_pending_log(deps.store.root)
     _advance_turn(state, deps.recorder)
 
     queue = ProposalQueue(deps.store.root)
@@ -380,6 +450,7 @@ async def memory_proposals(
                 acknowledge_credential=acknowledge_credential,
                 acknowledge_transient=acknowledge_transient,
                 acknowledge_scope_mismatch=acknowledge_scope_mismatch,
+                state=state,
             )
         except OSError as exc:
             # A disk-level failure (ENOSPC/EIO/EACCES). Translate to
