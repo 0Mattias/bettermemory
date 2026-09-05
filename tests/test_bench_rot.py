@@ -319,7 +319,11 @@ def test_mode_arms_are_append_only() -> None:
     assert rot._MODES[0] == "drift_only_relative_cite"
     assert rot._MODES[1] == "drift_only_absolute_cite"
     assert rot._MODES[2] == "shipped_default"
-    assert rot._MODES[3:] == ("drift_only_relative_cite_anchored",)
+    assert rot._MODES[3:] == (
+        "drift_only_relative_cite_anchored",
+        "drift_only_relative_cite_author_date",
+        "drift_only_relative_cite_reachability",
+    )
     assert len(set(rot._MODES)) == len(rot._MODES)
 
 
@@ -961,3 +965,121 @@ def test_absolute_citations_are_checked_and_catch_a_deletion(tmp_path: Path) -> 
     (tmp_path / "src/pkg/mod.py").unlink()
     gone = detect_path_drift(claim.body(tmp_path))
     assert len(gone.missing) == 1
+
+
+# ---------------------------------------------------------------------------
+# The basis arms — the shipped count on each axis, over the window's own ends
+# ---------------------------------------------------------------------------
+
+
+def _commit_dated(root: Path, rel: str, source: str, message: str, when: str) -> str:
+    """`_commit` with both git dates pinned; returns the new HEAD."""
+    import os
+
+    _tree(root, rel, source)
+    env = os.environ.copy()
+    env.update(GIT_AUTHOR_DATE=when, GIT_COMMITTER_DATE=when)
+    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+    subprocess.run(
+        ["git", "-C", str(root), "commit", "-q", "-m", message], check=True, env=env
+    )
+    return subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+
+def test_the_basis_arms_part_on_a_branch_authored_before_t0(tmp_path: Path) -> None:
+    """The defect the reachability unit exists for, measured by the arms
+    that exist to measure it.
+
+    A branch changes a module constant and is AUTHORED before t0; main
+    moves on; the branch is merged inside the window. At t1 the literal
+    claim is false. The author-date arm — the shipped count through
+    7.3.0, the memory stamped at t0's commit instant — bisects author
+    dates and finds no commit touching the file after the stamp: zero,
+    unflagged, a served stale claim. The reachability arm counts
+    ``t0..t1`` and finds the branch commit: one, flagged. Every other
+    claim in the window is still true, and neither arm flags it.
+    """
+    _git_repo(tmp_path)
+    _commit_dated(
+        tmp_path, "src/mod.py", "X = 1\n", "base", "2025-01-01T00:00:00+00:00"
+    )
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "checkout", "-q", "-b", "feat"], check=True
+    )
+    _commit_dated(
+        tmp_path, "src/mod.py", "X = 2\n", "old feature", "2025-01-02T00:00:00+00:00"
+    )
+    subprocess.run(["git", "-C", str(tmp_path), "checkout", "-q", "main"], check=True)
+    t0 = _commit_dated(
+        tmp_path, "src/other.py", "Y = 1\n", "main work", "2025-02-01T00:00:00+00:00"
+    )
+    import os
+
+    env = os.environ.copy()
+    env.update(
+        GIT_AUTHOR_DATE="2025-03-01T00:00:00+00:00",
+        GIT_COMMITTER_DATE="2025-03-01T00:00:00+00:00",
+    )
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(tmp_path),
+            "merge",
+            "-q",
+            "--no-ff",
+            "feat",
+            "-m",
+            "merge feat",
+        ],
+        check=True,
+        env=env,
+    )
+    # Touches the other module without falsifying anything about it.
+    t1 = _commit_dated(
+        tmp_path,
+        "src/other.py",
+        "Y = 1\n# after\n",
+        "after",
+        "2025-03-02T00:00:00+00:00",
+    )
+
+    rows, _ = rot.collect_rows(tmp_path, "src", t0, t1, "")
+    author = [r for r in rows if r["mode"] == "drift_only_relative_cite_author_date"]
+    reach = [r for r in rows if r["mode"] == "drift_only_relative_cite_reachability"]
+    assert len(author) == len(reach) == 4, "two path claims, two literals"
+    assert [r["truth"] for r in author] == [r["truth"] for r in reach]
+
+    # The claim the branch falsified: X in src/mod.py.
+    stale_author = [r for r in author if r["truth"] == "false"]
+    stale_reach = [r for r in reach if r["truth"] == "false"]
+    assert len(stale_author) == 1 and len(stale_reach) == 1
+    assert stale_author[0]["kind"] == "literal"
+    assert stale_author[0]["commit_drift"] == 0 and not stale_author[0]["flagged"], (
+        "the author-date arm saw the branch commit as drift — the fixture "
+        "no longer reproduces the defect"
+    )
+    assert stale_reach[0]["commit_drift"] == 1 and stale_reach[0]["flagged"]
+
+    # Claim order is extraction order: src/mod.py's path claim and X,
+    # then src/other.py's path claim and Y. The branch commit is the only
+    # touch on src/mod.py and predates t0, so the author-date arm reads
+    # zero on both of its claims; the `after` commit touches
+    # src/other.py inside the window on both axes, a file-level alert on
+    # two still-true claims, which is the cost the claim-level tier
+    # exists to remove and is the same on both arms.
+    assert [r["truth"] for r in author] == [
+        "still_true",
+        "false",
+        "still_true",
+        "still_true",
+    ]
+    assert [r["commit_drift"] for r in author] == [0, 0, 1, 1]
+    assert [r["commit_drift"] for r in reach] == [1, 1, 1, 1]
+    assert [r["flagged"] for r in author] == [False, False, True, True]
+    assert [r["flagged"] for r in reach] == [True, True, True, True]

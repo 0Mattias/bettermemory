@@ -98,6 +98,18 @@ _MODES = (
     "drift_only_absolute_cite",
     "shipped_default",
     "drift_only_relative_cite_anchored",
+    # The BASIS arms. The four arms above take their commit count from
+    # `commit_counts_touching`, a `git log t0..t1` the harness runs — the
+    # window's own reachability range — and consult the shipped function
+    # only for applicability. These two take the count FROM the shipped
+    # function, for a memory stamped at t0's commit instant and read at
+    # t1: the author-date arm hands it no anchor, so it counts the
+    # commits AUTHORED after the stamp (what every release through 7.3.0
+    # counted), and the reachability arm hands it t0 as `verified_head`,
+    # so it counts `t0..t1`. Same claims, same oracle, same calendar
+    # setting; the only difference is the axis.
+    "drift_only_relative_cite_author_date",
+    "drift_only_relative_cite_reachability",
 )
 
 
@@ -473,8 +485,20 @@ def verdict_for(
     calendar_fresh: bool,
     absolute: bool,
     anchored: bool = False,
+    since: datetime | None = None,
+    anchor_sha: str | None = None,
 ) -> tuple[str, int, int]:
     """Return (verdict, path_drift_missing, commit_drift_count).
+
+    `since` switches the commit count's SOURCE: with it the count comes
+    from the shipped `compute_commit_drift` over the window's own ends —
+    the memory stamped at `since` (t0's commit instant), the caller
+    standing in `tree1` (so HEAD is t1) — instead of from the harness's
+    `commits_touching` log, and `anchor_sha` is what the stamp recorded:
+    t0 for the reachability arm, None for the author-date arm. The
+    calendar leg is held fresh by evaluating it one day after the stamp,
+    the same way the drift-only arms hold it, so the two basis arms
+    measure the commit leg alone.
 
     `tree1` is the t1 END OF THE WINDOW as a materialised tree, and it is
     what absolute citations point at. `repo` is only the git directory,
@@ -498,6 +522,24 @@ def verdict_for(
     """
     body = claim.body(tree1 if absolute else None)
     drift = detect_path_drift(body, worktree_root=tree1 if anchored else None)
+    if since is not None:
+        verification = compute_verification_status(since, now=since + timedelta(days=1))
+        caller = Origin(repo=origin_repo, cwd=str(tree1), branch="main")
+        drift_status = compute_commit_drift(
+            since,
+            origin_repo,
+            caller_origin=caller,
+            verified_paths=[claim.rel_path],
+            body=body,
+            verified_head=anchor_sha,
+        )
+        count = drift_status.commits_since_verify if drift_status is not None else 0
+        verdict = compute_staleness_verdict(
+            verification=verification,
+            path_drift_missing=len(drift.missing),
+            commit_drift_count=count if drift_status is not None else None,
+        )
+        return verdict, len(drift.missing), count
     # Anchor inside the staleness window when isolating the drift legs, and
     # outside it when measuring the shipped default. Calendar age is not a
     # claim about the world, so folding it in silently would let a timer
@@ -812,6 +854,7 @@ def memoized_git_reads() -> Generator[dict[str, int]]:
             "commit_author_timestamps",
             "commit_author_timestamps_touching_pathspecs",
             "repo_toplevel",
+            "repo_toplevel_and_head",
             "resolve_repo_pathspecs",
         )
     }
@@ -1032,6 +1075,12 @@ def collect_rows(
         dropped = set(never_true)
         claims = [c for c in claims if c not in dropped]
 
+        # The basis arms stamp the memory at t0's COMMIT instant — the
+        # moment the verified tree state existed on its branch — and read
+        # it with HEAD at t1, which the materialised t1 worktree is.
+        t0_instant = datetime.fromisoformat(
+            _git(repo, "show", "-s", "--format=%cI", t0)
+        )
         with memoized_git_reads():
             rows, unresolved_citations, empty_anchor_literals = _score_claims(
                 claims,
@@ -1040,6 +1089,8 @@ def collect_rows(
                 origin_repo=origin_repo,
                 commits_touching=commits_touching,
                 index=index,
+                t0=t0,
+                t0_instant=t0_instant,
             )
     finally:
         for tree in (tree0, tree1):
@@ -1072,6 +1123,8 @@ def _score_claims(
     origin_repo: str,
     commits_touching: dict[str, int],
     index: dict[str, Any],
+    t0: str,
+    t0_instant: datetime,
 ) -> tuple[list[dict[str, Any]], int, int]:
     """Grade every claim under every arm. Pure scoring, no git setup."""
     rows: list[dict[str, Any]] = []
@@ -1079,11 +1132,13 @@ def _score_claims(
     empty_anchor_literals = 0
     for claim in claims:
         truth = label_claim(claim, tree1)
-        for mode, absolute, anchored in (
-            ("drift_only_relative_cite", False, False),
-            ("drift_only_absolute_cite", True, False),
-            ("shipped_default", False, False),
-            ("drift_only_relative_cite_anchored", False, True),
+        for mode, absolute, anchored, basis in (
+            ("drift_only_relative_cite", False, False, None),
+            ("drift_only_absolute_cite", True, False, None),
+            ("shipped_default", False, False, None),
+            ("drift_only_relative_cite_anchored", False, True, None),
+            ("drift_only_relative_cite_author_date", False, False, "author-date"),
+            ("drift_only_relative_cite_reachability", False, False, "reachability"),
         ):
             verdict, missing, commits = verdict_for(
                 claim,
@@ -1094,6 +1149,8 @@ def _score_claims(
                 calendar_fresh=(mode != "shipped_default"),
                 absolute=absolute,
                 anchored=anchored,
+                since=t0_instant if basis is not None else None,
+                anchor_sha=t0 if basis == "reachability" else None,
             )
             # The claim-level channels come from the RENDERED BODY, not the
             # Claim object — the firewall that stops this from becoming a

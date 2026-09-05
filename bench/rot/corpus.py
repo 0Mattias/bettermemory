@@ -26,8 +26,10 @@ import argparse
 import importlib.util
 import json
 import math
+import platform
 import subprocess
 import sys
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -143,6 +145,84 @@ def deletion_spread(repo: Path, entry: dict[str, Any]) -> tuple[int, int]:
     return len(commits), len(directories)
 
 
+def window_facts(repo: Path, entry: dict[str, Any]) -> dict[str, int]:
+    """What the window holds that separates the two basis arms.
+
+    `commits` is the reachable range `t0..t1`; `merges` the merge commits
+    in it; `authored_before_t0` the commits in it whose AUTHOR date is at
+    or before t0's commit instant — the population the author-date count
+    cannot see, because it bisects author dates against the stamp. A
+    corpus whose windows hold none of those cannot exercise the defect,
+    which is why the number is recorded beside the arms it explains.
+    """
+    t0, t1 = entry["t0"], entry["t1"]
+    t0_instant = datetime.fromisoformat(_git(repo, "show", "-s", "--format=%cI", t0))
+    commits = merges = before = 0
+    for line in _git(repo, "rev-list", "--format=%aI %P", f"{t0}..{t1}").splitlines():
+        if line.startswith("commit "):
+            commits += 1
+            continue
+        stamp, _, parents = line.partition(" ")
+        if len(parents.split()) > 1:
+            merges += 1
+        try:
+            if datetime.fromisoformat(stamp) <= t0_instant:
+                before += 1
+        except ValueError:
+            continue
+    return {"commits": commits, "merges": merges, "authored_before_t0": before}
+
+
+_BASIS_ARMS = (
+    "drift_only_relative_cite_author_date",
+    "drift_only_relative_cite_reachability",
+)
+
+
+def basis_disagreements(rows: list[dict[str, Any]]) -> int:
+    """Claims the author-date arm counted as zero and the reachability
+    arm counted — the defect, per claim. The two arms' rows come off
+    `_score_claims` in claim order, one row per arm per claim."""
+    author = [r for r in rows if r["mode"] == _BASIS_ARMS[0]]
+    reach = [r for r in rows if r["mode"] == _BASIS_ARMS[1]]
+    assert len(author) == len(reach)
+    return sum(
+        1
+        for a, b in zip(author, reach)
+        if a["commit_drift"] == 0 and b["commit_drift"] > 0
+    )
+
+
+def provenance() -> dict[str, Any]:
+    """Version, commit and platform stamp for the artifact, the shape the
+    integrity and retrieval benches write. `tree_dirty` counts tracked
+    modifications only; read at launch, before any arm runs."""
+    commit: str | None = None
+    tree_dirty: bool | None = None
+    try:
+        commit = _git(_HERE, "rev-parse", "--short", "HEAD") or None
+        tree_dirty = bool(_git(_HERE, "status", "--porcelain", "--untracked-files=no"))
+    except OSError:
+        pass
+    version: str | None = None
+    try:
+        import bettermemory
+
+        version = bettermemory.__version__
+    except ImportError:
+        pass
+    return {
+        "bettermemory_version": version,
+        "commit": commit,
+        "tree_dirty": tree_dirty,
+        "date": date.today().isoformat(),
+        "machine": {
+            "platform": platform.platform(),
+            "python": sys.version.split()[0],
+        },
+    }
+
+
 def sign_test(wins: int, losses: int) -> float | None:
     """Two-sided exact binomial p for a paired repo-level comparison.
 
@@ -167,6 +247,7 @@ def main() -> int:
     corpus = json.loads(Path(args.corpus).read_text())
     root = Path(args.clones)
     root.mkdir(parents=True, exist_ok=True)
+    stamp = provenance()
 
     entries = [e for s in select.STRATA for e in corpus["strata"][s]]
     pooled: list[dict[str, Any]] = []
@@ -207,6 +288,9 @@ def main() -> int:
         pooled.extend(rows)
 
         arm = [r for r in rows if r["mode"] == run._MODES[0]]
+        basis_rows = {
+            name: [r for r in rows if r["mode"] == name] for name in _BASIS_ARMS
+        }
         summary = {
             "repo": label,
             "rank": entry["rank"],
@@ -227,6 +311,21 @@ def main() -> int:
             "claim_strict": run._detector_stats(
                 arm, lambda r: r["claim_strict"], score=lambda r: r["cite_commits"]
             ),
+            # The basis arms, per repository: the same file-level flag,
+            # counted from the shipped function on each axis, beside what
+            # the window held for the axes to disagree about.
+            "window": window_facts(repo, entry),
+            "author_date": run._detector_stats(
+                basis_rows[_BASIS_ARMS[0]],
+                lambda r: r["flagged"],
+                score=lambda r: r["commit_drift"],
+            ),
+            "reachability": run._detector_stats(
+                basis_rows[_BASIS_ARMS[1]],
+                lambda r: r["flagged"],
+                score=lambda r: r["commit_drift"],
+            ),
+            "author_date_zero_reachability_positive": basis_disagreements(rows),
         }
         per_repo.append(summary)
         print(
@@ -290,6 +389,56 @@ def main() -> int:
         for kind in (*run.CLAIM_CLASSES, "ALL")
     }
 
+    # The basis arms, pooled — APPENDED like the anchored arm, selected by
+    # name. Same rows, same oracle; the arms differ only in the axis the
+    # shipped function counted on. P1 of the reachability unit is graded
+    # here, from the artifact, on its two pre-registered clauses: the
+    # pooled J of the reachability arm is at least the author-date arm's
+    # (MISSED if lower by more than 0.01), and at least one repository
+    # whose window holds a commit authored before t0 has a claim the
+    # author-date arm counted as zero and the reachability arm counted
+    # (MISSED if no such repository exists, which would mean the corpus
+    # cannot exercise the defect).
+    basis_pooled: dict[str, Any] = {}
+    for name in _BASIS_ARMS:
+        sel = [r for r in pooled if r["mode"] == name]
+        basis_pooled[name] = {
+            kind: run._detector_stats(
+                [r for r in sel if kind == "ALL" or r["kind"] == kind],
+                lambda r: r["flagged"],
+                score=lambda r: r["commit_drift"],
+            )
+            for kind in (*run.CLAIM_CLASSES, "ALL")
+        }
+    author_j = basis_pooled[_BASIS_ARMS[0]]["ALL"]["youden_j"]
+    reach_j = basis_pooled[_BASIS_ARMS[1]]["ALL"]["youden_j"]
+    exercised = [
+        r["repo"]
+        for r in per_repo
+        if r["window"]["authored_before_t0"] > 0
+        and r["author_date_zero_reachability_positive"] > 0
+    ]
+    p1_first = (
+        author_j is not None and reach_j is not None and reach_j >= author_j - 0.01
+    )
+    p1 = {
+        "author_date_j": author_j,
+        "reachability_j": reach_j,
+        "j_delta": (
+            round(reach_j - author_j, 4)
+            if author_j is not None and reach_j is not None
+            else None
+        ),
+        "repos_with_commits_authored_before_t0": sum(
+            1 for r in per_repo if r["window"]["authored_before_t0"] > 0
+        ),
+        "repos_where_author_date_reads_zero_and_reachability_counts": exercised,
+        "claims_author_date_zero_reachability_positive": sum(
+            r["author_date_zero_reachability_positive"] for r in per_repo
+        ),
+        "verdict": "hit" if p1_first and exercised else "MISSED",
+    }
+
     # Repo-level paired comparison on alerts-per-catch.
     wins = losses = ties = 0
     for summary in per_repo:
@@ -305,6 +454,7 @@ def main() -> int:
             ties += 1
 
     report = {
+        "provenance": stamp,
         "frame_sha256": corpus["frame_sha256"],
         "walked_to_rank": corpus["walked_to_rank"],
         "window_days": corpus["window_days"],
@@ -325,6 +475,7 @@ def main() -> int:
             "tied": ties,
             "sign_test_p": sign_test(wins, losses),
         },
+        "basis_arms": {"pooled": basis_pooled, "P1": p1},
         "per_repo": per_repo,
     }
     out = Path(args.out)
@@ -360,6 +511,14 @@ def main() -> int:
     )
     print(
         f"  repo-level paired: {wins}-{losses}-{ties}, p={report['repo_level_paired']['sign_test_p']}"
+    )
+    print(
+        f"  basis arms: author-date J={author_j}  reachability J={reach_j}  "
+        f"claims author-date zero / reachability positive="
+        f"{p1['claims_author_date_zero_reachability_positive']} "
+        f"in {len(exercised)} of "
+        f"{p1['repos_with_commits_authored_before_t0']} exercised repos  "
+        f"-> P1 {p1['verdict']}"
     )
     return 0
 
