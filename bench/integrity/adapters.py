@@ -47,6 +47,11 @@ LOCAL_LLM = os.environ.get("BM_INTEGRITY_LLM", "llama3.1:8b")
 LOCAL_EMBEDDER = "nomic-embed-text"
 LLM_BASE_URL = os.environ.get("BM_INTEGRITY_LLM_BASE_URL", "http://localhost:11434/v1")
 LLM_API_KEY = os.environ.get("BM_INTEGRITY_LLM_API_KEY", "ollama")
+OLLAMA_OPENAI_URL = "http://localhost:11434/v1"
+# True when the LLM is served by something other than the local ollama
+# daemon (any OpenAI-compatible endpoint). The embedder stays on ollama
+# either way, so only the LLM's pull check is waived.
+REMOTE_LLM = LLM_BASE_URL.rstrip("/") != OLLAMA_OPENAI_URL
 LETTA_EMBEDDING_COLUMN_DIM = 4096
 SELF_TEST_UPDATE = (
     "The api gateway deploy workflow was renamed: production deploys now run "
@@ -393,7 +398,9 @@ class Mem0Adapter:
     """mem0ai over an embedded qdrant store. Two arms: `raw` (add with
     infer=False, MiniLM embeddings) and `infer` (add with infer=True, the
     extraction and UPDATE / DELETE logic on, llama3.1:8b and nomic-embed-
-    text through the local ollama daemon)."""
+    text through the local ollama daemon by default; BM_INTEGRITY_LLM_BASE_URL
+    and BM_INTEGRITY_LLM_API_KEY point the LLM at any OpenAI-compatible
+    endpoint while the embedder stays on ollama)."""
 
     def __init__(self, scratch: Path, mode: str) -> None:
         if mode not in ("raw", "infer"):
@@ -429,14 +436,25 @@ class Mem0Adapter:
                     "ollama_base_url": "http://localhost:11434",
                 },
             }
-            llm = {
-                "provider": "ollama",
-                "config": {
-                    "model": LOCAL_LLM,
-                    "ollama_base_url": "http://localhost:11434",
-                    "temperature": 0,
-                },
-            }
+            if REMOTE_LLM:
+                llm = {
+                    "provider": "openai",
+                    "config": {
+                        "model": LOCAL_LLM,
+                        "api_key": LLM_API_KEY,
+                        "openai_base_url": LLM_BASE_URL,
+                        "temperature": 0,
+                    },
+                }
+            else:
+                llm = {
+                    "provider": "ollama",
+                    "config": {
+                        "model": LOCAL_LLM,
+                        "ollama_base_url": "http://localhost:11434",
+                        "temperature": 0,
+                    },
+                }
         return {
             "vector_store": {
                 "provider": "qdrant",
@@ -490,9 +508,10 @@ class Mem0Adapter:
             pass
         if not any(e in ("UPDATE", "DELETE") for e in events):
             raise SystemUnavailable(
-                f"the extractor ({LOCAL_LLM} through ollama) issued no UPDATE or "
+                f"the extractor ({LOCAL_LLM} at {LLM_BASE_URL}) issued no UPDATE or "
                 f"DELETE on the self-test contradiction (events: {events}); rerun "
-                "with BM_INTEGRITY_LLM pointing at a model whose decision step updates"
+                "with BM_INTEGRITY_LLM / BM_INTEGRITY_LLM_BASE_URL / "
+                "BM_INTEGRITY_LLM_API_KEY pointing at a model whose decision step updates"
             )
 
     def close(self) -> None:
@@ -515,7 +534,7 @@ class Mem0Adapter:
             out["sentence-transformers"] = _pkg_version("sentence-transformers")
         else:
             out["embedder"] = "ollama/nomic-embed-text"
-            out["llm"] = f"ollama/{LOCAL_LLM}"
+            out["llm"] = f"{LOCAL_LLM} at {LLM_BASE_URL}"
         out["qdrant-client"] = _pkg_version("qdrant-client")
         return out
 
@@ -594,8 +613,9 @@ class Mem0Adapter:
 
 
 class GraphitiAdapter:
-    """graphiti-core on neo4j, LLM and embedder through ollama's OpenAI-
-    compatible endpoint. Zep Cloud is the product; this is its published
+    """graphiti-core on neo4j, the embedder through ollama's OpenAI-compatible
+    endpoint and the LLM through the same endpoint unless BM_INTEGRITY_LLM_BASE_URL
+    and BM_INTEGRITY_LLM_API_KEY point it elsewhere. Zep Cloud is the product; this is its published
     engine, and the row is labelled graphiti for that reason."""
 
     name = "graphiti"
@@ -1085,7 +1105,10 @@ def _require_ollama() -> None:
             f"ollama daemon not reachable at localhost:11434: {exc}"
         ) from exc
     names = {str(m.get("name", "")).split(":")[0] for m in tags.get("models", [])}
-    for needed in (LOCAL_LLM.split(":")[0], LOCAL_EMBEDDER):
+    needed_models = (
+        (LOCAL_EMBEDDER,) if REMOTE_LLM else (LOCAL_LLM.split(":")[0], LOCAL_EMBEDDER)
+    )
+    for needed in needed_models:
         if needed not in names:
             raise SystemUnavailable(f"ollama model {needed} not pulled")
 
