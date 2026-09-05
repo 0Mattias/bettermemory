@@ -313,7 +313,17 @@ _AS_OF_DATE_MARKER = "as of <date>"
 #   "the New <X>" with a capital N is a proper noun (the New York office,
 #   The New Yorker), not a new-thing reference. Requiring lowercase "new"
 #   keeps sentence-initial "The new schema" firing; accepted trade-off:
-#   all-caps "THE NEW SCHEMA" no longer fires.
+#   all-caps "THE NEW SCHEMA" no longer fires. A second exemption is
+#   applied after the match (`_anchored_new_reference`): a sentence that
+#   names the transition "the new" refers to — a change cue AND a
+#   concrete identifier, "switched to Bugsnag with the new SDK release",
+#   "upgraded to Python 3.13 with the new base image" — is anchored, and
+#   the reference stays readable in a week. The integrity benchmark
+#   (`bench/integrity`) found three of the write path's four false alarms
+#   on 94 legitimate statements were this shape; the live override rate
+#   for the marker was 0.16 over 21 fires when the exemption landed.
+#   "The new schema replaces the old layout" carries a cue and no
+#   identifier and keeps firing.
 # - "at the moment": "at the moment of/when/that <event>" is an
 #   event-trigger clause describing durable behavior, never the now-sense,
 #   so suppressing those heads costs zero recall. The ambiguous a/an/the
@@ -483,6 +493,38 @@ def _is_titlecase_name(text: str, match: re.Match[str]) -> bool:
     return nxt != "I" and nxt.istitle()
 
 
+# A dot between two digits ("3.13") is a version, not a sentence end.
+_SENTENCE_END_RE = re.compile(r"[!?\n]|(?<!\d)\.|\.(?!\d)")
+
+
+def _sentence_around(text: str, pos: int) -> str:
+    """The sentence containing `pos`: from the previous terminator (or
+    the start) to the next one (or the end)."""
+    start = 0
+    for m in _SENTENCE_END_RE.finditer(text, 0, pos):
+        start = m.end()
+    end_match = _SENTENCE_END_RE.search(text, pos)
+    end = end_match.start() if end_match else len(text)
+    return text[start:end]
+
+
+def _anchored_new_reference(text: str, match: re.Match[str]) -> bool:
+    """True when a lowercase "the new" sits in a sentence that names the
+    transition it refers to: a change cue and a concrete identifier (a
+    number, a proper noun, a compound with a digit or three parts). See
+    the `_PATTERN_OVERRIDES` comment for the shape and the evidence. The
+    vocabulary is the write-time supersession detector's, imported lazily
+    because that module reaches this one through `consolidate` and
+    `health`."""
+    from .search import _raw_content_token_set
+    from .supersession import anchor_tokens, change_cues
+
+    sentence = _sentence_around(text, match.start())
+    if not change_cues(sentence):
+        return False
+    return bool(anchor_tokens(sentence, _raw_content_token_set(sentence)))
+
+
 def find_transient_markers(content: str) -> list[TransientMatch]:
     """Scan `content` for transient-state markers.
 
@@ -501,6 +543,8 @@ def find_transient_markers(content: str) -> list[TransientMatch]:
             if canonical in _TITLECASE_SKIP_MARKERS and _is_titlecase_name(
                 content, match
             ):
+                continue
+            if canonical == "the new" and _anchored_new_reference(content, match):
                 continue
             hits.append(
                 TransientMatch(

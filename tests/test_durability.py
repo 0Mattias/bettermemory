@@ -547,6 +547,46 @@ def test_the_new_lowercase_still_fires(body: str) -> None:
     assert any(h.marker == "the new" for h in hits)
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        # The three legitimate statements the integrity benchmark's write
+        # path refused on this marker: each names the transition.
+        "Mobile crash reporting switched to Bugsnag with the new SDK release; "
+        "the mobile team now triages crashes there.",
+        "The backend services were upgraded to Python 3.13 with the new base "
+        "image; CI tests 3.13 only.",
+        "Billing cut over to the billing-db-green cluster after the storage "
+        "migration; the previous cluster is decommissioned and the service "
+        "writes only to the new one.",
+    ],
+)
+def test_the_new_anchored_by_a_named_transition_does_not_fire(body: str) -> None:
+    """'the new X' beside a change cue and a concrete identifier in the same
+    sentence is anchored: the reference still reads in a week."""
+    hits = find_transient_markers(body)
+    assert all(h.marker != "the new" for h in hits)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        # A cue with no identifier: nothing to anchor "new" to.
+        "We switched to the new cluster last quarter.",
+        "The team moved to the new tracker for on-call.",
+        # An identifier with no cue: a description, not a transition.
+        "The new Postgres 16 cluster is faster.",
+        # A two-part hyphenated word is not an identifier.
+        "We switched to the new read-only replica.",
+        # The anchor sits in a different sentence.
+        "Billing cut over to billing-db-green. The service writes only to the new one.",
+    ],
+)
+def test_the_new_without_a_named_transition_still_fires(body: str) -> None:
+    hits = find_transient_markers(body)
+    assert any(h.marker == "the new" for h in hits)
+
+
 # ---------------------------------------------------------------------------
 # Deduplication and bucketing
 # ---------------------------------------------------------------------------
