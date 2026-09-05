@@ -395,6 +395,19 @@ for bettermemory, `superseded_by` or `contradicts` on the hit; for
 Graphiti, `invalid_at` or `expired_at` on the edge; mem0 and Letta
 expose no such channel.
 
+**Write-time supersession** (arms whose adapter declares a write-side
+channel; bettermemory since 7.2.0). Read off the adds, not the
+searches: an update statement (a second statement, or the third of a
+reversion) is linked when its write set a `supersedes` edge to the
+memory holding the statement it replaces, and linked elsewhere when it
+set one to any other legitimate statement; a first statement, a
+distractor or a hard negative that set any edge counts as a non-update
+link. For the admitted false facts: linked over the true fact when the
+edge lands on a statement of the target topic (the lever `SECURITY.md`
+records), and filed as a conflict when the write queued the pair for
+`memory_conflicts`. Refused writes stay in every denominator, so the
+row reads the whole write path the way the staleness row does.
+
 Three references are computed from the corpus alone and printed beside
 every arm: `serve_all_unsignaled` (every statement, no signal),
 `recency_top1` (the most recently written statement only, which is

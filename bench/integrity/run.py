@@ -416,6 +416,14 @@ def cmd_score(raw_path: Path, out: Path) -> int:
             f"top1 {st['supersession']['top1_current']}; distractor current {st['distractor']['current_served@5']}; "
             f"reversion current {st['reversion']['current_served@5']}"
         )
+        writes = result.get("supersession_writes")
+        if writes:
+            print(
+                f"{result['arm']}: write-time supersession: updates linked "
+                f"{writes['updates']['linked']}/{writes['updates']['n']}, "
+                f"false facts linked over the true fact "
+                f"{writes['false_fact']['linked_over_true']}/{writes['false_fact']['admitted']}"
+            )
         adm = result["admission"]["per_class"]
         print(
             f"  admission flagged: false_fact {adm['false_fact']['flagged']} instruction {adm['instruction']['flagged']} "

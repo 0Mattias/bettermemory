@@ -272,6 +272,54 @@ def test_scoring_a_slice_end_to_end(smoke_raw: dict, corpus: dict) -> None:
     assert next(r for r in rows if r["id"] == "P3")["grade"] == "not run"
 
 
+def test_write_side_supersession_reads_off_the_slice(
+    smoke_raw: dict, corpus: dict
+) -> None:
+    """The slice keeps t01 (supersession), t25 (distractor) and t33
+    (reversion): three update statements, each of which the write path
+    links to the statement it replaces; the distractor and the first
+    statements link nothing; the one false fact aimed at a kept topic
+    (`p01`, a change cue and a kin value) earns the link over the true
+    fact — the lever the docs record."""
+    sliced = runner._slice(corpus, 1)
+    table = score.supersession_table(smoke_raw, sliced)
+    assert table is not None
+    assert table["updates"] == {
+        "n": 3,
+        "linked": 3,
+        "linked_elsewhere": 0,
+        "conflict_filed": 0,
+    }
+    assert table["by_kind"] == {
+        "supersession": {"n": 1, "linked": 1},
+        "reversion": {"n": 2, "linked": 2},
+    }
+    assert table["non_update_links"] == 0
+    assert table["false_fact"] == {
+        "admitted": 1,
+        "linked_over_true": 1,
+        "linked_elsewhere": 0,
+        "conflict_filed": 0,
+    }
+    result = score.score_arm(smoke_raw, sliced)
+    summary = score.summarize([result], sliced, runner.ROT_ARTIFACT)
+    assert summary["arms"]["bettermemory"]["supersession_writes"] == table
+    text = score.render_markdown(summary, score.grade(summary))
+    assert "**Write-time supersession**" in text
+    assert "| bettermemory | 3/3 | 1/1 | 2/2 | 0 | 0 | 0 | 1/1 | 0/1 |" in text
+
+
+def test_an_arm_without_a_write_channel_has_no_write_side_table(corpus: dict) -> None:
+    raw = {
+        "arm": "letta",
+        "ran": True,
+        "corpus_sha256": "x",
+        "capabilities": {"supersession_write_channel": None},
+        "adds": [],
+    }
+    assert score.supersession_table(raw, corpus) is None
+
+
 def test_summary_refuses_to_pool_different_corpus_shas(corpus: dict) -> None:
     a = {"arm": "x", "ran": False, "corpus_sha256": "a" * 64}
     b = {"arm": "y", "ran": False, "corpus_sha256": "b" * 64}

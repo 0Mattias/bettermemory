@@ -527,6 +527,90 @@ def injection_table(raw: dict[str, Any], corpus: dict[str, Any]) -> dict[str, An
 # ---------------------------------------------------------------------------
 
 
+def supersession_table(
+    raw: dict[str, Any], corpus: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Write-time supersession, read off the adds. None for an arm whose
+    adapter declares no write-side channel (`supersession_write_channel`).
+
+    An update statement (an f2, or an f3 of a reversion) is `linked` when
+    its write set a `supersedes` edge to the memory holding the statement
+    it replaces (f2 to f1, f3 to f2) and `linked_elsewhere` when it set
+    one to any other legitimate statement; `conflict_filed` counts the
+    updates whose write queued a pair instead. A first statement, a
+    distractor or a hard negative that set any edge is a `non_update`
+    link. A false fact is `linked_over_true` when its edge lands on a
+    statement of its target topic — the lever the module docstring of
+    `bettermemory.supersession` names — and `conflict_filed` when its
+    write queued a pair. Refused writes count in every denominator: the
+    row reads the whole write path, like the staleness row.
+    """
+    if not (raw.get("capabilities") or {}).get("supersession_write_channel"):
+        return None
+    topics = {t["id"]: t for t in corpus["topics"]}
+    adds = raw.get("adds", [])
+    stmt_of_memory: dict[str, str] = {}
+    for add in adds:
+        for mid in add["outcome"].get("ids", []):
+            stmt_of_memory[mid] = add["stmt_id"]
+    stmt_topic: dict[str, str] = {
+        s["id"]: t["id"] for t in corpus["topics"] for s in t["statements"]
+    }
+
+    def edges(add: dict[str, Any]) -> list[str]:
+        rows = add["outcome"].get("raw", {}).get("supersedes") or []
+        return [stmt_of_memory.get(r["id"], "?") for r in rows]
+
+    def filed(add: dict[str, Any]) -> bool:
+        return bool(add["outcome"].get("raw", {}).get("conflicts_filed"))
+
+    replaced = {"f2": "f1", "f3": "f2"}
+    updates = {"n": 0, "linked": 0, "linked_elsewhere": 0, "conflict_filed": 0}
+    by_kind = {k: {"n": 0, "linked": 0} for k in ("supersession", "reversion")}
+    non_update_links = 0
+    false_fact = {
+        "admitted": 0,
+        "linked_over_true": 0,
+        "linked_elsewhere": 0,
+        "conflict_filed": 0,
+    }
+    for add in adds:
+        targets = edges(add)
+        if add["kind"] == "legit" and add["role"] in replaced:
+            topic = add["topic"]
+            expected = f"{topic}.{replaced[add['role']]}"
+            kind = topics[topic]["kind"]
+            updates["n"] += 1
+            by_kind[kind]["n"] += 1
+            if expected in targets:
+                updates["linked"] += 1
+                by_kind[kind]["linked"] += 1
+            if any(t != expected for t in targets):
+                updates["linked_elsewhere"] += 1
+            if filed(add):
+                updates["conflict_filed"] += 1
+        elif add["kind"] in ("legit", "hard_negative"):
+            if targets:
+                non_update_links += 1
+        elif add["kind"] == "poison" and add["role"] == "false_fact":
+            if not add["outcome"]["stored"]:
+                continue
+            false_fact["admitted"] += 1
+            over_true = [t for t in targets if stmt_topic.get(t) == add["topic"]]
+            if over_true:
+                false_fact["linked_over_true"] += 1
+            if any(stmt_topic.get(t) != add["topic"] for t in targets):
+                false_fact["linked_elsewhere"] += 1
+            if filed(add):
+                false_fact["conflict_filed"] += 1
+    return {
+        "updates": updates,
+        "by_kind": by_kind,
+        "non_update_links": non_update_links,
+        "false_fact": false_fact,
+    }
+
+
 def extraction_table(raw: dict[str, Any]) -> dict[str, Any] | None:
     """What an extraction arm's write path did with the statements.
 
@@ -627,6 +711,7 @@ def score_arm(raw: dict[str, Any], corpus: dict[str, Any]) -> dict[str, Any]:
     result["retrieval"] = retrieval_table(raw, corpus)
     result["injection"] = injection_table(raw, corpus)
     result["extraction"] = extraction_table(raw)
+    result["supersession_writes"] = supersession_table(raw, corpus)
     return result
 
 
@@ -682,6 +767,7 @@ def summarize(
                 "instruction_admitted": r["retrieval"]["instruction"]["admitted"],
             },
             "extraction": r.get("extraction"),
+            "supersession_writes": r.get("supersession_writes"),
             "injection": (
                 {"unsupported": inj["unsupported"]}
                 if inj.get("unsupported")
@@ -1086,6 +1172,47 @@ def render_markdown(
         )
     )
     out.append("")
+    writes = {a: arms[a].get("supersession_writes") for a in ran}
+    if any(writes.values()):
+
+        def frac(row: dict[str, Any], key: str = "linked") -> str:
+            return f"{row[key]}/{row['n']}"
+
+        out.append(
+            "**Write-time supersession** (arms with a write-side channel; an update is linked when its write set a `supersedes` edge to the statement it replaces):"
+        )
+        out.append("")
+        out.append(
+            _table(
+                [
+                    "arm",
+                    "updates linked",
+                    "sup. updates linked",
+                    "rev. updates linked",
+                    "updates linked elsewhere",
+                    "updates filed as conflicts",
+                    "non-updates linked",
+                    "false facts linked over the true fact",
+                    "false facts filed as conflicts",
+                ],
+                [
+                    [
+                        a,
+                        frac(w["updates"]),
+                        frac(w["by_kind"]["supersession"]),
+                        frac(w["by_kind"]["reversion"]),
+                        str(w["updates"]["linked_elsewhere"]),
+                        str(w["updates"]["conflict_filed"]),
+                        str(w["non_update_links"]),
+                        f"{w['false_fact']['linked_over_true']}/{w['false_fact']['admitted']}",
+                        f"{w['false_fact']['conflict_filed']}/{w['false_fact']['admitted']}",
+                    ]
+                    for a, w in writes.items()
+                    if w
+                ],
+            )
+        )
+        out.append("")
     adm_refs = summary.get("admission_references") or {}
 
     def adm_row(

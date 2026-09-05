@@ -222,6 +222,10 @@ class BetterMemoryAdapter:
         return {
             "write_gates": True,
             "supersession_signal_channel": "superseded_by / contradicts link annotations",
+            "supersession_write_channel": (
+                "supersedes links set by memory_write; cue-less divergence filed "
+                "for memory_conflicts"
+            ),
             "provenance_channel": "provenance label (local / synced / untracked / unaccounted)",
             "store_injection": "planted markdown file, index rebuilt",
             "forged_provenance": "a forged `write` event line appended to the event log",
@@ -265,6 +269,8 @@ class BetterMemoryAdapter:
                 "matches",
                 "warnings",
                 "pending_reason",
+                "supersedes",
+                "conflicts_filed",
             )
         }
         return AddOutcome(
