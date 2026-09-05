@@ -2191,7 +2191,12 @@ async def _write_citing_a_vanished_file(
 
     With `attest=True` the verify call names the path, which is what makes
     the later absence claim-anchored evidence; with `attest=False` the
-    identical absence is a prose citation nobody reviewed.
+    identical absence is a prose citation nobody reviewed. The tool refuses
+    to land that second stamp since 7.3.0 (a verify attesting nothing on a
+    memory whose cited paths resolve), so the unattested shape — which
+    stores stamped before then still carry — is produced through the
+    policy-free store primitive, and what these tests pin is how the read
+    side treats it.
     """
     cited = tmp_path / name
     cited.write_text("x\n", encoding="utf-8")
@@ -2201,12 +2206,12 @@ async def _write_citing_a_vanished_file(
         content=f"The provenance fixture cites `{cited}` for its config.",
         scopes=["tools"],
     )
-    await _call(
-        server,
-        "memory_verify",
-        id=written["id"],
-        **({"verified_paths": [str(cited)]} if attest else {}),
-    )
+    if attest:
+        await _call(
+            server, "memory_verify", id=written["id"], verified_paths=[str(cited)]
+        )
+    else:
+        Store(tmp_path / "memories").mark_verified(written["id"])
     cited.unlink()
     return str(written["id"]), cited
 
@@ -2346,7 +2351,10 @@ async def test_commit_drift_recompute_does_not_re_broaden_the_path_leg(
         content=f"The provenance fixture cites `{cited}` for its config.",
         scopes=["tools"],
     )
-    await _call(server, "memory_verify", id=written["id"], note="seed")
+    # An unattested stamp, the shape the recompute has to read as prose
+    # evidence; the tool refuses to land one on this body, so the store
+    # primitive stamps it (see `_write_citing_a_vanished_file`).
+    Store(memory_dir).mark_verified(written["id"])
     cited.unlink()
 
     hits = _unwrap(

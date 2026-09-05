@@ -10,7 +10,11 @@ from ..claims import check_claim, load_claims
 from ..origin import repos_match
 from ..store import ConcurrentUpdateError, MemoryNotFoundError, TombstonedError
 from ..symbols import check_symbol_citations
-from ..verify import unverifiable_attestations
+from ..verify import (
+    _worktree_root_is_live,
+    detect_path_drift,
+    unverifiable_attestations,
+)
 from ._shared import (
     Context,
     _NOTE_MAX_LEN,
@@ -124,6 +128,84 @@ def _refuse_unverifiable_stored_attestations(
         )
 
 
+# How many resolved citations a refusal lists before eliding the rest.
+_SUGGESTED_PATHS_SHOWN = 8
+
+
+def _relative_to_root(path: str, root: str | None) -> str:
+    """The citation as the writer would attest it: repo-relative when it
+    sits under the memory's worktree, as written otherwise."""
+    if root is None:
+        return path
+    try:
+        return str(
+            Path(path)
+            .resolve(strict=False)
+            .relative_to(Path(root).resolve(strict=False))
+        )
+    except (OSError, ValueError):
+        return path
+
+
+def _refuse_evidence_free_stamp(
+    memory_id: str,
+    body: str,
+    origin_root: str | None,
+    *,
+    attests_paths: bool,
+    attests_absence: bool,
+    declares_claims: bool,
+) -> None:
+    """Refuse a stamp that names nothing it checked on a memory whose
+    citations resolve.
+
+    `last_verified_at` asserts the record matches reality, and the read
+    side's drift legs read exactly two things a verify can leave behind:
+    `verified_paths` and `claims`. A bare `memory_verify(id)` stamped
+    `fresh` on zero evidence, and on a memory that cites files the caller
+    could have attested that stamp rests on nothing a reader can use —
+    the first weak point of the integrity recon, and the one a curation
+    pass reaches for most (the checkable half of the verification-debt
+    buckets is exactly these memories). Scoped to what RESOLVES: an
+    absolute citation that exists here, or a relative one anchored in the
+    memory's live worktree — `detect_path_drift`'s `checked` less its
+    misses. A memory with no resolving citation keeps the documented
+    no-arg slide-the-timestamp: a preference or a lesson has nothing to
+    attest, and a body whose cited files are gone is drift the read side
+    already reports, not evidence a stamp could carry. Attesting
+    intentional absence or declaring claims is evidence too, since the
+    caller looked; an explicit `[]` on every list is not.
+
+    The refusal lists the resolved citations, repo-relative when they sit
+    under the worktree, as the list to attest — the same remedy shape as
+    the vanished-attestation refusal, pointed the other way.
+    """
+    if attests_paths or attests_absence or declares_claims:
+        return
+    root = (
+        origin_root
+        if origin_root is not None and _worktree_root_is_live(origin_root)
+        else None
+    )
+    report = detect_path_drift(body, worktree_root=root)
+    gone = set(report.missing) | set(report.expected_absent)
+    resolved = [p for p in report.checked if p not in gone]
+    if not resolved:
+        return
+    suggested = [_relative_to_root(p, root) for p in resolved]
+    shown = ", ".join(suggested[:_SUGGESTED_PATHS_SHOWN])
+    if len(suggested) > _SUGGESTED_PATHS_SHOWN:
+        shown += f", and {len(suggested) - _SUGGESTED_PATHS_SHOWN} more"
+    raise ValueError(
+        f"cannot verify: memory {memory_id} cites {len(resolved)} path(s) that "
+        f"resolve here and this call attests none of them: {shown}. A stamp "
+        "that names nothing it checked asserts nothing the read side can use. "
+        "Pass verified_paths with the ones you looked at, verified_absent_paths "
+        "for any that should be absent, or claims for what the body asserts "
+        "about them."
+    )
+
+
 DESC_MEMORY_VERIFY = (
     "Bump `last_verified_at` to now after spot-checking that a "
     "memory's claims still match reality (file paths exist, "
@@ -154,7 +236,9 @@ DESC_MEMORY_VERIFY = (
     "false one blocks the stamp; memory_update first.\n"
     "All five lists are REPLACE, not append — `None` "
     "preserves the prior attestation, `[]` clears it, a populated "
-    "list supersedes it. Attest the full set each time.\n\n"
+    "list supersedes it. Attest the full set each time. A verify "
+    "attesting nothing on a memory whose cited paths resolve is "
+    "refused; the error lists them as the paths to attest.\n\n"
     "After memory_update on a memory you later spot-check, verify "
     "again — memory_update clears `last_verified_at` because the "
     "prior verification was for prose that no longer exists.\n\n"
@@ -328,6 +412,20 @@ async def memory_verify(
         )
     elif snapshot.claims:
         _refuse_stale_stored_claims(snapshot.claims, origin_root)
+
+    # The stamp has to name something it checked when there is something
+    # to check. Evidence is what this call attests or what a `None`
+    # preserves from the record; an explicit `[]` is a clear, not evidence.
+    _refuse_evidence_free_stamp(
+        id,
+        snapshot.body,
+        origin_root,
+        attests_paths=bool(verified_paths)
+        or (verified_paths is None and bool(snapshot.verified_paths)),
+        attests_absence=bool(verified_absent_paths)
+        or (verified_absent_paths is None and bool(snapshot.verified_absent_paths)),
+        declares_claims=bool(claims) or (claims is None and bool(snapshot.claims)),
+    )
 
     # Symbol citations in the body, AST-checked against the memory's own
     # recorded worktree. ADVISORY, and structurally so: the result is

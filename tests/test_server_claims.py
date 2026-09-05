@@ -292,9 +292,16 @@ async def test_verify_refuses_when_stored_claim_went_false(
         await _call(server, "memory_verify", id=memory_id)
 
     # `claims=[]` is the explicit clear-and-stamp escape; audited, and it
-    # drops the memory back to incumbent-governed drift.
-    cleared = await _call(server, "memory_verify", id=memory_id, claims=[])
+    # drops the memory back to incumbent-governed drift. On a body whose
+    # cited file resolves the clear has to come with an attestation — a
+    # stamp attesting nothing is refused since 7.3.0.
+    with pytest.raises(Exception, match="attests none of them"):
+        await _call(server, "memory_verify", id=memory_id, claims=[])
+    cleared = await _call(
+        server, "memory_verify", id=memory_id, claims=[], verified_paths=["pkg/mod.py"]
+    )
     assert cleared["claims"] == []
+    assert cleared["verified_paths"] == ["pkg/mod.py"]
 
 
 async def test_verify_replaces_claims(server_in_repo) -> None:

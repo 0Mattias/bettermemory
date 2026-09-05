@@ -119,6 +119,100 @@ async def test_preserving_reverify_slides_timestamp_when_attestations_hold(
     assert again["verified_paths"] == [str(attested)]
 
 
+async def test_bare_verify_on_a_memory_whose_citations_resolve_is_refused(
+    memory_dir: Path, tmp_path: Path
+) -> None:
+    """The recon's first weak point: a bare `memory_verify(id)` stamped
+    `fresh` on zero evidence. On a memory that cites a file which resolves
+    here, the stamp now has to name what it checked; the refusal lists the
+    resolved citation as the list to attest, nothing lands, and the same
+    call with `verified_paths` goes through — after which the documented
+    no-arg re-verify carries that attestation as its evidence."""
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    store = Store(memory_dir)
+    server = build_server(config=cfg, store=store, state=SessionState())
+
+    cited = tmp_path / "gateway.toml"
+    cited.write_text("port = 8443\n", encoding="utf-8")
+    res = await _call(
+        server,
+        "memory_write",
+        content=f"the gateway reads its listen port from `{cited}` at boot",
+        scopes=["infrastructure"],
+    )
+    mid = res["id"]
+
+    with pytest.raises(Exception, match="attests none of them") as excinfo:
+        await _call(server, "memory_verify", id=mid, note="looks right")
+    assert str(cited) in str(excinfo.value)
+    assert store.load_one(mid).last_verified_at is None
+
+    ok = await _call(server, "memory_verify", id=mid, verified_paths=[str(cited)])
+    assert ok["verified"] == mid
+    assert ok["verified_paths"] == [str(cited)]
+    again = await _call(server, "memory_verify", id=mid, note="spot-checked again")
+    assert again["verified_paths"] == [str(cited)]
+
+
+async def test_bare_verify_without_a_resolving_citation_still_stamps(
+    memory_dir: Path, tmp_path: Path
+) -> None:
+    """Two bodies with nothing to attest keep the no-arg stamp: one cites
+    no path at all, one cites a path that does not exist — the latter is
+    drift the read side reports, not evidence a stamp could carry."""
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    server = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    plain = await _call(
+        server,
+        "memory_write",
+        content="prefer squash merges on this repository",
+        scopes=["workflow"],
+    )
+    assert (await _call(server, "memory_verify", id=plain["id"]))["verified"] == plain[
+        "id"
+    ]
+    gone = tmp_path / "gone.toml"
+    cites_gone = await _call(
+        server,
+        "memory_write",
+        content=f"the old listener config lived at `{gone}` before the move",
+        scopes=["infrastructure"],
+    )
+    stamped = await _call(server, "memory_verify", id=cites_gone["id"])
+    assert stamped["verified"] == cites_gone["id"]
+
+
+async def test_absence_attestation_and_claims_count_as_evidence(
+    memory_dir: Path, tmp_path: Path
+) -> None:
+    """The caller looked: an absence attestation on another path, or a
+    stored attestation carried by `None`, is evidence; an explicit clear
+    of every list is not."""
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    store = Store(memory_dir)
+    server = build_server(config=cfg, store=store, state=SessionState())
+    cited = tmp_path / "present.toml"
+    cited.write_text("x = 1\n", encoding="utf-8")
+    elsewhere = tmp_path / "remote-only.toml"
+    res = await _call(
+        server,
+        "memory_write",
+        content=f"the service reads `{cited}`; the replica keeps `{elsewhere}`",
+        scopes=["infrastructure"],
+    )
+    mid = res["id"]
+    ok = await _call(
+        server, "memory_verify", id=mid, verified_absent_paths=[str(elsewhere)]
+    )
+    assert ok["verified"] == mid
+    with pytest.raises(Exception, match="attests none of them"):
+        await _call(
+            server, "memory_verify", id=mid, verified_paths=[], verified_absent_paths=[]
+        )
+    # The stored absence attestation, preserved by None, is still evidence.
+    assert (await _call(server, "memory_verify", id=mid))["verified"] == mid
+
+
 def test_stored_attestation_recheck_scoping(tmp_path: Path) -> None:
     """The scoping split, at the helper: ABSOLUTE stored entries are
     checked regardless of root liveness (they were attested as

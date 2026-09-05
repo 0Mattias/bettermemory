@@ -6528,7 +6528,10 @@ _DESC_BASELINE = {
     # spent — the slack the 2026-08-04 links-tail collapse bought is
     # what absorbed the feature.
     "memory_update": 1686,
-    "memory_verify": 1919,
+    # Re-measured 2026-09-05 for the evidence-free stamp refusal: 1919 ->
+    # 2041 (+122), one sentence naming the refusal and its remedy, under
+    # the 26,500 ceiling recalibrated the same day.
+    "memory_verify": 2041,
     # Re-measured 2026-09-05 for write-time supersession: 2998 -> 3020
     # (+22 net). The `supersedes` parameter bullet and the `committed`
     # status clause cost 300; the rest of the description paid for them —

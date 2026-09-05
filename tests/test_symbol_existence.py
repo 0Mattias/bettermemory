@@ -447,7 +447,7 @@ async def test_verify_reports_symbol_existence_for_what_it_can_parse(
     server: Any, memory_dir: Path, tree: Path
 ) -> None:
     mid = _plant(memory_dir, "`top_function` in `pkg/mod.py` is the entry point.", tree)
-    result = await _call(server, "memory_verify", id=mid)
+    result = await _call(server, "memory_verify", id=mid, verified_paths=["pkg/mod.py"])
     assert result["symbol_drift"] == {
         "checked": ["top_function in pkg/mod.py"],
         "missing": [],
@@ -459,7 +459,7 @@ async def test_verify_reports_a_miss_with_an_advisory_note(
     server: Any, memory_dir: Path, tree: Path
 ) -> None:
     mid = _plant(memory_dir, "`vanished_helper` in `pkg/mod.py` does the work.", tree)
-    result = await _call(server, "memory_verify", id=mid)
+    result = await _call(server, "memory_verify", id=mid, verified_paths=["pkg/mod.py"])
     assert result["symbol_drift"]["missing"] == ["vanished_helper in pkg/mod.py"]
     assert "Advisory only" in result["symbol_drift"]["note"]
 
@@ -482,7 +482,9 @@ async def test_a_symbol_miss_does_not_move_the_staleness_verdict(
     a symbol bound nowhere; it still reads `fresh`, because no verdict
     input reads this check."""
     mid = _plant(memory_dir, "`vanished_helper` in `pkg/mod.py` does the work.", tree)
-    verified = await _call(server, "memory_verify", id=mid)
+    verified = await _call(
+        server, "memory_verify", id=mid, verified_paths=["pkg/mod.py"]
+    )
     assert verified["symbol_drift"]["missing"]
     shown = await _call(server, "memory_show", id=mid)
     assert shown["staleness_verdict"] == "fresh"
@@ -494,9 +496,10 @@ async def test_the_advisory_does_not_reach_the_persisted_record(
     """No new frozen-surface vocabulary: the attestation lists are what
     they were, and a symbol miss adds nothing to them."""
     mid = _plant(memory_dir, "`vanished_helper` in `pkg/mod.py` does the work.", tree)
-    await _call(server, "memory_verify", id=mid)
+    await _call(server, "memory_verify", id=mid, verified_paths=["pkg/mod.py"])
     stored = Store(memory_dir).load_one(mid)
-    assert stored.verified_paths == []
+    # The attestation the call named, and nothing the advisory added.
+    assert stored.verified_paths == ["pkg/mod.py"]
     assert stored.verified_commits == []
     assert stored.verified_versions == []
     assert stored.last_verified_at is not None
@@ -514,7 +517,7 @@ async def test_a_miss_lands_in_the_event_log_and_nothing_else_does(
     quiet = _plant(memory_dir, "prefer cost checkpoints on long runs", tree)
     loud = _plant(memory_dir, "`vanished_helper` in `pkg/mod.py` does the work.", tree)
     await _call(server, "memory_verify", id=quiet)
-    await _call(server, "memory_verify", id=loud)
+    await _call(server, "memory_verify", id=loud, verified_paths=["pkg/mod.py"])
 
     events = {e["id"]: e for e in iter_events(memory_dir) if e["kind"] == "verify"}
     assert "symbol_drift_missing" not in events[quiet]
