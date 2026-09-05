@@ -22,6 +22,9 @@ never had (`_refuse_unverifiable_stored_attestations`).
 
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -30,7 +33,9 @@ import pytest
 from ._mcp import call_tool as _mcp_call
 
 from bettermemory.config import Config, StorageConfig
+from bettermemory.events import Recorder, iter_events
 from bettermemory.handlers.verify import _refuse_unverifiable_stored_attestations
+from bettermemory.origin import Origin
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
 from bettermemory.store import Store
@@ -248,3 +253,163 @@ def test_stored_attestation_recheck_scoping(tmp_path: Path) -> None:
         _refuse_unverifiable_stored_attestations(
             [str(gone_abs)], origin_root=str(dead_root)
         )
+
+
+# ---------------------------------------------------------------------------
+# The stamp records the origin checkout's HEAD as `verified_head`
+# ---------------------------------------------------------------------------
+
+_GIT_AVAILABLE = shutil.which("git") is not None
+_REMOTE = "git@github.com:example/foo.git"
+
+
+def _repo_with_a_commit(root: Path) -> str:
+    root.mkdir(parents=True, exist_ok=True)
+    env = os.environ.copy()
+    env.update(
+        GIT_AUTHOR_NAME="Test",
+        GIT_AUTHOR_EMAIL="test@example.com",
+        GIT_COMMITTER_NAME="Test",
+        GIT_COMMITTER_EMAIL="test@example.com",
+    )
+    subprocess.run(
+        ["git", "init", "-q", "--initial-branch=main"], cwd=root, check=True, env=env
+    )
+    (root / "notes.md").write_text("anchor\n", encoding="utf-8")
+    subprocess.run(["git", "add", "notes.md"], cwd=root, check=True, env=env)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "anchor"], cwd=root, check=True, env=env
+    )
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def _server(memory_dir: Path) -> tuple[Any, Store]:
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    state = SessionState()
+    store = Store(memory_dir)
+    recorder = Recorder(root=memory_dir, session_id=state.session_id, enabled=True)
+    return build_server(config=cfg, store=store, state=state, recorder=recorder), store
+
+
+def _verify_events(memory_dir: Path) -> list[dict[str, Any]]:
+    return [e for e in iter_events(memory_dir) if e.get("kind") == "verify"]
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+async def test_the_stamp_records_the_origin_checkouts_head(
+    memory_dir: Path, tmp_path: Path
+) -> None:
+    """The anchor is read from the memory's own live worktree — the tree
+    the attestation and claim checks resolve against — and rides the
+    response, the record and the event. A later stamp moves it to the
+    commit the tree stands at then."""
+    root = tmp_path / "worktree"
+    head = _repo_with_a_commit(root)
+    server, store = _server(memory_dir)
+    memory = store.write(
+        content="widgets live in notes.md",
+        scopes=["tools"],
+        origin=Origin(cwd=str(root), repo=_REMOTE, worktree_root=str(root)),
+    )
+
+    res = await _call(
+        server, "memory_verify", id=memory.id, verified_paths=["notes.md"]
+    )
+    assert res["verified_head"] == head
+    assert store.load_one(memory.id).verified_head == head
+    (event,) = _verify_events(memory_dir)
+    assert event["verified_head"] == head
+
+    (root / "notes.md").write_text("moved on\n", encoding="utf-8")
+    env = os.environ.copy()
+    env.update(GIT_COMMITTER_NAME="Test", GIT_COMMITTER_EMAIL="test@example.com")
+    subprocess.run(
+        ["git", "commit", "-q", "-am", "later"], cwd=root, check=True, env=env
+    )
+    later = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert later != head
+    # The preserving re-verify (stored attestations carried forward).
+    res = await _call(server, "memory_verify", id=memory.id)
+    assert res["verified_head"] == later
+    assert store.load_one(memory.id).verified_head == later
+
+
+async def test_a_memory_with_no_checkout_stamps_without_an_anchor(
+    memory_dir: Path, tmp_path: Path
+) -> None:
+    """No repository on the record, or a worktree that is not a
+    checkout here: the stamp lands, the anchor reads None, the event
+    carries no `verified_head` key, and the drift leg keeps counting in
+    author-date space for the record."""
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    (plain / "notes.md").write_text("x\n", encoding="utf-8")
+    server, store = _server(memory_dir)
+    no_repo = store.write(
+        content="widgets live in notes.md",
+        scopes=["tools"],
+        origin=Origin(cwd=str(plain), worktree_root=str(plain)),
+    )
+    res = await _call(
+        server, "memory_verify", id=no_repo.id, verified_paths=["notes.md"]
+    )
+    assert res["verified_head"] is None
+    assert store.load_one(no_repo.id).last_verified_at is not None
+    assert store.load_one(no_repo.id).verified_head is None
+
+    dead = store.write(
+        content="a preference with no path to check",
+        scopes=["tools"],
+        origin=Origin(
+            cwd=str(tmp_path / "never"),
+            repo=_REMOTE,
+            worktree_root=str(tmp_path / "never"),
+        ),
+    )
+    res = await _call(server, "memory_verify", id=dead.id)
+    assert res["verified_head"] is None
+    for event in _verify_events(memory_dir):
+        assert "verified_head" not in event
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+async def test_a_legacy_record_takes_the_head_of_the_callers_checkout(
+    memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A record that names its repository but not its worktree (written
+    before `worktree_root` existed) borrows the caller's checkout of the
+    same repository for its tree — the rule the attestation check
+    already applies — so its anchor is that checkout's HEAD."""
+    import bettermemory._handlers as handlers_module
+
+    root = tmp_path / "checkout"
+    head = _repo_with_a_commit(root)
+    monkeypatch.setattr(
+        handlers_module,
+        "capture_origin",
+        lambda cwd=None: Origin(
+            cwd=str(root), repo=_REMOTE, branch="main", worktree_root=str(root)
+        ),
+    )
+    server, store = _server(memory_dir)
+    legacy = store.write(
+        content="widgets live in notes.md",
+        scopes=["tools"],
+        origin=Origin(cwd=str(root), repo=_REMOTE),
+    )
+    res = await _call(
+        server, "memory_verify", id=legacy.id, verified_paths=["notes.md"]
+    )
+    assert res["verified_head"] == head

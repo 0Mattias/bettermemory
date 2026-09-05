@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from .._response import isoformat, isoformat_optional
 from ..claims import check_claim, load_claims
-from ..origin import repos_match
+from ..origin import head_sha, repos_match
 from ..store import ConcurrentUpdateError, MemoryNotFoundError, TombstonedError
 from ..symbols import check_symbol_citations
 from ..verify import (
@@ -239,6 +239,10 @@ DESC_MEMORY_VERIFY = (
     "list supersedes it. Attest the full set each time. A verify "
     "attesting nothing on a memory whose cited paths resolve is "
     "refused; the error lists them as the paths to attest.\n\n"
+    "The stamp records the origin checkout's HEAD as `verified_head`; "
+    "commit drift then counts the commits reachable since it "
+    "(`basis: reachability`), which sees a branch merged after the "
+    "stamp.\n\n"
     "After memory_update on a memory you later spot-check, verify "
     "again — memory_update clears `last_verified_at` because the "
     "prior verification was for prose that no longer exists.\n\n"
@@ -447,6 +451,23 @@ async def memory_verify(
     # is policy in the same sense the attestation refusal above is.
     symbol_drift = check_symbol_citations(snapshot.body, worktree_root=origin_root)
 
+    # The stamp's anchor: the commit the origin checkout stands at, read
+    # from the same live tree the attestation and claim checks above
+    # resolved against, so the record says which tree state it was
+    # verified at and the commit-drift leg can count from there in
+    # reachability space. None when no checkout answers — a memory
+    # written outside git, a synced replica whose worktree is not here,
+    # a record with no repository — and the leg keeps the author-date
+    # count for it, labelled as such.
+    verified_head = (
+        head_sha(Path(origin_root))
+        if origin_root is not None
+        and snapshot.origin is not None
+        and snapshot.origin.repo is not None
+        and _worktree_root_is_live(origin_root)
+        else None
+    )
+
     try:
         memory = deps.store.mark_verified(
             id,
@@ -455,6 +476,7 @@ async def memory_verify(
             verified_versions=verified_versions,
             verified_absent_paths=verified_absent_paths,
             claims=normalized_claims,
+            verified_head=verified_head,
             expected_last_verified_at=snapshot.last_verified_at,
             # Both snapshot fields ride the CAS: `last_verified_at`
             # alone is None == None on a never-verified memory, so a
@@ -518,6 +540,7 @@ async def memory_verify(
         verified_versions=list(memory.verified_versions),
         verified_absent_paths=list(memory.verified_absent_paths),
         **({"claims": list(memory.claims)} if memory.claims else {}),
+        **({"verified_head": memory.verified_head} if memory.verified_head else {}),
         **({"symbol_drift_missing": len(missing)} if missing else {}),
     )
     response: dict[str, Any] = {
@@ -529,6 +552,7 @@ async def memory_verify(
         "verified_versions": list(memory.verified_versions),
         "verified_absent_paths": list(memory.verified_absent_paths),
         "claims": list(memory.claims),
+        "verified_head": memory.verified_head,
     }
     # Emitted only when the body actually carried a citation this check
     # could parse. Silence is the normal case and is the honest one: an

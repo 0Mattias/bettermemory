@@ -10,8 +10,13 @@ with the same scoping, and whatever fails leaves with the removal fields.
 
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 from bettermemory.config import BehaviorConfig, Config, StorageConfig
 from bettermemory.events import Recorder, iter_events
@@ -92,6 +97,7 @@ async def test_a_claim_the_tree_now_contradicts_leaves_with_the_stamp(
         "claims": ["pkg/mod.py::TIMEOUT=30"],
         "verified_paths": [],
         "verification_cleared": True,
+        "verified_head_dropped": False,
     }
     assert "memory_verify" in res["hint"]
     restored = store.load_one(mid)
@@ -122,6 +128,7 @@ async def test_an_attested_path_that_vanished_leaves_with_the_stamp(
         "claims": [],
         "verified_paths": [str(attested)],
         "verification_cleared": True,
+        "verified_head_dropped": False,
     }
     restored = store.load_one(mid)
     assert restored.verified_paths == []
@@ -203,3 +210,128 @@ def test_the_cli_restore_runs_the_same_check(
     assert store.load_one(mid).claims == []
     (event,) = _restore_events(memory_dir)
     assert event["claims_dropped"] == ["pkg/mod.py::TIMEOUT=30"]
+
+
+# ---------------------------------------------------------------------------
+# The stamp's commit anchor is re-checked on the way back
+# ---------------------------------------------------------------------------
+
+_GIT_AVAILABLE = shutil.which("git") is not None
+
+
+def _git_tree(tmp_path: Path) -> tuple[Path, str]:
+    """`_tree`, committed: the origin worktree as a checkout whose HEAD is
+    the anchor a stamp would record."""
+    root = _tree(tmp_path)
+    env = os.environ.copy()
+    env.update(
+        GIT_AUTHOR_NAME="Test",
+        GIT_AUTHOR_EMAIL="test@example.com",
+        GIT_COMMITTER_NAME="Test",
+        GIT_COMMITTER_EMAIL="test@example.com",
+    )
+    subprocess.run(
+        ["git", "init", "-q", "--initial-branch=main"], cwd=root, check=True, env=env
+    )
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True, env=env)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "anchor"], cwd=root, check=True, env=env
+    )
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    return root, head
+
+
+def _seed_anchored(store: Store, root: Path, head: str) -> str:
+    memory = store.write(
+        content=_BODY,
+        scopes=["tools"],
+        origin=Origin(
+            cwd=str(root),
+            repo="git@github.com:example/foo.git",
+            worktree_root=str(root),
+        ),
+    )
+    store.mark_verified(memory.id, verified_paths=["pkg/mod.py"], verified_head=head)
+    store.tombstone(memory.id, "test")
+    return memory.id
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+async def test_an_anchor_the_origin_tree_no_longer_resolves_is_dropped(
+    memory_dir: Path, tmp_path: Path
+) -> None:
+    """The stamped commit was amended away while the record sat
+    tombstoned. The anchor leaves — nothing can count from it — but the
+    stamp stays: the record is still the one that was verified, it just
+    no longer says where, and the drift leg counts in author-date space
+    for it. Reported on the response and the event, without the
+    verification-cleared hint."""
+    root, head = _git_tree(tmp_path)
+    store = Store(memory_dir)
+    mid = _seed_anchored(store, root, head)
+    stamp = store.load_tombstone(mid).last_verified_at
+    env = os.environ.copy()
+    env.update(GIT_COMMITTER_NAME="Test", GIT_COMMITTER_EMAIL="test@example.com")
+    subprocess.run(
+        ["git", "commit", "-q", "--amend", "-m", "anchor, rewritten"],
+        cwd=root,
+        check=True,
+        env=env,
+    )
+
+    strip = trust_strip_for(store.load_tombstone(mid))
+    assert strip.verified_head is True
+    assert strip.any is False and strip.reported is True
+
+    server = _build(memory_dir)
+    res = await _call(server, "memory_restore", id=mid)
+    assert res["trust_stripped"] == {
+        "claims": [],
+        "verified_paths": [],
+        "verification_cleared": False,
+        "verified_head_dropped": True,
+    }
+    assert "hint" not in res
+    restored = store.load_one(mid)
+    assert restored.verified_head is None
+    assert restored.last_verified_at == stamp
+    assert restored.verified_paths == ["pkg/mod.py"]
+    (event,) = _restore_events(memory_dir)
+    assert event["verified_head_dropped"] is True
+    assert "verification_cleared" not in event
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+async def test_an_anchor_that_still_resolves_comes_back_intact(
+    memory_dir: Path, tmp_path: Path
+) -> None:
+    root, head = _git_tree(tmp_path)
+    store = Store(memory_dir)
+    mid = _seed_anchored(store, root, head)
+    server = _build(memory_dir)
+    res = await _call(server, "memory_restore", id=mid)
+    assert "trust_stripped" not in res
+    assert store.load_one(mid).verified_head == head
+    (event,) = _restore_events(memory_dir)
+    assert "verified_head_dropped" not in event
+
+
+def test_a_dead_origin_worktree_keeps_the_anchor(
+    memory_dir: Path, tmp_path: Path
+) -> None:
+    """A replica that never had the repository cannot say the commit is
+    gone: the anchor stays, and the read side falls back on its own if
+    HEAD there does not descend from it."""
+    root = tmp_path / "never-here"
+    store = Store(memory_dir)
+    mid = _seed_anchored(store, root, "c" * 40)
+    strip = trust_strip_for(store.load_tombstone(mid))
+    assert strip.verified_head is False
+    memory, _ = restore_with_trust_check(store, mid)
+    assert memory.verified_head == "c" * 40

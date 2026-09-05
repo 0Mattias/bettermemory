@@ -6530,8 +6530,12 @@ _DESC_BASELINE = {
     "memory_update": 1686,
     # Re-measured 2026-09-05 for the evidence-free stamp refusal: 1919 ->
     # 2041 (+122), one sentence naming the refusal and its remedy, under
-    # the 26,500 ceiling recalibrated the same day.
-    "memory_verify": 2041,
+    # the 26,500 ceiling recalibrated the same day. Re-measured again for
+    # the `verified_head` anchor: 2041 -> 2232 (+191), one sentence naming
+    # the field the stamp records and the basis the drift leg counts on
+    # from it — a return field no reject can teach, so the description
+    # carries it; the total lands 102 under the pressure line.
+    "memory_verify": 2232,
     # Re-measured 2026-09-05 for write-time supersession: 2998 -> 3020
     # (+22 net). The `supersedes` parameter bullet and the `committed`
     # status clause cost 300; the rest of the description paid for them —

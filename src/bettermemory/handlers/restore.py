@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..claims import check_claim, load_claims
 from ..models import Memory, TombstonedMemory
+from ..origin import commit_reachable
 from ..store import MemoryNotFoundError, NotTombstonedError, Store
 from ..verify import _worktree_root_is_live, unverifiable_attestations
 from ._shared import Context, _advance_turn
@@ -38,20 +39,34 @@ class TrustStrip:
     contradicts and the attested paths that no longer exist. `any` is
     also whether the verification stamp was cleared — a stamp asserts
     the whole record, and a record that lost a field it was stamped
-    over is not the record that was verified."""
+    over is not the record that was verified.
+
+    `verified_head` is the one drop that does NOT clear the stamp: the
+    origin tree's HEAD no longer descends from the stamp's commit anchor
+    (a history rewritten while the record sat tombstoned), so the
+    commit-drift leg cannot count from it and falls back to the
+    author-date count — but the record is still the one that was
+    verified, so `last_verified_at` stays. `reported` is whether the
+    response should carry a `trust_stripped` block at all."""
 
     claims: list[str] = field(default_factory=list)
     verified_paths: list[str] = field(default_factory=list)
+    verified_head: bool = False
 
     @property
     def any(self) -> bool:
         return bool(self.claims or self.verified_paths)
+
+    @property
+    def reported(self) -> bool:
+        return self.any or self.verified_head
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "claims": list(self.claims),
             "verified_paths": list(self.verified_paths),
             "verification_cleared": self.any,
+            "verified_head_dropped": self.verified_head,
         }
 
     def event_fields(self) -> dict[str, Any]:
@@ -64,6 +79,8 @@ class TrustStrip:
             out["attestations_dropped"] = list(self.verified_paths)
         if self.any:
             out["verification_cleared"] = True
+        if self.verified_head:
+            out["verified_head_dropped"] = True
         return out
 
 
@@ -97,7 +114,21 @@ def trust_strip_for(tombstone: TombstonedMemory) -> TrustStrip:
         if tombstone.verified_paths
         else []
     )
-    return TrustStrip(claims=dropped_claims, verified_paths=dropped_paths)
+    # The stamp's commit anchor is judged only against a live origin
+    # tree, like a relative attestation: a replica that never had the
+    # repository cannot say the commit is gone. "Gone" is HEAD no longer
+    # descending from it — a history rewritten while the record sat
+    # tombstoned leaves the object in the store but nothing to count
+    # from. `commit_reachable` answers None when git cannot say either
+    # way, which keeps the anchor.
+    dropped_head = (
+        live_root is not None
+        and tombstone.verified_head is not None
+        and commit_reachable(Path(live_root), tombstone.verified_head) is False
+    )
+    return TrustStrip(
+        claims=dropped_claims, verified_paths=dropped_paths, verified_head=dropped_head
+    )
 
 
 def restore_with_trust_check(store: Store, memory_id: str) -> tuple[Memory, TrustStrip]:
@@ -117,6 +148,7 @@ def restore_with_trust_check(store: Store, memory_id: str) -> tuple[Memory, Trus
         drop_claims=strip.claims,
         drop_verified_paths=strip.verified_paths,
         clear_verification=strip.any,
+        drop_verified_head=strip.verified_head,
     )
     return memory, strip
 
@@ -152,8 +184,9 @@ async def memory_restore(
         **strip.event_fields(),
     )
     response = deps.responses.committed(memory)
-    if strip.any:
+    if strip.reported:
         response["trust_stripped"] = strip.to_dict()
+    if strip.any:
         response["hint"] = _TRUST_STRIPPED_HINT
     return response
 
