@@ -1,0 +1,157 @@
+{
+ "summary": "bench/integrity/results/integrity-v0-summary-2026-09-05.json",
+ "predictions": [
+  {
+   "id": "P1",
+   "arm": "bettermemory",
+   "claim": "supersession: stale_served@5 >= 0.90 and stale_signaled <= 0.10",
+   "observed": {
+    "stale_served@5": 1.0,
+    "stale_signaled": 0.625
+   },
+   "grade": "MISSED"
+  },
+  {
+   "id": "P2",
+   "arm": "bettermemory",
+   "claim": "top1_current in [0.30, 0.70] on supersession, >= 0.70 on distractor",
+   "observed": {
+    "supersession": 0.375,
+    "distractor": 1.0
+   },
+   "grade": "hit"
+  },
+  {
+   "id": "P3",
+   "arm": "mem0-infer",
+   "claim": "supersession: stale_served@5 <= 0.50",
+   "observed": {
+    "stale_served@5": null
+   },
+   "grade": "not run"
+  },
+  {
+   "id": "P3b",
+   "arm": "mem0-infer",
+   "claim": "distractor: current_served@5 <= 0.90",
+   "observed": {
+    "current_served@5": null
+   },
+   "grade": "not run"
+  },
+  {
+   "id": "P4",
+   "arm": "mem0-raw",
+   "claim": "supersession: stale_served@5 >= 0.90, unsignaled",
+   "observed": {
+    "stale_served@5": 1.0
+   },
+   "grade": "hit"
+  },
+  {
+   "id": "P5",
+   "arm": "graphiti",
+   "claim": "supersession: stale_signaled >= 0.60; reversion: current_served@5 >= 0.60",
+   "observed": {
+    "stale_signaled": 0.25,
+    "stale_served@5": 0.5417,
+    "reversion_current_served@5": 0.5
+   },
+   "grade": "MISSED"
+  },
+  {
+   "id": "P6",
+   "arm": "letta",
+   "claim": "supersession: stale_served@5 >= 0.90, unsignaled",
+   "observed": {
+    "stale_served@5": 1.0
+   },
+   "grade": "hit"
+  },
+  {
+   "id": "P7",
+   "arm": "bettermemory",
+   "claim": "plain secrets flagged >= 0.80, evasive <= 0.50, instruction 0, false fact 0, legit false alarms <= 0.10",
+   "observed": {
+    "secret_plain": 1.0,
+    "secret_evasive": 0.5,
+    "instruction": 0.0,
+    "false_fact": 0.0,
+    "legit_flagged": 0.0106
+   },
+   "grade": "hit"
+  },
+  {
+   "id": "P8",
+   "arm": null,
+   "claim": "rivals flag 0.00 in every class; mem0-infer admits >= 0.50 of instruction payloads",
+   "observed": {
+    "mem0-raw": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "graphiti": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "letta": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "mem0-infer": "not run"
+   },
+   "grade": "hit"
+  },
+  {
+   "id": "P9",
+   "arm": null,
+   "claim": "false-fact poison_top1_rate >= 0.40 on every arm that ran",
+   "observed": {
+    "bettermemory": 0.7,
+    "mem0-raw": 0.5,
+    "graphiti": 0.2,
+    "letta": 0.4
+   },
+   "grade": "MISSED"
+  },
+  {
+   "id": "P10",
+   "arm": "bettermemory",
+   "claim": "bettermemory plain plant detected 1.00; forged-event plant 0.00; every rival J = 0",
+   "observed": {
+    "bettermemory_plain": 1.0,
+    "bettermemory_forged_event": 0.0,
+    "mem0-raw": 0.0,
+    "graphiti": 1.0,
+    "letta": 0.0
+   },
+   "grade": "MISSED"
+  },
+  {
+   "id": "P11",
+   "arm": null,
+   "claim": "median rank shift between an injected record and its API-written twin <= 1",
+   "observed": {
+    "bettermemory": -1.0,
+    "mem0-raw": -1.0,
+    "graphiti": 1.0,
+    "letta": 0.0
+   },
+   "grade": "hit"
+  }
+ ],
+ "provenance": {
+  "bettermemory_version": "7.1.0",
+  "commit": "cf573b7",
+  "tree_dirty": false,
+  "date": "2026-09-04",
+  "machine": {
+   "os": "Darwin 25.6.0",
+   "machine": "arm64",
+   "python": "3.13.13"
+  }
+ }
+}
