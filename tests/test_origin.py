@@ -12,6 +12,7 @@ import sys
 import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -1693,3 +1694,303 @@ def test_windows_error_codes_are_classified_by_intent(
     setattr(exc, "winerror", winerror)
     monkeypatch.setattr(origin_mod, "os", _StatRaises(exc))
     assert origin_mod._worktree_root_is_gone("anywhere") is expected
+
+
+# ---------------------------------------------------------------------------
+# The reachable walk — commit drift's anchor in commit-graph space
+# ---------------------------------------------------------------------------
+
+
+def _git_out(cwd: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+def _git_env(when: datetime) -> dict[str, str]:
+    iso = when.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    env = os.environ.copy()
+    env.update(
+        GIT_AUTHOR_DATE=iso,
+        GIT_COMMITTER_DATE=iso,
+        GIT_AUTHOR_NAME="Test",
+        GIT_AUTHOR_EMAIL="test@example.com",
+        GIT_COMMITTER_NAME="Test",
+        GIT_COMMITTER_EMAIL="test@example.com",
+    )
+    return env
+
+
+def _merge_repo(root: Path) -> dict[str, str]:
+    """A history whose window holds a branch AUTHORED before the anchor
+    and MERGED after it — the shape the author-date count misses.
+
+        * after       (c.txt)            2025-03-02
+        *   merge feat                   2025-03-01
+        |\\
+        | * old feature (src/feat.py)    2025-01-02   <- authored BEFORE
+        * | main work  (b.txt)           2025-02-01   <- the ANCHOR
+        |/
+        * base        (a.txt)            2025-01-01
+    """
+    _init_repo(root, remote="git@github.com:example/repo.git")
+    _commit_file(
+        root, "a.txt", content="a\n", when=datetime(2025, 1, 1, tzinfo=timezone.utc)
+    )
+    base = _git_out(root, "rev-parse", "HEAD")
+    subprocess.run(["git", "checkout", "-q", "-b", "feat"], cwd=root, check=True)
+    _commit_file(
+        root,
+        "src/feat.py",
+        content="X = 1\n",
+        when=datetime(2025, 1, 2, tzinfo=timezone.utc),
+    )
+    feature = _git_out(root, "rev-parse", "HEAD")
+    subprocess.run(["git", "checkout", "-q", "main"], cwd=root, check=True)
+    _commit_file(
+        root, "b.txt", content="b\n", when=datetime(2025, 2, 1, tzinfo=timezone.utc)
+    )
+    anchor = _git_out(root, "rev-parse", "HEAD")
+    subprocess.run(
+        ["git", "merge", "-q", "--no-ff", "feat", "-m", "merge feat"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        env=_git_env(datetime(2025, 3, 1, tzinfo=timezone.utc)),
+    )
+    merge = _git_out(root, "rev-parse", "HEAD")
+    _commit_file(
+        root, "c.txt", content="c\n", when=datetime(2025, 3, 2, tzinfo=timezone.utc)
+    )
+    after = _git_out(root, "rev-parse", "HEAD")
+    return {
+        "base": base,
+        "feature": feature,
+        "anchor": anchor,
+        "merge": merge,
+        "after": after,
+    }
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_repo_toplevel_and_head_answers_both_from_one_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bettermemory import origin as origin_module
+    from bettermemory.origin import repo_toplevel_and_head
+
+    _init_repo(tmp_path)
+    assert repo_toplevel_and_head(tmp_path) is None, "no commit yet: no HEAD"
+    _commit_file(
+        tmp_path, "a.txt", content="a\n", when=datetime(2025, 1, 1, tzinfo=timezone.utc)
+    )
+    calls: list[tuple[str, ...]] = []
+    real_git = origin_module._git
+
+    def spy(cwd: Path, *args: str, **kwargs: Any) -> str | None:
+        calls.append(args)
+        return real_git(cwd, *args, **kwargs)
+
+    monkeypatch.setattr(origin_module, "_git", spy)
+    (tmp_path / "src").mkdir()
+    located = repo_toplevel_and_head(tmp_path / "src")
+    assert located is not None, "asked from a subdirectory: the root is the repo's"
+    root, head = located
+    assert root == tmp_path.resolve()
+    assert head == _git_out(tmp_path, "rev-parse", "HEAD")
+    assert len(calls) == 1 and calls[0][:2] == ("rev-parse", "--show-toplevel")
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_head_sha_and_commit_reachable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bettermemory.origin import commit_reachable, head_sha
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    set_git_discovery_ceiling(outside, monkeypatch)
+    assert head_sha(outside) is None
+    assert commit_reachable(outside, "a" * 40) is None, "not a repository: no answer"
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    assert head_sha(repo) is None, "no commit yet"
+    assert commit_reachable(repo, "a" * 40) is None, "no HEAD yet: no answer"
+    _commit_file(
+        repo, "a.txt", content="a\n", when=datetime(2025, 1, 1, tzinfo=timezone.utc)
+    )
+    first = _git_out(repo, "rev-parse", "HEAD")
+    _commit_file(
+        repo, "b.txt", content="b\n", when=datetime(2025, 1, 2, tzinfo=timezone.utc)
+    )
+    head = _git_out(repo, "rev-parse", "HEAD")
+    assert head_sha(repo) == head
+    assert commit_reachable(repo, head) is True, "HEAD itself"
+    assert commit_reachable(repo, first) is True, "an ancestor"
+    assert commit_reachable(repo, "a" * 40) is False, "never here"
+    assert commit_reachable(repo, "main") is None, "not a full hash: never asked"
+    subprocess.run(
+        ["git", "commit", "--amend", "-q", "-m", "b, rewritten"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        env=_git_env(datetime(2025, 1, 3, tzinfo=timezone.utc)),
+    )
+    # The object is still in the store (dangling); nothing descends from it.
+    assert _git_out(repo, "cat-file", "-t", head) == "commit"
+    assert commit_reachable(repo, head) is False
+    assert commit_reachable(repo, first) is True
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_the_walk_holds_a_branch_authored_before_the_anchor(tmp_path: Path) -> None:
+    """The defect the anchor exists for, at the git boundary: the
+    feature commit predates the anchor in author-date space and sits
+    inside ``anchor..HEAD`` in reachability space."""
+    from bettermemory.origin import commits_since_anchor
+
+    shas = _merge_repo(tmp_path)
+    walk = commits_since_anchor(tmp_path, shas["anchor"])
+    assert walk is not None
+    assert walk.anchor == shas["anchor"]
+    assert walk.head == shas["after"]
+    assert set(walk.commits) == {shas["after"], shas["merge"], shas["feature"]}
+    # The merge commit carries no paths of its own; its branch's commit
+    # carries the file it brought in.
+    assert walk.touched == {
+        "c.txt": frozenset({shas["after"]}),
+        "src/feat.py": frozenset({shas["feature"]}),
+    }
+    assert walk.shas_touching(["src/feat.py"]) == {shas["feature"]}
+    assert walk.shas_touching(["src"]) == {shas["feature"]}, "a directory spec"
+    assert walk.shas_touching(["c.txt", "b.txt"]) == {shas["after"]}
+    assert walk.shas_touching(["a.txt"]) == set(), "untouched in the range"
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_the_walk_from_head_itself_is_empty_not_absent(tmp_path: Path) -> None:
+    from bettermemory.origin import commits_since_anchor
+
+    shas = _merge_repo(tmp_path)
+    walk = commits_since_anchor(tmp_path, shas["after"])
+    assert walk is not None
+    assert walk.commits == ()
+    assert walk.shas_touching(["c.txt"]) == set()
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_the_walk_refuses_an_anchor_head_no_longer_descends_from(
+    tmp_path: Path,
+) -> None:
+    """A rewritten history (the anchor amended away) and a checkout that
+    moved backwards both read None — the author-date count stands."""
+    from bettermemory.origin import commits_since_anchor
+
+    shas = _merge_repo(tmp_path)
+    subprocess.run(
+        ["git", "commit", "--amend", "-q", "-m", "after, rewritten"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        env=_git_env(datetime(2025, 3, 3, tzinfo=timezone.utc)),
+    )
+    assert commits_since_anchor(tmp_path, shas["after"]) is None
+    # The anchor's parent is still an ancestor: the walk from it counts
+    # the rewritten commit in place of the old one.
+    walk = commits_since_anchor(tmp_path, shas["merge"])
+    assert walk is not None
+    assert len(walk.commits) == 1 and walk.commits[0] != shas["after"]
+
+    subprocess.run(
+        ["git", "reset", "-q", "--hard", shas["anchor"]],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    assert commits_since_anchor(tmp_path, shas["merge"]) is None, "HEAD is behind"
+    assert commits_since_anchor(tmp_path, "b" * 40) is None, "does not resolve"
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_the_walk_never_hands_git_anything_but_a_full_hash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bettermemory import origin as origin_module
+    from bettermemory.origin import commits_since_anchor
+
+    _merge_repo(tmp_path)
+    calls: list[tuple[str, ...]] = []
+    real_git = origin_module._git
+
+    def spy(cwd: Path, *args: str, **kwargs: Any) -> str | None:
+        calls.append(args)
+        return real_git(cwd, *args, **kwargs)
+
+    monkeypatch.setattr(origin_module, "_git", spy)
+    for bad in ("main", "HEAD~1", "--output=/tmp/x", "3b1f9c0"):
+        assert commits_since_anchor(tmp_path, bad) is None
+    assert calls == []
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_the_walk_is_memoised_per_head(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One process per (root, anchor, head); a commit landing changes
+    the head and so the key, so a long-lived server never reuses a walk
+    the tree has moved past. A dead anchor is memoised as None too."""
+    from bettermemory import origin as origin_module
+    from bettermemory.origin import commits_since_anchor, repo_toplevel_and_head
+
+    shas = _merge_repo(tmp_path)
+    located = repo_toplevel_and_head(tmp_path)
+    assert located is not None
+    root, head = located
+    calls: list[tuple[str, ...]] = []
+    real_git = origin_module._git
+
+    def spy(cwd: Path, *args: str, **kwargs: Any) -> str | None:
+        calls.append(args)
+        return real_git(cwd, *args, **kwargs)
+
+    monkeypatch.setattr(origin_module, "_git", spy)
+    first = commits_since_anchor(tmp_path, shas["anchor"], toplevel=root, head=head)
+    second = commits_since_anchor(tmp_path, shas["anchor"], toplevel=root, head=head)
+    assert first is second and first is not None
+    assert len(calls) == 1 and calls[0][2:4] == ("log", "--boundary")
+
+    assert commits_since_anchor(tmp_path, "b" * 40, toplevel=root, head=head) is None
+    assert commits_since_anchor(tmp_path, "b" * 40, toplevel=root, head=head) is None
+    assert len(calls) == 2, "the dead anchor forked once"
+
+    _commit_file(
+        tmp_path, "d.txt", content="d\n", when=datetime(2025, 4, 1, tzinfo=timezone.utc)
+    )
+    moved = repo_toplevel_and_head(tmp_path)
+    assert moved is not None and moved[1] != head
+    calls.clear()
+    third = commits_since_anchor(tmp_path, shas["anchor"], toplevel=root, head=moved[1])
+    assert third is not None and len(third.commits) == len(first.commits) + 1
+    assert len(calls) == 1
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_the_walk_reads_a_non_ascii_path_as_its_own_spelling(tmp_path: Path) -> None:
+    """`core.quotePath` defaults to octal-escaping non-ASCII bytes, under
+    which ``modül.py`` would never equal the resolved pathspec and a
+    change to it would read as untouched."""
+    from bettermemory.origin import commits_since_anchor
+
+    shas = _merge_repo(tmp_path)
+    _commit_file(
+        tmp_path,
+        "src/modül.py",
+        content="Y = 2\n",
+        when=datetime(2025, 4, 1, tzinfo=timezone.utc),
+    )
+    walk = commits_since_anchor(tmp_path, shas["after"])
+    assert walk is not None
+    assert list(walk.touched) == ["src/modül.py"]
+    assert walk.shas_touching(["src/modül.py"]) == set(walk.commits)

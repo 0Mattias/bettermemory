@@ -39,6 +39,9 @@ import logging
 import os
 import re
 import subprocess
+from collections import OrderedDict
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -688,6 +691,18 @@ def _git_worktree_root(cwd: Path) -> str | None:
         return raw
 
 
+def is_full_commit_sha(value: object) -> bool:
+    """Whether `value` is a complete lowercase commit hash — 40 hex
+    characters for SHA-1 repositories, 64 for SHA-256 ones. The one
+    shape the read side hands to git as a revision: an abbreviation, a
+    ref name or an option-shaped string never reaches an argv."""
+    return (
+        isinstance(value, str)
+        and len(value) in (40, 64)
+        and all(c in "0123456789abcdef" for c in value)
+    )
+
+
 def repo_toplevel(cwd: Path | None) -> Path | None:
     """Resolve the repo root for `cwd` via ``git rev-parse --show-toplevel``.
 
@@ -707,6 +722,231 @@ def repo_toplevel(cwd: Path | None) -> Path | None:
         return Path(toplevel_raw).resolve()
     except OSError:
         return None
+
+
+def repo_toplevel_and_head(cwd: Path | None) -> tuple[Path, str] | None:
+    """`repo_toplevel` and the commit HEAD names, from ONE git process.
+
+    ``git rev-parse --show-toplevel HEAD`` prints the root and then the
+    full hash, one per line. The commit-drift surfaces that count in
+    reachability space need both — the root to resolve pathspecs
+    against and the head to key the reachable walk on (`commits_since_
+    anchor`) — and paying a second ``rev-parse`` for the head would
+    move the pinned per-search git-process count. None when git cannot
+    answer, including a repository with no commit yet (``HEAD`` does
+    not resolve there; the author-date readers fail on it the same way).
+    """
+    if cwd is None:
+        return None
+    raw = _git(cwd, "rev-parse", "--show-toplevel", "HEAD")
+    if raw is None:
+        return None
+    lines = [line.strip() for line in raw.splitlines() if line.strip()]
+    if len(lines) != 2 or not is_full_commit_sha(lines[1]):
+        return None
+    try:
+        return Path(lines[0]).resolve(), lines[1]
+    except OSError:
+        return None
+
+
+def head_sha(cwd: Path | None) -> str | None:
+    """The full hash of the commit HEAD names in `cwd`'s repository, or
+    None when git cannot answer or the repository has no commit yet.
+    What `memory_verify` records as the stamp's anchor."""
+    if cwd is None:
+        return None
+    raw = _git(cwd, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
+    if raw is None:
+        return None
+    sha = raw.strip().lower()
+    return sha if is_full_commit_sha(sha) else None
+
+
+def commit_reachable(cwd: Path | None, sha: str) -> bool | None:
+    """Whether `sha` is an ancestor of HEAD (or HEAD itself) in `cwd`'s
+    repository: True, False when it is not — a rewritten history, or a
+    commit the repository never had — or None when git could not answer
+    (not a repository, no commit yet, no binary). What the restore
+    re-check asks of a tombstone's `verified_head`: an anchor HEAD does
+    not descend from cannot be counted from, whether or not the object
+    still sits in the store. `sha` must already be a full hash — the
+    loaders guarantee that — so the only argv it can form is a revision."""
+    if cwd is None or not is_full_commit_sha(sha):
+        return None
+    raw = _git(cwd, "merge-base", "--is-ancestor", sha, "HEAD", empty_ok=True)
+    if raw is not None:
+        return True
+    # A non-zero exit is "not an ancestor", "no such commit" and "not a
+    # repository" alike, all folded into None by `_git`. Tell the last
+    # apart with the cheapest question that answers differently for it:
+    # can git see a HEAD here at all?
+    return False if head_sha(cwd) is not None else None
+
+
+@dataclass(frozen=True)
+class ReachableWalk:
+    """The commits reachable from `head` but not from `anchor` — the
+    range ``anchor..HEAD`` — with the paths each one changed.
+
+    Built only when `anchor` is an ancestor of `head` (or is `head`
+    itself, an empty walk), so `commits` is exactly what has landed on
+    top of the verified tree state: a branch authored before the stamp
+    and merged after it is in here, which is what the author-date count
+    cannot say. `touched` maps a repo-relative path to the commits in
+    the range whose diff carried it; a merge commit contributes nothing
+    there, as `git log --name-only` shows no diff for one, so its
+    branch's own commits carry the paths.
+    """
+
+    anchor: str
+    head: str
+    commits: tuple[str, ...]
+    touched: Mapping[str, frozenset[str]]
+
+    def shas_touching(self, pathspecs: Sequence[str]) -> set[str]:
+        """The commits in the range that changed a file matching any of
+        `pathspecs` — repo-root-relative forward-slash specs, the output
+        of `resolve_repo_pathspecs`, each a file or a directory prefix.
+        A path is a file or a directory in git, never both, so an exact
+        hit skips the prefix scan."""
+        out: set[str] = set()
+        for spec in pathspecs:
+            exact = self.touched.get(spec)
+            if exact is not None:
+                out |= exact
+                continue
+            prefix = spec.rstrip("/") + "/"
+            for path, shas in self.touched.items():
+                if path.startswith(prefix):
+                    out |= shas
+        return out
+
+
+# The reachable walk is memoised per process, keyed on (root, anchor,
+# head): the range between two named commits never changes, so an entry
+# is never stale, and the key's `head` is what lets a long-lived server
+# stop reusing a walk the moment a commit lands. Bounded so a store with
+# many distinct anchors cannot grow it without limit. A None entry (the
+# anchor is not an ancestor of that head) is memoised too, so a search
+# over many hits at one dead anchor forks once.
+_WALK_MEMO_CAP = 32
+_WALK_MEMO: OrderedDict[tuple[str, str, str], ReachableWalk | None] = OrderedDict()
+
+# Record separator for the walk's format line, the same control
+# character the patch stream carries: a path cannot contain it.
+_WALK_MARK = "\x01"
+
+
+def commits_since_anchor(
+    cwd: Path | None,
+    anchor: str,
+    *,
+    toplevel: Path | None = None,
+    head: str | None = None,
+) -> ReachableWalk | None:
+    """The reachable walk from `anchor` to HEAD, or None when the count
+    must fall back to author-date space.
+
+    One git process per distinct (root, anchor, head), memoised — see
+    `_WALK_MEMO`. ``git log --boundary --name-only anchor..HEAD`` lists
+    every commit in the range with the paths it changed, and marks the
+    range's boundary commits with ``-`` in ``%m``: the anchor is an
+    ancestor of HEAD exactly when it appears among them (a boundary
+    commit is a parent of a commit reachable from HEAD, and an ancestor
+    that is not HEAD itself is the parent of the range's oldest commit
+    on some path). An EMPTY listing means HEAD is reachable from the
+    anchor — the same commit, or a checkout that moved backwards — and
+    only the first of those is a measurement.
+
+    None, and the author-date fallback, when: `anchor` is not a full
+    hash (never handed to git as a revision), git cannot answer, the
+    anchor does not resolve here, it is not an ancestor of HEAD (a
+    rewritten history), or HEAD sits behind it. `toplevel` and `head`
+    skip the ``rev-parse`` when the caller already has them, the way
+    the batch surfaces thread a once-resolved root.
+    """
+    if cwd is None or not is_full_commit_sha(anchor):
+        return None
+    if toplevel is None or head is None:
+        located = repo_toplevel_and_head(cwd)
+        if located is None:
+            return None
+        toplevel, head = located
+    key = (str(toplevel), anchor, head)
+    if key in _WALK_MEMO:
+        _WALK_MEMO.move_to_end(key)
+        return _WALK_MEMO[key]
+    walk = _walk_reachable(toplevel, anchor, head)
+    _WALK_MEMO[key] = walk
+    while len(_WALK_MEMO) > _WALK_MEMO_CAP:
+        _WALK_MEMO.popitem(last=False)
+    return walk
+
+
+def _walk_reachable(toplevel: Path, anchor: str, head: str) -> ReachableWalk | None:
+    if anchor == head:
+        return ReachableWalk(anchor=anchor, head=head, commits=(), touched={})
+    raw = _git(
+        toplevel,
+        # Non-ASCII paths arrive as their UTF-8 spelling rather than
+        # octal-escaped, so they compare equal to a resolved pathspec;
+        # the residual quoting git still applies (embedded quotes,
+        # control bytes) is decoded below.
+        "-c",
+        "core.quotePath=false",
+        "log",
+        "--boundary",
+        # A rename is a change to BOTH paths: the cited old path stops
+        # existing, which is exactly what a memory about it should see.
+        "--no-renames",
+        f"--format={_WALK_MARK}%m%H",
+        "--name-only",
+        f"{anchor}..HEAD",
+        timeout=5.0,
+        empty_ok=True,
+    )
+    if raw is None:
+        return None
+    if not raw:
+        # HEAD is reachable from the anchor but is not it: the checkout
+        # moved backwards. Not a count of anything.
+        return None
+    commits: list[str] = []
+    touched: dict[str, set[str]] = {}
+    boundary: set[str] = set()
+    current: str | None = None
+    for line in raw.split("\n"):
+        if line.startswith(_WALK_MARK):
+            mark, sha = line[1:2], line[2:].strip().lower()
+            if mark == "-":
+                boundary.add(sha)
+                current = None
+            elif is_full_commit_sha(sha):
+                commits.append(sha)
+                current = sha
+            else:
+                current = None
+            continue
+        path = line.strip()
+        if not path or current is None:
+            continue
+        if path.startswith('"') and path.endswith('"'):
+            decoded = _unquote_c_path(path)
+            if decoded is not None:
+                path = decoded
+        touched.setdefault(path, set()).add(current)
+    if anchor not in boundary:
+        # Commits were listed, but none of them descends from the
+        # anchor: a rewritten history. The range measures the distance
+        # from the merge base, not from the verified tree state.
+        return None
+    return ReachableWalk(
+        anchor=anchor,
+        head=head,
+        commits=tuple(commits),
+        touched={path: frozenset(shas) for path, shas in touched.items()},
+    )
 
 
 def resolve_repo_pathspecs(
@@ -1419,6 +1659,12 @@ __all__ = [
     "commit_author_timestamps",
     "commit_author_timestamps_touching_pathspecs",
     "commit_patch_stream",
+    "commit_reachable",
+    "commits_since_anchor",
+    "head_sha",
+    "is_full_commit_sha",
+    "ReachableWalk",
+    "repo_toplevel_and_head",
     "repo_toplevel",
     "repos_match",
     "resolve_repo_pathspecs",
