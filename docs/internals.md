@@ -104,7 +104,15 @@ declared claims on `memory_write` / `memory_verify` (3.40.0).
 - Auto-scoping by repo and worktree; explicit cross-project queries.
 - Episodes: a sibling journal tier for run-state that never pollutes
   durable search, with promotion when a takeaway hardens into a fact.
-- Tombstones instead of deletes; everything is restorable.
+- Tombstones instead of deletes; everything is restorable, and a
+  restore re-checks the trust the tombstone carried (a claim the
+  origin tree now contradicts or an attested path that no longer
+  exists is dropped, the stamp with it).
+- Content evidence: every store write records the file's SHA-256
+  beside its index row, a rebuild carries the recorded hash forward
+  for a file that changed without a store write behind it, and
+  `bettermemory doctor` names those files. Detect-only and
+  single-machine; `SECURITY.md` draws the line.
 - Scales past ~500 memories via a derived SQLite FTS5 index. The
   markdown files stay canonical; upgrades rebuild it automatically,
   and `bettermemory reindex` rebuilds on demand.
