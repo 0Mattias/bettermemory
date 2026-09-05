@@ -530,6 +530,9 @@ async def memory_update(
     }
     if content is not None:
         update_fields["last_verified_at"] = None
+        # The stamp's commit anchor goes with the stamp: it named the
+        # tree state the OLD prose was checked against.
+        update_fields["verified_head"] = None
         update_fields["verified_paths"] = []
         update_fields["verified_commits"] = []
         update_fields["verified_versions"] = []

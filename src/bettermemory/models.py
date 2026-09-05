@@ -11,7 +11,7 @@ from typing import Annotated, Any
 
 from pydantic import BaseModel, Field, field_validator
 
-from .origin import Origin
+from .origin import Origin, is_full_commit_sha
 
 
 # ---------------------------------------------------------------------------
@@ -308,6 +308,23 @@ class MemoryLink(BaseModel):
 ScopesField = Annotated[list[str], Field(min_length=1)]
 
 
+def _validate_verified_head(v: str | None) -> str | None:
+    """`verified_head` is handed to git as a revision by the commit-drift
+    leg, so the record admits one shape only: a full lowercase commit
+    hash. Anything else — a branch name, an abbreviation, an
+    option-shaped string — is refused at the boundary rather than
+    reaching an argv."""
+    if v is None:
+        return None
+    candidate = str(v).strip().lower()
+    if not is_full_commit_sha(candidate):
+        raise ValueError(
+            f"verified_head must be a full commit hash (40 or 64 hex "
+            f"characters), got {v!r}"
+        )
+    return candidate
+
+
 class Memory(BaseModel):
     """Full memory record, body included.
 
@@ -358,6 +375,17 @@ class Memory(BaseModel):
     — a rewritten body may no longer assert what the old one claimed.
     Empty by default; legacy memories load as empty lists.
 
+    `verified_head` is the commit the memory's origin checkout stood at
+    when `memory_verify` last stamped it: the anchor the commit-drift
+    leg counts from in reachability space (`rev-list <anchor>..HEAD`),
+    which an author-date count cannot see past — a branch authored
+    before the stamp and merged after it counts zero there. None on a
+    record verified before the field shipped, or from a checkout that
+    had no HEAD to read; the leg then keeps the author-date count and
+    labels the block `basis: "author-date"`. Written only by
+    `Store.mark_verified`, whole on every stamp; cleared with
+    `last_verified_at` on a body edit.
+
     `corroborations` / `last_corroborated` are the recurrence rollup:
     bumped by `Store.record_corroboration` when a `memory_write` is
     dedup-rejected against this memory — the stored claim re-entered a
@@ -386,6 +414,7 @@ class Memory(BaseModel):
     verified_versions: list[str] = Field(default_factory=list)
     verified_absent_paths: list[str] = Field(default_factory=list)
     claims: list[str] = Field(default_factory=list)
+    verified_head: str | None = None
     links: list[MemoryLink] = Field(default_factory=list)
     corroborations: int = Field(default=0, ge=0)
     last_corroborated: datetime | None = None
@@ -401,6 +430,11 @@ class Memory(BaseModel):
         if not is_valid_ulid(v):
             raise ValueError(f"invalid ULID: {v!r}")
         return v
+
+    @field_validator("verified_head")
+    @classmethod
+    def _check_verified_head(cls, v: str | None) -> str | None:
+        return _validate_verified_head(v)
 
     @field_validator(
         "verified_paths",
@@ -578,6 +612,7 @@ class TombstonedMemory(BaseModel):
     verified_versions: list[str] = Field(default_factory=list)
     verified_absent_paths: list[str] = Field(default_factory=list)
     claims: list[str] = Field(default_factory=list)
+    verified_head: str | None = None
 
     # Removal metadata. `removed` and `removed_reason` are required —
     # a tombstone without them is malformed and won't load.
@@ -596,6 +631,11 @@ class TombstonedMemory(BaseModel):
         if not is_valid_ulid(v):
             raise ValueError(f"invalid ULID: {v!r}")
         return v
+
+    @field_validator("verified_head")
+    @classmethod
+    def _check_verified_head(cls, v: str | None) -> str | None:
+        return _validate_verified_head(v)
 
     @field_validator(
         "verified_paths",

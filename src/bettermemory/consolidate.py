@@ -2246,6 +2246,7 @@ def _body_replacement_reset_fields() -> dict[str, Any]:
     """
     return {
         "last_verified_at": None,
+        "verified_head": None,
         "verified_paths": [],
         "verified_commits": [],
         "verified_versions": [],

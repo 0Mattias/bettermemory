@@ -60,7 +60,7 @@ from .models import (
     make_slug,
     utcnow,
 )
-from .origin import Origin
+from .origin import Origin, is_full_commit_sha
 from .quarantine import quarantined_names
 
 
@@ -632,6 +632,7 @@ class Store:
                         "verified_versions": list(current.verified_versions),
                         "verified_absent_paths": list(current.verified_absent_paths),
                         "claims": list(current.claims),
+                        "verified_head": current.verified_head,
                     }
                 )
             new_memory = new_memory.model_copy(update=carried_over)
@@ -654,6 +655,7 @@ class Store:
         verified_versions: list[str] | None = None,
         verified_absent_paths: list[str] | None = None,
         claims: list[str] | None = None,
+        verified_head: str | None = None,
         expected_last_verified_at: datetime | None = None,
         expected_updated: datetime | None = None,
         check_expected: bool = False,
@@ -678,6 +680,16 @@ class Store:
         populated list replaces the prior list — verification is
         per-event, not append-only, and the event log is the audit
         trail for the history.
+
+        `verified_head` is the commit the origin checkout stood at when
+        the caller checked, or None when no checkout answered. Unlike
+        the lists it is written WHOLE on every stamp, never preserved
+        from the prior one: a stamp that carries no anchor is not
+        anchored at the previous stamp's commit either, and the
+        commit-drift leg falls back to the author-date count for it.
+        Must be a full commit hash — the read side hands it to git as
+        a revision — so anything else is refused here as a structural
+        limit, the way an over-long scope list is.
 
         Optimistic concurrency (W8): when `check_expected=True`, the
         caller's `expected_last_verified_at` is the snapshot value they
@@ -724,7 +736,16 @@ class Store:
               (`_write_path` → `_atomic_write_post`): EIO mid-write, ENOSPC
               on the tmp write or rename, EACCES on the directory. The MCP
               handler boundary translates this to a structured `ValueError`.
+            ValueError: `verified_head` is set but is not a full commit
+              hash.
         """
+        if verified_head is not None:
+            verified_head = verified_head.strip().lower()
+            if not is_full_commit_sha(verified_head):
+                raise ValueError(
+                    "verified_head must be a full commit hash (40 or 64 hex "
+                    f"characters), got {verified_head!r}"
+                )
         existing_path = self._find_path_for_id(memory_id)
         if existing_path is None:
             # Tombstone scan must tolerate corrupt/racing entries — the
@@ -819,6 +840,9 @@ class Store:
                 update["verified_absent_paths"] = list(verified_absent_paths)
             if claims is not None:
                 update["claims"] = list(claims)
+            # Whole on every stamp — see the docstring. A caller with no
+            # checkout to read clears whatever anchor the prior stamp had.
+            update["verified_head"] = verified_head
             new_memory = existing.model_copy(update=update)
             # Lifecycle re-dump of an already-admitted, already-readable record.
             # `mark_verified` GROWS the record: the caller-controlled verified_*
@@ -1331,6 +1355,7 @@ class Store:
                 verified_versions=_load_str_list(meta.get("verified_versions")),
                 verified_absent_paths=_load_str_list(meta.get("verified_absent_paths")),
                 claims=_load_str_list(meta.get("claims")),
+                verified_head=_load_commit_sha(meta.get("verified_head")),
                 removed=_as_dt(meta["removed"]),
                 removed_reason=str(meta["removed_reason"]),
                 removed_session=(
@@ -1349,12 +1374,16 @@ class Store:
         drop_claims: Iterable[str] = (),
         drop_verified_paths: Iterable[str] = (),
         clear_verification: bool = False,
+        drop_verified_head: bool = False,
     ) -> Memory:
         """Move a tombstone back to the active set, stripping removal
         frontmatter — and, when the caller says so, the trust the record
         could not re-prove: `drop_claims` and `drop_verified_paths` name
-        stored entries to leave behind and `clear_verification` drops
-        `last_verified_at`. Judging them is the handler's job
+        stored entries to leave behind, `clear_verification` drops
+        `last_verified_at`, and `drop_verified_head` drops the stamp's
+        commit anchor (a commit the origin tree no longer resolves; the
+        stamp itself survives and the commit-drift leg counts in
+        author-date space for it). Judging them is the handler's job
         (`handlers.restore.trust_strip_for`); this primitive applies the
         drops under the same lock as the write, so the record never
         exists active with a field its restorer judged false.
@@ -1481,6 +1510,8 @@ class Store:
                 ]
             if clear_verification:
                 post.metadata.pop("last_verified_at", None)
+            if drop_verified_head:
+                post.metadata.pop("verified_head", None)
 
             # Mirror `_path_for`'s always-suffix discipline so the restore
             # lands at the same shape a fresh `write()` would produce —
@@ -2326,6 +2357,7 @@ def _parse_memory_file(path: Path) -> Memory:
             verified_versions=_load_str_list(meta.get("verified_versions")),
             verified_absent_paths=_load_str_list(meta.get("verified_absent_paths")),
             claims=_load_str_list(meta.get("claims")),
+            verified_head=_load_commit_sha(meta.get("verified_head")),
             links=links,
             corroborations=corroborations,
             last_corroborated=last_corroborated,
@@ -3245,6 +3277,11 @@ def _memory_metadata(memory: Memory) -> dict[str, object]:
     # and an empty list stays off disk like the other four.
     if memory.claims:
         meta["claims"] = list(memory.claims)
+    # The stamp's anchor rides with the stamp: written when
+    # `mark_verified` had a checkout to read, absent otherwise, and
+    # cleared with `last_verified_at` on a body edit.
+    if memory.verified_head:
+        meta["verified_head"] = memory.verified_head
     # `links` is omitted when empty — same noise-floor rationale as
     # `verified_paths`. Each link is serialized as a plain dict
     # (`type` is the enum value, not the Python name) so a hand-
@@ -3384,6 +3421,18 @@ def _id_still_at_path(path: Path, memory_id: str) -> bool:
     except (FileNotFoundError, ValueError, KeyError, OSError):
         return False
     return post.metadata.get("id") == memory_id
+
+
+def _load_commit_sha(value: object) -> str | None:
+    """A frontmatter `verified_head`, or None unless it is a full commit
+    hash. The read side hands the value to git as a revision, so a
+    branch name, an abbreviation or an option-shaped string is dropped
+    on read rather than passed through; the record then reads as
+    verified without an anchor, which the drift leg handles."""
+    if not isinstance(value, str):
+        return None
+    candidate = value.strip().lower()
+    return candidate if is_full_commit_sha(candidate) else None
 
 
 def _load_str_list(value: object) -> list[str]:

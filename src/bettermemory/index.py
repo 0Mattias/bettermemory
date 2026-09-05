@@ -182,7 +182,15 @@ log = logging.getLogger("bettermemory.index")
 # (`_stash_provenance` parks it in `meta.trust_carry`), and the rebuild
 # derives it from `verify` and `sync_pull` events as well
 # (`provenance.classify_trust`).
-SCHEMA_VERSION = 9
+#
+# Version 10 (verified_head column): `memories` gains `verified_head`,
+# the commit the memory's origin checkout stood at when `memory_verify`
+# last stamped it (`Memory.verified_head`), or NULL. Straight off the
+# record at every upsert and re-read from frontmatter at every rebuild,
+# so unlike the three columns above it needs no carry across a drop; it
+# is here so a curation pass can read every stamp's anchor from one
+# query instead of opening every file.
+SCHEMA_VERSION = 10
 
 # Pinned `search.tokenizer_fingerprint()` digest for the current
 # SCHEMA_VERSION. Consumed only by the ratchet test
@@ -255,7 +263,12 @@ CREATE TABLE IF NOT EXISTS memories (
     -- `bettermemory reindex`. `doctor`'s `memory_content_evidence`
     -- compares it with the file. NULL until a write or a rebuild stamps
     -- the row.
-    content_sha256 TEXT
+    content_sha256 TEXT,
+    -- Schema v10. The commit the memory's origin checkout stood at when
+    -- `memory_verify` last stamped it, straight off the record
+    -- (`Memory.verified_head`); NULL when the stamp carries no anchor.
+    -- Re-read from frontmatter at every rebuild, so it needs no carry.
+    verified_head TEXT
 );
 
 -- The FTS table indexes the PREPROCESSED columns (schema v4): body_fts /
@@ -2047,8 +2060,8 @@ def _upsert_memory(
         "id, created, updated, last_verified_at, confidence, category, "
         "body, body_fts, scopes_text, scopes_fts, scopes_json, filename, "
         "origin_repo, origin_worktree, provenance, verified_locally_at, "
-        "content_sha256) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "content_sha256, verified_head) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(id) DO UPDATE SET "
         "created = excluded.created, "
         "updated = excluded.updated, "
@@ -2071,7 +2084,10 @@ def _upsert_memory(
         "verified_locally_at = COALESCE(excluded.verified_locally_at, "
         "memories.verified_locally_at), "
         "content_sha256 = COALESCE(excluded.content_sha256, "
-        "memories.content_sha256)",
+        "memories.content_sha256), "
+        # Straight off the record, never COALESCEd: a body edit clears the
+        # anchor with the stamp, and the row has to say so.
+        "verified_head = excluded.verified_head",
         (
             memory.id,
             memory.created.isoformat(),
@@ -2090,6 +2106,7 @@ def _upsert_memory(
             provenance,
             verified_locally_at,
             content_sha256,
+            memory.verified_head,
         ),
     )
     _sync_links(conn, memory)
