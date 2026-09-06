@@ -558,7 +558,7 @@ def _is_titlecase_name(text: str, match: re.Match[str]) -> bool:
 _SENTENCE_END_RE = re.compile(r"[!?\n]|(?<!\d)\.|\.(?!\d)")
 
 
-def _sentence_around(text: str, pos: int) -> str:
+def sentence_around(text: str, pos: int) -> str:
     """The sentence containing `pos`: from the previous terminator (or
     the start) to the next one (or the end)."""
     start = 0
@@ -580,7 +580,7 @@ def _anchored_new_reference(text: str, match: re.Match[str]) -> bool:
     from .search import _raw_content_token_set
     from .supersession import anchor_tokens, change_cues
 
-    sentence = _sentence_around(text, match.start())
+    sentence = sentence_around(text, match.start())
     if not change_cues(sentence):
         return False
     return bool(anchor_tokens(sentence, _raw_content_token_set(sentence)))
@@ -645,4 +645,5 @@ __all__ = [
     "find_transient_markers",
     "in_quoted_span",
     "quoted_spans",
+    "sentence_around",
 ]

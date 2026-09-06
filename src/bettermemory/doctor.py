@@ -53,6 +53,7 @@ from typing import Any, Literal, cast
 
 from . import search
 from .config import Config, TelemetryConfig, _coerce_search_mode, load_config
+from .durability import sentence_around
 from .eval import is_admin_recorded_event
 from .events import EVENT_LOG_FILENAME, iter_all_events
 from .health import is_hook_telemetry_event
@@ -3285,6 +3286,59 @@ def _anchor_tokens(body: str) -> set[str]:
     return out
 
 
+# Vocabulary for "this symbol is GONE", which is a different claim from
+# the value-change vocabulary in `supersession.CHANGE_CUES` and needs its
+# own list. Deliberately excludes "dropped": measured against the store,
+# it is the one word here that routinely describes DATA being discarded
+# rather than code being removed ("a re-ranker rescuing the dropped
+# co-evidence"), and it produced the only false exemption in the set.
+_ABSENCE_CUE_RE = re.compile(
+    r"\b(?:removed|deleted|purged|stripped|retired|gone|absent|neither"
+    r"|no longer|never existed|does ?n[o']t exist|nothing left)\b",
+    re.IGNORECASE,
+)
+
+# How close a cue must sit to the symbol it retires. Sharing a sentence
+# is not enough — a long sentence can mention a live symbol at one end
+# and discard something unrelated at the other, which is exactly how the
+# false exemption arose. Measured: the two genuine absence records in the
+# store bind at 60, the live-symbol false positive needs 110, and the
+# verdict is unchanged from 60 through 120, so this sits in a gap rather
+# than on a knife edge. A semicolon between cue and symbol disqualifies
+# the pairing whatever the distance: `_SENTENCE_END_RE` does not treat
+# one as a boundary, so "the `old_helper` shim was removed;
+# `detect_supersession` is live" would otherwise retire the live symbol
+# sitting 20 characters away.
+_ABSENCE_CUE_WINDOW = 60
+
+
+def _absence_claimed(body: str, token: str) -> bool:
+    """True when EVERY mention of `token` in `body` sits beside an
+    absence cue — the body names the symbol in order to say it is gone.
+
+    All-occurrences rather than any: a body that retires a symbol in one
+    breath and describes it live in another is still making a live
+    claim, and the live half is what an attestation has to watch.
+    """
+    hits = [m.start() for m in re.finditer(re.escape(token), body)]
+    if not hits:
+        return False
+    for hit in hits:
+        sentence = sentence_around(body, hit)
+        offset = body.find(sentence)
+        if offset < 0:
+            return False
+        relative = hit - offset
+        if not any(
+            abs(cue.start() - relative) <= _ABSENCE_CUE_WINDOW
+            and ";"
+            not in sentence[min(cue.end(), relative) : max(cue.start(), relative)]
+            for cue in _ABSENCE_CUE_RE.finditer(sentence)
+        ):
+            return False
+    return True
+
+
 def _readable_anchor(raw: str, root: Path) -> Path | None:
     """The attested path as an in-`root`, text-like FILE, or None.
 
@@ -3391,6 +3445,14 @@ def _check_attestation_anchors(directory: Path, cwd: Path) -> Diagnosis:
         ):
             continue
         tokens = _anchor_tokens(memory.body)
+        if not tokens:
+            continue
+        # A symbol the body names in order to say it is GONE cannot be in
+        # any live file, so requiring one to carry it inverts the test:
+        # the memory is punished for being accurate about a removal. Drop
+        # those, and if nothing live is left the check has nothing to
+        # judge and stays silent, like the no-identifiers case above.
+        tokens = {t for t in tokens if not _absence_claimed(memory.body, t)}
         if not tokens:
             continue
         readable = [p for raw in anchors if (p := _readable_anchor(raw, root))]

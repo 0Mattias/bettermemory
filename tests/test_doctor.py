@@ -45,6 +45,7 @@ from bettermemory.doctor import (
     _check_memory_parse_health,
     _check_python_version,
     _check_session_start_hook_wired,
+    _absence_claimed,
     _check_attestation_anchors,
     _check_retrieval_discrimination,
     _DISCRIMINATION_WARN_AT,
@@ -7511,3 +7512,93 @@ def test_sync_admit_is_classified_admin(tmp_path: Path) -> None:
         "the admit event was counted in the census — it is being read as a "
         "client-session event, which also invents a phantom session"
     )
+
+
+# ---------------------------------------------------------------------------
+# attestation_anchors — symbols the body names in order to retire them
+# ---------------------------------------------------------------------------
+
+
+def test_attestation_anchors_exempts_a_body_whose_symbols_are_all_retired(
+    tmp_path: Path,
+) -> None:
+    """The blind spot: this check asks whether an attested file CARRIES
+    the body's distinctive symbols, so a memory that names a symbol
+    precisely to record that it is GONE could never satisfy it — no live
+    file will ever contain it. The correctly-anchored record was punished
+    for being accurate about a removal. Nothing live is left to watch, so
+    the check has nothing to judge and stays silent, exactly like the
+    prose-only case."""
+    repo = _anchored_store(
+        tmp_path,
+        "Neither the `no_fastembed` marker nor the "
+        "`pytest_collection_modifyitems` hook survives in conftest.py.",
+        ["tests/conftest.py"],
+    )
+    (repo / "tests").mkdir(parents=True, exist_ok=True)
+    (repo / "tests" / "conftest.py").write_text("import pytest\n", encoding="utf-8")
+
+    diag = _check_attestation_anchors(repo / "store", repo)
+
+    assert diag.status == "ok"
+    assert diag.details["checked"] == 0
+
+
+def test_attestation_anchors_still_requires_the_live_half_of_a_mixed_body(
+    tmp_path: Path,
+) -> None:
+    """A body that retires one symbol and makes a live claim about
+    another is still making a live claim, and the live half is what the
+    attestation has to watch. Exempting the whole memory because part of
+    it describes a removal would be a new blind spot."""
+    repo = _anchored_store(
+        tmp_path,
+        "The `old_helper` shim was removed in 4.0.0; `detect_supersession` "
+        "is the live entry point.",
+        ["src/gone.py"],
+    )
+    (repo / "src" / "gone.py").write_text("x = 1\n", encoding="utf-8")
+
+    diag = _check_attestation_anchors(repo / "store", repo)
+
+    assert diag.status == "warn"
+    assert diag.details["findings"][0]["symbols"] == ["detect_supersession"]
+
+
+def test_absence_claimed_requires_the_cue_to_sit_beside_the_symbol() -> None:
+    """Sharing a sentence is not enough. A long sentence can name a LIVE
+    symbol at one end and discard something unrelated at the other — the
+    measured false exemption was `score_memory` (a live function) in a
+    sentence that later mentioned rescuing "the dropped co-evidence"
+    110 characters away."""
+    body = (
+        "The note claimed the largest remaining error was coverage: "
+        "`score_memory`'s multiplier cannot be satisfied by either half, "
+        "and a read-side re-ranker rescuing the dropped co-evidence was "
+        "estimated at +3.2 points."
+    )
+    assert not _absence_claimed(body, "score_memory")
+
+
+def test_absence_claimed_needs_every_mention_to_be_a_retirement() -> None:
+    """All-occurrences, not any: a symbol described live anywhere in the
+    body is a live claim, however many other sentences retire it."""
+    body = (
+        "The `legacy_probe` hook is gone from origin.py. "
+        "Callers still route through `legacy_probe` on the sync path."
+    )
+    assert not _absence_claimed(body, "legacy_probe")
+
+
+def test_absence_claimed_accepts_a_removal_record(tmp_path: Path) -> None:
+    body = "Commit 1da8233 removed it (`commits_since` is gone from origin.py)."
+    assert _absence_claimed(body, "commits_since")
+
+
+def test_dropped_is_not_an_absence_cue() -> None:
+    """Deliberately absent from the vocabulary: measured against the
+    store it is the one word that routinely describes DATA being
+    discarded rather than code being removed, and it produced the only
+    false exemption in the set."""
+    body = "The `rescue_leg` ranker still runs; the dropped rows are re-queued."
+    assert not _absence_claimed(body, "rescue_leg")
