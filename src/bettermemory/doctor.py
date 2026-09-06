@@ -3307,8 +3307,9 @@ _ABSENCE_CUE_RE = re.compile(
 # than on a knife edge. A semicolon between cue and symbol disqualifies
 # the pairing whatever the distance: `_SENTENCE_END_RE` does not treat
 # one as a boundary, so "the `old_helper` shim was removed;
-# `detect_supersession` is live" would otherwise retire the live symbol
-# sitting 20 characters away.
+# `detect_supersession` is live" would otherwise retire a live symbol
+# sitting well inside the window. Pinned by
+# `tests/test_doctor.py::test_attestation_anchors_still_requires_the_live_half_of_a_mixed_body`.
 _ABSENCE_CUE_WINDOW = 60
 
 

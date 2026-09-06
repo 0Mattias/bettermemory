@@ -7,9 +7,31 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## Unreleased
+
+A retired symbol is not a mis-anchored one (`5f474cf`). `doctor`'s
+`attestation_anchors` check asks whether an attested file CARRIES the
+body's distinctive symbols, so a memory that names a symbol precisely to
+record that it is GONE could never satisfy it — no live file will ever
+contain it — and a correctly-anchored record was flagged for being
+accurate about a removal. Two of the store's four findings were that
+shape. Symbols the body retires are now dropped from the requirement,
+and when nothing live is left the check stays silent, which is the
+module's own "everything it cannot judge is silent" principle applied to
+a case it had not anticipated. It only ever narrows the alarm.
+
+The vocabulary excludes "dropped" on measured grounds: it produced the
+only false exemption in the store, on a live function in a sentence that
+later mentioned rescuing dropped co-evidence — data being discarded, not
+code removed. A semicolon between cue and symbol also disqualifies the
+pairing whatever the distance, because the sentence splitter does not
+treat one as a boundary. Classification is all-occurrences: a symbol
+described live anywhere in the body is a live claim, however many other
+sentences retire it.
+
 ## 7.5.0 - 2026-09-06
 
-Quotation is not assertion. The write gates matched phrasing without
+Quotation is not assertion (`80a0cce`). The write gates matched phrasing without
 asking whose voice a sentence was in, so a body that QUOTED transient
 state was blocked for a phrase its author never asserted: an owner
 ruling recorded verbatim, a user's own query wording the memory exists
