@@ -85,6 +85,27 @@ and an entry leaves this file when it lands there.
   to session count rather than to 1; and three behaviours ride the
   post-load loop (the floor skip, the `since`/scope filters, the datetime
   sort) that any short-circuit must preserve. Bench before building.
+- **A renamed checkout orphans a memory's drift legs, and no shipped
+  path reconciles it.** `origin.worktree_root` is captured once at write
+  time and never re-resolved, so renaming a project directory leaves
+  every memory written from the old one pointing at a path that is gone.
+  `memory_health`'s estate check reports that group under `skipped`
+  ("worktree missing on disk") and those memories stop being judged
+  entirely — not fresh, not drifted, unjudgeable, and absent from
+  `curation_pending`, which is why a curation pass driven off the rollup
+  walks past them. `migrate origin --repair` cannot help: its two rules
+  only ever rewrite `repo`, which in this shape is already correct. The
+  origin block is not on the `memory_update` surface either, so the
+  repair today is a hand edit plus `reindex` — the exact write
+  `memory_content_evidence` is built to flag. The open question is which
+  leg to fix: adopt the live worktree the estate check already resolves
+  for that repo's other memories (read-only, and it fixes the health
+  surface alone), or stop trusting a recorded root wherever the repo
+  resolves elsewhere on disk (which also fixes relative-citation
+  resolution, and changes drift semantics — the reason this is an entry
+  here rather than a patch). Found by sweeping every recorded
+  `worktree_root` against disk, which is the check the store does not
+  currently run for itself.
 
 ## Not planned
 
