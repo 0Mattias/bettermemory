@@ -7,7 +7,7 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
-## Unreleased
+## 7.5.1 - 2026-09-06
 
 A retired symbol is not a mis-anchored one (`5f474cf`). `doctor`'s
 `attestation_anchors` check asks whether an attested file CARRIES the
@@ -28,6 +28,13 @@ pairing whatever the distance, because the sentence splitter does not
 treat one as a boundary. Classification is all-occurrences: a symbol
 described live anywhere in the body is a live claim, however many other
 sentences retire it.
+
+The `_ABSENCE_CUE_WINDOW` comment cites the pin instead of asserting a
+bare measurement (`fbe72e3`). It had put a measured character distance
+on a surface a model reads with nothing committed behind it, and the
+distance was never the point — the clause boundary is — so the comment
+now describes the shape and names the test that pins the window. Repo
+hygiene rather than behaviour: no check changes its verdict.
 
 ## 7.5.0 - 2026-09-06
 
