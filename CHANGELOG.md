@@ -7,7 +7,7 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
-## Unreleased
+## 7.5.0 - 2026-09-06
 
 Quotation is not assertion. The write gates matched phrasing without
 asking whose voice a sentence was in, so a body that QUOTED transient
