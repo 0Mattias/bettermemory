@@ -561,3 +561,60 @@ async def test_status_vocabulary_is_documented(
     desc = tools["memory_write"].description or ""
     assert "user_claim_warning" in desc
     assert "acknowledge_user_claim" in desc
+
+
+# ---------------------------------------------------------------------------
+# Quotation exempts the first-person leg only
+# ---------------------------------------------------------------------------
+
+
+def test_quoted_owner_words_do_not_read_as_a_user_claim() -> None:
+    """`_PREFERENCE_RE` is a transcript miner — first person there means
+    the user because the user typed it. In a memory BODY the author is the
+    assistant, so first person is either its own voice or a transcription.
+    Staging a verbatim owner ruling as `user-inference` would ask the user
+    to confirm that they said what they are quoted saying."""
+    body = (
+        "(2) 2026-08-11 canonical correction: \"I never said 'no neural "
+        "weights', I said no sloppy bullshit. You can add neural weights "
+        'as long as we built the model from scratch" — from-scratch neural '
+        "legal, third-party pretrained weights still banned."
+    )
+    assert _find_user_claims(body) == []
+
+
+def test_the_third_person_leg_still_fires_inside_a_quotation() -> None:
+    """`_USER_CLAIM_RE` reads the shape a MODEL writes when it files a
+    claim of its own. It has no quoted fires in the measured store, and
+    narrowing an unfired leg on no evidence is how a gate stops working."""
+    body = 'The retro notes said "the user prefers tabs over spaces" verbatim.'
+    assert [hit.phrase for hit in _find_user_claims(body)] == ["the user prefers"]
+
+
+def test_a_quotation_does_not_silence_a_later_first_person_assertion() -> None:
+    body = 'He said "i like dark mode". I always use dark mode as well.'
+    assert [hit.phrase for hit in _find_user_claims(body)] == ["I always"]
+
+
+def test_quotation_exemption_survives_a_hard_wrapped_quote() -> None:
+    """`_HARD_WRAP_RE` rejoins soft-wrapped prose before spans are
+    measured, so a quotation broken across a wrap is still one span."""
+    body = 'The owner wrote: "i want this to store our\ntraining data etc" verbatim.'
+    assert _find_user_claims(body) == []
+
+
+def test_quotation_exemption_survives_a_list_prefix() -> None:
+    """Offsets are threaded through the bullet strip, so a quoted claim in
+    a list item is still located inside its span."""
+    body = '- 2026-08-19 owner ruling: "i like verifiable memory" and nothing else.'
+    assert _find_user_claims(body) == []
+
+
+def test_unquoted_first_person_assistant_voice_still_blocks() -> None:
+    """Named so it is not mistaken for solved: the residue quotation does
+    not clear is unquoted first person in the ASSISTANT's voice, where the
+    pronoun heads a relative clause rather than a self-report. Still a
+    false positive, still blocking — separating it needs a clause-position
+    rule and there is not enough evidence to tune one."""
+    body = "A memory about my own error is the one I never think to query for."
+    assert [hit.phrase for hit in _find_user_claims(body)] == ["I never"]

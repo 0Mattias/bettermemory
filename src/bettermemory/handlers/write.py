@@ -44,7 +44,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from ..conflicts import ConflictCandidate, ConflictQueue, _pair_id
 from ..credentials import find_credential_markers
-from ..durability import find_transient_markers
+from ..durability import find_transient_markers, in_quoted_span, quoted_spans
 from ..models import Category, Memory, SimilarHit, is_valid_ulid, snippet_for, utcnow
 from ..proposals import (
     _HARD_WRAP_RE,
@@ -393,6 +393,40 @@ class UserClaimHit:
     sentence: str
 
 
+def _sentence_spans(text: str) -> list[tuple[int, int]]:
+    """`_SENTENCE_SPLIT_RE.split(text)` segments, as offsets into `text`.
+
+    The split pattern captures nothing, so the segments are exactly the
+    gaps between separator matches — same sequence `split` returns, with
+    the positions kept.
+    """
+    out: list[tuple[int, int]] = []
+    prev = 0
+    for sep in _SENTENCE_SPLIT_RE.finditer(text):
+        out.append((prev, sep.start()))
+        prev = sep.end()
+    out.append((prev, len(text)))
+    return out
+
+
+def _first_unquoted(
+    pattern: re.Pattern[str],
+    sentence: str,
+    base: int,
+    spans: tuple[tuple[int, int], ...],
+) -> re.Match[str] | None:
+    """First `pattern` match in `sentence` that is not inside a quotation.
+
+    `base` is `sentence`'s offset in the text `spans` was measured on.
+    Applied to `_PREFERENCE_RE` only — see `_find_user_claims`.
+    """
+    for match in pattern.finditer(sentence):
+        if in_quoted_span(spans, base + match.start(), base + match.end()):
+            continue
+        return match
+    return None
+
+
 def _find_user_claims(content: str) -> list[UserClaimHit]:
     """Sentences in `content` that read as claims about the user.
 
@@ -406,14 +440,52 @@ def _find_user_claims(content: str) -> list[UserClaimHit]:
     30-char / 6-token floor keeps a noisy REVIEW QUEUE clean, while
     "Mattias prefers tabs" (20 chars, 3 tokens) is precisely the write
     this gate exists to catch.
+
+    QUOTATION EXEMPTS THE `_PREFERENCE_RE` LEG ONLY. That leg is a
+    transcript miner: every branch is first person, because in the Stop
+    hook the text it reads was typed BY the user. A memory body is
+    written by the assistant, so first person there is either the
+    assistant's own voice or a transcription of somebody else's — never
+    the shape this gate exists to stage. Measured on the 360-body
+    dogfood store: 9 of the leg's 11 fires sat inside a quotation, all
+    nine on owner rulings and directives recorded verbatim, and filing
+    those as `user-inference` would ask the user to confirm that they
+    said what they are quoted saying. `_USER_CLAIM_RE` keeps firing
+    inside quotations — it reads the THIRD-person shape a model writes
+    when it files a claim of its own, its evidence is nine fires none of
+    which is quoted, and narrowing an unfired leg on no evidence is how
+    a gate quietly stops working.
+
+    The residue this does not clear, named so it is not mistaken for
+    solved: two fires are unquoted first person in the ASSISTANT's voice
+    ("the one I never think to query for", "a corpus we never ran"),
+    where the pronoun heads a relative clause rather than a self-report.
+    Both are false positives and both still block. The rule that would
+    separate them is clause position, and four fires is not enough
+    evidence to tune one.
     """
     hits: list[UserClaimHit] = []
     text = _HARD_WRAP_RE.sub(" ", content.translate(_SMART_APOSTROPHES))
-    for raw in _SENTENCE_SPLIT_RE.split(text):
-        sentence = _LIST_PREFIX_RE.sub("", raw.strip()).strip()
+    # Both normalizations above are length-preserving — `str.translate`
+    # maps one character to one, and `_HARD_WRAP_RE` replaces a single
+    # `\n` with a single space — so a span measured here indexes
+    # `content` too, and the hard-wrap repair has already rejoined a
+    # quotation broken across a soft wrap before it is measured.
+    spans = quoted_spans(text)
+    for start, end in _sentence_spans(text):
+        raw = text[start:end]
+        lead = len(raw) - len(raw.lstrip())
+        stripped = raw.strip()
+        delisted = _LIST_PREFIX_RE.sub("", stripped)
+        lead += len(stripped) - len(delisted)
+        sentence = delisted.strip()
+        lead += len(delisted) - len(delisted.lstrip())
         if not sentence:
             continue
-        match = _PREFERENCE_RE.search(sentence) or _USER_CLAIM_RE.search(sentence)
+        base = start + lead
+        match = _first_unquoted(_PREFERENCE_RE, sentence, base, spans)
+        if match is None:
+            match = _USER_CLAIM_RE.search(sentence)
         if match is not None:
             hits.append(UserClaimHit(phrase=match.group(0), sentence=sentence))
     return hits

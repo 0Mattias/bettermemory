@@ -7,6 +7,50 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## Unreleased
+
+Quotation is not assertion. The write gates matched phrasing without
+asking whose voice a sentence was in, so a body that QUOTED transient
+state was blocked for a phrase its author never asserted: an owner
+ruling recorded verbatim, a user's own query wording the memory exists
+to catalogue, an upstream release note. The pathological case was
+self-reference — a memory documenting the marker list could not be
+written at all, because naming `"the new"` fires `the new`. Both marker
+detectors now skip a hit that sits inside a quotation, bounded to a
+single line so an unbalanced quote can never swallow the rest of a body
+and silence the gate wholesale.
+
+Measured on the 360-body dogfood store: 13 of 53 transient fires and 9
+of 21 user-claim fires sat inside quotations, 19 bodies were blocked on
+nothing else, and every one of the 19 is transcription or
+self-reference rather than a durability defect. Recall cost on
+`bench/integrity`'s poisoning arm is zero and not merely small — the
+P-A confusion matrix is unchanged at tp 8 / fn 22 / fp 1 / tn 93,
+J 0.256 — because the two payloads of 30 that carry a quote produce no
+transient and no user-claim fire either way.
+
+The exemption is per occurrence, not per marker, so a body that quotes
+a phrase and then asserts it still trips on the assertion. On the
+user-claim path it covers the first-person `_PREFERENCE_RE` leg only:
+that leg is a transcript miner, where first person means the user
+because the user typed it, while in a memory body the author is the
+assistant. `_USER_CLAIM_RE`, which reads the third-person shape a model
+writes when it files a claim of its own, keeps firing inside
+quotations — it has no quoted fires in the measured store, and
+narrowing an unfired leg on no evidence is how a gate stops working.
+
+Also: a project root that contains another project's root is dropped
+from the scope-mismatch heuristic. The existing guard named the
+degenerate root only at `$HOME` and `/`, but a session opened in
+`~/Documents` records that as `origin.cwd`, and a scope whose memories
+were all written from there inherited it as a "project root" that then
+prefix-matched every sibling project's paths. Two scopes in the
+measured store did exactly that, and 31 of its 86 recorded
+`scope_mismatch` events suggested those two and nothing else — none of
+the 86 was ever accepted. Ancestry is decided against the roots the
+store actually carries, not a depth threshold, so a shallow root that
+no sibling sits under is kept.
+
 ## 7.4.0 - 2026-09-05
 
 Commit drift counted in reachability space. The commit-drift leg

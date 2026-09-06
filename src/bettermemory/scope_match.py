@@ -403,7 +403,54 @@ def collect_project_roots(memories: Iterable[Memory]) -> dict[str, str]:
             if home_folds_case:
                 continue
         out[scope] = root
-    return out
+    return _drop_ancestor_roots(out)
+
+
+def _drop_ancestor_roots(roots: dict[str, str]) -> dict[str, str]:
+    """Drop any root that strictly contains another scope's root.
+
+    The `$HOME` and `/` guard above catches the degenerate root only at
+    its two best-known spellings. The same pathology lives at every
+    level in between: a session opened in `~/Documents` records that as
+    `origin.cwd`, and a scope whose memories were all written from there
+    inherits `~/Documents` as its "project root". It then prefix-matches
+    every path the user cites under it — including the roots of all its
+    SIBLING projects — and suggests itself on writes that have nothing
+    to do with it.
+
+    Measured on the dogfood store: `projects:cml` and `projects:homelab`
+    both derived `/Users/mattias/Documents`, an ancestor of five other
+    project roots in the same store, and 31 of the 86 recorded
+    `scope_mismatch` events suggest those two scopes and nothing else.
+    None of the 86 was ever accepted.
+
+    Ancestry is decided against the OTHER roots this store actually
+    carries rather than against a depth threshold or a list of known
+    parent directories: a root that no sibling sits under is discriminating
+    however shallow it is, and one that a sibling sits under is not,
+    however deep. Both sides are folded (`_fold_altsep`) and compared with
+    a separator appended, so `/a/foo` is not read as an ancestor of
+    `/a/foobar` — the same boundary rule `_find_root_occurrence` applies
+    in prose. Dropping the root drops only the `project_root` leg for
+    that scope; its `project_name` leg is untouched.
+    """
+    if len(roots) < 2:
+        return roots
+    folded = {
+        scope: _fold_altsep(root, os.sep, os.altsep).rstrip(os.sep)
+        for scope, root in roots.items()
+    }
+    kept: dict[str, str] = {}
+    for scope, root in roots.items():
+        mine = folded[scope]
+        if any(
+            other != mine and other.startswith(mine + os.sep)
+            for name, other in folded.items()
+            if name != scope
+        ):
+            continue
+        kept[scope] = root
+    return kept
 
 
 def _home_alias(path: str) -> str | None:

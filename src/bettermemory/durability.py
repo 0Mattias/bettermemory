@@ -404,6 +404,67 @@ _TITLECASE_SKIP_MARKERS: frozenset[str] = frozenset(
 )
 
 
+# ---------------------------------------------------------------------------
+# Quoted material
+# ---------------------------------------------------------------------------
+#
+# A memory body has ONE author — the assistant — and it routinely
+# TRANSCRIBES other voices: an owner ruling, a user's own query phrasing,
+# an upstream release note. Every marker in this module detects the
+# author ASSERTING transient state; none of them can tell an assertion
+# from a transcription, so a body that quotes "forget the email for now"
+# is blocked for a phrase the author never asserted. The pathological
+# case is self-reference: a memory documenting this very marker list
+# ("the transient marker \"the new\"") cannot be written at all.
+#
+# Measured on the 360-body dogfood store before this landed. 13 of 53
+# marker fires sat inside a quoted span, and 10 whole bodies were blocked
+# on nothing else; all 13 are transcription or self-reference, none is a
+# durability defect the author could fix by rephrasing — the only
+# available "fix" is to stop quoting accurately. Recall cost on the
+# poisoning arm is zero, not merely small: of `bench/integrity`'s 30
+# payloads, the two carrying a quote or code span produce no transient
+# and no user-claim fire either way (they are the credential and
+# instruction classes, caught by other gates).
+#
+# THE SPAN NEVER CROSSES A LINE BREAK. That bound is what keeps an
+# unbalanced quote from swallowing the rest of the body and silencing the
+# gate wholesale — the fail-open cascade that would be far worse than the
+# false positives this fixes. It costs nothing: of 1,921 quoted spans in
+# the store, 2 contain a newline and 1 contains a blank line, and
+# `_HARD_WRAP_RE` has already rejoined soft-wrapped prose by the time the
+# user-claim path calls in here.
+#
+# BACKTICK CODE SPANS ARE DELIBERATELY NOT INCLUDED. A marker name cited
+# as a code token reads like the same mention-not-use case, but adding
+# `` ` `` to the pattern suppresses exactly ZERO additional fires on this
+# store (the self-referential bodies all quote rather than fence), so
+# there is no evidence to buy the wider surface with. That is the entry
+# ticket if someone measures a population where it matters.
+
+
+_QUOTED_SPAN_RE = re.compile(r'"[^"\n]*"|\u201c[^\u201c\u201d\n]*\u201d')
+
+
+def quoted_spans(text: str) -> tuple[tuple[int, int], ...]:
+    """Half-open `(start, end)` spans of `text` that sit inside quotes.
+
+    Straight pairs are matched left to right, so an odd number of `"` on
+    a line leaves the last one unpaired and opening nothing. Curly pairs
+    are matched directionally. Both are line-bounded (see the comment
+    above). Single quotes are NOT delimiters — an apostrophe is
+    indistinguishable from an opening quote, and the nested case that
+    matters ("I never said 'no neural weights'") is already covered by
+    the double-quoted span around it.
+    """
+    return tuple((m.start(), m.end()) for m in _QUOTED_SPAN_RE.finditer(text))
+
+
+def in_quoted_span(spans: tuple[tuple[int, int], ...], start: int, end: int) -> bool:
+    """True when `[start, end)` is wholly contained in one of `spans`."""
+    return any(a <= start and end <= b for a, b in spans)
+
+
 @dataclass(frozen=True)
 class TransientMatch:
     """One transient-marker hit against a candidate write.
@@ -535,11 +596,18 @@ def find_transient_markers(content: str) -> list[TransientMatch]:
     """
     hits: list[TransientMatch] = []
     seen: set[str] = set()
+    spans = quoted_spans(content)
 
     for canonical, regex in _PHRASE_REGEXES:
         if canonical in seen:
             continue
         for match in regex.finditer(content):
+            if in_quoted_span(spans, match.start(), match.end()):
+                # Transcribed, not asserted. `continue` rather than
+                # `break` on purpose: a marker the body both quotes and
+                # then uses in the author's own voice still fires on the
+                # second occurrence.
+                continue
             if canonical in _TITLECASE_SKIP_MARKERS and _is_titlecase_name(
                 content, match
             ):
@@ -555,14 +623,16 @@ def find_transient_markers(content: str) -> list[TransientMatch]:
             seen.add(canonical)
             break
 
-    as_of = _AS_OF_DATE_RE.search(content)
-    if as_of is not None:
+    for as_of in _AS_OF_DATE_RE.finditer(content):
+        if in_quoted_span(spans, as_of.start(), as_of.end()):
+            continue
         hits.append(
             TransientMatch(
                 marker=_AS_OF_DATE_MARKER,
                 snippet=_snippet_around(content, as_of.start(), as_of.end()),
             )
         )
+        break
 
     return hits
 
@@ -573,4 +643,6 @@ __all__ = [
     "TransientMatch",
     "canonical_marker",
     "find_transient_markers",
+    "in_quoted_span",
+    "quoted_spans",
 ]

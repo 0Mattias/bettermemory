@@ -1143,3 +1143,86 @@ def test_collect_project_roots_empty_when_no_origin() -> None:
     a = _memory(scopes=["projects:foo"])  # no origin
     out = collect_project_roots([a])
     assert out == {}
+
+
+# ---------------------------------------------------------------------------
+# Degenerate roots at intermediate depths — `_drop_ancestor_roots`
+# ---------------------------------------------------------------------------
+
+
+def test_collect_project_roots_drops_a_root_that_contains_another() -> None:
+    """The `$HOME` / `/` guard only names the degenerate root at its two
+    best-known spellings; the pathology lives at every level between. A
+    scope whose memories were all written from `~/Documents` inherits that
+    directory as its root and then prefix-matches every sibling project's
+    paths — the store this was measured on had two such scopes, and 31 of
+    its 86 recorded `scope_mismatch` events suggested those two and
+    nothing else."""
+    a = _memory(scopes=["projects:cml"], cwd="/Users/me/Documents")
+    b = _memory(scopes=["projects:homelab"], cwd="/Users/me/Documents")
+    c = _memory(scopes=["projects:foo"], cwd="/Users/me/Documents/projects/foo")
+    out = collect_project_roots([a, b, c])
+    assert out == {"projects:foo": "/Users/me/Documents/projects/foo"}
+
+
+def test_collect_project_roots_keeps_a_shallow_root_nothing_sits_under() -> None:
+    """Ancestry is decided against the roots the store actually carries,
+    not against a depth threshold: a shallow root that no sibling sits
+    under still discriminates and is kept."""
+    a = _memory(scopes=["projects:shallow"], cwd="/srv/app")
+    b = _memory(scopes=["projects:deep"], cwd="/Users/me/a/b/c/d/deep")
+    out = collect_project_roots([a, b])
+    assert out == {
+        "projects:shallow": "/srv/app",
+        "projects:deep": "/Users/me/a/b/c/d/deep",
+    }
+
+
+def test_collect_project_roots_ancestry_respects_segment_boundaries() -> None:
+    """`/a/foo` is not an ancestor of `/a/foobar` — the same boundary rule
+    `_find_root_occurrence` applies in prose, so a sibling whose last
+    segment merely shares a prefix must not evict a legitimate root."""
+    a = _memory(scopes=["projects:foo"], cwd="/Users/me/projects/foo")
+    b = _memory(scopes=["projects:foobar"], cwd="/Users/me/projects/foobar")
+    out = collect_project_roots([a, b])
+    assert out == {
+        "projects:foo": "/Users/me/projects/foo",
+        "projects:foobar": "/Users/me/projects/foobar",
+    }
+
+
+def test_collect_project_roots_keeps_identical_roots() -> None:
+    """Two scopes sharing ONE checkout (monorepo sub-projects) are not an
+    ancestry pair — the containment test is strict, and the identical-root
+    case already has its own suppression at the comparison site."""
+    a = _memory(scopes=["projects:api"], cwd="/Users/me/projects/mono")
+    b = _memory(scopes=["projects:web"], cwd="/Users/me/projects/mono")
+    out = collect_project_roots([a, b])
+    assert out == {
+        "projects:api": "/Users/me/projects/mono",
+        "projects:web": "/Users/me/projects/mono",
+    }
+
+
+def test_generic_home_subdirectory_no_longer_suggests_sibling_scopes() -> None:
+    """End to end, the false positive this fixes: a ruling memory that
+    cites `~/Documents` as a location, tagged with no project scope at
+    all, used to be blocked with `projects:cml` and `projects:homelab`
+    suggested — two projects that merely live under that directory."""
+    mems = [
+        _memory(scopes=["projects:cml"], cwd="/Users/me/Documents"),
+        _memory(scopes=["projects:homelab"], cwd="/Users/me/Documents"),
+        _memory(scopes=["projects:foo"], cwd="/Users/me/Documents/projects/foo"),
+    ]
+    body = (
+        "RULING. The audit covered the store and the global config under "
+        "/Users/me/Documents, and every proposed fix was approved."
+    )
+    report = detect_scope_mismatch(
+        body=body,
+        declared_scopes=["workflow", "learning-style"],
+        project_scopes=collect_project_scopes(mems),
+        project_roots=collect_project_roots(mems),
+    )
+    assert not report.has_mismatch
+    assert report.suggested_scopes == ()

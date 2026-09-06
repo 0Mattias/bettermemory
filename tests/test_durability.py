@@ -668,3 +668,89 @@ def test_snippet_no_leading_ellipsis_at_body_start() -> None:
     hits = find_transient_markers(body)
     currently = next(h for h in hits if h.marker == "currently")
     assert not currently.snippet.startswith("...")
+
+
+# ---------------------------------------------------------------------------
+# Quoted material — transcription is not assertion
+# ---------------------------------------------------------------------------
+
+
+def test_marker_inside_a_quotation_does_not_fire() -> None:
+    """A body quoting an owner decision is not asserting the transient
+    state it quotes; the author cannot fix it by rephrasing, only by
+    quoting less accurately."""
+    body = (
+        'OWNER DECISION 2026-08-12 (verbatim: "its okay forget the email '
+        'for now, second, prepare for everything else"). The email lane is '
+        "closed until the campaign ships."
+    )
+    assert find_transient_markers(body) == []
+
+
+def test_marker_naming_itself_inside_a_quotation_does_not_fire() -> None:
+    """The pathological case: a memory documenting this module cannot be
+    written at all while the marker list matches its own names."""
+    body = (
+        "Two ROADMAP entries changed (write-time supersession; the "
+        'transient marker "the new"), plus one SECURITY.md sentence.'
+    )
+    assert find_transient_markers(body) == []
+
+
+def test_quotation_does_not_silence_the_same_marker_used_in_the_body() -> None:
+    """Suppression is per occurrence, not per marker: a body that quotes a
+    phrase and then asserts it still trips on the assertion."""
+    body = 'He said "forget the email for now". The rollout is parked for now.'
+    markers = [hit.marker for hit in find_transient_markers(body)]
+    assert markers == ["for now"]
+
+
+def test_as_of_date_inside_a_quotation_does_not_fire() -> None:
+    """The dated-snapshot detector takes the first UNQUOTED match, not the
+    first match."""
+    quoted = 'The upstream note read "as of 2026-06-09 the cluster is on 1.29".'
+    assert find_transient_markers(quoted) == []
+    both = (
+        'The upstream note read "as of 2026-06-09 the cluster is on 1.29". '
+        "As of 2026-07-01 we are still pinned to 1.28."
+    )
+    assert [hit.marker for hit in find_transient_markers(both)] == ["as of <date>"]
+
+
+def test_curly_quotation_marks_delimit_a_span() -> None:
+    body = "The release note said “we now use the new pipeline” and shipped."
+    assert find_transient_markers(body) == []
+
+
+def test_an_unbalanced_quote_cannot_silence_the_rest_of_the_body() -> None:
+    """The fail-open case the line bound exists to stop: one stray quote
+    must not open a span that swallows every later marker."""
+    body = 'The 24" monitor arrived.\nThe migration is currently paused.'
+    assert [hit.marker for hit in find_transient_markers(body)] == ["currently"]
+
+
+def test_a_quotation_does_not_span_a_line_break() -> None:
+    body = 'He said "forget it\nand the rollout is currently paused'
+    assert [hit.marker for hit in find_transient_markers(body)] == ["currently"]
+
+
+def test_quoted_spans_pairs_left_to_right_and_drops_an_odd_trailing_quote() -> None:
+    from bettermemory.durability import in_quoted_span, quoted_spans
+
+    text = 'a "one" b "two" c "dangling'
+    spans = quoted_spans(text)
+    assert len(spans) == 2
+    assert in_quoted_span(spans, text.index("one"), text.index("one") + 3)
+    assert not in_quoted_span(spans, text.index("dangling"), len(text))
+
+
+def test_single_quotes_are_not_delimiters() -> None:
+    """An apostrophe is indistinguishable from an opening quote, so single
+    quotes never open a span — the nested case that matters is already
+    inside the double-quoted span around it."""
+    from bettermemory.durability import quoted_spans
+
+    assert quoted_spans("it's the user's own copy") == ()
+    nested = "\"I never said 'no neural weights'\" was the correction."
+    spans = quoted_spans(nested)
+    assert len(spans) == 1
