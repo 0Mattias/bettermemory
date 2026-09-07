@@ -8,54 +8,59 @@ Metric definitions live in [eval.md](eval.md).
 
 ## Production telemetry
 
-`bettermemory eval` over the author's live store — 243 active
-memories, 7,037 logged events, 579 distinct sessions across just
-under three months of daily agent use (measured 2026-08-04,
-`v1_top1_high` rule, Wilson 95% CIs). Rates only; the raw event log
-is personal and stays local.
+`bettermemory eval` over the author's live store — 363 active
+memories, 11,507 logged events, 774 distinct sessions across four
+months of daily agent use (measured 2026-09-07, `v1_top1_high` rule,
+Wilson 95% CIs). Rates only; the raw event log is personal and stays
+local.
 
 The numbers in this section are generated with `bettermemory eval
 --report`, which emits exactly this rates-and-counts shape with the
 leak-free property enforced by a tested contract. This snapshot ran
-the published 3.38.0 binary.
+the published 7.5.1 binary; the previous one ran 3.38.0 and its rows
+survive in this file's git history.
 
 Read `memory_helped_rate` as a deliberate floor, not as an estimate of
 usefulness: the numerator counts only *explicit, claim-excerpt-backed*
 endorsements, while the denominator counts every retrieval occurrence.
 A retrieval that genuinely helped but left no attestation still counts
-against it. Roughly one in seventeen retrievals in the last month left
+against it. Roughly one in eighteen retrievals in the last month left
 a verifiable "this memory shaped this sentence" record.
 
 | rate | last 30 days | all time |
 |---|---|---|
-| `memory_helped_rate` | 136/2,341 = **0.06** [0.05, 0.07] | 196/4,371 = 0.04 [0.04, 0.05] |
-| `endorsement_rate` | 182/1,508 = **0.12** [0.11, 0.14] | 290/2,705 = 0.11 [0.10, 0.12] |
-| `silent_miss_rate` | 3/128 = **0.02** [0.01, 0.07] | 3/128 = 0.02 [0.01, 0.07] |
+| `memory_helped_rate` | 162/2,928 = **0.06** [0.05, 0.06] | 360/7,346 = 0.05 [0.04, 0.05] |
+| `endorsement_rate` | 168/1,416 = **0.12** [0.10, 0.14] | 460/4,146 = 0.11 [0.10, 0.12] |
+| `silent_miss_rate` | 2/354 = **0.01** [0.00, 0.02] | 2/489 = 0.00 [0.00, 0.01] |
 
-Scan detail — last 30d: 2,341 retrieval occurrences · 1,508
-applied-use events · 128 turns audited (20 no-signal excluded, 102
-repeat audits deduped). All time: 4,371 · 2,705 · 128 (20 no-signal,
-102 deduped).
+Scan detail — last 30d: 2,928 retrieval occurrences · 1,416
+applied-use events · 354 turns audited (22 no-signal excluded, 171
+repeat audits deduped). All time: 7,346 · 4,146 · 489 (47 no-signal,
+277 deduped).
 
 **The audited denominators restarted on 2026-07-22.** A
 `consolidate --acknowledge-misses-before` cutoff was written that day
 (as part of the second widening-labeling pass's probe triage), and
 under the retraction contract it drops every earlier `turn_audited` /
 `search_miss` event from all miss surfaces — eval, `memory_health`,
-and the curation rollup agree over the same stream. That is why the
-30-day and all-time miss columns are identical, why 128 is *smaller*
-than the July snapshot's 403, and why the two snapshots' audited
-counts must not be read as one series. Retrieval and use telemetry
-carry no such cutoff and accumulate across the whole log.
+and the curation rollup agree over the same stream. So the audited
+counts here are post-cutoff only, and they must not be read as one
+series with the July snapshot's 403 or the August one's 128. The
+30-day and all-time miss columns were *identical* in the August
+snapshot because the cutoff itself still sat inside the 30-day window;
+now that it has aged out, all-time covers more post-cutoff audits than
+the window does and the two columns separate. Retrieval and use
+telemetry carry no such cutoff and accumulate across the whole log.
 
 Reading the table:
 
-- The 30-day rates still beat the all-time rates, but the gap is
-  closing (`endorsement_rate` 0.12 vs 0.11 now, against 0.12 vs 0.09
-  in July): the attestation tooling matured mid-history, and the mature
-  era now dominates the log, so the columns converge as the early
-  signal-poor months shrink as a share of all time. Read the trend,
-  not either column alone.
+- The 30-day rates still beat the all-time rates, and the gap keeps
+  closing: `memory_helped_rate` reads 0.06 vs 0.05 here against 0.06 vs
+  0.04 in August, and `endorsement_rate` holds 0.12 vs 0.11 against
+  0.12 vs 0.09 in July. The attestation tooling matured mid-history and
+  the mature era now dominates the log, so the columns converge as the
+  early signal-poor months shrink as a share of all time. Read the
+  trend, not either column alone.
 - **The miss series ends in its current meaning at 3.41.0.** The
   prompt-recall hook now runs the same predicate at prompt time and
   converts a would-be miss into a `prompt_recall` delivery event plus
@@ -84,14 +89,26 @@ Reading the table:
   the store is being retrieved well. The full measurement, and why the shadow
   `relevance_v2` label makes it worse rather than better, are in
   [eval.md](eval.md#silent_miss_rate).
-- Three silent misses have accrued since the 2026-07-22 cutoff — 1 on
-  `claude-fable-5`, 2 on `claude-opus-5` — and all three are pending
-  triage as of this snapshot. They are *new* events, distinct from the
-  two published in July (those fell before the cutoff and are
-  retracted from every rate above; the July rows survive in this
-  file's git history). A counterfactual sweep (`bettermemory eval
-  --threshold-sweep`) replays the 8 post-cutoff v1-flagged misses
-  against the stricter v2/v3/v4 rules, which flag none of them — so
+- **The miss numerator and the sweep's denominator count different
+  things on purpose, and the gap between them is the whole triage
+  history.** Twenty `search_miss` events have accrued since the
+  2026-07-22 cutoff. Eighteen were acknowledged as false positives via
+  `memory_acknowledge_miss` and drop out of every rate above, leaving
+  the two live misses in the table — one on `claude-fable-5-1`, one on
+  `claude-opus-5`, both from this month and both still pending triage.
+  The three "pending" misses published in the August snapshot are among
+  the eighteen; they were acked over the following weeks, so this
+  snapshot's pair is a *different set of events*, not the same set
+  shrinking, which is also why the per-model attribution moved.
+  Meanwhile the counterfactual sweep (`bettermemory eval
+  --threshold-sweep`) replays all twenty, because it deliberately
+  honours the bulk `silent_miss_cutoff` and deliberately ignores
+  per-event `miss_ack`: an acked miss is a *confirmed false positive of
+  the current rule*, which is precisely the calibration signal a
+  stricter candidate is judged against, while the rates drop acks
+  because they report outstanding actionable misses.
+  `compute_threshold_sweep`'s docstring carries the asymmetry and its
+  reasoning. The stricter v2/v3/v4 rules flag none of the twenty — so
   v1 isn't over-firing. (Strictly *looser* rules were the other
   question, and their lane is now closed: three
   `--widening-preview` labeling passes —
@@ -109,50 +126,59 @@ Reading the table:
 
 | model | audited | no-signal | misses |
 |---|---|---|---|
-| `claude-fable-5` | 34 | 4 | 1 |
-| `claude-opus-5` | 94 | 16 | 2 |
+| `claude-fable-5` | 300 | 26 | 0 |
+| `claude-fable-5-1` | 52 | 2 | 1 |
+| `claude-opus-4-8` | 2 | 0 | 0 |
+| `claude-opus-5` | 135 | 19 | 1 |
 
-"All time" here starts at the 2026-07-22 cutoff, which is also why
-the `claude-sonnet-5` / `claude-opus-4-8` rows from the July snapshot
-are gone: their audits predate it, and neither model has produced
-post-cutoff traffic on this machine.
+"All time" here starts at the 2026-07-22 cutoff, so a model appears
+once it produces post-cutoff traffic and not before: `claude-opus-4-8`
+returns with two audits after being absent from the August snapshot,
+`claude-fable-5-1` is new to the table, and `claude-sonnet-5` is still
+gone because all of its audits predate the cutoff. The `misses` column
+counts live misses only, on the same ack-honouring basis as the rate
+table — which is why `claude-fable-5` reads zero here despite carrying
+the largest audited share.
 
 ### Threshold sweep (counterfactual, all time)
 
 | rule | would flag | Δ v1 | % of v1 |
 |---|---|---|---|
-| `v1_top1_high` | 8 | — | 100.0% |
-| `v2_top1_high_score_50` | 0 | -8 | 0.0% |
-| `v3_top1_high_dominant` | 0 | -8 | 0.0% |
-| `v4_top1_high_strict_combined` | 0 | -8 | 0.0% |
+| `v1_top1_high` | 20 | — | 100.0% |
+| `v2_top1_high_score_50` | 0 | -20 | 0.0% |
+| `v3_top1_high_dominant` | 0 | -20 | 0.0% |
+| `v4_top1_high_strict_combined` | 0 | -20 | 0.0% |
 
-Stricter rules replay over misses v1 already flagged, so this answers
-"is v1 over-firing?" — not "what does v1 miss?".
+Twenty replayable misses — every post-cutoff `search_miss`, acked or
+not, per the asymmetry above. Stricter rules replay over misses v1
+already flagged, so this answers "is v1 over-firing?" — not "what does
+v1 miss?".
 
 ### Tool usage (top 10, all time)
 
 | tool | calls | share |
 |---|---|---|
-| `memory_audit_turn` | 1,650 | 23.8% |
-| `memory_show` | 1,153 | 16.6% |
-| `memory_record_use` | 916 | 13.2% |
-| `memory_verify` | 806 | 11.6% |
-| `memory_update` | 694 | 10.0% |
-| `memory_write` | 418 | 6.0% |
-| `memory_search` | 414 | 6.0% |
-| `memory_scope_overview` | 347 | 5.0% |
-| `episode_write` | 324 | 4.7% |
-| `episode_handoff` | 68 | 1.0% |
+| `memory_show` | 2,215 | 19.6% |
+| `memory_audit_turn` | 2,213 | 19.6% |
+| `memory_verify` | 1,929 | 17.1% |
+| `memory_record_use` | 1,289 | 11.4% |
+| `memory_update` | 1,278 | 11.3% |
+| `memory_write` | 631 | 5.6% |
+| `memory_search` | 573 | 5.1% |
+| `memory_scope_overview` | 436 | 3.9% |
+| `episode_write` | 428 | 3.8% |
+| `episode_handoff` | 110 | 1.0% |
 
-6,934 tool calls across 27 known tools as of the 2026-08-04 snapshot —
-retrieval (`memory_search`, 6.0%) is dwarfed by upkeep (audit, verify,
-update, record_use), the same shape as both earlier snapshots.
+11,313 tool calls across 27 known tools as of this snapshot —
+retrieval (`memory_search`, 5.1%) is dwarfed by upkeep (show, audit,
+verify, record_use, update), the same shape as every earlier snapshot
+and a slightly more lopsided one each time.
 
 ### Snapshot history
 
-Three snapshots of the same live store so far — the first predates
-`--report`; both later ones ran the then-published binary. This file
-is rewritten in place per snapshot, so the earlier columns live in
+Four snapshots of the same live store so far — the first predates
+`--report`; the later ones each ran the then-published binary. This
+file is rewritten in place per snapshot, so the earlier columns live in
 git history (2026-07-16 as e4e19cd).
 
 | measured | binary | memories | events | sessions | helped (30d) | endorsement (30d) | miss denom (30d/all) |
@@ -160,13 +186,17 @@ git history (2026-07-16 as e4e19cd).
 | 2026-07-03 | — | 58 | 3,492 | 288 | 0.07 | 0.13 | 167 / 237 |
 | 2026-07-16 | 3.23.0 | 134 | 4,967 | 422 | 0.07 | 0.12 | 244 / 403 |
 | 2026-08-04 | 3.38.0 | 243 | 7,037 | 579 | 0.06 | 0.12 | 128 / 128 † |
+| 2026-09-07 | 7.5.1 | 363 | 11,507 | 774 | 0.06 | 0.12 | 354 / 489 † |
 
 † audited denominators restart at the 2026-07-22 acknowledgment
-cutoff; the miss columns are not one series across that line.
+cutoff; the miss columns are not one series across that line. The two
+post-cutoff rows *are* one series with each other, and they separate
+from 30d/all parity only because the cutoff has since aged out of the
+30-day window.
 
-The helped/endorsement rates are stable across a store that quadrupled
-its memory count and doubled its event log — the floor is holding, not
-rising. Two hand corrections were applied to the 2026-07-16
+The helped/endorsement rates are stable across a store that has grown
+six-fold in memories and more than tripled its event log — the floor is
+holding, not rising. Two hand corrections were applied to the 2026-07-16
 publication on 2026-07-30 (a wrong claim that looser rules were
 unmeasurable, and a stale tool count annotated as snapshot-valued);
 both are embodied in the current prose, and the correction text
