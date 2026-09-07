@@ -36,7 +36,14 @@ and an entry leaves this file when it lands there.
      memories with ≥1 corroboration and ≥3 with ≥2. **HOLD, as
      pre-recorded:** not one memory in the store carries a
      corroboration, so the signal this flag ranks on has still never
-     fired live. The cheapest flip stays the least ready.
+     fired live. The cheapest flip stays the least ready. This one is
+     no longer waiting on evidence in the way the other two are, and
+     the next read on it should answer a different question: after four
+     months of daily use with zero corroborations recorded, is the
+     signal unreachable in practice — nothing in any shipped workflow
+     asks for one — or is the flag ranking on an event that does not
+     occur? The first is a gap to close, the second retires the flag
+     and its config surface. Deciding that needs no new telemetry.
   4. `standing_tier` — two-stage. Dogfood-config flip (never the
      shipped default) when ≥2 receipts exist of standing content going
      unserved by retrieval in 30 days; shipped-default flip only after
