@@ -6,50 +6,61 @@ and an entry leaves this file when it lands there.
 
 ## Planned
 
-- **The usage-signal flags: flip bars declared, read 2026-09-09.** Four
-  ranking/delivery flags are built, tested and OFF with no measured
-  bar: `endorsement_boost`, `outcome_demotion`, `corroboration_boost`
-  (`config.py`, all default false) and `standing_tier` (shipped
-  3.42.0, "flip only with dogfood evidence"). Declared now, read once
-  at the recall-stack soak checkpoint — **2026-09-09**, ~2 weeks of
-  6.2.0's `delivered_reason` telemetry — alongside a fresh
-  `eval --report` snapshot (the published one is 3.38.0, measured
-  2026-08-04; the cohort lane's first trend point). An unread bar is a
-  hold, not a pass. Preconditions measured 2026-08-30 on the dogfood
-  log, so the bars guard signal liveness rather than ambition:
-  1. `endorsement_boost` — 96 distinct memories carried an explicit
-     endorse in the trailing 30 days (signal live). Flip if that
-     density holds ≥40 at the read AND an offline replay of the
-     window's audited turns (per-turn `top_hits`, flag toggled, no
-     store mutation) shows at least two-thirds of changed top-1s
-     improving and no miss-labeled turn worsening, on n ≥ 10 changed
-     turns; fewer changed turns is a hold for blast-radius evidence.
-  2. `outcome_demotion` — 57 distinct negative-outcome memories in 30
-     days. Same replay protocol at ≥20 density, plus one invariant:
-     zero demoted memories that were a later turn's explicitly-applied
-     top-1 inside the window.
-  3. `corroboration_boost` — ZERO corroborated memories exist
-     (2026-08-30: 0 of 320 carry `corroborations > 0`), so the
-     cheapest flip is the least ready: the signal it ranks on has
-     never fired live. Liveness gate before any replay: ≥10 memories
-     with ≥1 corroboration and ≥3 with ≥2. Expected verdict at this
-     read: HOLD — recorded now so the hold is a verdict, not a shrug.
+- **The usage-signal flags: four bars declared, read once, all four
+  HOLD — and the next read is an evidence trigger, not a date.** Four
+  ranking/delivery flags are built, tested and OFF: `endorsement_boost`,
+  `outcome_demotion`, `corroboration_boost` (`config.py`, all default
+  false) and `standing_tier` (shipped 3.42.0, "flip only with dogfood
+  evidence"). The bars stand exactly as declared; what the read changed
+  is the checkpoint's clock. Read with `bettermemory eval
+  --usage-replay` (methodology in eval.md), which measures and never
+  flips, alongside a fresh `eval --report` snapshot
+  ([eval-results.md](eval-results.md)):
+  1. `endorsement_boost` — flip when the explicit-endorse density holds
+     ≥40 distinct memories over the trailing 30 days AND an offline
+     replay of the window's audited turns (per-turn `top_hits`, flag
+     toggled, no store mutation) shows at least two-thirds of changed
+     top-1s improving and no miss-labeled turn worsening, on n ≥ 10
+     changed turns; fewer changed turns is a hold for blast-radius
+     evidence. **HOLD:** density clears comfortably, and the replay
+     produced no changed top-1 at all — the flag engaged on a handful
+     of turns, so there is nothing yet to judge.
+  2. `outcome_demotion` — same replay protocol at ≥20 negative-outcome
+     density, plus one invariant: zero demoted memories that were a
+     later turn's explicitly-applied top-1 inside the window. **HOLD:**
+     density clears, the invariant is clean, and the handful of changed
+     top-1s is far under the n ≥ 10 floor. Direction is mildly
+     encouraging (one improving, none worsening, the rest neutral) and
+     that is not evidence at this n — which is what the floor is for.
+  3. `corroboration_boost` — liveness gate before any replay: ≥10
+     memories with ≥1 corroboration and ≥3 with ≥2. **HOLD, as
+     pre-recorded:** not one memory in the store carries a
+     corroboration, so the signal this flag ranks on has still never
+     fired live. The cheapest flip stays the least ready.
   4. `standing_tier` — two-stage. Dogfood-config flip (never the
      shipped default) when ≥2 receipts exist of standing content going
-     unserved by retrieval in 30 days — receipt #1 is the 2026-07-26
-     STOP-SURFACING directive, retrieved once while applied daily
-     out-of-band, recategorized `ambient` 2026-08-30, which makes it
-     deliverable the moment the flag flips. Shipped-default flip only
-     after ≥2 weeks of dogfood soak: no misdelivery, the 1024-byte
-     budget holding.
-  If the replay harness does not exist by the read, the read holds and
-  the harness becomes the next unit — the bars stay as declared.
-  *Harness shipped 2026-08-30* (`bettermemory eval --usage-replay`;
-  methodology in docs/eval.md): exact per-turn toggle capture recorded
-  by the production ranker from 2026-08-30 onward — turns logged
-  before that are counted as not-replayable, never approximated, so
-  the replay clauses read only exact evidence and "fewer changed
-  turns" resolves as the declared hold.
+     unserved by retrieval in 30 days; shipped-default flip only after
+     ≥2 weeks of dogfood soak with no misdelivery and the 1024-byte
+     budget holding. **HOLD:** receipt #1 (the 2026-07-26
+     STOP-SURFACING directive, recategorized `ambient` and so
+     deliverable the moment the flag flips) has aged out of any 30-day
+     window and no second receipt was recorded. This flag is also the
+     one the replay surface cannot speak to, so its hold rests on
+     receipts alone.
+  **Why the next read is not another date.** The 2026-09-09 checkpoint
+  was derived from the `delivered_reason` calendar, but the binding
+  clock is the exact per-turn toggle capture the production ranker
+  began recording on 2026-08-30 — turns before it are counted
+  not-replayable, never approximated. `--usage-replay --since all`
+  returns replay counts identical to the 30-day window, so the read
+  already consumed every capture in existence and waiting would have
+  added days, not evidence. Both replay bars are gated on n ≥ 10
+  changed top-1s, and the observed change rate does not reach that
+  within days of the original checkpoint. So the trigger replaces the
+  date: re-read when `--usage-replay` reports n ≥ 10 changed top-1s on
+  either replay bar. An unread bar is still a hold, not a pass, and a
+  hold at n = 0 is a statement about evidence rather than about the
+  flags.
 - **Cause provenance.** The 6.5.0 label says how a file entered the
   store, not what was in context when the model wrote it, so an
   injection-driven legitimate write reads `local`. A write-time record
