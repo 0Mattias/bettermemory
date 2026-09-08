@@ -65,6 +65,21 @@ hostile push would want them to. Both listings now use `-z` and split on
 NUL, which no config setting can turn off. The test asserts the
 `sync_pull` event's own file list, which was empty before the fix.
 
+**And the name git returned still had to survive the decode**
+(`856afb7`). The windows CI leg failed on the test above and was right
+to: `sync._run_git` passed `text=True` with no `encoding`, so it decoded
+git's output with the LOCALE codepage — cp1252 on a stock runner — and
+the `café.md` that `-z` had just recovered came back as `cafÃ©.md`, a
+name matching no file on disk. Fixing one half of a path without the
+other would have shipped a green macOS run over a still-broken
+admission gate. The codec is now pinned to UTF-8, with the existing
+`errors="replace"` leniency kept and its own reason restated —
+`--porcelain -z` emits path bytes verbatim, so strict decoding would
+raise inside `subprocess.run` before this function could return.
+`origin.py` already pinned the codec on its git calls; `sync.py` was
+the one that did not. `doctor._binary_dist_version` is pinned in the
+same commit for consistency, though its output is a version string.
+
 ## 7.7.0 - 2026-09-08
 
 ### Fixed
