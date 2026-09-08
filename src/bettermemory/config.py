@@ -129,6 +129,16 @@ outcome_demotion = false
 # keeps independently re-entering conversations wins a near-tie over a
 # one-off remark. No event-log read — the counter lives on the memory
 # record itself.
+#
+# DEPRECATED in 7.6.0, REMOVAL AT 8.0. The nudge cannot fire: the
+# rollup only bumps on a dedup-rejected write, which needs raw Jaccard
+# >= 0.75 between two independently written bodies. Measured on a real
+# 367-memory store, the closest of 67,161 pairs scored 0.575 — the
+# containment ceiling, which sits below the bar by construction — and
+# 639 production writes over four months produced no duplicate
+# rejection outside test scopes. Setting this changes no ranking. The
+# `corroborations` rollup itself is NOT deprecated and keeps feeding
+# dead-weight curation.
 corroboration_boost = false
 
 # Write-time supersession. When a claim-sized memory_write carries a
@@ -429,7 +439,9 @@ class BehaviorConfig:
     # memories slide down (bounded ≥0.85x). Opt-in — see DEFAULT_CONFIG.
     outcome_demotion: bool = False
     # Recurrence-fed ranking nudge (bounded ≤ +10%) reading the persisted
-    # `corroborations` rollup. Opt-in — see DEFAULT_CONFIG.
+    # `corroborations` rollup. Opt-in — see DEFAULT_CONFIG. DEPRECATED in
+    # 7.6.0 (removal at 8.0): the signal it ranks on is unreachable, so
+    # the flag cannot change a ranking. See `_DEPRECATED_BEHAVIOR_KEYS`.
     corroboration_boost: bool = False
     # Write-time supersession (`supersession.detect_supersession`): a
     # claim-sized write that carries a change cue and diverges on a value
@@ -1009,6 +1021,69 @@ def default_config_path() -> Path:
 _DEPRECATED_KEY_WARNED_PATHS: set[tuple[Path, str]] = set()
 
 
+# [behavior] keys that still work but are destined for removal at the
+# next major, per the deprecation cycle in CONTRIBUTING.md: value ->
+# (removal target, why). The key keeps functioning until that major —
+# semver says so — and the warning is the operator's notice.
+_DEPRECATED_BEHAVIOR_KEYS: dict[str, tuple[str, str]] = {
+    "corroboration_boost": (
+        "8.0",
+        "the ranking nudge it enables reads the `corroborations` rollup, "
+        "which only bumps when a memory_write is dedup-rejected — a bar "
+        "prose-sized memories do not reach, so the flag cannot change a "
+        "ranking whether it is on or off. The rollup itself is NOT "
+        "deprecated and still keeps corroborated memories out of "
+        "dead-weight curation",
+    ),
+}
+
+
+def _warn_deprecated_behavior_keys(
+    behavior_raw: dict[str, object], config_path: Path
+) -> None:
+    """Warn once per (config, key) for a `[behavior]` key that is
+    deprecated but still live.
+
+    The key is deliberately NOT dropped: CONTRIBUTING.md's deprecation
+    cycle says a deprecated surface keeps functioning until the next
+    major, so the loader below reads it exactly as before and only the
+    warning is new. Config-key deprecations use `log.warning` rather
+    than `DeprecationWarning` — the operator who set the line reads
+    server logs, not Python's warnings channel — with the same one-shot
+    `(resolved path, key)` guard as
+    `_apply_legacy_endorsement_debt_alias`, so a long-lived server that
+    rereads config on signal does not spam.
+    """
+    present = [k for k in _DEPRECATED_BEHAVIOR_KEYS if k in behavior_raw]
+    if not present:
+        return
+
+    try:
+        resolved = config_path.resolve()
+    except OSError:
+        resolved = config_path
+
+    import logging
+
+    log = logging.getLogger("bettermemory.config")
+    for key in present:
+        removal_target, why = _DEPRECATED_BEHAVIOR_KEYS[key]
+        guard_key = (resolved, f"{key}+deprecated")
+        if guard_key in _DEPRECATED_KEY_WARNED_PATHS:
+            continue
+        _DEPRECATED_KEY_WARNED_PATHS.add(guard_key)
+        log.warning(
+            "bettermemory: TOML config at %s sets [behavior] `%s`, which "
+            "is deprecated and will be removed in bettermemory %s — %s. "
+            "It still loads and behaves exactly as before; delete the "
+            "line to silence this warning.",
+            resolved,
+            key,
+            removal_target,
+            why,
+        )
+
+
 def _apply_legacy_endorsement_debt_alias(
     behavior_raw: dict[str, object], config_path: Path
 ) -> None:
@@ -1120,6 +1195,10 @@ def load_config(path: Path | None = None) -> Config:
     # `behavior_raw` so the downstream `behavior_raw.get(...)` lookups
     # below pick up the legacy value under the new key.
     _apply_legacy_endorsement_debt_alias(behavior_raw, config_path)
+
+    # Deprecated-but-live keys: warn once so the operator gets notice
+    # before the removal major. The key itself still loads below.
+    _warn_deprecated_behavior_keys(behavior_raw, config_path)
 
     return Config(
         storage=StorageConfig(

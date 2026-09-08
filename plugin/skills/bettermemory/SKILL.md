@@ -164,7 +164,7 @@ A `memory_search` hit whose memory was `ignored` or `contradicted` in the last 3
 
 ## Duplicates are evidence, not waste
 
-A `memory_write` that comes back `status="duplicate"` credits the matched memory a **corroboration** (`corroboration_recorded: true`, once per session): the claim re-entered a conversation, which is evidence it still holds. The rollup keeps corroborated memories out of dead-weight curation and (under `[behavior] corroboration_boost`) nudges them up near-ties. So don't force-write around dedup out of capture anxiety — the rejection already landed the signal. `force=True` remains for claims that are genuinely different.
+A `memory_write` that comes back `status="duplicate"` credits the matched memory a **corroboration** (`corroboration_recorded: true`, once per session): the claim re-entered a conversation, which is evidence it still holds. The rollup keeps corroborated memories out of dead-weight curation (it also gated `[behavior] corroboration_boost`, deprecated in 7.6.0 for removal at 8.0 — the nudge could never fire). So don't force-write around dedup out of capture anxiety — the rejection already landed the signal. `force=True` remains for claims that are genuinely different.
 
 ## Corpus curation: conflicts and cross-session patterns
 

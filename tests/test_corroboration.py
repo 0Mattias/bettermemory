@@ -7,6 +7,15 @@ touching `updated`. Consumers: the freshest-touch curation window
 (always), memory_show / memory_list surfacing (always, absent while
 zero), and the opt-in `[behavior] corroboration_boost` ranking nudge.
 
+That third consumer is DEPRECATED in 7.6.0 for removal at 8.0 — the
+nudge cannot fire in practice, because a corroboration needs raw
+Jaccard >= 0.75 between two independently written bodies and prose-sized
+memories do not reach it (the measurement is in
+`search._corroboration_factor`'s docstring). The tests below still
+exercise it: a deprecated surface keeps working until the major, so the
+tie-break and ceiling contracts stay pinned until 8.0 deletes them. The
+deprecation notice itself is tested in `test_config.py`.
+
 The write-handler hook is once-per-(memory, session)
 (`SessionState.corroborated_ids`) and best-effort — a telemetry bump
 must never turn a clean duplicate rejection into an error.

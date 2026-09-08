@@ -6,13 +6,16 @@ and an entry leaves this file when it lands there.
 
 ## Planned
 
-- **The usage-signal flags: four bars declared, read once, all four
-  HOLD — and the next read is an evidence trigger, not a date.** Four
-  ranking/delivery flags are built, tested and OFF: `endorsement_boost`,
-  `outcome_demotion`, `corroboration_boost` (`config.py`, all default
-  false) and `standing_tier` (shipped 3.42.0, "flip only with dogfood
-  evidence"). The bars stand exactly as declared; what the read changed
-  is the checkpoint's clock. Read with `bettermemory eval
+- **The usage-signal flags: four bars declared, one answered and
+  three still HOLD — and the next read is an evidence trigger, not a
+  date.** Four ranking/delivery flags are built, tested and OFF:
+  `endorsement_boost`, `outcome_demotion`, `corroboration_boost`
+  (`config.py`, all default false) and `standing_tier` (shipped
+  3.42.0, "flip only with dogfood evidence"). `corroboration_boost`
+  was answered in 7.6.0 and is now DEPRECATED for removal at 8.0 — it
+  leaves the bar list below; the reasoning is at the end of this
+  entry. The other bars stand exactly as declared; what the read
+  changed is the checkpoint's clock. Read with `bettermemory eval
   --usage-replay` (methodology in eval.md), which measures and never
   flips, alongside a fresh `eval --report` snapshot
   ([eval-results.md](eval-results.md)):
@@ -32,19 +35,7 @@ and an entry leaves this file when it lands there.
      top-1s is far under the n ≥ 10 floor. Direction is mildly
      encouraging (one improving, none worsening, the rest neutral) and
      that is not evidence at this n — which is what the floor is for.
-  3. `corroboration_boost` — liveness gate before any replay: ≥10
-     memories with ≥1 corroboration and ≥3 with ≥2. **HOLD, as
-     pre-recorded:** not one memory in the store carries a
-     corroboration, so the signal this flag ranks on has still never
-     fired live. The cheapest flip stays the least ready. This one is
-     no longer waiting on evidence in the way the other two are, and
-     the next read on it should answer a different question: after four
-     months of daily use with zero corroborations recorded, is the
-     signal unreachable in practice — nothing in any shipped workflow
-     asks for one — or is the flag ranking on an event that does not
-     occur? The first is a gap to close, the second retires the flag
-     and its config surface. Deciding that needs no new telemetry.
-  4. `standing_tier` — two-stage. Dogfood-config flip (never the
+  3. `standing_tier` — two-stage. Dogfood-config flip (never the
      shipped default) when ≥2 receipts exist of standing content going
      unserved by retrieval in 30 days; shipped-default flip only after
      ≥2 weeks of dogfood soak with no misdelivery and the 1024-byte
@@ -68,6 +59,43 @@ and an entry leaves this file when it lands there.
   either replay bar. An unread bar is still a hold, not a pass, and a
   hold at n = 0 is a statement about evidence rather than about the
   flags.
+  **`corroboration_boost` was answered, and deprecated rather than
+  read again (7.6.0; removal at 8.0).** Its question — signal
+  unreachable, or flag ranking on an event that does not occur? —
+  needed no new telemetry, and the answer was the second, with a
+  mechanism. A corroboration only bumps when `memory_write` is
+  dedup-rejected, which needs a `high` hit from `find_similar`: raw
+  Jaccard ≥ `HIGH_SIMILARITY` (0.75) between two independently written
+  bodies. The containment leg cannot reach that bar by construction
+  (`_CONTAINMENT_CEILING` = 0.575 < 0.75, deliberate so advisory
+  similarity never blocks a write). Measured on the dogfood store:
+  639 production writes over four months produced three `duplicate`
+  rejections, all three from test scopes (`projects:x`,
+  `audit-sandbox`) — and the plumbing worked correctly on all three,
+  so this was never a broken recorder. Across the 367-memory corpus
+  (median body ~460 words), all 67,161 pairs scored under the bar; the
+  closest sat at 0.575, pinned exactly at the containment ceiling,
+  0.175 short, with all 1,918 above-medium hits labeled `medium` and
+  not one `high`. Prose that long cannot reach 0.75 Jaccard without
+  being a copy-paste. The two ways to "close the gap" were both worse
+  than retiring: lowering `HIGH_SIMILARITY` would make the write gate
+  reject legitimate distinct writes to feed a ranking nudge, and
+  redefining corroboration onto the `medium` band would fire on 49% of
+  writes — boosting nearly everything, which is worse than off. The
+  `corroborations` / `last_corroborated` rollup SURVIVES: recording
+  stays on (cheap, additive), it still keeps a corroborated memory out
+  of dead-weight curation via `health._freshest_touch_ts`, and
+  memory_show / memory_list still surface it. What retires is the
+  ranking hook and its config key — and NOT yet: CONTRIBUTING.md's
+  deprecation cycle covers config keys explicitly, so 7.6.0 ships the
+  notice (a one-shot `log.warning` naming 8.0, the config lane's
+  pattern) with the flag still loading and behaving exactly as
+  documented, and 8.0 takes `_corroboration_factor`, the threading
+  through both scorers, the `USAGE_FLAG_NAMES` entry, the
+  `BehaviorConfig` field and the TOML key. Removing it in a minor was
+  the first draft and was wrong: the flag being provably inert is an
+  argument for retiring it, not for skipping the promise made to
+  anyone pinning `bettermemory==7.x`.
 - **Cause provenance.** The 6.5.0 label says how a file entered the
   store, not what was in context when the model wrote it, so an
   injection-driven legitimate write reads `local`. A write-time record

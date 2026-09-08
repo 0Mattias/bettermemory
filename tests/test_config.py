@@ -31,6 +31,7 @@ import tomllib
 from bettermemory.config import (
     DEFAULT_CONFIG,
     ENV_DIR_OVERRIDE,
+    BehaviorConfig,
     Config,
     StorageConfig,
     _SEARCH_MODES,
@@ -1294,3 +1295,72 @@ def test_search_mode_absent_and_valid_values_are_untouched(tmp_path: Path) -> No
             f'[behavior]\nsearch_mode = "{mode}"\n', encoding="utf-8"
         )
         assert load_config(tmp_path / "config.toml").behavior.search_mode == mode
+
+
+# ---------------------------------------------------------------------------
+# Deprecated [behavior] keys: a key destined for removal at the next major
+# keeps working (CONTRIBUTING.md's deprecation cycle, step 3) and warns
+# once per (config, key) on the log lane. `corroboration_boost` is the
+# first — deprecated 7.6.0, removal at 8.0, because the ranking nudge it
+# gates provably cannot fire.
+# ---------------------------------------------------------------------------
+
+
+def test_deprecated_behavior_key_still_loads_and_warns_once(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The deprecation must be a NOTICE, not a behavior change: the flag
+    still reaches `BehaviorConfig` with the value the operator set, and
+    the warning names the removal target so they can plan for it."""
+    _reset_deprecated_key_guard()
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[behavior]\ncorroboration_boost = true\ndefault_max_results = 9\n",
+        encoding="utf-8",
+    )
+    with caplog.at_level("WARNING", logger="bettermemory.config"):
+        cfg = load_config(config_path)
+
+    # Step 3 of the cycle: the deprecated surface continues to function.
+    assert cfg.behavior.corroboration_boost is True
+    assert cfg.behavior.default_max_results == 9
+
+    records = [
+        r
+        for r in caplog.records
+        if r.levelname == "WARNING" and "corroboration_boost" in r.getMessage()
+    ]
+    assert len(records) == 1, [r.getMessage() for r in records]
+    message = records[0].getMessage()
+    assert "deprecated and will be removed in bettermemory 8.0" in message
+    assert str(config_path.resolve()) in message
+
+    # One-shot per (path, key): a reload stays quiet.
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="bettermemory.config"):
+        load_config(config_path)
+    assert not [r for r in caplog.records if "corroboration_boost" in r.getMessage()]
+
+
+def test_unset_deprecated_key_is_silent(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The warning fires when a CALLER uses the surface, not on every
+    load — a config that never mentions the key must stay quiet."""
+    _reset_deprecated_key_guard()
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("[behavior]\ndefault_max_results = 5\n", encoding="utf-8")
+    with caplog.at_level("WARNING", logger="bettermemory.config"):
+        load_config(config_path)
+    assert not [r for r in caplog.records if "corroboration_boost" in r.getMessage()]
+
+
+def test_every_deprecated_key_is_a_real_behavior_field() -> None:
+    """A key in the registry that no longer exists on `BehaviorConfig`
+    has been REMOVED, not deprecated — the two states warn differently
+    and this catches the day someone conflates them."""
+    from bettermemory.config import _DEPRECATED_BEHAVIOR_KEYS
+
+    for key in _DEPRECATED_BEHAVIOR_KEYS:
+        assert hasattr(BehaviorConfig(), key), key
+        assert key in DEFAULT_CONFIG, key

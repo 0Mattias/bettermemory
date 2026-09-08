@@ -2154,7 +2154,24 @@ def _corroboration_factor(corroborations: int) -> float:
     claim that keeps coming up wins a near-tie over a one-off remark —
     recurrence accumulating into retrieval weight, capped so it can
     never override relevance. Reads the persisted rollup on the Memory
-    record, so unlike the event-fed factors it costs no event-log walk."""
+    record, so unlike the event-fed factors it costs no event-log walk.
+
+    DEPRECATED in 7.6.0, REMOVAL AT 8.0 — with the `corroboration_boost`
+    flag, the threading through `_score_keyword` / `_score_bm25`, and
+    the `USAGE_FLAG_NAMES` entry. This factor cannot fire, and the
+    reason is a fact about the BANDS above rather than about the
+    factor: a corroboration needs a `high` hit from `find_similar`,
+    i.e. raw Jaccard >= HIGH_SIMILARITY (0.75) between two
+    independently written bodies. The containment leg cannot get there
+    by construction (`_CONTAINMENT_CEILING` < HIGH_SIMILARITY,
+    deliberately — see `_pairwise_content_jaccard`), and on a real
+    367-memory store whose median body runs ~460 words the closest of
+    67,161 pairs scored 0.575, pinned exactly at that ceiling and 0.175
+    short of the bar, with all 1,918 above-medium hits labeled `medium`
+    and not one `high`. 639 production writes over four months produced
+    three `duplicate` rejections, all from test scopes. The
+    `corroborations` rollup it reads is NOT deprecated — dead-weight
+    windowing in `health._freshest_touch_ts` still uses it."""
     if corroborations <= 0:
         return 1.0
     return 1.0 + 0.1 * (1.0 - math.exp(-corroborations / 3.0))
