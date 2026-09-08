@@ -4642,6 +4642,84 @@ def test_unreadable_worktree_is_not_libeled_as_reused(tmp_path: Path) -> None:
     )
 
 
+def test_estate_skip_reasons_separate_the_three_repo_is_none_causes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`capture().repo is None` is three outcomes wearing one value, and
+    only one of them is a finding about the directory.
+
+    `origin._git` folds a missing binary, a timeout and a non-zero exit
+    into the same None, and `capture` gates `repo` on `worktree_root`,
+    so "git never answered" used to arrive indistinguishable from "git
+    answered: not a checkout" — and both were published as the positive
+    claim "directory is no longer a checkout of the recorded repo". A
+    server spawned from a GUI with a minimal PATH has no git at all,
+    which libeled every foreign group in the estate at once.
+
+    `worktree_root` is the discriminator: `capture` sets it from the
+    first probe and only when that probe succeeded."""
+    import subprocess
+
+    from bettermemory.origin import Origin
+
+    def estate(worktree: Path) -> list[str]:
+        m = _with_origin(
+            _memory(
+                body="cites `src/app.py`",
+                created=_utc(2026, 1, 2),
+                last_verified_at=_utc(2026, 2, 1),
+            ),
+            cwd=str(worktree),
+            repo="https://github.com/example/foreign.git",
+            worktree=str(worktree),
+        )
+        caller = Origin(
+            cwd=str(tmp_path),
+            repo="https://github.com/example/caller.git",
+            worktree_root=str(tmp_path),
+        )
+        report = compute_health([m], [], caller_origin=caller, now=_utc(2026, 4, 1))
+        xr = report.cross_repo_drift
+        assert xr is not None
+        return [s["reason"] for s in xr.skipped]
+
+    # (a) git cannot answer at all — nothing identified a checkout, and
+    # the estate must not claim the directory was reused.
+    absent = tmp_path / "absent"
+    absent.mkdir()
+    _init_estate_repo(absent, "https://github.com/example/foreign.git")
+    _estate_commit_touching(absent, "c1", when=_utc(2026, 1, 1), filename="src/app.py")
+    monkeypatch.setenv("PATH", str(tmp_path / "no-such-bin"))
+    assert estate(absent) == ["no checkout identified in the recorded worktree"]
+    monkeypatch.undo()
+
+    # (b) a real checkout whose remotes are gone: identified as a
+    # checkout, not identifiable as THIS repo. Still not a reuse claim.
+    remoteless = tmp_path / "remoteless"
+    remoteless.mkdir()
+    _init_estate_repo(remoteless, "https://github.com/example/foreign.git")
+    _estate_commit_touching(
+        remoteless, "c1", when=_utc(2026, 1, 1), filename="src/app.py"
+    )
+    subprocess.run(
+        ["git", "remote", "remove", "origin"],
+        cwd=remoteless,
+        check=True,
+        capture_output=True,
+    )
+    assert estate(remoteless) == [
+        "checkout found, but its repo could not be identified"
+    ]
+
+    # (c) the directory genuinely holds another repo — the one case that
+    # earns the reuse verdict.
+    reused = tmp_path / "reused"
+    reused.mkdir()
+    _init_estate_repo(reused, "https://github.com/example/other.git")
+    _estate_commit_touching(reused, "c1", when=_utc(2026, 1, 1), filename="src/app.py")
+    assert estate(reused) == ["directory is no longer a checkout of the recorded repo"]
+
+
 def test_cross_repo_drift_excludes_the_callers_own_repo(tmp_path: Path) -> None:
     """Memories anchored in the caller's own repo belong to
     `commit_drift_debt`; the estate check owns only the rest. With no

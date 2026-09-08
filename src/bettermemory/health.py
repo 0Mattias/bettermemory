@@ -2744,20 +2744,39 @@ def _compute_cross_repo_drift(
             continue
         live = capture(root)
         if live.repo is None or not repos_match(repo, live.repo):
-            # Reached only for a directory this process COULD stat, so
-            # `repo is None` now means what the reason says: git looked
-            # and found no checkout of the recorded repo. Before the
-            # split above, an unreadable directory landed here too and
-            # was libeled as reused — a positive claim about a tree
-            # nobody had managed to read. Same shape as 7.5.1's "a
-            # retired symbol is not a mis-anchored one": a check must
-            # not report a finding where its evidence is absence of
-            # evidence.
+            # `repo is None` is THREE outcomes wearing one value, and
+            # only one of them is a finding about the directory. The
+            # stat split above fixed the unreadable arm and it would be
+            # easy to stop there and claim the rest — but `origin._git`
+            # folds a missing binary, a timeout at its 1.0s ceiling and
+            # a non-zero exit into the same `None`, and `capture` gates
+            # `repo` on `worktree_root`, so "git never answered" arrives
+            # here indistinguishable from "git answered: not a
+            # checkout". A server spawned from a GUI with a minimal PATH
+            # has no git at all, and would otherwise have every foreign
+            # group in the estate libeled at once.
+            #
+            # `worktree_root` is the discriminator, because `capture`
+            # sets it from the FIRST probe and only when that probe
+            # succeeded. So:
+            #   root is None                -> nothing identified a
+            #                                  checkout here (git absent,
+            #                                  git timed out, or the
+            #                                  directory is not a repo)
+            #   root set, repo is None      -> a checkout, but it names
+            #                                  no remote we could read
+            #   root set, repo mismatched   -> the finding, now earned
+            if live.worktree_root is None:
+                reason = "no checkout identified in the recorded worktree"
+            elif live.repo is None:
+                reason = "checkout found, but its repo could not be identified"
+            else:
+                reason = "directory is no longer a checkout of the recorded repo"
             skipped.append(
                 {
                     "repo": repo,
                     "worktree_root": worktree,
-                    "reason": "directory is no longer a checkout of the recorded repo",
+                    "reason": reason,
                 }
             )
             continue
