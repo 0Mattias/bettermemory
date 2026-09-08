@@ -142,13 +142,20 @@ and an entry leaves this file when it lands there.
   cannot diverge. Measure first, and widen `bench/rot`'s blind-spot
   counter so container-valued claims are instrumented before any
   number is quoted for them.
-- **The "cannot tell" sweep's remaining 21 findings.** 7.7.0 and 7.8.0
-  fixed seven probes that turned "I could not determine this" into a
-  finding, verdict or stand-down. A whole-tree sweep for the class
-  (2026-09-08, seven domains, every finding adversarially refuted at
-  HEAD with a live reproduction) confirmed 24; the detail, including
-  each verifier's own repro, is in that day's episode under
-  `projects:bettermemory`. What is left, in severity order:
+- **The "cannot tell" sweep's remaining 19 findings.** A whole-tree
+  sweep for probes that turn "I could not determine this" into a
+  finding, verdict or stand-down (2026-09-08, seven domains, every
+  finding adversarially refuted at HEAD with a live reproduction)
+  confirmed 24. Five are fixed — the estate check's `capture` arm in
+  `health.py` in 7.7.0, and `check_claim`'s two branches in
+  `claims.py`, `iter_active_memory_paths` in `store.py` and
+  `_pulled_files` in `sync.py` in 7.8.0 — leaving 19. Those five are
+  named by SYMBOL rather than line because the fixes moved the lines,
+  which is the failure mode the doc-claims line-ref check exists to
+  catch; the nineteen below are still line-pinned because that code has
+  not moved and the line is the actionable address. The detail, including each verifier's own
+  repro, is in that day's episode under `projects:bettermemory`.
+  What is left, in severity order:
   **`index.py`'s `trust_for` returns `{}` for both "no classified row
   yet" and "the index could not be read at all"** — and
   `verified_locally_at` is the one column separating a stamp this host
