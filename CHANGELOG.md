@@ -7,6 +7,122 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 7.7.0 - 2026-09-08
+
+### Fixed
+
+**A claim the detector cannot address no longer narrows its file**
+(`08c769f`). Declaring a claim takes its path out of the incumbent
+any-touch leg and scores it through the claim tiers instead. That trade
+holds only while the detector can see the binding move, and for a
+literal claim whose value is a CONTAINER it cannot: the source may span
+physical lines, and all three literal routes in `claim_level_drift` are
+blind to an interior one — `anchors_from_value` returns () for a
+non-str, the `changed_fragments` route is gated on `isinstance(claimed,
+str)`, and `_binding_token` matches at column 0, which an indented
+element never is. The file lost its alarm and got nothing in return.
+
+Measured end to end: declare `cfg.py::TIMEOUTS={"connect": 5, "read":
+30, "write": 15}` against a multi-line dict, then edit `"read": 30` to
+`"read": 300`. `check_claim` calls the claim false in as many words,
+`claim_level_drift` reports strict=False and weak=False, and the
+commit-drift count goes from 1 without the claim to 0 with it — the
+record reads FRESH across the commit that falsified its own claim,
+worse than never having declared it.
+
+The fix is at the governance boundary, not in the scoring: the detector
+reported "I saw nothing", which was the truth, and what was wrong is
+the product reading that as "nothing happened". `claim_paths` gains a
+sibling, `governed_claim_paths`, that drops any path carrying a claim
+`claim_is_addressable` refuses, and the two narrowing sites use it —
+the union in `_quiescent_drift_applicable` deliberately does not,
+because widening was never the problem. Scalars stay narrowed (an int,
+bool or None has nowhere to live but the assignment line) and so do
+strings, multi-line included, which is what `anchors_from_value` and
+`string_fragment` exist for; path, symbol and absence kinds are
+untouched.
+
+The cost is bounded and named: a container occupying ONE source line is
+addressable in fact, and the predicate cannot tell, because a claim
+record stores the canonical repr and not the source layout. Its file
+falls back to the incumbent alert rate — a precision cost on a file the
+caller already cited, paid to remove a silent false-fresh, landing on
+the floor the feature must never breach: never worse than not
+declaring. `claim_level_drift` is byte-identical, so `bench/rot` and
+the 1.1-alerts-per-catch figure `docs/api.md` publishes are unmoved.
+The governance path is unreachable from the bench for a second,
+independent reason worth writing down: `bench/rot/run.py` calls
+`compute_commit_drift` with `verified_paths` and `body` but no
+`claims=`, and both governance sites are gated on a non-empty claim
+list, so they return the same empty set they always did. Recovering
+the conceded precision is a roadmap entry.
+
+**An unreadable checkout is not a missing one** (`cb62b0c`). The estate
+check probed a recorded foreign worktree with `Path.exists()`, which
+answers a different question than the one being asked and gets it wrong
+in two directions. It re-raises every OSError outside its own ignore
+set, so a foreign checkout behind a permission-denied parent, on a
+dropped network mount, or on failing media propagated out of
+`_compute_cross_repo_drift`, out of `compute_health`, and took
+`memory_health`, the full `memory_scope_overview` report and
+`bettermemory health` down with it — one directory nobody could stat
+blanked the whole health surface, including every memory it says
+nothing about. Where it does answer, it folds a slice of "I could not
+find out" into "nothing is there" (Windows ERROR_NOT_READY, a removable
+or disconnected volume), published as the positive finding "worktree
+missing on disk"; an unreadable root then fell through to `capture()`,
+came back with `repo=None` because git could not speak either, and was
+reported as "no longer a checkout of the recorded repo" — a claim about
+the contents of a tree nobody had read.
+
+The probe now reads three states where it read two. Positively absent
+keeps its reason and earns it, unreachable gets its own, and only a
+directory this process could stat is handed to git, which is what makes
+the reuse reason true when it fires. None of this is new doctrine:
+`origin._worktree_root_is_gone` is the package's settled answer to the
+liveness question, an errno taxonomy whose unclassified default is
+"cannot tell" so a new error class holds the boundary instead of
+opening it, and `verify` and `symbols` already route their root probes
+through equivalent guards. `health.py` was the one call site that never
+adopted it.
+
+**The same probe on the write/verify path** (`27e064e`). Three call
+sites asked `Path.is_dir()` about a recorded worktree root.
+`_validate_declared_claims` already had the right answer one line below
+the probe — "the origin worktree is not visible from this machine" —
+and an unreadable tree is exactly that, yet a claims-carrying
+`memory_verify` raised PermissionError out of the tool instead. The two
+read-side legs, the stored-claim re-check and the attestation check,
+each guarded `resolve()` and then called `is_dir()` unguarded, losing
+the synced-replica leniency their own docstrings promise. All three now
+probe with `os.path.isdir`, the choice `verify.py` already makes twice
+and writes down both times. No behaviour changes for a readable tree.
+
+### Documentation
+
+Neither fix repairs a record in the maintainer's own store, and the
+entry says so rather than implying a population. Two censuses, both
+read at this release: sweeping every recorded `origin.worktree_root`
+against disk gives 369 memories across 4 recorded roots with **0**
+gone, and the claims census gives 181 memories carrying 1,057 claims
+(515 path, 464 symbol, 45 literal, 33 absent) with **0**
+unaddressable — every literal value in that store is a scalar or a
+string. Both defects are latent: correctness for anyone who moves a
+checkout, loses access to one, or declares a container-valued claim.
+
+The roadmap's renamed-checkout entry carried two premises that a
+re-read of the code refuted, both corrected: "absent from
+`curation_pending`" is scoping rather than orphaning (that rollup's
+`drifted` leg is caller-repo gated by design and its other legs carry
+no origin term at all, so every foreign memory is outside it), and
+`migrate origin --repair`'s demote rule does pop `worktree_root` — what
+is true is that neither rule rewrites it to a corrected path, and
+neither can fire in this shape. The entry now also names the sharper
+cost it had missed: `memory_verify`'s caller-checkout fallback fires
+only when `origin_root is None`, so an orphan is strictly worse off
+than a legacy pre-`worktree_root` record, and re-stamps without
+checking a single relative attestation.
+
 ## 7.6.0 - 2026-09-08
 
 ### Deprecated

@@ -115,6 +115,33 @@ and an entry leaves this file when it lands there.
   / `test_audit.py` / `test_usage_replay.py`. What STAYS: the
   `corroborations` / `last_corroborated` rollup, `record_corroboration`,
   the write-handler hook, and the `health._freshest_touch_ts` consumer.
+- **A single-line container claim pays the incumbent alert rate it
+  need not pay.** 7.7.0 stopped a literal claim whose value is a
+  container (dict/list/set/tuple) from narrowing its file, because the
+  detector cannot attribute an edit to an interior physical line of a
+  multi-line container and the narrowing was removing the file's alarm
+  without putting anything in its place — a memory read fresh across
+  the commit that falsified its own claim. The predicate
+  (`claims.claim_is_addressable`) keys on the VALUE's type, which is
+  all a claim record carries: the canonical repr, never the source
+  layout. So a container that occupies one source line — addressable in
+  fact, since any edit to it edits the column-0 binding line — is
+  ungoverned too, and its file falls back to the incumbent any-touch
+  rate. Recovering that precision means deciding addressability against
+  the tree instead of the value: `build_binding_index` already parses
+  the new-side line numbers out of each hunk header and discards them
+  (`_HUNK_RE`), and `verify._weak_tier_evaluation` — unlike
+  `claim_level_drift`, which is bench-shared and one-argument by
+  design — holds `cwd` and `toplevel`, so it can read the assignment's
+  `lineno..end_lineno` span from the worktree and compare. That also
+  fixes the multi-line case properly rather than conceding it, which is
+  the reason to do it at all. Blocked on nothing but a bench re-run:
+  any change that reaches `claim_level_drift` moves the
+  1.1-alerts-per-catch figure `docs/api.md` publishes, and
+  `bench/rot/run.py` imports the shipped functions precisely so the two
+  cannot diverge. Measure first, and widen `bench/rot`'s blind-spot
+  counter so container-valued claims are instrumented before any
+  number is quoted for them.
 - **Cause provenance.** The 6.5.0 label says how a file entered the
   store, not what was in context when the model wrote it, so an
   injection-driven legitimate write reads `local`. A write-time record
@@ -155,11 +182,22 @@ and an entry leaves this file when it lands there.
   time and never re-resolved, so renaming a project directory leaves
   every memory written from the old one pointing at a path that is gone.
   `memory_health`'s estate check reports that group under `skipped`
-  ("worktree missing on disk") and those memories stop being judged
-  entirely — not fresh, not drifted, unjudgeable, and absent from
-  `curation_pending`, which is why a curation pass driven off the rollup
-  walks past them. `migrate origin --repair` cannot help: its two rules
-  only ever rewrite `repo`, which in this shape is already correct. The
+  ("worktree missing on disk") and those memories stop being judged by
+  it — not fresh, not drifted, unjudgeable. **Two premises this entry
+  shipped with are wrong, corrected 7.7.0 after re-reading the code.**
+  (1) "Absent from `curation_pending`" is FALSE as a statement about
+  orphaning: `compute_curation_pending`'s `stale` / `never_verified` /
+  `cold` / `dead` legs carry no origin term at all and count an orphan
+  like any other memory, while its `drifted` leg is caller-repo gated
+  by design ("`curation_pending` stays caller-repo cheap",
+  `health.py`) — so EVERY foreign memory is outside that count,
+  orphaned or not, and the rollup's silence here is scoping rather than
+  this defect. (2) "`--repair`'s two rules only ever rewrite `repo`" is
+  half wrong: the demote rule POPS `worktree_root` (`migrate.py`). The
+  accurate statement is that neither rule ever rewrites it to a
+  corrected path, and neither can fire in this shape anyway, since
+  `plan_repair` returns None when the recorded `repo` is set and
+  matches. The
   origin block is not on the `memory_update` surface either, so the
   repair today is a hand edit plus `reindex` — the exact write
   `memory_content_evidence` is built to flag. The open question is which
@@ -168,9 +206,33 @@ and an entry leaves this file when it lands there.
   surface alone), or stop trusting a recorded root wherever the repo
   resolves elsewhere on disk (which also fixes relative-citation
   resolution, and changes drift semantics — the reason this is an entry
-  here rather than a patch). Found by sweeping every recorded
-  `worktree_root` against disk, which is the check the store does not
-  currently run for itself.
+  here rather than a patch). The sharper cost, and the one that makes
+  this worth fixing, is on the VERIFY path rather than the health one:
+  `memory_verify`'s caller-checkout fallback fires only when
+  `origin_root is None`, so a recorded-but-dead root gets neither the
+  fallback nor the relative-attestation check, and a re-stamp sails
+  through without checking a single relative citation — path drift has
+  dropped its anchor and symbol drift returns empty. An orphan is
+  therefore strictly worse off than a legacy pre-`worktree_root`
+  record, which does get the fallback. Extending that already-blessed
+  trust rule (caller stands in a `repos_match` checkout, so it speaks
+  for the memory's tree) from "no recorded root" to "recorded root is
+  not live" is the cheapest principled leg and needs no new surface.
+  Found by sweeping every recorded `worktree_root` against disk, which
+  is the check the store does not currently run for itself; that sweep
+  reads ZERO orphans in the live store today, so this is a latent
+  defect with no live instance and its fix needs a constructed
+  reproduction rather than a repair.
+
+  The crash and the two mislabels that sat on the same code path were
+  NOT design questions and left in 7.7.0: the estate check probed the
+  recorded root with `Path.exists()`, which re-raises EACCES and the
+  rest of the unreachable family, so one unreadable foreign checkout
+  took `compute_health` — and with it `memory_health`, the full
+  `memory_scope_overview` report and `bettermemory health` — down
+  entirely; an unreadable root was then libeled "no longer a checkout
+  of the recorded repo". Three call sites on the write/verify path
+  carried the same `Path.is_dir()` shape.
 
 ## Not planned
 
