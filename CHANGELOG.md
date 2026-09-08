@@ -7,6 +7,53 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 7.6.0 - 2026-09-08
+
+### Deprecated
+
+`[behavior] corroboration_boost` is deprecated and will be removed in
+8.0 (`49bcda4`). The flag has been off since it shipped, held behind a
+liveness gate that never fired: not one memory in the store carries a
+corroboration. The roadmap's question was whether nothing in a shipped
+workflow requests the signal, or the flag ranks on an event that does
+not occur. It is the second, and the reason is structural rather than
+circumstantial.
+
+A corroboration bumps only when a `memory_write` is dedup-rejected,
+which needs a `high` hit from `find_similar` — raw Jaccard at or above
+`HIGH_SIMILARITY` (0.75) between two independently written bodies. The
+containment leg cannot reach that bar by construction:
+`_CONTAINMENT_CEILING` is 0.575, placed below it precisely so advisory
+similarity never blocks a write. Measured on the dogfood store, 639
+production writes over four months produced three `duplicate`
+rejections, all three from test scopes — and the recording path worked
+correctly on all three, so this was never a broken recorder. Across the
+367-memory corpus, whose median body runs about 460 words, all 67,161
+pairs fell short of the bar; the closest sat at 0.575, pinned exactly at
+the ceiling, and all 1,918 above-medium hits were labeled `medium` with
+not one `high`. Prose that long does not reach 0.75 Jaccard without
+being a copy-paste.
+
+Both ways to close the gap are worse than retiring the flag. Lowering
+`HIGH_SIMILARITY` would make the write gate reject legitimate distinct
+writes in order to feed a ranking nudge — the tail wagging the dog.
+Redefining corroboration onto the `medium` band would fire on 49% of
+writes, boosting nearly everything, which is worse than off.
+
+This release ships the notice and nothing else. Setting the key still
+loads and behaves exactly as documented; `load_config` now emits one
+`log.warning` per (config path, key) naming 8.0, the lane
+`_apply_legacy_endorsement_debt_alias` established for config-key
+deprecations. 8.0 removes `search._corroboration_factor`, its threading
+through `_score_keyword` / `_score_bm25` and `search()`, the
+`USAGE_FLAG_NAMES` entry, the `BehaviorConfig` field, and the TOML key.
+
+The `corroborations` / `last_corroborated` rollup is **not** deprecated.
+Recording stays on — it is cheap, additive telemetry — and
+`health._freshest_touch_ts` still reads `last_corroborated` to keep a
+corroborated memory out of dead-weight curation, with `memory_show` and
+`memory_list` still surfacing both fields.
+
 ## 7.5.1 - 2026-09-06
 
 A retired symbol is not a mis-anchored one (`5f474cf`). `doctor`'s
