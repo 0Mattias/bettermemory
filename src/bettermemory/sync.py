@@ -563,15 +563,25 @@ def _run_git(
     `check=False` for commands where the exit code is informational
     (e.g. `git diff --quiet` returns 1 to mean "there are diffs").
 
-    Decoding is lenient (`errors="replace"`). git's output is not
-    guaranteed to be valid in the locale encoding: `status --porcelain
-    -z` emits path bytes verbatim (NUL-delimited output turns C-quoting
-    off), and error text can echo them too. Under the default strict
-    decoding `subprocess.run` itself raises `UnicodeDecodeError` before
-    this function can return — verified by feeding a subprocess an
-    undecodable byte both ways. A path rendered with U+FFFD in a
-    message is a worse name; a traceback out of `sync status` is a
-    worse outcome.
+    Decoding is UTF-8 and lenient (`errors="replace"`), and BOTH halves
+    of that are load-bearing.
+
+    The codec has to be pinned. `text=True` alone decodes with the
+    LOCALE encoding, which on Windows is the ANSI codepage — cp1252 on
+    a stock runner — while git writes paths as UTF-8. So a pulled
+    `café.md` came back as `caf�.md`, and every consumer that
+    matches a returned name against a file on disk quietly missed it.
+    `origin.py` pins the codec on its own git calls for the same
+    reason; this one did not, and the windows CI leg is what said so.
+
+    Leniency has to stay. git's output is not guaranteed to be valid
+    UTF-8 either: `status --porcelain -z` emits path bytes verbatim
+    (NUL-delimited output turns C-quoting off), and error text can echo
+    them too. Under strict decoding `subprocess.run` itself raises
+    `UnicodeDecodeError` before this function can return — verified by
+    feeding a subprocess an undecodable byte both ways. A path rendered
+    with U+FFFD in a message is a worse name; a traceback out of
+    `sync status` is a worse outcome.
     """
     binary = _require_git()
     cmd = [binary, *args]
@@ -580,6 +590,7 @@ def _run_git(
         cwd=root,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         errors="replace",
         check=False,
     )

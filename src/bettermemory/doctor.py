@@ -3834,6 +3834,13 @@ def _binary_dist_version(binary: str) -> str | None:
             [binary, "--version"],
             capture_output=True,
             text=True,
+            # Pinned for the same reason `sync._run_git` pins it: bare
+            # `text=True` decodes with the locale codepage, which is
+            # cp1252 on a stock Windows runner. This output is a version
+            # string and so ASCII in practice, but a probe that reads a
+            # user-registered binary should not depend on that.
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
             check=False,
         )

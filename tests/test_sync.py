@@ -4291,9 +4291,18 @@ def test_pull_sees_a_file_whose_name_git_quotes(
     # rebuild then made of it. Before `-z` the name was absent from both
     # — the file arrived unjudged and read `untracked`, the value that
     # means "the log cannot speak to how this arrived".
-    quoted_name = quoted.name
+    #
+    # Matched on the ULID rather than the literal filename. The id is
+    # ASCII and survives every codec on the path; comparing the `é`
+    # itself would test the runner's filesystem normalisation as much as
+    # this parser, and the windows leg proved that the hard way. The
+    # C-quoting assertion below is what actually pins the defect: a
+    # quoted name arrives wrapped in double quotes, and no name here may
+    # be.
     pulls = [e for e in iter_events(other_dir) if e.get("kind") == "sync_pull"]
-    assert quoted_name in [f for e in pulls for f in e["files"]]
+    pulled_names = [f for e in pulls for f in e["files"]]
+    assert any(second.id.lower() in name for name in pulled_names), pulled_names
+    assert not any(name.startswith('"') for name in pulled_names), pulled_names
 
     labels = _index.provenance_for(other_dir, [anchor.id, second.id])
     assert labels[second.id] == "synced"
