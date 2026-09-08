@@ -42,6 +42,16 @@ strings, multi-line included, which is what `anchors_from_value` and
 `string_fragment` exist for; path, symbol and absence kinds are
 untouched.
 
+One consequence is worth stating because it changes a verdict rather
+than a count. A memory whose ONLY anchor is a container claim — no
+other cited path — used to read a measured `0` on the reachability
+path, and a measured zero stands the calendar leg down. It now reads
+`None`, commit drift not applicable, which by this project's own rule
+deliberately does NOT stand that leg down. Strictly the more
+conservative of the two, and consistent with the reason for the change:
+a zero the detector could never have earned should not silence a
+staleness alarm.
+
 The cost is bounded and named: a container occupying ONE source line is
 addressable in fact, and the predicate cannot tell, because a claim
 record stores the canonical repr and not the source layout. Its file
