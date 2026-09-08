@@ -7,6 +7,64 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 7.8.0 - 2026-09-08
+
+### Fixed
+
+Three more probes that answered a question nobody asked, found by a
+whole-codebase sweep for the class 7.7.0 opened. All three share one
+root cause worth stating once: **`Path.exists()` and `Path.is_file()`
+swallow only ENOENT/ENOTDIR/EBADF/ELOOP and RE-RAISE the rest on Python
+3.11, 3.12 and 3.13, while on 3.14 they delegate to `os.path.*` and
+swallow everything.** So the same line is a crash on three of the four
+interpreters CI runs and a false verdict on the fourth. Both are wrong,
+differently, and a fix validated on one interpreter proves nothing about
+the others; each fix below was re-run on 3.11, 3.13 and 3.14.
+
+**One unstattable entry no longer takes the whole store down**
+(`fe33b9f`).
+`iter_active_memory_paths` asked `entry.is_file()` before
+`entry.is_symlink()`. `is_file()` FOLLOWS the link and stats the target,
+which may live anywhere, so a symlink into an unreadable directory
+raised from wherever it pointed — and `load_all` calls `next()` on the
+generator outside its own `try`, so `PARSE_SKIP_EXCEPTIONS` never saw
+it. `memory_search`, `memory_list` and `memory_health` died together on
+one bad entry, and a `sync pull` landing `note.md -> /root/x` is enough
+to produce it. Testing the link first excludes it — which the function
+already wanted — without ever following it, and the remaining
+`os.path.isfile` covers the plain-file case. Reproduced on 3.11.15 and
+3.13.13; 3.14 silently skipped the entry, which is the answer we want
+but only by accident of version.
+
+**An absence claim is no longer affirmed by a stat that failed**
+(`27740a5`).
+`check_claim`'s `absent` branch AFFIRMS its claim on the negative arm,
+and `Path.exists()` cannot express "could not tell". On 3.14 an
+unreadable-but-occupied path read as an empty one, so a deleted file
+that later came back — a revert, a cherry-pick, a restored vendored
+copy — under a directory that had since become unreadable kept its
+`!path` claim affirmed while the file sat on disk. That is a false clean
+on the trust path, not a missed alarm. Occupancy is now three-valued
+(`_occupancy`: occupied / nothing there / cannot tell) over an explicit
+`_ABSENT_ERRNOS` set, the same enumerate-the-negative-side discipline
+`origin._WORKTREE_GONE_ERRNOS` uses, so an unclassified errno holds the
+boundary instead of opening it. The positive kinds gained the matching
+half: an unreadable path used to raise outright on 3.11-3.13 and to
+publish "does not exist in the worktree" on 3.14 — an accusation about a
+tree nothing had read — and now reports that it could not be read.
+
+**A pulled file whose name git quotes is no longer invisible to
+admission** (`3f5c5da`). Under the default `core.quotePath`, `git diff --name-only`
+and `git ls-tree --name-only` C-QUOTE any path needing escaping, so
+`café.md` arrives as `"caf\303\251.md"`. Split on newlines that name
+ends with `.md"`, the `.md` filter dropped it, and the file was then
+absent from `incoming` — so `_admit_pulled_files` NEVER JUDGED it and
+the size cap, the store parser, the id-alias anti-shadowing check and
+the credential scan all stood down together, for exactly the file a
+hostile push would want them to. Both listings now use `-z` and split on
+NUL, which no config setting can turn off. The test asserts the
+`sync_pull` event's own file list, which was empty before the fix.
+
 ## 7.7.0 - 2026-09-08
 
 ### Fixed

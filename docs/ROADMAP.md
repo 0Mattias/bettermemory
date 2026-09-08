@@ -142,6 +142,40 @@ and an entry leaves this file when it lands there.
   cannot diverge. Measure first, and widen `bench/rot`'s blind-spot
   counter so container-valued claims are instrumented before any
   number is quoted for them.
+- **The "cannot tell" sweep's remaining 21 findings.** 7.7.0 and 7.8.0
+  fixed seven probes that turned "I could not determine this" into a
+  finding, verdict or stand-down. A whole-tree sweep for the class
+  (2026-09-08, seven domains, every finding adversarially refuted at
+  HEAD with a live reproduction) confirmed 24; the detail, including
+  each verifier's own repro, is in that day's episode under
+  `projects:bettermemory`. What is left, in severity order:
+  **`index.py`'s `trust_for` returns `{}` for both "no classified row
+  yet" and "the index could not be read at all"** — and
+  `verified_locally_at` is the one column separating a stamp this host
+  made from one that arrived inside a pulled file, so a corrupt or
+  truncated index re-reads a remote's `last_verified_at` as locally
+  earned. That one is a design decision, not a substitution: the fix
+  needs a third value AND an answer for what the read surfaces render
+  when the index cannot speak, which is why it did not ride 7.8.0.
+  Then, in rough order of blast radius: `health.py`'s `drifted` and
+  `unaccounted` legs both publish a clean `0` at session start when git
+  or the index could not answer (`provenance_rows` even returns a
+  deliberate three-valued None that a bare truthiness test collapses);
+  `doctor.py`'s content-evidence walk reports "All N memory files match
+  the bytes the store last wrote" after aborting partway;
+  `hook.py:521`, where a `capture_origin()` that could not reach git
+  reads as "the caller is nowhere" and drops four scoping shields at
+  once; `handlers/show.py:333`, where an unreadable index stands the
+  6.6.0 pulled-stamp rule down; and the rest —
+  `config.py:710`, `consolidate.py:1945`, `doctor.py:2750`,
+  `doctor.py:3360`, `episodes.py:380`, `handlers/restore.py:110`,
+  `handlers/verify.py:67`, `handlers/verify.py:378`, `ingest.py:1080`,
+  `ingest.py:1387`, `origin.py:784`, `provenance.py:313`,
+  `sync.py:908`. The through-line worth keeping when fixing any of
+  them: **`Path.exists()` / `Path.is_file()` re-raise on 3.11-3.13 and
+  swallow on 3.14**, so one line is a crash on three CI interpreters and
+  a false verdict on the fourth — re-run a fix on both sides of that
+  split before believing it.
 - **Cause provenance.** The 6.5.0 label says how a file entered the
   store, not what was in context when the model wrote it, so an
   injection-driven legitimate write reads `local`. A write-time record
