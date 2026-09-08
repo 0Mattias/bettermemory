@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -54,7 +55,11 @@ def _refuse_stale_stored_claims(stored: list[str], origin_root: str | None) -> N
         root = Path(origin_root).resolve(strict=False)
     except (OSError, ValueError):
         return
-    if not root.is_dir():
+    # The guard above covers `resolve()` only; `Path.is_dir()` re-raises
+    # EACCES and friends on its own. An unreadable tree is an invisible
+    # tree, which this check already skips — `os.path.isdir` is what
+    # makes it skip instead of raise.
+    if not os.path.isdir(root):
         return
     failures = [
         (claim.render(), reason)
@@ -114,7 +119,11 @@ def _refuse_unverifiable_stored_attestations(
             resolved = Path(origin_root).resolve(strict=False)
         except (OSError, ValueError):
             resolved = None
-        if resolved is not None and resolved.is_dir():
+        # `os.path.isdir`, not `resolved.is_dir()`: the try above guards
+        # `resolve()` alone, and an unreadable worktree must read as
+        # invisible here (root stays None, attestations go unchecked)
+        # rather than raising out of the handler.
+        if resolved is not None and os.path.isdir(resolved):
             root = origin_root
     unseen = unverifiable_attestations(stored, worktree_root=root)
     if unseen:

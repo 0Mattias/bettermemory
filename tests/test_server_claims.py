@@ -523,3 +523,140 @@ async def test_reappearance_escalates_commit_drift_naming_the_claim(
     assert drift["claim_drift"]["checked"] == 1
     assert drift["claim_drift"]["drifted"] == ["!pkg/legacy.py"]
     assert shown["staleness_verdict"] == "spot_check_recommended"
+
+
+# ---------------------------------------------------------------------------
+# An unreadable origin worktree is invisible, not absent
+# ---------------------------------------------------------------------------
+
+
+def _unreadable_dir_is_enforceable() -> bool:
+    """True when this process can actually be locked out of a directory.
+
+    Windows does not honour POSIX mode bits here, and root walks through
+    them, so on either the seal below is a no-op and the test would
+    assert nothing.
+    """
+    import sys
+
+    if sys.platform == "win32":
+        return False
+    getuid = getattr(os, "geteuid", None)
+    return getuid is not None and getuid() != 0
+
+
+@pytest.mark.skipif(
+    not _unreadable_dir_is_enforceable(),
+    reason="needs POSIX mode bits and a non-root euid",
+)
+async def test_verify_with_claims_refuses_cleanly_on_an_unreadable_worktree(
+    memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A recorded worktree this machine cannot read must produce the
+    designed refusal, not a raw OSError out of the tool.
+
+    `Path.is_dir()` re-raises EACCES, so a claims-carrying
+    `memory_verify` against a tree behind a permission-denied parent
+    replaced the "not visible from this machine" ValueError — which is
+    already the correct diagnosis for an unreadable tree — with a
+    PermissionError escaping the handler. Same class as the estate
+    check's `Path.exists()` probe, on the write/verify path instead of
+    the health path."""
+    sealed = tmp_path / "sealed"
+    sealed.mkdir()
+    repo = _make_repo(sealed)
+
+    state = SessionState()
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    import bettermemory._handlers as handlers_module
+    import bettermemory.server as server_module
+
+    server = build_server(
+        config=cfg,
+        store=Store(memory_dir),
+        state=state,
+        recorder=Recorder(root=memory_dir, session_id=state.session_id),
+    )
+    origin = Origin(cwd=str(repo), repo=_REMOTE, branch="main", worktree_root=str(repo))
+
+    def fake_capture(cwd: Path | None = None) -> Origin:
+        return origin
+
+    monkeypatch.setattr(handlers_module, "capture_origin", fake_capture)
+    monkeypatch.setattr(server_module, "capture_origin", fake_capture)
+
+    written = await _call(
+        server,
+        "memory_write",
+        content="The drift gate lives in `pkg/mod.py`.",
+        scopes=["tools"],
+    )
+    assert written["status"] == "committed"
+
+    sealed.chmod(0o000)
+    try:
+        with pytest.raises(Exception, match="not visible from this machine"):
+            await _call(
+                server,
+                "memory_verify",
+                id=written["id"],
+                claims=["pkg/mod.py::handler"],
+            )
+    finally:
+        sealed.chmod(0o755)
+
+
+@pytest.mark.skipif(
+    not _unreadable_dir_is_enforceable(),
+    reason="needs POSIX mode bits and a non-root euid",
+)
+async def test_verify_without_claims_skips_an_unreadable_worktree(
+    memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The read-side legs treat an unreadable tree the way they already
+    treat an invisible one: skip, don't raise.
+
+    The stored-claim re-check and the attestation check both guarded
+    `resolve()` and then called `Path.is_dir()` unguarded, so a verify
+    from a machine that cannot read the recorded tree died instead of
+    falling back to the documented synced-replica leniency."""
+    sealed = tmp_path / "sealed"
+    sealed.mkdir()
+    repo = _make_repo(sealed)
+
+    state = SessionState()
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    import bettermemory._handlers as handlers_module
+    import bettermemory.server as server_module
+
+    server = build_server(
+        config=cfg,
+        store=Store(memory_dir),
+        state=state,
+        recorder=Recorder(root=memory_dir, session_id=state.session_id),
+    )
+    origin = Origin(cwd=str(repo), repo=_REMOTE, branch="main", worktree_root=str(repo))
+
+    def fake_capture(cwd: Path | None = None) -> Origin:
+        return origin
+
+    monkeypatch.setattr(handlers_module, "capture_origin", fake_capture)
+    monkeypatch.setattr(server_module, "capture_origin", fake_capture)
+
+    written = await _call(
+        server,
+        "memory_write",
+        content="The drift gate lives in `pkg/mod.py`.",
+        scopes=["tools"],
+        claims=["pkg/mod.py::handler"],
+    )
+    assert written["status"] == "committed"
+
+    sealed.chmod(0o000)
+    try:
+        stamped = await _call(server, "memory_verify", id=written["id"])
+    finally:
+        sealed.chmod(0o755)
+    assert stamped["last_verified_at"] is not None

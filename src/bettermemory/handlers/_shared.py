@@ -18,6 +18,7 @@ the test suite wants to override.
 
 from __future__ import annotations
 
+import os
 import time
 from typing import Any, TypeAlias
 
@@ -308,7 +309,14 @@ def _validate_declared_claims(
             )
         )
     root = Path(worktree_root)
-    if not root.is_dir():
+    # `os.path.isdir` rather than `Path.is_dir()`: the latter re-raises
+    # EACCES and friends, so a recorded worktree behind a
+    # permission-denied parent replaced this designed refusal with a raw
+    # PermissionError out of the tool. An unreadable tree IS "not
+    # visible from this machine" — the message below is already the
+    # right diagnosis for it, and the guarded probe is what lets it be
+    # the one the caller receives.
+    if not os.path.isdir(root):
         raise ValueError(
             f"claims cannot be checked: the origin worktree "
             f"{worktree_root!r} is not visible from this machine. "
