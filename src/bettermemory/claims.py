@@ -108,6 +108,8 @@ __all__ = [
     "load_claims",
     "check_claim",
     "claim_paths",
+    "claim_is_addressable",
+    "governed_claim_paths",
     "build_binding_index",
     "claim_level_drift",
     "string_fragment",
@@ -332,6 +334,76 @@ def claim_paths(claims: list[Claim]) -> list[str]:
     for claim in claims:
         seen.setdefault(claim.rel_path, None)
     return list(seen)
+
+
+def claim_is_addressable(claim: Claim) -> bool:
+    """Whether `claim_level_drift` can attribute an edit to this binding.
+
+    Declaring a claim NARROWS its file: `verify._resolve_with_claims`
+    takes the claimed path out of the incumbent any-touch leg and scores
+    it through the claim tiers instead. That trade is only honest while
+    the detector can actually see the binding move. Where it cannot, the
+    narrowing removes the file's alarm and puts nothing in its place,
+    and the memory reads FRESH across the very commit that falsified its
+    own claim — worse than never declaring the claim at all, which
+    inverts the entire point of declaring one.
+
+    One kind is structurally unaddressable: a literal claim whose value
+    is a CONTAINER (dict/list/set/tuple). Its source may span physical
+    lines, and all three literal routes in `claim_level_drift` are blind
+    to an interior one — `anchors_from_value` returns () for a non-`str`
+    (it addresses triple-quoted text, which containers are not), the
+    `changed_fragments` route is gated on `isinstance(claimed, str)`,
+    and `_binding_token` matches at column 0 only, which an indented
+    element never is. Edit `"read": 30` to `"read": 300` inside a
+    multi-line dict and the detector reports `strict=False, weak=False`
+    while `check_claim` calls the same claim false.
+
+    Scalars are addressable and stay narrowed: an int, float, bool, None
+    or plain string has nowhere to live but the assignment line itself,
+    so any edit to the value edits a column-0 binding line. A `str` is
+    addressable even multi-line, which is exactly what
+    `anchors_from_value` and `string_fragment` were built for.
+
+    The cost of the conservative direction is bounded and known: a
+    container that happens to occupy a single source line is addressable
+    in fact, and this predicate cannot tell — the claim record stores
+    the canonical repr, not the source layout — so its file falls back
+    to any-touch and pays the incumbent alert rate. That is a precision
+    cost on a file the caller already cited; the alternative is a
+    silent false-fresh on the trust surface, which is not a trade this
+    project makes. Recovering that precision needs the assignment's line
+    span read from the worktree at scoring time (see ROADMAP).
+
+    Deliberately NOT a `claim_level_drift` change: the bench imports
+    that function and `docs/api.md` publishes its measured alert rate,
+    so its scoring stays byte-identical here. The detector was never
+    wrong — it reported "I saw nothing", honestly. What was wrong is the
+    product reading that as "nothing happened."
+    """
+    if claim.kind != "literal":
+        return True
+    try:
+        value = ast.literal_eval(claim.value)
+    except Exception:
+        # Unparseable values never reached `check_claim`'s comparison
+        # either; treat as unaddressable rather than inventing coverage.
+        return False
+    return not isinstance(value, (dict, list, set, frozenset, tuple))
+
+
+def governed_claim_paths(claims: list[Claim]) -> list[str]:
+    """The subset of `claim_paths` whose narrowing the detector can back.
+
+    A path is governed only when EVERY claim on it is addressable. One
+    unaddressable claim is enough to disqualify the file: the narrowing
+    promise is per-file ("commits escalate only when a claimed binding
+    is implicated"), and it cannot be kept for a file holding a binding
+    nothing can implicate. The path stays in the ungoverned any-touch
+    leg, which is precisely the floor — never worse than not declaring.
+    """
+    blocked = {c.rel_path for c in claims if not claim_is_addressable(c)}
+    return [p for p in claim_paths(claims) if p not in blocked]
 
 
 def _resolve_claim_path(root: Path, rel_path: str) -> Path | None:

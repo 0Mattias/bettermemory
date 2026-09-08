@@ -104,6 +104,7 @@ from .claims import (
     build_binding_index,
     claim_level_drift,
     claim_paths,
+    governed_claim_paths,
     load_claims,
 )
 from .origin import (
@@ -2510,7 +2511,7 @@ def _resolve_reachable(
     unfiltered = len(walk.commits)
     checked = len(claims)
     conservative = ResolvedCommitDrift(unfiltered, checked, (), BASIS_REACHABILITY)
-    governed = claim_paths(list(claims)) if claims else []
+    governed = governed_claim_paths(list(claims)) if claims else []
     governed_set = set(governed)
     specs: list[str] = []
     if anchors:
@@ -2585,7 +2586,7 @@ def _resolve_with_claims(
     """
     checked = len(claims)
     conservative = ResolvedCommitDrift(unfiltered, checked, ())
-    governed = claim_paths(list(claims))
+    governed = governed_claim_paths(list(claims))
     governed_set = set(governed)
     ungoverned: list[str] = []
     if anchors:

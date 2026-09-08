@@ -23,6 +23,8 @@ from bettermemory.claims import (
     Claim,
     build_binding_index,
     check_claim,
+    claim_is_addressable,
+    governed_claim_paths,
     claim_level_drift,
     claim_paths,
     load_claims,
@@ -420,3 +422,52 @@ def test_presence_path_claim_unmoved_by_the_absent_branch() -> None:
     result = claim_level_drift(parse_claim("pkg/gone.py"), index)
     assert result["weak"] is False
     assert result["strict"] is False
+
+
+# ---------------------------------------------------------------------------
+# Addressability — which claims may narrow their file
+# ---------------------------------------------------------------------------
+
+
+def test_container_literals_are_not_addressable() -> None:
+    """A container's source may span physical lines, and every literal
+    route in `claim_level_drift` is blind to an interior one. Declaring
+    such a claim must therefore not take its file out of the any-touch
+    leg — the predicate that decides is asserted directly so the reason
+    survives a refactor of its caller."""
+    for value in ('{"a": 1}', "[1, 2]", "{1, 2}", "(1, 2)"):
+        claim = parse_claim(f"pkg/mod.py::NAME={value}")
+        assert claim_is_addressable(claim) is False, value
+
+
+def test_scalars_and_strings_stay_addressable() -> None:
+    """The narrowing survives for every value that cannot hide from the
+    binding line. A scalar has nowhere to live but the assignment
+    itself; a string — even a multi-line one — is what
+    `anchors_from_value` and `string_fragment` were built to address."""
+    for value in ("30", "30.0", "True", "None", '"hi"', '"""a\nb"""'):
+        claim = parse_claim(f"pkg/mod.py::NAME={value}")
+        assert claim_is_addressable(claim) is True, value
+
+
+def test_non_literal_kinds_are_addressable() -> None:
+    """Path, symbol and absence claims are untouched by the split —
+    their bindings are column-0 addressable or path-level."""
+    for spec in ("pkg/mod.py", "pkg/mod.py::handler", "!pkg/gone.py"):
+        assert claim_is_addressable(parse_claim(spec)) is True, spec
+
+
+def test_one_unaddressable_claim_ungoverns_the_whole_path() -> None:
+    """Governance is per-FILE, because the narrowing promise is
+    per-file: "commits escalate only when a claimed binding is
+    implicated." That promise cannot be kept for a file holding a
+    binding nothing can implicate, so one unaddressable claim
+    disqualifies the path even when an addressable claim sits beside
+    it. Other files in the same declaration keep their narrowing."""
+    claims = [
+        parse_claim("pkg/mod.py::handler"),
+        parse_claim('pkg/mod.py::LIMITS={"a": 1}'),
+        parse_claim("pkg/other.py::TIMEOUT=30"),
+    ]
+    assert claim_paths(claims) == ["pkg/mod.py", "pkg/other.py"]
+    assert governed_claim_paths(claims) == ["pkg/other.py"]

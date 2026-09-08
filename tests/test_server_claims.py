@@ -47,6 +47,11 @@ MODULE_SOURCE = '''\
 
 TIMEOUT = 30
 
+LIMITS = {
+    "soft": 1,
+    "hard": 2,
+}
+
 
 def handler():
     return 1
@@ -660,3 +665,74 @@ async def test_verify_without_claims_skips_an_unreadable_worktree(
     finally:
         sealed.chmod(0o755)
     assert stamped["last_verified_at"] is not None
+
+
+# ---------------------------------------------------------------------------
+# A claim the detector cannot address must not narrow its file
+# ---------------------------------------------------------------------------
+
+
+async def test_container_claim_interior_edit_still_escalates(server_in_repo) -> None:
+    """The floor: declaring a claim is never worse than not declaring it.
+
+    A literal claim whose value is a container may have its source
+    spread over several physical lines, and every literal route in
+    `claim_level_drift` is blind to an interior one — the fragment route
+    and `anchors_from_value` both require a `str`, and `_binding_token`
+    matches at column 0, which an indented element never is. So the
+    commit below genuinely falsifies the claim (`check_claim` says so)
+    while the detector reports nothing.
+
+    Before the governance fix that combination read CLEAN: the claim had
+    taken `pkg/mod.py` out of the any-touch leg and put nothing in its
+    place, so the memory stayed fresh across the commit that made its
+    own claim false — strictly worse than never claiming. Now the path
+    is left ungoverned, so the incumbent rule still speaks for it."""
+    server, repo = server_in_repo
+    memory_id = await _write_claimed(
+        server, 'pkg/mod.py::LIMITS={"soft": 1, "hard": 2}'
+    )
+    await _call(server, "memory_verify", id=memory_id)
+
+    _edit_and_commit(
+        repo,
+        "pkg/mod.py",
+        '    "hard": 2,',
+        '    "hard": 3,',
+        "raise the hard limit",
+        when=_FUTURE,
+    )
+
+    shown = await _call(server, "memory_show", id=memory_id)
+    drift = shown["commit_drift"]
+    assert drift is not None
+    assert drift["status"] == "drift"
+    assert drift["commits_since_verify"] == 1
+    assert shown["staleness_verdict"] == "spot_check_recommended"
+
+
+async def test_addressable_claim_on_the_same_file_still_narrows(
+    server_in_repo,
+) -> None:
+    """The fix is scoped to the unaddressable kind, not to claims.
+
+    A symbol claim on the same module keeps the narrowing the feature
+    exists for: churn in another function's body reads clean. Asserted
+    beside the test above so a future change cannot buy that one's
+    safety by disabling narrowing wholesale."""
+    server, repo = server_in_repo
+    memory_id = await _write_claimed(server, "pkg/mod.py::handler")
+    await _call(server, "memory_verify", id=memory_id)
+
+    _edit_and_commit(
+        repo,
+        "pkg/mod.py",
+        "def other():\n    return 1",
+        "def other():\n    return 2",
+        "tweak other's body",
+        when=_FUTURE,
+    )
+
+    shown = await _call(server, "memory_show", id=memory_id)
+    assert shown["commit_drift"]["status"] == "clean"
+    assert shown["staleness_verdict"] == "fresh"
