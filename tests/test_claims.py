@@ -564,6 +564,10 @@ def test_a_claim_follows_symlinks_because_resolution_does(tmp_path: Path) -> Non
     place where lstat could change this, and it cannot: resolution has
     already followed the link before the probe runs."""
     import os
+    import sys
+
+    if sys.platform == "win32":
+        pytest.skip("symlink semantics differ on Windows; POSIX-only test")
 
     (tmp_path / "src").mkdir()
     os.symlink(tmp_path / "src" / "nowhere.py", tmp_path / "src" / "link.py")

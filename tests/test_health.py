@@ -4683,13 +4683,23 @@ def test_estate_skip_reasons_separate_the_three_repo_is_none_causes(
         assert xr is not None
         return [s["reason"] for s in xr.skipped]
 
-    # (a) git cannot answer at all — nothing identified a checkout, and
-    # the estate must not claim the directory was reused.
+    # (a) git cannot answer at all. Driven by making `capture` report
+    # what it reports whenever `_git` returns None — a missing binary, a
+    # timeout at the 1.0s ceiling, a non-zero exit — rather than by
+    # stripping PATH, because "can this process still find git" resolves
+    # differently on each platform and the branch is what this asserts.
+    # The estate must not claim the directory was reused.
     absent = tmp_path / "absent"
     absent.mkdir()
     _init_estate_repo(absent, "https://github.com/example/foreign.git")
     _estate_commit_touching(absent, "c1", when=_utc(2026, 1, 1), filename="src/app.py")
-    monkeypatch.setenv("PATH", str(tmp_path / "no-such-bin"))
+    import bettermemory.health as _health
+
+    monkeypatch.setattr(
+        _health,
+        "capture",
+        lambda _root: Origin(cwd=None, repo=None, worktree_root=None),
+    )
     assert estate(absent) == ["no checkout identified in the recorded worktree"]
     monkeypatch.undo()
 
