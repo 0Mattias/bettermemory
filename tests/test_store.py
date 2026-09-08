@@ -2481,3 +2481,54 @@ def test_mark_verified_stamps_the_local_verification_in_the_index(
     assert index.trust_for(memory_dir, [memory.id])[memory.id].verified_locally_at == (
         row.verified_locally_at
     )
+
+
+# ---------------------------------------------------------------------------
+# An unstattable entry must not take the whole store down
+# ---------------------------------------------------------------------------
+
+
+def _unreadable_dir_is_enforceable() -> bool:
+    """True when this process can actually be locked out of a directory."""
+    import sys
+
+    if sys.platform == "win32":
+        return False
+    getuid = getattr(os, "geteuid", None)
+    return getuid is not None and getuid() != 0
+
+
+@pytest.mark.skipif(
+    not _unreadable_dir_is_enforceable(),
+    reason="needs POSIX mode bits and a non-root euid",
+)
+def test_load_all_survives_a_symlink_whose_target_cannot_be_stat(
+    tmp_path: Path,
+) -> None:
+    """One unstattable entry used to hard-kill the whole read surface.
+
+    `iter_active_memory_paths` asked `entry.is_file()` before
+    `entry.is_symlink()`. `is_file()` FOLLOWS the link and stats the
+    target, which may live anywhere, and on Python 3.11-3.13 it
+    re-raises EACCES from wherever that is. `load_all` calls `next()` on
+    the generator outside its own `try`, so `PARSE_SKIP_EXCEPTIONS` never
+    saw it and `memory_search`, `memory_list` and `memory_health` died
+    together. A `sync pull` landing `note.md -> /root/x` is enough.
+
+    Testing the link first excludes it — which this function already
+    wanted — without ever following it."""
+    store = Store(tmp_path)
+    keeper = store.write(content="a real memory that must still load", scopes=["tools"])
+
+    sealed = tmp_path / "sealed"
+    sealed.mkdir()
+    (sealed / "target.md").write_text("unreadable\n")
+    os.symlink(sealed / "target.md", tmp_path / "01BBBBBBBBBBBBBBBBBBBBBBBB.md")
+
+    sealed.chmod(0o000)
+    try:
+        loaded = store.load_all()
+    finally:
+        sealed.chmod(0o755)
+
+    assert [m.id for m in loaded] == [keeper.id]

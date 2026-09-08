@@ -13,6 +13,7 @@ from collections.abc import Iterable
 import contextlib
 import errno
 import logging as _logging
+import os
 import stat
 import sys
 from dataclasses import dataclass
@@ -2424,7 +2425,30 @@ def iter_active_memory_paths(root: Path) -> Iterator[Path]:
     directory; callers pick their own degraded answer."""
     excluded = quarantined_names(root)
     for entry in root.iterdir():
-        if entry.is_file() and not entry.is_symlink() and entry.suffix == ".md":
+        # ORDER IS LOAD-BEARING, and so is `os.path.isfile`.
+        #
+        # `is_symlink()` reads the entry's own lstat, which succeeds
+        # whenever the directory listing did; `is_file()` FOLLOWS the
+        # link and stats the target, which may live anywhere. Asking
+        # `is_file()` first therefore reached out of this directory and,
+        # on Python 3.11-3.13, re-raised EACCES from wherever the link
+        # pointed. `load_all` calls `next()` on this generator OUTSIDE
+        # its own try, so `PARSE_SKIP_EXCEPTIONS` never saw it and one
+        # unstattable symlink hard-killed memory_search, memory_list and
+        # memory_health together. A `sync pull` landing
+        # `note.md -> /root/x` is enough. (Reproduced on 3.11.15 and
+        # 3.13.13; 3.14 swallows the errno instead and skips the entry,
+        # which is the answer we want but only by accident of version.)
+        #
+        # Testing the link first means a symlink is excluded — which
+        # this function already wanted — without ever following it. The
+        # remaining `os.path.isfile` covers the regular-file case: a
+        # plain `.md` this process cannot stat is not a memory we can
+        # serve, and "cannot tell" must not become an exception the
+        # callers do not catch.
+        if entry.is_symlink() or not os.path.isfile(entry):
+            continue
+        if entry.suffix == ".md":
             if entry.name in excluded:
                 continue
             yield entry
