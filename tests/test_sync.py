@@ -4238,3 +4238,62 @@ def test_cli_sync_without_a_subcommand_prints_help(
     out = capsys.readouterr().out
     for name in ("init", "status", "push", "pull", "auto"):
         assert name in out, f"`sync` help does not mention the {name!r} subcommand"
+
+
+def test_pull_sees_a_file_whose_name_git_quotes(
+    memory_dir: Path, bare_remote: Path, tmp_path: Path
+) -> None:
+    """A pulled file git C-QUOTES must still reach the admission chain.
+
+    Under the default `core.quotePath`, `git diff --name-only` and
+    `git ls-tree --name-only` wrap any path needing escaping in double
+    quotes with octal escapes, so `café.md` arrives on stdout as
+    `"caf\\303\\251.md"`. Parsed by newline, that name ends with `.md"`,
+    the `.md` filter drops it, and the file is then absent from
+    `incoming` — so `_admit_pulled_files` never judges it and the size
+    cap, the store parser, the id-alias anti-shadowing check and the
+    credential scan all stand down together, for exactly the file a
+    hostile push would want them to. `-z` emits raw NUL-delimited names
+    and no config setting can turn it off."""
+    from bettermemory import index as _index
+    from bettermemory.events import Recorder, iter_events
+
+    sync.init(memory_dir, remote=str(bare_remote))
+    source = Store(memory_dir)
+    anchor = source.write(content="an ordinary memory", scopes=["tools"])
+    sync.push(memory_dir)
+
+    other_dir = tmp_path / "quoted_clone"
+    subprocess.run(
+        ["git", "clone", str(bare_remote), str(other_dir)],
+        check=True,
+        capture_output=True,
+    )
+
+    # A second memory whose FILENAME carries a non-ASCII byte. Written
+    # through the store, then renamed in git so the name is the only
+    # thing unusual about it.
+    second = source.write(content="a café note about espresso", scopes=["tools"])
+    original = next(p for p in memory_dir.glob("*.md") if second.id.lower() in p.name)
+    quoted = memory_dir / f"café-{original.name}"
+    original.rename(quoted)
+    _git(memory_dir, "add", "-A")
+    _git(memory_dir, "commit", "-m", "add a quoted name")
+    _git(memory_dir, "push", "origin", "HEAD")
+
+    recorder = Recorder(root=other_dir, session_id="sess-quoted")
+    result = sync.pull(other_dir, recorder=recorder)
+    assert result["pulled"] is True
+
+    # The pull must have SEEN the quoted name. Two proofs, because each
+    # answers a different half: the `sync_pull` event lists what the
+    # parser actually returned, and the provenance label is what the
+    # rebuild then made of it. Before `-z` the name was absent from both
+    # — the file arrived unjudged and read `untracked`, the value that
+    # means "the log cannot speak to how this arrived".
+    quoted_name = quoted.name
+    pulls = [e for e in iter_events(other_dir) if e.get("kind") == "sync_pull"]
+    assert quoted_name in [f for e in pulls for f in e["files"]]
+
+    labels = _index.provenance_for(other_dir, [anchor.id, second.id])
+    assert labels[second.id] == "synced"

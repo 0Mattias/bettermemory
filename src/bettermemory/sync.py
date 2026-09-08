@@ -1793,15 +1793,29 @@ def _pulled_files(root: Path, before_sha: str | None) -> list[str]:
     are memories (tombstones and sidecars live below or are dotfiles).
     Never raises: a git failure reads as "nothing known", which the
     provenance derivation treats as no evidence rather than as local."""
+    # `-z` is not a preference here, it is the difference between a
+    # judged file and an unjudged one. Under the default `core.quotePath`
+    # git C-QUOTES any path needing escaping — a non-ASCII byte, a quote,
+    # a backslash, a control character — so `café.md` arrives on stdout
+    # as `"caf\303\251.md"`. Split on newlines, that name ends with `.md"`
+    # and the filter below drops it; it is then absent from `incoming`,
+    # and `_admit_pulled_files` NEVER JUDGES it. The size cap, the store
+    # parser, the id-alias anti-shadowing check and the credential scan
+    # all stand down together for exactly the file a hostile push would
+    # want them to. `-z` emits raw NUL-delimited names and is unaffected
+    # by `core.quotePath`, which is why it is the porcelain parsers'
+    # answer too — a config setting must not be able to open an
+    # admission gate.
     if before_sha is None:
         result = _run_git(
-            root, ["ls-tree", "-r", "--name-only", "FETCH_HEAD"], check=False
+            root, ["ls-tree", "-r", "-z", "--name-only", "FETCH_HEAD"], check=False
         )
     else:
         result = _run_git(
             root,
             [
                 "diff",
+                "-z",
                 "--name-only",
                 "--diff-filter=ACMR",
                 f"{before_sha}...FETCH_HEAD",
@@ -1812,7 +1826,7 @@ def _pulled_files(root: Path, before_sha: str | None) -> list[str]:
         return []
     return sorted(
         name
-        for name in result.stdout.splitlines()
+        for name in result.stdout.split("\0")
         if name and "/" not in name and name.endswith(".md")
     )
 
