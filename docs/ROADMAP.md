@@ -96,6 +96,25 @@ and an entry leaves this file when it lands there.
   the first draft and was wrong: the flag being provably inert is an
   argument for retiring it, not for skipping the promise made to
   anyone pinning `bettermemory==7.x`.
+- **Remove `corroboration_boost` at 8.0.** Scheduled debt, not an open
+  question — the decision is made and recorded (7.6.0 CHANGELOG, and
+  the tail of the usage-signal entry above carries the measurement).
+  It has its own line here so the teardown is greppable rather than
+  buried inside another entry. What goes: `search._corroboration_factor`
+  and its docstring, the `corroboration_boost` parameter threading
+  through `_score_keyword` / `_score_bm25` / `search()` /
+  `audit.probe_for_miss` / `handlers.search.RankingInputs` /
+  `handlers.audit_turn` / `hook`, the `USAGE_FLAG_NAMES` entry and its
+  `_usage_factor_components` / `_compute_usage_toggles` legs, the
+  `BehaviorConfig.corroboration_boost` field, the `DEFAULT_CONFIG`
+  block, the loader coercion, the `_DEPRECATED_BEHAVIOR_KEYS` entry,
+  `eval`'s corroboration-liveness counts
+  (`corroborated_memories` / `corroborated_twice_memories`, the
+  `memories=` parameter on `compute_usage_replay`, and the CLI store
+  join that feeds it), and the flag's tests in `test_corroboration.py`
+  / `test_audit.py` / `test_usage_replay.py`. What STAYS: the
+  `corroborations` / `last_corroborated` rollup, `record_corroboration`,
+  the write-handler hook, and the `health._freshest_touch_ts` consumer.
 - **Cause provenance.** The 6.5.0 label says how a file entered the
   store, not what was in context when the model wrote it, so an
   injection-driven legitimate write reads `local`. A write-time record
