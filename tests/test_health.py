@@ -4,9 +4,13 @@ HealthReport."""
 from __future__ import annotations
 
 import json
+import os
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Generator
+
+import pytest
 
 
 from bettermemory.durability import SHA_MARKER
@@ -4482,6 +4486,156 @@ def test_cross_repo_drift_skips_missing_and_moved_worktrees(tmp_path: Path) -> N
     assert xr.total_drifted == 0
     reasons = {s["repo"]: s["reason"] for s in xr.skipped}
     assert reasons["https://github.com/example/gone.git"] == "worktree missing on disk"
+    assert (
+        reasons["https://github.com/example/expected.git"]
+        == "directory is no longer a checkout of the recorded repo"
+    )
+
+
+def _unreadable_dir_is_enforceable() -> bool:
+    """True when this process can actually be locked out of a directory.
+
+    Two ways the setup silently no-ops, and both would turn the tests
+    below into tests of nothing: Windows does not honour POSIX mode bits
+    on directories the way this needs, and root bypasses them outright
+    (`geteuid` is absent on Windows, hence the guarded call).
+    """
+    import sys
+
+    if sys.platform == "win32":
+        return False
+    getuid = getattr(os, "geteuid", None)
+    return getuid is not None and getuid() != 0
+
+
+@contextmanager
+def _sealed(directory: Path) -> Generator[None]:
+    """Make `directory` unstattable for the body, and always give it back.
+
+    Without the `finally`, a failing assertion leaves a 0o000 directory
+    under `tmp_path` and pytest's own cleanup is what fails, reporting a
+    teardown error instead of the assertion.
+    """
+    directory.chmod(0o000)
+    try:
+        yield
+    finally:
+        directory.chmod(0o755)
+
+
+@pytest.mark.skipif(
+    not _unreadable_dir_is_enforceable(),
+    reason="needs POSIX mode bits and a non-root euid",
+)
+def test_cross_repo_drift_survives_an_unreadable_worktree(tmp_path: Path) -> None:
+    """An unreadable foreign checkout must not take the health surface
+    down with it.
+
+    `Path.exists()` re-raises every OSError outside its own ignore set,
+    so a recorded worktree behind a permission-denied parent — equally,
+    on a dropped network mount or failing media — propagated out of
+    `_compute_cross_repo_drift`, out of `compute_health`, and blanked
+    `memory_health`, the full `memory_scope_overview` report and
+    `bettermemory health` at once. One directory nobody can stat is not
+    a reason to report nothing about the other 368 memories."""
+    from bettermemory.origin import Origin
+
+    parent = tmp_path / "locked"
+    parent.mkdir()
+    foreign = parent / "proj"
+    foreign.mkdir()
+    _init_estate_repo(foreign, "https://github.com/example/foreign.git")
+    _estate_commit_touching(foreign, "c1", when=_utc(2026, 1, 1), filename="src/app.py")
+
+    m = _with_origin(
+        _memory(
+            body="cites `src/app.py`",
+            created=_utc(2026, 1, 2),
+            last_verified_at=_utc(2026, 2, 1),
+        ),
+        cwd=str(foreign),
+        repo="https://github.com/example/foreign.git",
+        worktree=str(foreign),
+    )
+    caller = Origin(
+        cwd=str(tmp_path),
+        repo="https://github.com/example/caller.git",
+        worktree_root=str(tmp_path),
+    )
+
+    with _sealed(parent):
+        report = compute_health([m], [], caller_origin=caller, now=_utc(2026, 4, 1))
+
+    xr = report.cross_repo_drift
+    assert xr is not None
+    assert xr.groups == []
+    assert xr.total_drifted == 0
+    assert [s["reason"] for s in xr.skipped] == ["worktree unreadable"]
+
+
+@pytest.mark.skipif(
+    not _unreadable_dir_is_enforceable(),
+    reason="needs POSIX mode bits and a non-root euid",
+)
+def test_unreadable_worktree_is_not_libeled_as_reused(tmp_path: Path) -> None:
+    """ "Unreadable" and "someone else's checkout now" are different
+    findings, and only one of them is a claim about the directory's
+    contents.
+
+    A root this process could not stat used to fall through to
+    `capture()`, come back with `repo=None` because git could not speak
+    either, and be reported as "no longer a checkout of the recorded
+    repo" — a positive statement about a tree nobody had read. The
+    genuine reuse case must keep its reason, so both are asserted
+    together: the distinction is the point, not either string alone."""
+    from bettermemory.origin import Origin
+
+    parent = tmp_path / "locked"
+    parent.mkdir()
+    unreadable = parent / "proj"
+    unreadable.mkdir()
+    _init_estate_repo(unreadable, "https://github.com/example/unreadable.git")
+
+    reused = tmp_path / "reused"
+    reused.mkdir()
+    _init_estate_repo(reused, "https://github.com/example/other.git")
+    _estate_commit_touching(reused, "c1", when=_utc(2026, 1, 1), filename="src/app.py")
+
+    m_unreadable = _with_origin(
+        _memory(
+            body="cites `src/app.py`",
+            created=_utc(2026, 1, 2),
+            last_verified_at=_utc(2026, 2, 1),
+        ),
+        cwd=str(unreadable),
+        repo="https://github.com/example/unreadable.git",
+        worktree=str(unreadable),
+    )
+    m_reused = _with_origin(
+        _memory(
+            body="cites `src/app.py` too",
+            created=_utc(2026, 1, 2),
+            last_verified_at=_utc(2026, 2, 1),
+        ),
+        cwd=str(reused),
+        repo="https://github.com/example/expected.git",
+        worktree=str(reused),
+    )
+    caller = Origin(
+        cwd=str(tmp_path),
+        repo="https://github.com/example/caller.git",
+        worktree_root=str(tmp_path),
+    )
+
+    with _sealed(parent):
+        report = compute_health(
+            [m_unreadable, m_reused], [], caller_origin=caller, now=_utc(2026, 4, 1)
+        )
+
+    xr = report.cross_repo_drift
+    assert xr is not None
+    reasons = {s["repo"]: s["reason"] for s in xr.skipped}
+    assert reasons["https://github.com/example/unreadable.git"] == "worktree unreadable"
     assert (
         reasons["https://github.com/example/expected.git"]
         == "directory is no longer a checkout of the recorded repo"

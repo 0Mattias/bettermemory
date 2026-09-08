@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import bisect
 import json
+import os
 import re
 from collections import Counter
 from dataclasses import dataclass, field
@@ -50,6 +51,7 @@ from .events import _event_id_list, iter_all_events
 from .models import Category, Memory, first_summary_line
 from .origin import (
     Origin,
+    _worktree_root_is_gone,
     capture,
     commit_author_timestamps,
     commits_since_anchor,
@@ -2688,7 +2690,36 @@ def _compute_cross_repo_drift(
             )
             continue
         root = Path(worktree)
-        if not root.exists():
+        # Liveness in THREE states, not two, because the two-state read
+        # asserted things it could not know — and crashed on one of them.
+        #
+        # `Path.exists()` was the original probe and it is the wrong
+        # question twice over. It RE-RAISES every OSError outside its
+        # own ignore set (ENOENT/ENOTDIR/EBADF/ELOOP), so a foreign
+        # checkout behind a permission-denied parent, on a dropped
+        # network mount, or on failing media propagated out of here,
+        # out of `compute_health`, and took `memory_health`, the full
+        # `memory_scope_overview` report and `bettermemory health` down
+        # with it — one unreadable directory anywhere in the estate
+        # blanked the entire health surface. And where it does answer
+        # `False` it folds "nothing is there" together with a slice of
+        # "I could not find out" (Windows ERROR_NOT_READY: a removable
+        # or disconnected volume), which then got reported as the
+        # positive finding "worktree missing on disk".
+        #
+        # `origin._worktree_root_is_gone` is this package's settled
+        # answer to exactly that question — an errno taxonomy whose
+        # unclassified default is "cannot tell", so a new error class
+        # holds the boundary instead of opening it. `verify` and
+        # `symbols` already route their root probes through their own
+        # guards for the same reason; this call site was the one that
+        # never adopted the doctrine, and the only unguarded one left.
+        #
+        # So: positively absent is a finding, unreadable is a separate
+        # finding, and only a directory we could actually stat is
+        # handed to git — asking git to work inside a directory we
+        # could not stat is how the mislabel below happened.
+        if _worktree_root_is_gone(worktree):
             skipped.append(
                 {
                     "repo": repo,
@@ -2697,8 +2728,31 @@ def _compute_cross_repo_drift(
                 }
             )
             continue
+        if not os.path.isdir(root):
+            # Not positively gone, and still not stattable as a
+            # directory: unreachable rather than absent. `os.path.isdir`
+            # swallows the OSError that `Path.is_dir()` would re-raise
+            # — the same choice, for the same reason, that
+            # `verify._worktree_root_is_live` writes down.
+            skipped.append(
+                {
+                    "repo": repo,
+                    "worktree_root": worktree,
+                    "reason": "worktree unreadable",
+                }
+            )
+            continue
         live = capture(root)
         if live.repo is None or not repos_match(repo, live.repo):
+            # Reached only for a directory this process COULD stat, so
+            # `repo is None` now means what the reason says: git looked
+            # and found no checkout of the recorded repo. Before the
+            # split above, an unreadable directory landed here too and
+            # was libeled as reused — a positive claim about a tree
+            # nobody had managed to read. Same shape as 7.5.1's "a
+            # retired symbol is not a mis-anchored one": a check must
+            # not report a finding where its evidence is absence of
+            # evidence.
             skipped.append(
                 {
                     "repo": repo,
