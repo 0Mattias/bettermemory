@@ -87,8 +87,21 @@ the contents of a tree nobody had read.
 
 The probe now reads three states where it read two. Positively absent
 keeps its reason and earns it, unreachable gets its own, and only a
-directory this process could stat is handed to git, which is what makes
-the reuse reason true when it fires. None of this is new doctrine:
+directory this process could stat is handed to git.
+
+That last clause was not enough on its own, and the first draft's
+comment claimed it was (`866abb5`). `origin._git` folds a missing
+binary, a timeout at its 1.0s ceiling and a non-zero exit into one
+`None`, and `capture` gates `repo` on `worktree_root`, so "git never
+answered" still arrived indistinguishable from "git answered: not a
+checkout" — and a server spawned from a GUI with a minimal PATH, having
+no git at all, had every foreign group in the estate libeled at once.
+`worktree_root` is the discriminator, since `capture` sets it from the
+first probe and only when that probe succeeded. So the skip reasons are
+three: nothing identified a checkout here, a checkout whose repo could
+not be identified because its remotes are gone, and the reuse verdict —
+which now fires only when git read a remote and it named a different
+repository, which is what makes it true. None of this is new doctrine:
 `origin._worktree_root_is_gone` is the package's settled answer to the
 liveness question, an errno taxonomy whose unclassified default is
 "cannot tell" so a new error class holds the boundary instead of
