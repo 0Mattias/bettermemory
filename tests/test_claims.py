@@ -471,3 +471,102 @@ def test_one_unaddressable_claim_ungoverns_the_whole_path() -> None:
     ]
     assert claim_paths(claims) == ["pkg/mod.py", "pkg/other.py"]
     assert governed_claim_paths(claims) == ["pkg/other.py"]
+
+
+# ---------------------------------------------------------------------------
+# A stat that did not answer is not evidence
+# ---------------------------------------------------------------------------
+
+
+def _unreadable_dir_is_enforceable() -> bool:
+    """True when this process can actually be locked out of a directory."""
+    import os
+    import sys
+
+    if sys.platform == "win32":
+        return False
+    getuid = getattr(os, "geteuid", None)
+    return getuid is not None and getuid() != 0
+
+
+@pytest.mark.skipif(
+    not _unreadable_dir_is_enforceable(),
+    reason="needs POSIX mode bits and a non-root euid",
+)
+def test_absence_claim_is_not_affirmed_by_a_stat_that_failed(tmp_path: Path) -> None:
+    """The absence branch AFFIRMS its claim on the negative arm, so a
+    stat this process could not complete must never reach it.
+
+    `Path.exists()` cannot express "could not tell" and gets it wrong in
+    both directions by interpreter: it re-raises EACCES on 3.11-3.13 and
+    folds it into the same False as "nothing is there" on 3.14. On 3.14
+    that made a deleted-then-restored file under a directory that later
+    became unreadable keep its `!path` claim affirmed while the file sat
+    on disk — a false clean on the trust path, not a missed alarm."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "legacy").mkdir()
+    target = tmp_path / "src" / "legacy" / "old_api.py"
+    claim = parse_claim("!src/legacy/old_api.py")
+
+    # Genuinely absent: the claim holds, and must keep holding.
+    assert check_claim(claim, tmp_path) is None
+
+    # The file comes back — a revert, a cherry-pick, a restored copy.
+    target.write_text("def old_api(): pass\n")
+    assert "exists in the worktree" in (check_claim(claim, tmp_path) or "")
+
+    # ...and its directory then becomes unreadable. Still not affirmed.
+    (tmp_path / "src" / "legacy").chmod(0o000)
+    try:
+        reason = check_claim(claim, tmp_path)
+    finally:
+        (tmp_path / "src" / "legacy").chmod(0o755)
+    assert reason is not None
+    assert "could not be read" in reason
+
+
+@pytest.mark.skipif(
+    not _unreadable_dir_is_enforceable(),
+    reason="needs POSIX mode bits and a non-root euid",
+)
+def test_positive_claims_report_unreadable_rather_than_absent(tmp_path: Path) -> None:
+    """The other polarity's two failure modes, both wrong, both closed.
+
+    On 3.11-3.13 `is_file()` re-raised straight out of `check_claim`,
+    through `_refuse_stale_stored_claims` and `_validate_declared_claims`
+    — so a claims-carrying `memory_verify` died. On 3.14 it answered
+    False and the caller published "does not exist in the worktree",
+    which is an accusation about a tree nothing had read. Neither is an
+    answer; both now report what actually happened."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "mod.py").write_text("def handler(): pass\n")
+
+    for spec in ("src/mod.py", "src/mod.py::handler"):
+        claim = parse_claim(spec)
+        assert check_claim(claim, tmp_path) is None, spec
+        (tmp_path / "src").chmod(0o000)
+        try:
+            reason = check_claim(claim, tmp_path)
+        finally:
+            (tmp_path / "src").chmod(0o755)
+        assert reason is not None, spec
+        assert "could not be read" in reason, spec
+        assert "does not exist" not in reason, spec
+
+
+def test_a_claim_follows_symlinks_because_resolution_does(tmp_path: Path) -> None:
+    """Pins the semantics `_resolve_claim_path` has always had, now that
+    `_occupancy` sits behind it: the claim addresses the path the tree
+    RESOLVES to, not the link that points at it. So a dangling link
+    inside the worktree reads as absent on both polarities — the
+    absence claim holds, and the path claim fails for the same reason.
+    Asserted because the three-valued probe would otherwise look like a
+    place where lstat could change this, and it cannot: resolution has
+    already followed the link before the probe runs."""
+    import os
+
+    (tmp_path / "src").mkdir()
+    os.symlink(tmp_path / "src" / "nowhere.py", tmp_path / "src" / "link.py")
+
+    assert check_claim(parse_claim("!src/link.py"), tmp_path) is None
+    assert "does not exist" in (check_claim(parse_claim("src/link.py"), tmp_path) or "")

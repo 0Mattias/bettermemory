@@ -93,6 +93,8 @@ alarm for that file, silence keeps the conservative default.
 from __future__ import annotations
 
 import ast
+import errno
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -115,6 +117,13 @@ __all__ = [
     "string_fragment",
     "anchors_from_value",
 ]
+
+# The errnos where the OS ANSWERED "nothing is at this path" — the only
+# two a claim oracle may read as absence. Every other error is a failure
+# to determine, and `origin._WORKTREE_GONE_ERRNOS` makes the same split
+# for the same reason: enumerate the negative side, and let an
+# unclassified errno hold the boundary instead of opening it.
+_ABSENT_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR})
 
 # Caps mirror the `verified_*` attestation caps at the memory_verify
 # handler boundary (`handlers/verify._MAX_VERIFIED_ENTRIES` /
@@ -433,6 +442,42 @@ def _resolve_claim_path(root: Path, rel_path: str) -> Path | None:
         return None
 
 
+def _occupancy(target: Path) -> bool | None:
+    """Three-valued: True occupied, False nothing there, None cannot tell.
+
+    `Path.exists()` cannot express the third state and gets it wrong in
+    both directions depending on the interpreter — it RE-RAISES EACCES
+    and friends on 3.11 through 3.13, and on 3.14 folds them into the
+    same False it uses for "nothing is there". Neither is an answer, and
+    the absence branch of `check_claim` AFFIRMS its claim on False, so
+    the difference is the difference between a verdict and a guess.
+
+    `os.lstat` rather than `stat`, though here the two agree:
+    `_resolve_claim_path` has already called `.resolve()`, which follows
+    every link, so the target this receives is never itself a symlink.
+    lstat is the primitive that matches the question — is anything AT
+    this path — and picking it means the answer does not change if
+    resolution ever stops following links.
+    """
+    try:
+        os.lstat(target)
+    except OSError as exc:
+        if exc.errno in _ABSENT_ERRNOS:
+            return False
+        return None
+    except ValueError:
+        return None
+    return True
+
+
+def _is_regular_file(target: Path) -> bool:
+    """`is_file()` without the re-raise, for a target already known to
+    be occupied. Follows symlinks, as the claim kinds intend: a claim
+    names the module the tree resolves to, not the link that points at
+    it."""
+    return os.path.isfile(target)
+
+
 def check_claim(claim: Claim, root: Path) -> str | None:
     """The declare-time oracle: None when the claim holds, else why not.
 
@@ -457,15 +502,34 @@ def check_claim(claim: Claim, root: Path) -> str | None:
             "worktree — claims are anchored to the memory's origin "
             "worktree; use verified_paths for out-of-tree attestations"
         )
+    occupancy = _occupancy(target)
     if claim.kind == "absent":
-        if target.exists():
+        if occupancy is True:
             return (
                 f"path {claim.rel_path!r} exists in the worktree — an "
                 "absence claim (`!path`) asserts it stays deleted; "
                 "remove it, or drop the claim if it is meant to be back"
             )
+        if occupancy is None:
+            # An absence claim is AFFIRMED by the negative arm, so a
+            # stat this process could not complete must never reach it.
+            # `Path.exists()` used to: on 3.14 it answers False for
+            # EACCES/ESTALE/EIO alike, so a deleted-then-restored file
+            # under a directory that later became unreadable kept its
+            # `!path` claim affirmed while the file sat on disk — a
+            # false clean on the trust path, not a missed alarm.
+            return (
+                f"path {claim.rel_path!r} could not be read in the "
+                "worktree, so its absence cannot be confirmed — an "
+                "absence claim is only as good as a stat that answered"
+            )
         return None
-    if not target.is_file():
+    if occupancy is None:
+        return (
+            f"path {claim.rel_path!r} could not be read in the worktree "
+            "— the claim may well hold, but nothing here can say so"
+        )
+    if not _is_regular_file(target):
         return f"path {claim.rel_path!r} does not exist in the worktree"
     if claim.kind == "path":
         return None
