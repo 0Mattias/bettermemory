@@ -432,11 +432,50 @@ def test_a_full_corpus_arm_is_never_mistaken_for_an_engaged_one(
 
 
 def test_main_refuses_to_emit_when_the_prefilter_did_not_engage(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
 ) -> None:
     """The whole integrity of the artifact rests on this exit code. A run
     that fell back must be impossible to mistake for a result, so it fails
-    loudly instead of printing numbers nobody can tell apart."""
+    loudly instead of printing numbers nobody can tell apart.
+
+    Runs against a two-document corpus written here rather than the
+    committed one: the check under test fires after the arm has run, so
+    the corpus size is pure cost. Against the committed 1,080 documents
+    this test wrote every one through the fsync'd store and ranked all
+    120 questions, 195 s for one exit code.
+    """
+    corpus = tmp_path / "corpus.jsonl"
+    questions = tmp_path / "questions.jsonl"
+    corpus.write_text(
+        json.dumps(
+            {
+                "slug": "gold-topic",
+                "body": "Staging deploys go through the blue lane only.",
+                "scopes": ["ops"],
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "slug": "distractor",
+                "body": "The office plant is watered on Fridays.",
+                "scopes": ["ops"],
+            }
+        )
+        + "\n"
+    )
+    questions.write_text(
+        json.dumps(
+            {
+                "slug": "gold-topic",
+                "question": "which lane do staging deploys use?",
+                "requery": "staging deploy lane",
+            }
+        )
+        + "\n"
+    )
     monkeypatch.setattr(
         runner,
         "resolve_search_pool",
@@ -445,7 +484,20 @@ def test_main_refuses_to_emit_when_the_prefilter_did_not_engage(
         ),
     )
     monkeypatch.setattr(
-        sys, "argv", ["run.py", "--arms", "lexical", "--prefilter", "on", "--json"]
+        sys,
+        "argv",
+        [
+            "run.py",
+            "--arms",
+            "lexical",
+            "--prefilter",
+            "on",
+            "--json",
+            "--corpus",
+            str(corpus),
+            "--questions",
+            str(questions),
+        ],
     )
     assert runner.main() == 1
     captured = capsys.readouterr()
