@@ -366,9 +366,9 @@ and an entry leaves this file when it lands there.
   [examples/programmatic_client.py](../examples/programmatic_client.py).
 - **Removing `verified_commits` / `verified_versions` within a major.**
   The compatibility contract forbids removing a parameter within a
-  major; they are documented as audit-trail-only. 4.0, 5.0 and 6.0 all
-  shipped without taking them — 6.0 spent its breaking budget elsewhere
-  — so this is a 7.0 question at most.
+  major; they are documented as audit-trail-only. 4.0, 5.0, 6.0 and 7.0
+  all shipped without taking them — 7.0 spent its one break on the
+  `episode_handoff` body default — so this is an 8.0 question at most.
 - **Gating the low-use episode tools out of the lean surface.**
   Evaluated against the event log; not available — the shipped plugin
   skill, the system-prompt addendum, and the swarm fan-in path depend
@@ -400,10 +400,10 @@ and an entry leaves this file when it lands there.
   The compatibility contract forbids removing a tool within a major,
   and the economics are backwards without the removal: a merged
   replacement can only be *added* in a minor, so inside the line it
-  would grow the description budget rather than shrink it. 4.0, 5.0
-  and 6.0 all passed on it — 6.0 spent its breaking budget elsewhere —
-  so it is a 7.0 question: deprecation cycle first, removal at the
-  major with migration notes.
+  would grow the description budget rather than shrink it. 4.0, 5.0,
+  6.0 and 7.0 all passed on it — 7.0 spent its one break on the
+  `episode_handoff` body default — so it is an 8.0 question:
+  deprecation cycle first, removal at the major with migration notes.
 
 ## Contributing
 
