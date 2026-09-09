@@ -240,6 +240,76 @@ this machine and lifts the rule. The column is carried across rebuilds
 and derived from `verify` and `sync_pull` events when the index is
 rebuilt from scratch, so the rule survives an index reset.
 
+## Module map
+
+Ninety-four modules under `src/bettermemory/`. A tool call crosses
+them in one order, and the map is that order.
+
+**Entry.** `cli/` is the `bettermemory` command; `cli/serve.py` is the
+no-argument default and hands off to `builder.build_server`, which
+instantiates the MCP SDK server and binds every tool. `server.py` is a
+re-export shim kept for callers that import `build_server` from there.
+`__main__.py` covers `python -m bettermemory`.
+
+**Request.** Every tool handler lives in `handlers/<tool>.py` beside its
+`DESC_` description constant; `handlers/_shared.py` holds what all of
+them reach for (payload validation, use-token settlement, the turn
+counter). `_handlers.py` is the facade that wires those functions onto
+one class, and the chokepoint the handlers call `capture_origin`
+through. `session.py` resolves the per-client `SessionState` for the
+request (pending writes, disabled scopes, use tokens) and `_response.py`
+shapes what goes back on the wire. `_decorators.py` and `time_utils.py`
+are cross-cutting.
+
+**Write path.** `handlers/write.py` runs the gate chain: `credentials.py`
+(secret-shaped strings), `durability.py` (structural durability),
+`scope_match.py` (scope mismatch against the caller's repo),
+`groundedness.py` (transcript overlap), `claims.py` (declared claims
+checked against the worktree), `supersession.py` (does this replace a
+stored statement), `conflicts.py` (contradiction candidates). A write
+that passes lands in `store.py`, one file per memory under a
+per-file lock, with `_frontmatter.py` for the YAML header, `_fsutil.py`
+for atomic writes and fsync, and `index.py` mirroring the record into
+the SQLite FTS5 index under the same lock. `origin.py` stamps where the
+write happened.
+
+**Read path.** `handlers/search.py` and `handlers/show.py` read through
+`index.py` (the FTS prefilter above the index threshold) into
+`search.py`, the ranker, with `expansion.py` supplying the optional
+rescue vocabulary. Ranking is drift-independent; `verify.py` then
+annotates each hit with the staleness verdict from path, commit and
+calendar drift, with `symbols.py` for advisory symbol citations, and
+`provenance.py` supplies the entry label derived at index build.
+
+**Telemetry.** `events.py` is the append-only JSONL log every handler
+records into, sharded by session. `audit.py` and `attribution.py` turn
+it into silent-miss and use telemetry; `eval.py` computes the
+effectiveness rates; `health.py` is the curation rollup that
+`handlers/health.py` and `handlers/curate.py` serve; `doctor.py` is the
+install diagnostic.
+
+**Hooks.** `hook.py` is the Claude Code side: the Stop-hook turn audit
+and the UserPromptSubmit prompt recall, invoked through
+`cli/audit_turn_cmd.py`, `cli/prompt_recall_cmd.py` and
+`cli/session_start_cmd.py`. These run out of process, so they read the
+event log rather than the server's session state.
+
+**Offline.** `consolidate.py` (dedup, demote, scope hygiene) with
+`llm.py` for model-driven proposals and `proposals.py` for the review
+queue; `sync.py` with `quarantine.py` for git-based cross-host sync and
+its admission gates; `migrate.py` for on-disk format migrations;
+`ingest.py` for importing Claude Code's auto-memory; `init.py` and
+`_install_hints.py` for client onboarding.
+
+**Episodes.** `episodes.py` is the journal store beside `store.py`;
+`patterns.py` finds themes recurring across sessions; the five
+`handlers/episode_*.py` tools serve them.
+
+**Leaves.** `models.py` (Pydantic models, enums, ULIDs), `config.py`
+(config loading and the store-directory rule), `prompts.py` (the
+system-prompt addendum). Nothing in this group imports a handler or the
+store, and a new cross-cutting concept belongs here, not in a cycle.
+
 ## Storage
 
 One file per memory, grep-able and hand-editable:
