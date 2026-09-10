@@ -7,6 +7,158 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 7.9.0 - 2026-09-09
+
+### Fixed
+
+The remaining nineteen findings of the "cannot tell" sweep are closed.
+The class, once more: a probe that cannot distinguish "the condition is
+false" from "I could not determine the condition", whose negative branch
+then publishes a finding, verdict, refusal or stand-down as knowledge.
+The through-line from 7.7.0 and 7.8.0 held on every one — **`Path.exists()`
+and `Path.is_file()` re-raise EACCES and friends on Python 3.11 through
+3.13 and swallow them on 3.14** — and every fix below was re-run on 3.11
+and 3.14, with its test asserted to fail against the reverted source.
+Where a probe's answer had to become three-valued, the third value is
+published, never folded into a zero or a null that already meant
+something else.
+
+**The trust index** (`68945da`). `index.trust_for` returned `{}` both for
+"these rows are not classified yet" and for "the index could not be
+opened", and the read surfaces treated `{}` as the first: the 6.6.0 rule
+stood down per row, and the file's own `last_verified_at` — of unknown
+origin — read `fresh` on `memory_search`, `memory_show` and `memory_list`
+alike, with no warning anywhere. A truncated index, a deleted one (the
+product's own advice on a version skew) and a newer-schema one produced
+identical false-fresh output. `trust_for` now returns None when the index
+could not be read; every row then carries `trust_unavailable: true`, no
+label is invented, and a row whose file carries a stamp drops to
+`spot_check_required` with `verification.recommendation` naming
+`bettermemory reindex`. The `expand_top` re-derivation keeps the demotion
+the way it keeps `remote`, and the recall pointer — the one delivery that
+reaches the model without a tool call — renders `[provenance: unknown,
+index unreadable]` instead of a plain local record. The session-start
+standing tier — the one consumer the first sweep of callers missed, and
+the type checkers caught (`133153f`) — renders every candidate as a
+pointer under the same label when the index could not be read, since a
+body is delivered only for a row known to be `local`.
+
+**The session-start rollup** (`833e36f`). `curation_pending.drifted`
+stayed at its 0 initialiser whenever `commit_author_timestamps` returned
+None for a caller standing in a repo, and `curation_pending.unaccounted`
+collapsed `provenance_rows`' deliberate None ("could not look") into the
+same 0 as its `[]` ("looked, found none"). Both published a clean bill on
+a leg nobody measured, on the two headline integrity claims, at session
+start. The integer key set is pinned on the wire, so
+`memory_scope_overview` now carries `curation_unmeasured` beside it: a
+list naming the legs whose 0 was never asked, empty on every call where
+both answered. `curation_counts_with_coverage` is the two-valued walk
+beneath it; `curation_counts` keeps its one-valued contract.
+
+**Git saying no and git not answering** (`36340dd`). `origin._git`
+returned one None for a non-zero exit, a missing binary, a timeout and a
+failed spawn. `capture()` therefore returned a null `repo` whether git
+said "not a repository" or could not be asked at all, and the Stop hook
+read the null as "the caller is nowhere": the project-cohort shield
+dropped, so a turn asked from inside the matching repo while git was
+unreachable was logged as a `search_miss` against the model, and the
+recall lane's auto-scope filter opened to every project's memories.
+`Origin.git_indeterminate` — a private attribute, never serialised into
+frontmatter or an event — now says which it was; `probe_for_miss`
+declines to declare a miss on it (`suppressed_by: "origin_indeterminate"`)
+and `run_prompt_recall` delivers nothing. `commit_reachable` no longer
+turns a merge-base timeout into the False that `memory_restore` reads as
+"strip the anchor for good". Both ride a new `_git_result`, which keeps
+the exit code and is None only when git could not run.
+
+**Claims** (`b623e7b`). `check_claim`'s three "could not be read" reasons
+are bound to a named marker, `INDETERMINATE_REASON_MARKER`, with
+`claim_reason_is_indeterminate` as the question, and the callers acting on
+a non-None reason hear the difference. `memory_verify` refuses an
+unchecked stored claim with "could not be checked here" rather than
+"no longer hold", an accusation about a tree nothing had read; the
+declared-claims gate on `memory_write` and `memory_verify` splits "do not
+hold" from "could not be checked" the same way; and `memory_restore` keeps
+a claim the tree could not be read for instead of dropping it and the
+stamp with it. A fresh `verified_paths` list is judged against the
+record's worktree only when that root is live here, the gate the
+stored-list arm and the restore strip already applied, so a synced
+record's relative attestations no longer read as fabricated all at once.
+
+**Provenance** (`4a1100a`). `Evidence.tracked_files` was None for one
+documented meaning — "not a sync repo" — and silently carried three more:
+git missing, a non-zero exit (`dubious ownership` on a bind-mounted or
+sudo-created store), a timeout. Rule 6 was skipped and every uncommitted
+file fell through to `unaccounted`, the hand-planted label doctor
+publishes as a finding and body delivery refuses. The leg is three-valued
+(`tracked_files_unavailable`), rule 6 falls through only on a measured
+negative, and could-not-ask lands on `untracked`, with a warning.
+
+**Sync** (`c9ccfd0`). `_is_repo` read every non-zero `rev-parse` exit and
+a missing binary as "not a git working tree". `push`, `pull` and `auto`
+told a user whose store git refused to open to "run `sync init` first";
+`init` would have run `git init` over a repo it could not read; and
+`sync status` reported `is_repo=False, has_changes=False` about a repo
+holding uncommitted edits. "not a git repository" is git's one measured
+no. Everything else raises `SyncError` with git's words, `SyncStatus.is_repo`
+is None with `error` beside it (dataclass and `--json`), and the text CLI
+says nothing below is known. Doctor's two consumers of the probe stand
+down as before and carry git's words.
+
+**Doctor** (`7f2e6c4`). `memory_content_evidence` fell through to "All N
+memory files match the bytes the store last wrote" after its walk aborted
+— the store's one tamper-evidence surface; an aborted walk is now `fail`
+with `changed: None`. `_readable_anchor`'s `is_file()` sat outside its
+`try`, so one unstattable attested path turned `attestation_anchors` into
+"this is a bettermemory bug"; it is `os.path.isfile` and the None it always
+meant. `store_nested_in_parent_repo` reported an enclosing repo whose index
+could not be listed only when no level found a hit, and otherwise named it
+under `scanned_parent_toplevels`; unlisted levels are now named as such
+and dropped from the scanned list.
+
+**Episodes** (`b52351a`). `list_by_session` caught `ValueError`, `KeyError`
+and `OSError` in one arm, and `episode_promote` told a caller holding the
+id of an unreadable file that it "may have been pruned past its TTL or
+never existed". The listing still stays up, now with a warning;
+`EpisodeStore.locate` answers the by-id question with one stat, and the
+handler names a file that could not be read or parsed as such.
+
+**Consolidate** (`1a535ee`). `_load_transcript` returned "" for an absent
+path, a non-regular file, an unreadable file and an empty one alike, so a
+mistyped `--from-transcript` produced a clean "0 proposals" with no
+Failures block. Only an empty file is "" now; the rest raise with the
+reason, told apart by an explicit `os.stat`, and `consolidate_llm`
+records the lane's failure under `transcript-facts`.
+
+**Ingest** (`01716dd`). `discover_default_source_root`'s
+`exists() and is_dir()` raised out of three surfaces for an auto-memory
+directory this process cannot stat; it is `os.path.isdir` and the None
+"none found" already means. `_session_cwds` collapsed "no transcripts",
+"could not read them" and "read the first twenty of two hundred" into one
+empty set, and `apply_ingest_plan` stamped `origin = capture(cwd)` on all
+three — the guard exists for the many-to-one sanitisation hazard and its
+own contract is conservative on ambiguity. The scan reports whether it
+was complete, an incomplete scan withholds the stamp, and the file
+ceiling moves from a sample of 20 to a cost bound of 2000.
+
+**Config** (`48a6126`). `Config.resolved_directory` probed
+`<cwd>/.claude-memory` with `Path.is_dir()`, so a cwd whose children
+cannot be stat'd aborted every entry path — CLI, server startup, both
+hooks — on three of the four interpreters, while the deleted-cwd branch
+four lines earlier already took the global store. It takes the same
+fallback now.
+
+### Added
+
+`trust_unavailable` on every `memory_search` hit, `memory_show` response
+and `memory_list` row when the index could not be read; `curation_unmeasured`
+on `memory_scope_overview`; `error` on `bettermemory sync status --json`
+with `is_repo` three-valued; `suppressed_by: "origin_indeterminate"` on
+audit and recall events; `Origin.git_indeterminate`,
+`claims.claim_reason_is_indeterminate`, `health.curation_counts_with_coverage`
+and `EpisodeStore.locate` on the Python surface. All additive: a client
+that ignores them sees the 7.8.0 shapes.
+
 ## 7.8.0 - 2026-09-08
 
 ### Fixed
