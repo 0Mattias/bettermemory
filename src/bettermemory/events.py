@@ -58,6 +58,7 @@ from itertools import groupby
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
+from . import identity
 from ._fsutil import flock_excl, fsync_dir, fsync_file, replace_atomic
 from .time_utils import parse_event_ts
 
@@ -447,6 +448,15 @@ class Recorder:
                 # same name (none exist today) is left untouched.
                 if self.worktree_root is not None:
                     event.setdefault("worktree_root", self.worktree_root)
+                # Stamp the request's actor (`identity`) when it carries
+                # anything — the declared client / model, the transport
+                # session, the attested principal, each with its channel.
+                # Absent for a caller that declared nothing, so an event
+                # from such a caller keeps the 7.9.0 shape; a handler
+                # field of the same name wins.
+                actor = identity.current_actor()
+                if actor is not None:
+                    event.setdefault("actor", actor.to_record())
                 line = json.dumps(event, separators=(",", ":"), default=str) + "\n"
                 # Append-binary so we control line endings explicitly across
                 # platforms and don't fight Python's text-mode translation.

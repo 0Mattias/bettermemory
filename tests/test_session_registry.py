@@ -13,8 +13,8 @@ Two test layers:
   Context, lazy state creation, idempotent reuse, the no-ctx /
   no-client-id fallback.
 * Integration: build two servers backed by the *same* `SessionRegistry`,
-  issue a pending write from one with a forged `client_id` context,
-  confirm/cancel from the other with a different `client_id`, and
+  issue a pending write from one with a forged `session_id` context,
+  confirm/cancel from the other with a different `session_id`, and
   assert the pending-write isolation holds end-to-end.
 """
 
@@ -37,15 +37,15 @@ from bettermemory.store import Store
 from ._mcp import fake_ctx as _mcp_fake_ctx
 
 
-def _fake_ctx(*, client_id: str | None = None) -> Any:
-    """A stand-in `Context` carrying `client_id`, from `tests/_mcp.py`.
+def _fake_ctx(*, session_id: str | None = None) -> Any:
+    """A stand-in `Context` carrying `session_id`, from `tests/_mcp.py`.
 
     Kept as a keyword-only wrapper so the call sites below read the way
     they always have. The forged shape itself lives in tests/_mcp.py
     because it mirrors the SDK's request shape, which moved in the 2.x
     port — see that module for why two private copies of it were a tax.
     """
-    return _mcp_fake_ctx(client_id)
+    return _mcp_fake_ctx(session_id)
 
 
 # ---------------------------------------------------------------------------
@@ -53,14 +53,14 @@ def _fake_ctx(*, client_id: str | None = None) -> Any:
 # ---------------------------------------------------------------------------
 
 
-def test_registry_returns_same_state_for_same_client_id() -> None:
-    """Calling `for_request` twice with the same client_id returns the same
+def test_registry_returns_same_state_for_same_session_id() -> None:
+    """Calling `for_request` twice with the same session_id returns the same
     state. Without this, every tool call would mint a fresh state and
     pending writes / use-tokens would never carry between calls within
     one client session."""
     registry = SessionRegistry()
-    ctx_a1 = _fake_ctx(client_id="client-A")
-    ctx_a2 = _fake_ctx(client_id="client-A")
+    ctx_a1 = _fake_ctx(session_id="client-A")
+    ctx_a2 = _fake_ctx(session_id="client-A")
 
     state1 = registry.for_request(ctx_a1)
     state2 = registry.for_request(ctx_a2)
@@ -68,13 +68,13 @@ def test_registry_returns_same_state_for_same_client_id() -> None:
     assert state1 is state2
 
 
-def test_registry_returns_distinct_states_for_distinct_client_ids() -> None:
+def test_registry_returns_distinct_states_for_distinct_session_ids() -> None:
     """The whole point of the registry: client A and client B get
     isolated state. Identity (not just equality) — the SessionState
     objects must be different instances so mutations on one don't bleed."""
     registry = SessionRegistry()
-    state_a = registry.for_request(_fake_ctx(client_id="A"))
-    state_b = registry.for_request(_fake_ctx(client_id="B"))
+    state_a = registry.for_request(_fake_ctx(session_id="A"))
+    state_b = registry.for_request(_fake_ctx(session_id="B"))
 
     assert state_a is not state_b
     assert state_a.session_id != state_b.session_id
@@ -91,44 +91,46 @@ def test_registry_falls_back_to_default_state_when_ctx_is_none() -> None:
     assert state is state_again
 
 
-def test_registry_falls_back_to_default_state_when_client_id_is_empty() -> None:
-    """An empty-string or None `client_id` on the Context maps to the
-    default bucket. Some transports populate client_id late or not at
+def test_registry_falls_back_to_default_state_when_session_id_is_empty() -> None:
+    """An empty-string or None `session_id` on the Context maps to the
+    default bucket. Some transports populate session_id late or not at
     all; treat absence the same as None rather than minting a new
     state for every empty-id request."""
     registry = SessionRegistry()
-    state_empty = registry.for_request(_fake_ctx(client_id=""))
+    state_empty = registry.for_request(_fake_ctx(session_id=""))
     state_none_ctx = registry.for_request(None)
 
     assert state_empty is state_none_ctx
 
 
-def test_registry_does_not_collide_default_key_with_real_client_id() -> None:
-    """A client that picks `__default__` as its literal client_id (or
-    whatever the internal sentinel happens to be) shouldn't end up
-    sharing state with the no-id bucket. We aren't going to enforce
-    that contract on the client id a request carries; this test just pins the
-    current behavior so a future change is intentional rather than
-    accidental."""
+def test_registry_does_not_collide_default_key_with_a_spoofed_session_id() -> None:
+    """A client whose transport session is literally `__default__` — the
+    internal sentinel — must not land in the no-discriminator bucket.
+
+    Through 7.9.0 the two collided: the raw id WAS the key, and the test
+    that stood here pinned the collision as "current behavior, flip
+    deliberately". The 7.10.0 resolver prefixes every discriminator with
+    its kind (`identity.registry_key`), so a spoofed sentinel is just
+    another session and gets its own state."""
     registry = SessionRegistry()
     default_state = registry.for_request(None)
-    spoof_state = registry.for_request(_fake_ctx(client_id="__default__"))
+    spoof_state = registry.for_request(_fake_ctx(session_id="__default__"))
 
-    # Today the keys collide (both bucket into the same sentinel).
-    # If that ever changes, this assertion flips — fine, just be
-    # deliberate about it.
-    assert default_state is spoof_state
+    assert default_state is not spoof_state
+    assert default_state.client_key == "__default__"
+    assert spoof_state.client_key == "session=__default__"
 
 
 def test_registry_known_keys_reflects_inserted_clients() -> None:
     registry = SessionRegistry()
-    registry.for_request(_fake_ctx(client_id="A"))
-    registry.for_request(_fake_ctx(client_id="B"))
+    registry.for_request(_fake_ctx(session_id="A"))
+    registry.for_request(_fake_ctx(session_id="B"))
     registry.for_request(None)
 
     keys = registry.known_keys()
-    assert "A" in keys
-    assert "B" in keys
+    # A transport session keys under its kind (`identity.registry_key`).
+    assert "session=A" in keys
+    assert "session=B" in keys
     # The "no-id" bucket is keyed under the module-level sentinel.
     assert any(k.startswith("__") for k in keys)
 
@@ -140,7 +142,7 @@ def test_session_state_satisfies_session_source_protocol() -> None:
     `state=SessionState()` to `build_server` and keep working."""
     shared = SessionState()
     assert shared.for_request(None) is shared
-    assert shared.for_request(_fake_ctx(client_id="anyone")) is shared
+    assert shared.for_request(_fake_ctx(session_id="anyone")) is shared
 
 
 def test_get_default_registry_is_a_stable_singleton() -> None:
@@ -189,7 +191,7 @@ def two_client_server(
     be confirmable by another.
 
     Returns (server, registry, client_ctxs) — client_ctxs is a small
-    dict of name -> client_id strings so callers can vary it per
+    dict of name -> session_id strings so callers can vary it per
     request without re-typing the literal.
     """
     from bettermemory.config import BehaviorConfig
@@ -216,8 +218,8 @@ async def test_pending_write_is_isolated_between_clients(
     """
     server, registry, ids = two_client_server
 
-    # Alice opens a pending write under her client_id.
-    alice_ctx = _fake_ctx(client_id=ids["alice"])
+    # Alice opens a pending write under her session_id.
+    alice_ctx = _fake_ctx(session_id=ids["alice"])
     pending = await _call(
         server,
         "memory_write",
@@ -228,11 +230,11 @@ async def test_pending_write_is_isolated_between_clients(
     assert pending["status"] == "pending"
     pending_id = pending["pending_id"]
 
-    # Bob tries to cancel — under bob's client_id, the registry hands
+    # Bob tries to cancel — under bob's session_id, the registry hands
     # him a separate SessionState that knows nothing about alice's
     # pending. The cancel reports "existed=False", confirming the
     # isolation.
-    bob_ctx = _fake_ctx(client_id=ids["bob"])
+    bob_ctx = _fake_ctx(session_id=ids["bob"])
     bob_cancel = await _call(
         server,
         "memory_write_cancel",
@@ -275,8 +277,8 @@ async def test_disabled_scopes_are_isolated_between_clients(
     consent. The registry isolates `disabled_scopes` per client.
     """
     server, registry, ids = two_client_server
-    alice_ctx = _fake_ctx(client_id=ids["alice"])
-    bob_ctx = _fake_ctx(client_id=ids["bob"])
+    alice_ctx = _fake_ctx(session_id=ids["alice"])
+    bob_ctx = _fake_ctx(session_id=ids["bob"])
 
     # Alice disables `tools`.
     alice_disable = await _call(
@@ -306,35 +308,35 @@ async def test_disabled_scopes_are_isolated_between_clients(
 
 
 def test_session_registry_evicts_oldest_when_full() -> None:
-    """Inserting one client_id past `max_clients` evicts the oldest entry.
+    """Inserting one session_id past `max_clients` evicts the oldest entry.
 
     Without the LRU cap, a long-running HTTP/SSE server would accumulate
-    state for every distinct client_id ever connected — an unbounded
+    state for every distinct session_id ever connected — an unbounded
     memory leak. The eviction kicks in on the insert-past-cap path,
     drops the front of the OrderedDict (least-recently-used), and bumps
     the `evicted` counter exposed via `stats()`.
     """
     registry = SessionRegistry(max_clients=3)
-    s0 = registry.for_request(_fake_ctx(client_id="c0"))
-    registry.for_request(_fake_ctx(client_id="c1"))
-    registry.for_request(_fake_ctx(client_id="c2"))
+    s0 = registry.for_request(_fake_ctx(session_id="c0"))
+    registry.for_request(_fake_ctx(session_id="c1"))
+    registry.for_request(_fake_ctx(session_id="c2"))
     assert registry.stats() == {"size": 3, "evicted": 0, "max_clients": 3}
 
     # One past the cap — c0 (oldest) gets evicted.
-    registry.for_request(_fake_ctx(client_id="c3"))
+    registry.for_request(_fake_ctx(session_id="c3"))
     stats = registry.stats()
     assert stats["size"] == 3
     assert stats["evicted"] == 1
     assert stats["max_clients"] == 3
 
     keys = registry.known_keys()
-    assert "c0" not in keys, "oldest entry should have been evicted"
-    assert {"c1", "c2", "c3"} <= keys
+    assert "session=c0" not in keys, "oldest entry should have been evicted"
+    assert {"session=c1", "session=c2", "session=c3"} <= keys
 
     # And a fresh `for_request` for c0 mints a NEW state (different
     # identity from the original) — proving the original was actually
     # dropped, not just moved.
-    s0_again = registry.for_request(_fake_ctx(client_id="c0"))
+    s0_again = registry.for_request(_fake_ctx(session_id="c0"))
     assert s0_again is not s0
     # Inserting c0 fresh evicted the next-oldest (c1) since the cap was full.
     assert registry.stats()["evicted"] == 2
@@ -351,23 +353,23 @@ def test_session_registry_touches_on_access() -> None:
     behave as a FIFO instead of an LRU.
     """
     registry = SessionRegistry(max_clients=3)
-    s_a = registry.for_request(_fake_ctx(client_id="A"))
-    registry.for_request(_fake_ctx(client_id="B"))
-    registry.for_request(_fake_ctx(client_id="C"))
+    s_a = registry.for_request(_fake_ctx(session_id="A"))
+    registry.for_request(_fake_ctx(session_id="B"))
+    registry.for_request(_fake_ctx(session_id="C"))
 
     # Touch A — it should now be the most-recently-used.
-    s_a_again = registry.for_request(_fake_ctx(client_id="A"))
+    s_a_again = registry.for_request(_fake_ctx(session_id="A"))
     assert s_a_again is s_a  # same instance — touch, not re-create
 
     # Insert D — pushes past the cap, evicts the current oldest (B).
-    registry.for_request(_fake_ctx(client_id="D"))
+    registry.for_request(_fake_ctx(session_id="D"))
 
     keys = registry.known_keys()
-    assert "B" not in keys, (
+    assert "session=B" not in keys, (
         "B should have been evicted as the oldest after A was touched; "
         "if A was evicted instead, touch-on-access isn't working"
     )
-    assert {"A", "C", "D"} <= keys
+    assert {"session=A", "session=C", "session=D"} <= keys
     assert registry.stats()["evicted"] == 1
 
 
@@ -384,7 +386,7 @@ def test_session_registry_touches_on_access() -> None:
 
 
 def test_session_registry_same_key_concurrent_for_request_returns_one_state() -> None:
-    """N threads racing on the same fresh client_id must all receive the
+    """N threads racing on the same fresh session_id must all receive the
     same `SessionState` instance.
 
     Without the lock, two threads observing `self._states.get(key) is None`
@@ -404,7 +406,7 @@ def test_session_registry_same_key_concurrent_for_request_returns_one_state() ->
 
     def worker() -> None:
         start.wait()  # release all threads simultaneously for maximum contention
-        state = registry.for_request(_fake_ctx(client_id="hot-key"))
+        state = registry.for_request(_fake_ctx(session_id="hot-key"))
         with results_lock:
             results.append(state)
 
@@ -450,7 +452,7 @@ def test_session_registry_concurrent_distinct_inserts_preserve_size_invariant() 
         try:
             start.wait()
             for i in range(inserts_per_thread):
-                registry.for_request(_fake_ctx(client_id=f"t{thread_idx}-k{i}"))
+                registry.for_request(_fake_ctx(session_id=f"t{thread_idx}-k{i}"))
         except BaseException as exc:  # noqa: BLE001
             errors.append(exc)
 

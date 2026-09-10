@@ -42,6 +42,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from . import _fsutil
+from .identity import ENV_CLIENT
 from .prompts import SYSTEM_PROMPT_ADDENDUM
 
 
@@ -252,6 +253,7 @@ def server_snippet(
     *,
     name: str = DEFAULT_SERVER_NAME,
     binary: str | None = None,
+    client: str | None = None,
 ) -> dict[str, Any]:
     """Return the canonical `mcpServers` entry for bettermemory. Suitable
     for direct embedding in any MCP client's config file.
@@ -259,16 +261,23 @@ def server_snippet(
     The shape includes `type: "stdio"` and `env: {}` even though both are
     optional — they match what `claude mcp add` produces and what Claude
     Code 2.x writes by default, so the snippet is recognizable next to
-    the user's other entries instead of looking deliberately minimal."""
+    the user's other entries instead of looking deliberately minimal.
+
+    `client` names the client the entry is for; when given, the `env`
+    block declares it as `BETTERMEMORY_CLIENT` so every write the server
+    records carries the client's name even where the handshake's
+    `clientInfo` is absent — a stdio server's only out-of-band channel
+    (`identity.SOURCE_ENV`)."""
     if binary is None:
         binary = find_binary()
+    env: dict[str, Any] = {ENV_CLIENT: client} if client else {}
     return {
         "mcpServers": {
             name: {
                 "type": "stdio",
                 "command": binary,
                 "args": [],
-                "env": {},
+                "env": env,
             }
         }
     }
@@ -452,6 +461,7 @@ def patch_client_config(
     *,
     name: str = DEFAULT_SERVER_NAME,
     binary: str | None = None,
+    client: str | None = None,
 ) -> dict[str, Any]:
     """Idempotently merge the bettermemory entry into the named MCP
     client config file. Creates parent dirs and the file if missing.
@@ -603,6 +613,10 @@ def patch_client_config(
             merged_env.update(legacy_entry["env"])
         if isinstance(existing_entry.get("env"), dict):
             merged_env.update(existing_entry["env"])
+        # Declare the client to the server (`identity.SOURCE_ENV`); a value
+        # the user already set wins, declared is declared.
+        if client is not None:
+            merged_env.setdefault(ENV_CLIENT, client)
 
         new_entry["type"] = "stdio"
         new_entry["command"] = binary
@@ -789,7 +803,7 @@ def cli_init(
     if name is None:
         name = DEFAULT_SERVER_NAME
     binary = find_binary()
-    snippet = server_snippet(name=name, binary=binary)
+    snippet = server_snippet(name=name, binary=binary, client=client)
 
     # Continue's current released schema takes `mcpServers` as a LIST in
     # `config.yaml`; the object-in-`config.json` shape this client target
@@ -817,7 +831,9 @@ def cli_init(
             out["system_prompt_addendum"] = SYSTEM_PROMPT_ADDENDUM
         if client is not None and not print_only:
             target = config_path or KNOWN_CLIENTS[client]().paths[0]
-            out["patch"] = patch_client_config(target, name=name, binary=binary)
+            out["patch"] = patch_client_config(
+                target, name=name, binary=binary, client=client
+            )
         print(json.dumps(out, indent=2))
         return
 
@@ -842,7 +858,7 @@ def cli_init(
         print(f"\n# Save the above to: {target}")
         return
 
-    result = patch_client_config(target, name=name, binary=binary)
+    result = patch_client_config(target, name=name, binary=binary, client=client)
     _print_patch_summary(
         result=result,
         binary=binary,

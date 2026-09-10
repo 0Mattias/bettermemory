@@ -242,7 +242,7 @@ rebuilt from scratch, so the rule survives an index reset.
 
 ## Module map
 
-Ninety-four modules under `src/bettermemory/`. A tool call crosses
+Ninety-five modules under `src/bettermemory/`. A tool call crosses
 them in one order, and the map is that order.
 
 **Entry.** `cli/` is the `bettermemory` command; `cli/serve.py` is the
@@ -256,10 +256,16 @@ re-export shim kept for callers that import `build_server` from there.
 them reach for (payload validation, use-token settlement, the turn
 counter). `_handlers.py` is the facade that wires those functions onto
 one class, and the chokepoint the handlers call `capture_origin`
-through. `session.py` resolves the per-client `SessionState` for the
-request (pending writes, disabled scopes, use tokens) and `_response.py`
-shapes what goes back on the wire. `_decorators.py` and `time_utils.py`
-are cross-cutting.
+through. `identity.py` resolves who is calling and from where — the
+declared client, model and transport session, the attested OAuth
+principal, and the channel that named the workspace — and publishes
+the caller for the request so the recorder, the registry and origin
+capture read it without a threaded argument; on the wire path its
+middleware asks a roots-capable client where it works, once per
+connection. `session.py` resolves the per-client `SessionState` for
+the request (pending writes, disabled scopes, use tokens), keyed on
+that caller, and `_response.py` shapes what goes back on the wire.
+`_decorators.py` and `time_utils.py` are cross-cutting.
 
 **Write path.** `handlers/write.py` runs the gate chain: `credentials.py`
 (secret-shaped strings), `durability.py` (structural durability),

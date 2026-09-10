@@ -21,11 +21,16 @@ a distinct `SessionState` per client identifier.
 The single-state and registry shapes are unified through the
 `SessionSource` protocol so tests can pass a concrete `SessionState`
 directly (no per-client routing needed when there's only one) and
-production can pass a `SessionRegistry` (per-client when a stable
-client_id is available, falling back to a shared "default" state when
-not). `server._register_tools` calls `sessions.for_request(ctx)` at
-the entry of every tool handler; the resolution layer is invisible
-to the handler bodies.
+production can pass a `SessionRegistry` (per-client when the request
+carries something that can differ between two clients of one process
+— an attested principal, a transport session, a header-declared
+identity; see `identity.registry_key` — falling back to a shared
+"default" state when not). `server._register_tools` calls
+`sessions.for_request(ctx)` at the entry of every tool handler; the
+resolution layer is invisible to the handler bodies. That entry is also
+where the request's caller is resolved and published
+(`identity.bind`), so `origin.capture` and the event recorder further
+down the same call read the request's declarations.
 """
 
 from __future__ import annotations
@@ -41,7 +46,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple, Protocol, TypeAlias
 
+from . import identity
 from ._fsutil import atomic_write_bytes, flock_excl
+from .identity import Actor
 from .models import Category, Confidence, Source
 from .origin import Origin
 
@@ -72,12 +79,12 @@ _PENDING_TTL_SECONDS = 60 * 60  # 1 hour
 # confirmation doesn't drop them silently. See `PendingWriteLog`.
 PENDING_WRITES_FILENAME = ".pending_writes.jsonl"
 
-# Key under which clients that don't expose a stable identifier (e.g.
-# stdio transport, which sends no client id in the request's _meta) share
-# a single SessionState. Anything else opts into per-client isolation by
-# passing a real client id through. Declared up here (rather than beside
-# `SessionRegistry`, where it used to live) because `SessionState` now
-# carries it as a field default.
+# Key under which clients that carry no per-request discriminator (the
+# stdio transport: no headers, no transport session, no principal) share
+# a single SessionState. Anything the resolver can tell apart
+# (`identity.registry_key`) opts into per-client isolation. Declared up
+# here (rather than beside `SessionRegistry`, where it used to live)
+# because `SessionState` now carries it as a field default.
 _DEFAULT_CLIENT_KEY = "__default__"
 
 # Pending use-tokens are evicted on a wall-clock TTL as a safety net for
@@ -215,8 +222,8 @@ def _encode_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """`Store.write` kwargs as JSON-safe values.
 
     The three enums are `str` subclasses, so `json.dumps` would already
-    emit them — but `origin` is a pydantic model and raises, which is the
-    reason this function exists rather than a bare dumps.
+    emit them — but `origin` and `actor` are pydantic models and raise,
+    which is the reason this function exists rather than a bare dumps.
     """
     out: dict[str, Any] = {}
     for key, value in payload.items():
@@ -224,6 +231,8 @@ def _encode_payload(payload: dict[str, Any]) -> dict[str, Any]:
             out[key] = getattr(value, "value", value)
         elif key == "origin":
             out[key] = value.model_dump() if value is not None else None
+        elif key == "actor":
+            out[key] = value.model_dump(mode="json") if value is not None else None
         else:
             out[key] = value
     return out
@@ -246,6 +255,9 @@ def _decode_payload(raw: dict[str, Any]) -> dict[str, Any]:
     origin = out.get("origin")
     if isinstance(origin, dict):
         out["origin"] = Origin.model_validate(origin)
+    actor = out.get("actor")
+    if isinstance(actor, dict):
+        out["actor"] = Actor.model_validate(actor)
     return out
 
 
@@ -1230,8 +1242,11 @@ class SessionState:
         `build_server(state=...)` keep working — the handlers call
         `state.for_request(ctx)` uniformly and get the same instance
         back. Per-client routing only kicks in when a `SessionRegistry`
-        is used instead.
+        is used instead. The caller is still resolved and published
+        (`identity.bind`) so the write path sees the request's
+        declarations whichever source shape is in use.
         """
+        identity.bind(ctx)
         return self
 
 
@@ -1252,10 +1267,12 @@ class SessionSource(Protocol):
 class SessionRegistry:
     """Per-client `SessionState` map for multi-client server processes.
 
-    Keys are the request's client id (or `_DEFAULT_CLIENT_KEY` when
-    the transport doesn't supply one). States are created lazily on
-    first `for_request` for a given key, so an idle client doesn't
-    pre-allocate anything.
+    Keys are `identity.registry_key` of the request's resolved actor —
+    the attested principal, the transport session, and any
+    header-declared client/model, whichever are present — or
+    `_DEFAULT_CLIENT_KEY` when the request carries none of them. States
+    are created lazily on first `for_request` for a given key, so an
+    idle client doesn't pre-allocate anything.
 
     Backed by an `OrderedDict` with an LRU eviction cap (`max_clients`,
     default 256): on each `for_request` an existing key is touched to
@@ -1322,29 +1339,21 @@ class SessionRegistry:
 
     @staticmethod
     def _key_for_ctx(ctx: "_Ctx | None") -> str:
-        if ctx is None:
-            return _DEFAULT_CLIENT_KEY
-        try:
-            meta = ctx.request_context.meta
-            client_id = meta.get("client_id") if meta is not None else None
-        except (AttributeError, ValueError):
-            # `ctx.request_context` may raise ValueError if no request is
-            # in progress (a Context constructed outside a tool call).
-            # Treat that as "no identifier" and bucket into the default;
-            # the alternative would be to crash the tool call for a
-            # degenerate context shape. AttributeError covers the stand-in
-            # contexts the suite forges, which carry no request context.
-            #
-            # mcp 1.x exposed this as a `Context.client_id` property that
-            # did the same `getattr(request_context.meta, ...)` read; 2.x
-            # dropped the property, and `meta` went from a pydantic model
-            # to `RequestParamsMeta`, an open TypedDict (`extra_items=Any`)
-            # that round-trips arbitrary keys — so the key is still
-            # reachable, by mapping read instead of attribute read.
-            return _DEFAULT_CLIENT_KEY
-        if not client_id:
-            return _DEFAULT_CLIENT_KEY
-        return str(client_id)
+        # Resolve the caller from the handler context and publish it for
+        # the rest of this call (`identity.bind` never raises: a context
+        # constructed outside a request, or a forged stand-in with no
+        # request context, contributes nothing and the environment
+        # still can). The bucket is whatever the resolver found that can
+        # differ between two clients of one process; a stdio request has
+        # none of it and lands in the default.
+        #
+        # Through 7.9.0 this read `ctx.request_context.meta["client_id"]`,
+        # a key no known client sends, so every production request —
+        # even over HTTP — collapsed into `_DEFAULT_CLIENT_KEY` and the
+        # per-client isolation below was unreachable.
+        caller = identity.bind(ctx)
+        key = identity.registry_key(caller.actor)
+        return key if key is not None else _DEFAULT_CLIENT_KEY
 
     def known_keys(self) -> set[str]:
         """Snapshot of the registered session keys. Test-only; lets

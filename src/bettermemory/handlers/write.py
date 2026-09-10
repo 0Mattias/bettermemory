@@ -59,6 +59,7 @@ from ..scope_match import (
     detect_scope_mismatch,
 )
 from ..search import find_similar, find_similar_tombstones
+from .. import identity
 from ..session import GATE_FLAG_KEYS, PendingWrite, SessionState
 from ..store import MemoryNotFoundError, TombstonedError
 from ..supersession import SupersessionMatch, detect_supersession
@@ -1075,6 +1076,12 @@ async def memory_write(
     # We never persist origin for a rejection — the early return
     # below short-circuits before any disk I/O.
     payload["origin"] = _h.capture_origin()
+    # The actor rides beside the origin: who is writing, resolved at the
+    # handler entry (`identity.bind` inside `sessions.for_request`) from
+    # the request's headers, the server environment, the `initialize`
+    # handshake's clientInfo and the attested principal. None when the
+    # caller declared nothing, and then the record carries no block.
+    payload["actor"] = identity.current_actor()
 
     # Declared claims are oracle-checked HERE, against the origin just
     # captured — before the gate chain, because a false claim has no

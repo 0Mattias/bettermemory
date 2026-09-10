@@ -151,6 +151,14 @@ async def memory_show(
         "provenance": index_reads.pop("provenance"),
         "body": memory.body,
         "origin": deps.responses.origin_to_dict(memory.origin),
+        # Who wrote it — the full shape, nulls included, so an absent
+        # attestation reads as recorded rather than omitted. The key
+        # itself is omitted when the writer declared nothing (identity).
+        **(
+            {"actor": actor_dict}
+            if (actor_dict := deps.responses.actor_to_dict(memory.actor)) is not None
+            else {}
+        ),
         "path_drift": (
             drift.to_dict()
             if (drift.has_drift or drift.verified or drift.expected_absent)

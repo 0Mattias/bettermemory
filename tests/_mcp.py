@@ -35,8 +35,39 @@ from mcp.server.mcpserver import MCPServer
 
 
 @dataclass
+class _FakeClientInfo:
+    name: str | None = None
+    version: str | None = None
+
+
+@dataclass
+class _FakeClientParams:
+    client_info: _FakeClientInfo | None = None
+
+
+@dataclass
+class _FakeSession:
+    """Stands in for `ServerSession`: `client_params` is what the identity
+    resolver reads (the handshake's `clientInfo`); the roots surface is
+    forged by the identity tests themselves."""
+
+    client_params: _FakeClientParams | None = None
+
+
+@dataclass
+class _FakeRequest:
+    """Stands in for the transport's request object — the SDK reads
+    `request_context.request.headers`, and stdio has no request at all."""
+
+    headers: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
 class _FakeRequestContext:
-    meta: dict[str, Any] | None = field(default=None)
+    meta: dict[str, Any] | None = None
+    request: _FakeRequest | None = None
+    session: _FakeSession | None = None
+    request_id: str | None = None
 
 
 @dataclass
@@ -44,35 +75,63 @@ class _FakeCtx:
     request_context: _FakeRequestContext
 
 
-def fake_ctx(client_id: str | None = None, *, with_meta: bool = True) -> Any:
+def fake_ctx(
+    session_id: str | None = None,
+    *,
+    headers: dict[str, str] | None = None,
+    client_info: tuple[str | None, str | None] | None = None,
+    request_id: str | None = None,
+    with_request: bool = True,
+) -> Any:
     """A stand-in for the SDK's request-scoped `Context`, typed `Any`.
 
-    `SessionRegistry._key_for_ctx` reads exactly one thing —
-    `ctx.request_context.meta["client_id"]` — so a duck-typed object with
-    that path is enough for a unit test. Building a real `Context` would
-    mean standing up a whole request context to set one key.
+    `identity.resolve` reads three paths off `ctx.request_context`:
+    `request.headers` (the `x-bettermemory-*` declarations and the
+    transport's `mcp-session-id`), `session.client_params.client_info`
+    (the `initialize` handshake's clientInfo), and the attested principal
+    through the SDK's auth contextvar, which no forged object can reach.
+    A duck-typed object with those paths is enough for a unit test;
+    building a real `Context` would mean standing up a whole request
+    context to set one header.
 
-    It lives HERE, rather than in each test module, because it is knowledge
-    about the SDK's request shape and that knowledge just moved: mcp 1.x
-    exposed the id as a `Context.client_id` property, 2.x dropped the
-    property and left the key reachable through `_meta`, an open TypedDict.
-    Two test modules had byte-identical private copies of the old shape and
-    both broke on that one change — the same duplication tax this module
-    was created to stop paying for `call_tool`.
+    `session_id` forges the transport session (`mcp-session-id`), the
+    discriminator two HTTP clients of one server differ on — what the
+    session-registry tests vary per "client". `headers` adds any other
+    header verbatim; `client_info` is `(name, version)`.
 
-    `with_meta=False` forges the other real absence: a transport that sent
-    no `_meta` at all, where `meta` is None rather than a map missing the
-    key. Both must bucket into the default session, and they reach
-    `_key_for_ctx` by different branches.
+    `with_request=False` forges the stdio shape: no request object, so no
+    headers at all — the resolver must treat that as "nothing declared",
+    not as an error, and bucket the call into the default session.
+
+    It lives HERE, rather than in each test module, because it is
+    knowledge about the SDK's request shape and that knowledge has moved
+    twice: mcp 1.x exposed a `Context.client_id` property, 2.x left the
+    key reachable only through `_meta` (which no client sends), and 7.10.0
+    retired that key for the resolved actor.
 
     Returned as `Any` so strict mypy accepts it where `for_request` expects
     a real `Context`; the stand-in is structurally compatible and the cast
     is purely a type-checker concession.
     """
-    if not with_meta:
-        return _FakeCtx(request_context=_FakeRequestContext(meta=None))
-    meta: dict[str, Any] = {} if client_id is None else {"client_id": client_id}
-    return _FakeCtx(request_context=_FakeRequestContext(meta=meta))
+    merged: dict[str, str] = {}
+    if session_id is not None:
+        merged["mcp-session-id"] = session_id
+    if headers:
+        merged.update(headers)
+    request = _FakeRequest(headers=merged) if with_request else None
+    session = None
+    if client_info is not None:
+        name, version = client_info
+        session = _FakeSession(
+            client_params=_FakeClientParams(
+                client_info=_FakeClientInfo(name=name, version=version)
+            )
+        )
+    return _FakeCtx(
+        request_context=_FakeRequestContext(
+            meta={}, request=request, session=session, request_id=request_id
+        )
+    )
 
 
 def probe_server(name: str) -> Any:

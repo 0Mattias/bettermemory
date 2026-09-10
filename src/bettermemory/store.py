@@ -61,6 +61,7 @@ from .models import (
     make_slug,
     utcnow,
 )
+from .identity import SOURCE_PROCESS_CWD, Actor
 from .origin import Origin, is_full_commit_sha
 from .quarantine import quarantined_names
 
@@ -420,8 +421,14 @@ class Store:
         category: Category | None = None,
         claims: list[str] | None = None,
         links: list[Any] | None = None,
+        actor: Actor | dict[str, Any] | None = None,
     ) -> Memory:
         """Create a new memory. Generates ID, slug, filename.
+
+        `actor` is who is writing — the `identity.Actor` the handler
+        resolved for the request, or its dict (a staged pending-write
+        payload carries the dict, being JSON). Persisted beside `origin`
+        and, like it, only when it carries something.
 
         `links` are the record's outbound edges at birth — `MemoryLink`
         instances or their `{type, target_id, note}` dicts (the staged
@@ -451,6 +458,7 @@ class Store:
             source=source,
             body=content.strip() + "\n",
             origin=origin,
+            actor=Actor.model_validate(actor) if isinstance(actor, dict) else actor,
             category=category,
             claims=list(claims) if claims else [],
             links=[
@@ -1321,6 +1329,10 @@ class Store:
                 if isinstance(origin_raw, dict)
                 else None
             )
+            actor_raw = meta.get("actor")
+            actor = (
+                Actor.model_validate(actor_raw) if isinstance(actor_raw, dict) else None
+            )
             verified_raw = meta.get("last_verified_at")
             last_verified_at: datetime | None
             if verified_raw is None:
@@ -1349,6 +1361,7 @@ class Store:
                 source=Source(meta["source"]),
                 body=post.content.strip() + "\n",
                 origin=origin,
+                actor=actor,
                 last_verified_at=last_verified_at,
                 category=category,
                 verified_paths=_load_str_list(meta.get("verified_paths")),
@@ -2276,6 +2289,10 @@ def _parse_memory_file(path: Path) -> Memory:
         origin = (
             Origin.model_validate(origin_raw) if isinstance(origin_raw, dict) else None
         )
+        # `actor` is additive the same way: absent on every record written
+        # before 7.10.0 and on one whose writer declared nothing.
+        actor_raw = meta.get("actor")
+        actor = Actor.model_validate(actor_raw) if isinstance(actor_raw, dict) else None
         # `last_verified_at` is also additive — older memories have no
         # entry and read as "never verified". A malformed timestamp is
         # treated the same as missing (rather than raising) so a typo
@@ -2351,6 +2368,7 @@ def _parse_memory_file(path: Path) -> Memory:
             source=Source(meta["source"]),
             body=post.content.strip() + "\n",
             origin=origin,
+            actor=actor,
             last_verified_at=last_verified_at,
             category=category,
             verified_paths=_load_str_list(meta.get("verified_paths")),
@@ -3265,8 +3283,23 @@ def _memory_metadata(memory: Memory) -> dict[str, object]:
     # `origin: {cwd: null, repo: null, branch: null}` — that's noise.
     if memory.origin is not None:
         origin_dict = memory.origin.model_dump(mode="json", exclude_none=True)
+        # The process-cwd `source` stays implicit on disk: it is the only
+        # channel that existed before the field, so leaving it off keeps
+        # a non-declaring client's file byte-identical to the pre-field
+        # shape. A declared channel (`header`, `env`, `roots`) is
+        # written, because that is the fact the field exists to keep.
+        if origin_dict.get("source") == SOURCE_PROCESS_CWD:
+            del origin_dict["source"]
         if origin_dict:
             meta["origin"] = origin_dict
+    # `actor` is emitted only when the writing request declared or
+    # attested something — the discipline the episode writer uses for
+    # `swarm_id` — so a memory from a client that said nothing serializes
+    # byte-identically to the 7.9.0 format.
+    if memory.actor is not None:
+        actor_dict = memory.actor.to_record()
+        if actor_dict:
+            meta["actor"] = actor_dict
     # `last_verified_at` is omitted from frontmatter when None — keeps
     # newly-written memories from carrying a `last_verified_at: null`
     # placeholder, which would be visual noise on every file. Once the

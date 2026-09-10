@@ -97,10 +97,13 @@ async def test_write_captures_origin_into_show(
         server, "memory_write", content="durable fact", scopes=["tools"]
     )
     shown = await _call(server, "memory_show", id=written["id"])
+    # `source` is the read surface's label for an origin that names no
+    # channel: it was captured from the process cwd (identity, 7.10.0).
     assert shown["origin"] == {
         "cwd": "/projects/foo",
         "repo": "git@github.com:example/foo.git",
         "branch": "main",
+        "source": "process-cwd",
     }
 
 
@@ -112,7 +115,7 @@ async def test_write_with_no_repo_persists_only_cwd(
         server, "memory_write", content="durable fact", scopes=["tools"]
     )
     shown = await _call(server, "memory_show", id=written["id"])
-    assert shown["origin"] == {"cwd": "/projects/scratch"}
+    assert shown["origin"] == {"cwd": "/projects/scratch", "source": "process-cwd"}
 
 
 async def test_origin_persists_through_disk_roundtrip(

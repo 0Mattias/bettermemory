@@ -150,3 +150,35 @@ If you find a client whose snippet shape isn't this, please file an issue.
 | Cursor          | `~/.cursor/mcp.json` or `<repo>/.cursor/mcp.json` | yes |
 | Continue        | `~/.continue/config.json` (legacy shape; current Continue wants a YAML list in `config.yaml` — see caveat above) | writes + warns |
 | Cline           | VS Code `globalStorage/saoudrizwan.claude-dev/...` | yes (default VS Code only) |
+
+## Declaring who is calling
+
+Since 7.10.0 every memory records who wrote it (`actor`) and which
+channel named the directory it was written from (`origin.source`), and
+every event carries the same actor. A stdio server has exactly one
+out-of-band channel for that: the `env` block of its config entry.
+
+- `BETTERMEMORY_CLIENT` — the client's name. `bettermemory init
+  --client cursor` writes `"env": {"BETTERMEMORY_CLIENT": "cursor"}`
+  into the entry it patches; a value you set yourself is kept.
+- `BETTERMEMORY_CLIENT_VERSION`, `BETTERMEMORY_MODEL` — optional. The
+  handshake's `clientInfo` fills the client name and version when the
+  client sends one (Claude Code does), so the model is the one you
+  usually have to declare.
+- `BETTERMEMORY_WORKSPACE` — the project directory, for a host that
+  starts the server somewhere else. One long-lived gateway serving many
+  chat surfaces from `$HOME` (Hermes Agent's shape: stdio servers take
+  `command`, `args` and `env`, and no `cwd`) would otherwise anchor
+  every write to the gateway's own directory; with the variable set the
+  write records the declared project, its git remote and branch, and
+  `source: env` beside them.
+
+Over HTTP the same declarations travel as request headers —
+`x-bettermemory-client`, `x-bettermemory-client-version`,
+`x-bettermemory-model`, `x-bettermemory-workspace` — and take precedence
+over the environment; a client that offers `roots` is asked once per
+connection where it works, ranking below both. An OAuth token verifier
+on the transport fills `actor.principal`, the only attested field.
+Everything declared is client input and is stored as such; `SECURITY.md`
+says what that does and does not protect. `docs/api.md` (under
+Identity) has the full precedence table and the on-disk shape.

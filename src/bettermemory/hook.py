@@ -124,6 +124,7 @@ from .config import Config, load_config
 from .events import Recorder, redact_query
 from .events import iter_events_window
 from .models import utcnow
+from . import identity
 from .origin import Origin, capture as capture_origin
 from .store import MemoryNotFoundError, Store, TombstonedError
 from .time_utils import parse_event_ts
@@ -514,6 +515,11 @@ def run_audit(
     # own read at production's width, which under `outcome_demotion` is
     # wider than this one.
     recent = list(iter_events_window(root, REAUDIT_DEDUP_WINDOW_SECONDS))
+    # The hook reads a transcript, not the wire: publish its caller so
+    # the events below carry `actor` (client, transcript-derived model,
+    # transcript id as the session — every value declared, the principal
+    # stays None) beside the top-level `client_model` eval slices on.
+    identity.bind_transcript(session_id=session_id, model=client_model)
     # Capture once; reused for the probe's auto-scope and stamped on the
     # hook's events so episode_handoff can worktree-match this turn's
     # session (queue #28). The hook runs as a fresh process in the
@@ -884,6 +890,9 @@ def run_prompt_recall(
         return None
     store = Store(root)
     recent = list(iter_events_window(root, REAUDIT_DEDUP_WINDOW_SECONDS))
+    # Same caller the Stop hook publishes (`run_audit`), minus the model
+    # — this hook fires before the assistant has answered.
+    identity.bind_transcript(session_id=session_id, model=None)
     caller_origin = capture_origin()
     if caller_origin.git_indeterminate:
         # Delivery is scope-gated on the caller's repo and worktree, and

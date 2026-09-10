@@ -478,7 +478,19 @@ either — see the two falsified claims above; sharding the writes
 without also partitioning the rotation namespace cost a data-loss
 defect that took until `eace517` to close.
 
-### Phase 2 — Swarm provenance on durable memory
+### Phase 2 — Swarm provenance on durable memory — SHIPPED 2026-09-10 (v7.10.0), generalized
+
+Shipped as the identity resolver (`identity.py`) rather than as the
+two fields sketched below: a durable memory now carries an `actor`
+block — declared client, version and model, the transport session, the
+attested OAuth principal, each declared field naming its channel — and
+its `origin` names the channel that chose the workspace. That is
+`swarm_id` / `agent_id` generalized from "which cohort" to "which
+client, model and person, through which channel", with the same
+conditional-frontmatter discipline the episode writer uses. The
+`memory_search(swarm_id=)` filter and the per-swarm `memory_health`
+slice are NOT shipped; `docs/ROADMAP.md` carries them as the next
+units.
 
 Generalize the episodes `swarm_id` to durable memories.
 

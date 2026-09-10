@@ -66,6 +66,7 @@ from ._handlers import (
     DESC_MEMORY_WRITE_CONFIRM,
     ToolHandlers,
 )
+from . import identity
 from ._response import ResponseBuilder
 from .config import Config, load_config
 from .events import Recorder
@@ -211,6 +212,13 @@ def build_server(
             "drifted."
         ),
     )
+
+    # Wire-path identity (`identity.middleware`): before a `tools/call`
+    # reaches its handler, ask a roots-capable client where it works —
+    # once per connection — and publish the resolved caller for the
+    # request's task. In-process callers never pass through here; they
+    # reach the same resolution through `sessions.for_request`.
+    mcp.middleware.append(identity.middleware)
 
     _register_tools(
         mcp, config=config, store=store, sessions=sessions, recorder=recorder

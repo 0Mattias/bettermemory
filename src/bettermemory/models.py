@@ -11,6 +11,7 @@ from typing import Annotated, Any
 
 from pydantic import BaseModel, Field, field_validator
 
+from .identity import Actor
 from .origin import Origin, is_full_commit_sha
 
 
@@ -332,6 +333,16 @@ class Memory(BaseModel):
     auto-scope feature shipped have no origin and are treated as "global"
     by `memory_search(auto_scope=True)`.
 
+    `actor` is who wrote the record — the `identity.Actor` resolved for
+    the writing request: a declared client / version / model, the
+    transport session, and the attested OAuth `principal`, each declared
+    field naming the channel that supplied it. None on a record written
+    before the field shipped or by a client that declared nothing; the
+    frontmatter block is emitted only when something is set, so such a
+    record is byte-identical to the pre-field shape. Evidence, never a
+    permission: nothing filters on it and `memory_show` stays
+    unrestricted.
+
     `last_verified_at` is bumped by `memory_verify` (and only that tool) when
     the caller has spot-checked the body's claims against ground truth — file
     paths still exist, version numbers still match, etc. None means "never
@@ -409,6 +420,7 @@ class Memory(BaseModel):
     source: Source
     body: str
     origin: Origin | None = None
+    actor: Actor | None = None
     last_verified_at: datetime | None = None
     category: Category | None = None
     verified_paths: list[str] = Field(default_factory=list)
@@ -607,6 +619,7 @@ class TombstonedMemory(BaseModel):
     source: Source
     body: str
     origin: Origin | None = None
+    actor: Actor | None = None
     last_verified_at: datetime | None = None
     category: Category | None = None
     verified_paths: list[str] = Field(default_factory=list)

@@ -49,6 +49,8 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, PrivateAttr
 
+from . import identity
+
 log = logging.getLogger("bettermemory.origin")
 
 
@@ -83,6 +85,16 @@ class Origin(BaseModel):
     repo: str | None = None  # raw remote URL or null
     branch: str | None = None  # current branch or null (detached HEAD → null)
     worktree_root: str | None = None  # `git rev-parse --show-toplevel` or null
+    # Which channel named the directory this origin describes — one of
+    # `identity.WORKSPACE_SOURCES` when `capture()` resolved it (`header`,
+    # `env`, `roots`, or the labeled fallback `process-cwd`); None on a
+    # record written before the field existed, or captured from an
+    # explicit `cwd` whose caller said nothing. Persisted only when it is
+    # NOT the process cwd, so a non-declaring client's frontmatter stays
+    # byte-identical to the pre-field shape; the read surfaces label the
+    # absent case `process-cwd` explicitly (`ResponseBuilder.origin_to_dict`),
+    # because an unlabeled cwd is exactly the silent default 7.10.0 retired.
+    source: str | None = None
 
     # Other official spellings of the remote `repo` was read from — every
     # raw `git config --get-all remote.<name>.url` value other than the
@@ -122,13 +134,23 @@ class Origin(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def capture(cwd: Path | None = None) -> Origin:
+def capture(cwd: Path | None = None, *, source: str | None = None) -> Origin:
     """Snapshot the current working context.
 
-    `cwd` is parameterized for testability — production usage passes None
-    and we read `Path.cwd()`. If git isn't on PATH or the directory isn't
-    a repo, `repo` and `branch` come back null; `cwd` is always populated
-    when the directory exists.
+    `cwd` is parameterized for testability — production usage passes None,
+    and the directory is then WHICHEVER the request declared: a
+    `BETTERMEMORY_WORKSPACE` environment variable, an
+    `x-bettermemory-workspace` header, or a `file://` root the client
+    offered (`identity.workspace_declaration`, in that precedence) — and
+    only when none of those spoke, `Path.cwd()`. `source` records the
+    answering channel on the returned origin; the process-cwd fallback is
+    labeled as such rather than left implicit. A caller passing an
+    explicit `cwd` may name its own `source`; when it does not, the field
+    stays None, which the read surfaces render as the process cwd — the
+    only channel any explicit-cwd caller in this tree stands in for.
+    If git isn't on PATH or the directory isn't a repo, `repo` and
+    `branch` come back null; `cwd` is always populated when the directory
+    exists.
 
     `worktree_root` is captured whenever we're inside any git checkout —
     it is the FIRST probe (`rev-parse --show-toplevel` fails exactly when
@@ -150,10 +172,16 @@ def capture(cwd: Path | None = None) -> Origin:
     let the audit explode.
     """
     if cwd is None:
+        declared = identity.workspace_declaration()
+        if declared is not None:
+            cwd, source = declared
+        elif source is None:
+            source = identity.SOURCE_PROCESS_CWD
+    if cwd is None:
         try:
             resolved = Path.cwd().resolve()
         except (FileNotFoundError, OSError):
-            return Origin()
+            return Origin(source=source)
     else:
         resolved = cwd.resolve()
     cwd_str = str(resolved)
@@ -170,6 +198,7 @@ def capture(cwd: Path | None = None) -> Origin:
         repo=repo_url,
         branch=branch,
         worktree_root=worktree_root,
+        source=source,
     )
     # The first probe is the one that decides whether git ran; the two
     # gated on it cannot fail differently once it has answered.

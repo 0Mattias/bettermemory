@@ -142,6 +142,20 @@ and an entry leaves this file when it lands there.
   cannot diverge. Measure first, and widen `bench/rot`'s blind-spot
   counter so container-valued claims are instrumented before any
   number is quoted for them.
+- **Reading the actor back: filters, a health slice, targeted
+  rollback.** 7.10.0 records who wrote a memory (`actor`) and which
+  channel named its workspace (`origin.source`), and renders both on
+  every read surface — but nothing yet selects on them. The consumers
+  the identity resolver was declared for are the next three units, in
+  this order: `memory_search(client=…)` / `memory_list(client=…)`
+  filters (an index column beside `origin_repo`, one schema bump, so
+  the filter is a `WHERE` and not a body walk); a per-actor slice on
+  `memory_health` ("what did the fleet's seventh agent write this
+  run"); and a `bettermemory consolidate --by-actor` rollback that
+  tombstones one actor's contributions in a window and leaves
+  everyone else's. Each is additive. The Hermes shape (one gateway
+  process, many chat platforms) is the workload they are measured
+  against, and the Teams Phase 1 Store seam follows them.
 - **Cause provenance.** The 6.5.0 label says how a file entered the
   store, not what was in context when the model wrote it, so an
   injection-driven legitimate write reads `local`. A write-time record

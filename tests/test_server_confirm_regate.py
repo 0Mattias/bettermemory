@@ -67,15 +67,15 @@ from bettermemory.session import (
 from bettermemory.store import Store
 
 
-def _fake_ctx(client_id: str) -> Any:
-    """A stand-in `Context` carrying `client_id`, from `tests/_mcp.py`.
+def _fake_ctx(session_id: str) -> Any:
+    """A stand-in `Context` carrying `session_id`, from `tests/_mcp.py`.
 
     The forged shape used to be a private copy here and a byte-identical
     private copy in `tests/test_session_registry.py`; the 2.x port moved
     the client id off `Context.client_id` and both broke at once. It lives
     in tests/_mcp.py now for the same reason the return-shape unpack does.
     """
-    return _mcp_fake_ctx(client_id)
+    return _mcp_fake_ctx(session_id)
 
 
 async def _call(server: Any, name: str, **kwargs: Any) -> Any:
@@ -87,7 +87,7 @@ async def _call(server: Any, name: str, **kwargs: Any) -> Any:
     return await _mcp_call(server, name, kwargs)
 
 
-async def _call_as(server: Any, name: str, client_id: str, **kwargs: Any) -> Any:
+async def _call_as(server: Any, name: str, session_id: str, **kwargs: Any) -> Any:
     """Invoke a tool as a named client.
 
     Reaches the handler function directly rather than going through
@@ -98,7 +98,7 @@ async def _call_as(server: Any, name: str, client_id: str, **kwargs: Any) -> Any
     one thing an isolation test must not do. Same idiom as
     `tests/test_session_registry.py`."""
     fn = server._tool_manager.get_tool(name).fn
-    return await fn(ctx=_fake_ctx(client_id), **kwargs)
+    return await fn(ctx=_fake_ctx(session_id), **kwargs)
 
 
 def _boot(memory_dir: Path, *, sessions: Any = None) -> tuple[Any, Any]:
@@ -563,8 +563,8 @@ async def test_one_client_s_rewrite_keeps_the_other_client_s_rows(
         server, "memory_write_cancel", "client-alice", pending_id=ids["alice"]
     )
     log = PendingWriteLog(memory_dir)
-    assert [r.pending_id for r in log.load("client-alice")] == []
-    assert [r.pending_id for r in log.load("client-bob")] == [ids["bob"]]
+    assert [r.pending_id for r in log.load("session=client-alice")] == []
+    assert [r.pending_id for r in log.load("session=client-bob")] == [ids["bob"]]
 
 
 async def test_expiry_across_a_restart_reads_as_expired_not_missing(
@@ -968,11 +968,11 @@ async def test_one_client_s_claim_keeps_another_client_s_rows(
         server, "memory_write_confirm", "client-alice", pending_id=ids["alice"]
     )
     log = PendingWriteLog(memory_dir)
-    assert [r.pending_id for r in log.load("client-alice")] == []
-    assert log.is_consumed("client-alice", ids["alice"]) is True
-    assert [r.pending_id for r in log.load("client-bob")] == [ids["bob"]]
+    assert [r.pending_id for r in log.load("session=client-alice")] == []
+    assert log.is_consumed("session=client-alice", ids["alice"]) is True
+    assert [r.pending_id for r in log.load("session=client-bob")] == [ids["bob"]]
     # Bob's id is not consumed just because alice's is filed nearby.
-    assert log.is_consumed("client-bob", ids["bob"]) is False
+    assert log.is_consumed("session=client-bob", ids["bob"]) is False
     committed = await _call_as(
         server, "memory_write_confirm", "client-bob", pending_id=ids["bob"]
     )

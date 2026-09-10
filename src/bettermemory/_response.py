@@ -29,6 +29,7 @@ from .models import (
     SimilarHit,
     TombstonedSummary,
 )
+from .identity import SOURCE_PROCESS_CWD, Actor
 from .origin import (
     Origin,
     commit_author_timestamps,
@@ -363,6 +364,9 @@ class ResponseBuilder:
             "staleness_verdict": verdict,
             "origin": self.origin_to_dict(memory.origin),
         }
+        actor = self.actor_to_dict(memory.actor)
+        if actor is not None:
+            out["actor"] = actor
         # Corroboration rollup — omitted while zero, the same
         # absence-as-signal contract the on-disk frontmatter uses, so
         # the common never-corroborated shape is unchanged.
@@ -422,6 +426,9 @@ class ResponseBuilder:
             "updated": isoformat(memory.updated),
             "last_verified_at": isoformat_optional(memory.last_verified_at),
         }
+        actor = self.actor_to_dict(memory.actor)
+        if actor is not None:
+            out["actor"] = actor
         if related:
             out["related"] = [self.similar_to_dict(h) for h in related]
         if removed_related:
@@ -486,7 +493,30 @@ class ResponseBuilder:
         if origin is None:
             return None
         payload = origin.model_dump(mode="json", exclude_none=True)
-        return payload or None
+        if not payload:
+            return None
+        # The labeled fallback. A record that carries a directory but no
+        # `source` was captured from the server's process cwd — the only
+        # channel that existed before 7.10.0, and the one the frontmatter
+        # still leaves implicit so a non-declaring client's file stays
+        # byte-identical. Say so here rather than leave the reader to
+        # infer it: an unlabeled cwd is the silent default this field
+        # exists to retire.
+        payload.setdefault("source", SOURCE_PROCESS_CWD)
+        return payload
+
+    def actor_to_dict(self, actor: Actor | None) -> dict[str, Any] | None:
+        """Serialize a record's actor for tool responses, or None when the
+        record carries none.
+
+        The FULL shape, nulls included — unlike the frontmatter, which
+        emits set fields only. A reader of `memory_show` should see
+        `principal: null` beside a declared `client` and know the
+        difference was recorded, not merely omitted.
+        """
+        if actor is None or actor.is_empty():
+            return None
+        return actor.model_dump(mode="json")
 
     # ---- per-search bulk decorators -------------------------------------
 
