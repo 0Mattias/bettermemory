@@ -2710,3 +2710,37 @@ def test_standing_tier_pointers_share_the_delivery_budget(
         "…and 3 more standing pointers over the delivery budget (memory_list)." in out
     )
     assert "Planted body" not in out
+
+
+def test_standing_tier_unreadable_index_renders_pointers_not_bodies(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`index.trust_for` is None when the index could not be read
+    (7.9.0). The standing tier delivers a body only for a row known to
+    be `local`, and with no row knowable every candidate is a pointer
+    under a label that says why — "unknown" is not "unclassified", the
+    benign not-yet-rebuilt state. Before the split this consumer called
+    `.get` on the None and the whole session-start hint degraded to the
+    base block through `_standing_section`'s failure arm."""
+    from bettermemory import index as _index
+    from bettermemory.models import Category
+
+    _standing_tier_config(tmp_path, monkeypatch, "true")
+    store = _seeded_store(tmp_path, monkeypatch)
+    local = store.write(
+        content="Local standing body.", scopes=["x"], category=Category.AMBIENT
+    )
+    store.mark_verified(local.id)
+    _rebuild_index(store)
+
+    monkeypatch.setattr(_index, "trust_for", lambda root, ids: None)
+    _run_session_start(monkeypatch, tmp_path)
+
+    out = capsys.readouterr().out
+    assert "Local standing body." not in out, (
+        "a body was delivered under an unread label"
+    )
+    assert f"- {local.id} (x) [provenance: unknown, index unreadable]" in out
+    assert "Standing pointers (ambient, provenance not local" in out

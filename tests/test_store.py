@@ -2462,14 +2462,17 @@ def test_mark_verified_stamps_the_local_verification_in_the_index(
     carries, and a verify stamps the instant it wrote `last_verified_at`."""
     from bettermemory import index
 
+    def _trust(memory_id: str) -> index.TrustRow:
+        rows = index.trust_for(memory_dir, [memory_id])
+        assert rows is not None, "the index answered"
+        return rows[memory_id]
+
     memory = store.write(content="a memory to verify on this host", scopes=["tools"])
-    assert (
-        index.trust_for(memory_dir, [memory.id])[memory.id].verified_locally_at is None
-    )
+    assert _trust(memory.id).verified_locally_at is None
 
     verified = store.mark_verified(memory.id)
     assert verified.last_verified_at is not None
-    row = index.trust_for(memory_dir, [memory.id])[memory.id]
+    row = _trust(memory.id)
     assert row.verified_locally_at is not None
     assert row.verified_locally_at == verified.last_verified_at.isoformat()
 
@@ -2478,9 +2481,7 @@ def test_mark_verified_stamps_the_local_verification_in_the_index(
         current.model_copy(update={"scopes": ["tools", "infrastructure"]}),
         preserve_verification=True,
     )
-    assert index.trust_for(memory_dir, [memory.id])[memory.id].verified_locally_at == (
-        row.verified_locally_at
-    )
+    assert _trust(memory.id).verified_locally_at == row.verified_locally_at
 
 
 # ---------------------------------------------------------------------------

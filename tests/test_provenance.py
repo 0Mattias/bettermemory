@@ -588,7 +588,7 @@ def test_a_sync_repo_git_cannot_answer_for_reads_untracked_not_unaccounted(
             )
         return real_run(cmd, *args, **kwargs)
 
-    monkeypatch.setattr(provenance.subprocess, "run", _dubious)
+    monkeypatch.setattr(subprocess, "run", _dubious)
     evidence = provenance.gather_evidence(memory_dir)
     assert evidence.tracked_files is None
     assert evidence.tracked_files_unavailable is True, (
@@ -597,7 +597,7 @@ def test_a_sync_repo_git_cannot_answer_for_reads_untracked_not_unaccounted(
     _rebuild(store)
     assert index.provenance_for(memory_dir, [a, b]) == {a: "untracked", b: "untracked"}
 
-    monkeypatch.setattr(provenance.shutil, "which", lambda name: None)
+    monkeypatch.setattr(shutil, "which", lambda name: None)
     evidence = provenance.gather_evidence(memory_dir)
     assert evidence.tracked_files is None
     assert evidence.tracked_files_unavailable is True, "no git binary at all"

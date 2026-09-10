@@ -583,8 +583,18 @@ def _standing_section(
             or not admit(memory.scopes, memory.origin)
         ):
             continue
-        trust_row = trust.get(memory.id)
-        label = trust_row.provenance if trust_row is not None else "unclassified"
+        # `trust_for` is None when the index could not be read at all:
+        # no row's label is knowable, and a body may be delivered only
+        # for a record known to be `local`. Every row becomes a pointer
+        # under a label that says why — "unknown" is not "unclassified",
+        # which is the benign not-yet-rebuilt state.
+        trust_row = trust.get(memory.id) if trust is not None else None
+        if trust_row is not None:
+            label = trust_row.provenance
+        elif trust is None:
+            label = "unknown, index unreadable"
+        else:
+            label = "unclassified"
         if label != LOCAL:
             pointers.append((memory, label))
             continue

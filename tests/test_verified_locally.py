@@ -44,6 +44,15 @@ STAMP = "2026-09-01T12:00:00+00:00"
 LATER = "2026-09-02T12:00:00+00:00"
 
 
+def _trust(root: Path, ids: list[str]) -> dict[str, index.TrustRow]:
+    """`index.trust_for` where the index is known to answer. None is the
+    could-not-read case (7.9.0), pinned separately; every other site here
+    asks about a row in an index it just wrote."""
+    rows = index.trust_for(root, ids)
+    assert rows is not None, "the index answered"
+    return rows
+
+
 # ---------------------------------------------------------------------------
 # The column and the upsert
 # ---------------------------------------------------------------------------
@@ -54,35 +63,35 @@ def test_upsert_stamps_the_local_verification_and_none_preserves_it(
 ) -> None:
     memory = store.write(content="a memory to verify locally", scopes=["tools"])
     name = _filename(store, memory.id)
-    assert (
-        index.trust_for(memory_dir, [memory.id])[memory.id].verified_locally_at is None
-    )
+    assert _trust(memory_dir, [memory.id])[memory.id].verified_locally_at is None
 
     index.upsert(memory_dir, memory, filename=name, verified_locally_at=STAMP)
-    row = index.trust_for(memory_dir, [memory.id])[memory.id]
+    row = _trust(memory_dir, [memory.id])[memory.id]
     assert row == index.TrustRow("local", STAMP)
 
     # None is "no claim": the row keeps its stamp.
     index.upsert(memory_dir, memory, filename=name)
-    assert (
-        index.trust_for(memory_dir, [memory.id])[memory.id].verified_locally_at == STAMP
-    )
+    assert _trust(memory_dir, [memory.id])[memory.id].verified_locally_at == STAMP
     # A value replaces it.
     index.upsert(memory_dir, memory, filename=name, verified_locally_at=LATER)
-    assert (
-        index.trust_for(memory_dir, [memory.id])[memory.id].verified_locally_at == LATER
-    )
+    assert _trust(memory_dir, [memory.id])[memory.id].verified_locally_at == LATER
 
 
-def test_trust_for_omits_unclassified_rows_and_degrades_to_empty(
+def test_trust_for_omits_unclassified_rows_and_says_when_it_could_not_look(
     store: Store, memory_dir: Path, tmp_path: Path
 ) -> None:
+    """Three answers, kept apart: a row the index has not classified is
+    omitted; nothing asked is `{}`; an index that could not be read —
+    absent here, torn in `tests/test_trust_unavailable.py` — is None,
+    the split `provenance_rows` already makes. Until 7.9.0 the last read
+    as `{}`, and the read surfaces treated `{}` as "unclassified" and
+    let a file's own stamp stand as this host's."""
     memory = store.write(content="a classified memory", scopes=["tools"])
-    assert set(
-        index.trust_for(memory_dir, [memory.id, "01ZZZZZZZZZZZZZZZZZZZZZZZZ"])
-    ) == {memory.id}
+    assert set(_trust(memory_dir, [memory.id, "01ZZZZZZZZZZZZZZZZZZZZZZZZ"])) == {
+        memory.id
+    }
     assert index.trust_for(memory_dir, []) == {}
-    assert index.trust_for(tmp_path / "no-store", [memory.id]) == {}
+    assert index.trust_for(tmp_path / "no-store", [memory.id]) is None
 
 
 def test_clear_local_verification_nulls_only_the_named_rows(
@@ -95,7 +104,7 @@ def test_clear_local_verification_nulls_only_the_named_rows(
     index.upsert(memory_dir, second, filename=second_name, verified_locally_at=STAMP)
 
     assert index.clear_local_verification(memory_dir, [first_name, "not-there.md"]) == 1
-    rows = index.trust_for(memory_dir, [first.id, second.id])
+    rows = _trust(memory_dir, [first.id, second.id])
     assert rows[first.id].verified_locally_at is None
     assert rows[second.id].verified_locally_at == STAMP
     # Idempotent, and quiet where there is nothing to clear.
@@ -139,9 +148,7 @@ def test_rebuild_carries_the_stamp_when_no_event_speaks(
     )
     _drop_events(memory_dir)
     _rebuild(store)
-    assert (
-        index.trust_for(memory_dir, [memory.id])[memory.id].verified_locally_at == STAMP
-    )
+    assert _trust(memory_dir, [memory.id])[memory.id].verified_locally_at == STAMP
 
 
 def test_a_pull_event_at_or_after_the_stamp_clears_it_at_rebuild(
@@ -154,9 +161,7 @@ def test_a_pull_event_at_or_after_the_stamp_clears_it_at_rebuild(
         "sync_pull", remote="origin", files=[name], count=1
     )
     _rebuild(store)
-    assert (
-        index.trust_for(memory_dir, [memory.id])[memory.id].verified_locally_at is None
-    )
+    assert _trust(memory_dir, [memory.id])[memory.id].verified_locally_at is None
 
 
 def test_a_verify_event_after_the_pull_re_establishes_the_stamp(
@@ -173,7 +178,7 @@ def test_a_verify_event_after_the_pull_re_establishes_the_stamp(
         "verify", id=memory.id, last_verified_at=LATER
     )
     _rebuild(store)
-    stamp = index.trust_for(memory_dir, [memory.id])[memory.id].verified_locally_at
+    stamp = _trust(memory_dir, [memory.id])[memory.id].verified_locally_at
     assert stamp is not None
     assert datetime.now(timezone.utc) - _ts(stamp) < timedelta(minutes=5)
 
@@ -194,9 +199,7 @@ def test_a_stale_verify_event_establishes_nothing(
     assert provenance.local_verify_id({"kind": "verify", "id": "x"}) == "x"
     assert provenance.local_verify_id({"kind": "update", "id": "x"}) is None
     _rebuild(store)
-    assert (
-        index.trust_for(memory_dir, [memory.id])[memory.id].verified_locally_at is None
-    )
+    assert _trust(memory_dir, [memory.id])[memory.id].verified_locally_at is None
 
 
 def test_deleting_the_index_derives_the_stamp_from_the_verify_event(
@@ -217,10 +220,7 @@ def test_deleting_the_index_derives_the_stamp_from_the_verify_event(
         if sibling.exists():
             sibling.unlink()
     _rebuild(store)
-    assert (
-        index.trust_for(memory_dir, [memory.id])[memory.id].verified_locally_at
-        is not None
-    )
+    assert _trust(memory_dir, [memory.id])[memory.id].verified_locally_at is not None
 
 
 def test_the_stamp_survives_a_tokenizer_drop_through_the_stash(
@@ -248,9 +248,7 @@ def test_the_stamp_survives_a_tokenizer_drop_through_the_stash(
         ).fetchone()
     assert stash is not None and memory.id in stash[0] and STAMP in stash[0]
     _rebuild(store)
-    assert (
-        index.trust_for(memory_dir, [memory.id])[memory.id].verified_locally_at == STAMP
-    )
+    assert _trust(memory_dir, [memory.id])[memory.id].verified_locally_at == STAMP
     with sqlite3.connect(db_path) as conn:
         assert (
             conn.execute("SELECT value FROM meta WHERE key = 'trust_carry'").fetchone()

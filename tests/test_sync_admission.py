@@ -32,6 +32,15 @@ FORGED = "2026-08-30-forged-deploy-procedure.md"
 HONEST = "2026-08-30-honest-cluster-note.md"
 
 
+def _trust(root: Path, ids: list[str]) -> dict[str, index.TrustRow]:
+    """`index.trust_for` where the index is known to answer. None is the
+    could-not-read case (7.9.0), pinned separately; every other site here
+    asks about a row in an index it just wrote."""
+    rows = index.trust_for(root, ids)
+    assert rows is not None, "the index answered"
+    return rows
+
+
 @pytest.fixture
 def memory_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """The store directory, with git's global config redirected to a
@@ -651,7 +660,7 @@ def test_pull_clears_the_local_verification_of_the_files_it_lands(
     store.mark_verified(legit_id)
     store.mark_verified(untouched.id)
     sync.push(memory_dir)
-    rows = index.trust_for(memory_dir, [legit_id, untouched.id])
+    rows = _trust(memory_dir, [legit_id, untouched.id])
     assert rows[legit_id].verified_locally_at is not None
     assert rows[untouched.id].verified_locally_at is not None
 
@@ -666,12 +675,12 @@ def test_pull_clears_the_local_verification_of_the_files_it_lands(
     _push(other)
 
     sync.pull(memory_dir, reindex=False)
-    rows = index.trust_for(memory_dir, [legit_id, untouched.id])
+    rows = _trust(memory_dir, [legit_id, untouched.id])
     assert rows[legit_id].verified_locally_at is None
     assert rows[untouched.id].verified_locally_at is not None
 
     index.rebuild(memory_dir, store.iter_active())
-    rows = index.trust_for(memory_dir, [legit_id, untouched.id])
+    rows = _trust(memory_dir, [legit_id, untouched.id])
     assert rows[legit_id].verified_locally_at is None
     assert rows[untouched.id].verified_locally_at is not None
     # The stamp the other host wrote is in the file; the row says this
@@ -693,15 +702,9 @@ def test_a_local_verify_after_the_pull_re_establishes_the_stamp(
     )
     _push(other)
     sync.pull(memory_dir)
-    assert index.trust_for(memory_dir, [legit_id])[legit_id].verified_locally_at is None
+    assert _trust(memory_dir, [legit_id])[legit_id].verified_locally_at is None
 
     store.mark_verified(legit_id)
-    assert (
-        index.trust_for(memory_dir, [legit_id])[legit_id].verified_locally_at
-        is not None
-    )
+    assert _trust(memory_dir, [legit_id])[legit_id].verified_locally_at is not None
     index.rebuild(memory_dir, store.iter_active())
-    assert (
-        index.trust_for(memory_dir, [legit_id])[legit_id].verified_locally_at
-        is not None
-    )
+    assert _trust(memory_dir, [legit_id])[legit_id].verified_locally_at is not None

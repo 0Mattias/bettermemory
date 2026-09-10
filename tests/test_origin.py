@@ -2024,7 +2024,7 @@ def test_capture_marks_the_origin_indeterminate_when_git_cannot_run(
     def _no_binary(*args: Any, **kwargs: Any) -> Any:
         raise FileNotFoundError(errno.ENOENT, "No such file or directory", "git")
 
-    monkeypatch.setattr(_origin.subprocess, "run", _no_binary)
+    monkeypatch.setattr(subprocess, "run", _no_binary)
     unknown = _origin.capture(plain)
     assert unknown.cwd == str(plain.resolve())
     assert unknown.repo is None and unknown.worktree_root is None
@@ -2057,14 +2057,14 @@ def test_commit_reachable_gives_no_answer_when_git_could_not_run(
     assert _origin.commit_reachable(repo, head) is True
     assert _origin.commit_reachable(repo, "a" * 40) is False, "measured: never here"
 
-    real_run = _origin.subprocess.run
+    real_run = subprocess.run
 
     def _merge_base_hangs(cmd: list[str], *args: Any, **kwargs: Any) -> Any:
         if "merge-base" in cmd:
             raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout", 1.0))
         return real_run(cmd, *args, **kwargs)
 
-    monkeypatch.setattr(_origin.subprocess, "run", _merge_base_hangs)
+    monkeypatch.setattr(subprocess, "run", _merge_base_hangs)
     assert _origin.head_sha(repo) == head, "premise: the cheaper probe still answers"
     assert _origin.commit_reachable(repo, head) is None, "could not ask: no answer"
     assert _origin.commit_reachable(repo, "a" * 40) is None

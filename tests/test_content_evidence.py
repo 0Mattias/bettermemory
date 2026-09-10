@@ -13,7 +13,9 @@ says so.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -215,7 +217,7 @@ def test_a_walk_that_stops_is_not_a_clean_bill(
 
     real_iter_active = Store.iter_active
 
-    def _stops_after_one(self: Store):  # type: ignore[no-untyped-def]
+    def _stops_after_one(self: Store) -> Iterator[Any]:
         for i, pair in enumerate(real_iter_active(self)):
             if i == 1:
                 raise PermissionError(13, "Permission denied", str(memory_dir))
