@@ -18,6 +18,7 @@ import sys
 import threading
 from collections.abc import Generator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
