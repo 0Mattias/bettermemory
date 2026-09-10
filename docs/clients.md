@@ -128,6 +128,8 @@ Two things follow from Hermes's shape. One gateway process serves every chat pla
 
 A running interactive Hermes session reloads its MCP connections when the file changes; a gateway started before the patch reads the block at its next start.
 
+Once two clients write to one store — Claude Code declaring itself through `clientInfo`, Hermes through the `env` block above — the listing and the search can be narrowed to one of them: `memory_list(client="hermes")`, `memory_search(query=…, client="claude-code")`. The match is exact and case-sensitive on whatever the client declared, and every `memory_list` row shows the `client` / `model` it was written with, so the spellings are there to read rather than guess. Records written before 7.10.0 carry no actor and match no value — a filtered listing shows what is labelled, not a census of who wrote what. And since the value is declared by the client itself, the filter is for attribution and cleanup, never a boundary between clients: any client can call itself anything.
+
 ## Other clients
 
 For anything not listed, run `bettermemory init` (no flags) to print the canonical snippet plus known config locations. Copy by hand into your client's MCP config file. If your client doesn't accept raw JSON config, embed the `mcp` SDK directly — see [`../examples/programmatic_client.py`](../examples/programmatic_client.py) for the wire-protocol shape.

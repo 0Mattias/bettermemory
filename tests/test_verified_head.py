@@ -211,7 +211,9 @@ async def test_memory_show_carries_the_anchor_beside_the_attestations(
 def test_the_index_row_mirrors_the_anchor_and_a_rebuild_reads_it_back(
     memory_dir: Path,
 ) -> None:
-    assert index.SCHEMA_VERSION == 10
+    # Bumped with v11 (the actor columns), which added two siblings
+    # under this column's own discipline and left its semantics alone.
+    assert index.SCHEMA_VERSION == 11
     store = Store(memory_dir)
     memory = _seed(store)
     assert _row_anchor(memory_dir, memory.id) is None

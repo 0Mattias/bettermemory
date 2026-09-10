@@ -121,6 +121,8 @@ DESC_MEMORY_SEARCH = (
     "vocabulary is the lever, not question phrasing. Weak hits: "
     "re-query, different nouns.\n"
     "- `scopes` (optional): filter to scope union.\n"
+    "- `client` / `model`: writer's DECLARED actor, exact; "
+    "undeclared matches neither.\n"
     "- `max_results` (default 5, cap 50).\n"
     "- `expand_top=True`: inline the full body of the top hit when it "
     "has high `relevance` or a decisive score lead over the runner-up "
@@ -530,6 +532,8 @@ def resolve_search_pool(
     excluded_scopes: set[str] | None = None,
     repo_filter: str | None = None,
     worktree_filter: str | None = None,
+    client_filter: str | None = None,
+    model_filter: str | None = None,
     min_survivors: int,
 ) -> SearchPool:
     """Build the candidate pool for `query` exactly as production
@@ -608,9 +612,12 @@ def resolve_search_pool(
     left open rather than guessed.
 
     Pass the same `scopes` / `excluded_scopes` / `repo_filter` /
-    `worktree_filter` that will be handed to `search.search`: the
-    corpus-statistics predicate binds them so document frequencies come
-    from exactly the collection about to be ranked. Under auto-scope that
+    `worktree_filter` / `client_filter` / `model_filter` that will be
+    handed to `search.search`: the corpus-statistics predicate binds them
+    so document frequencies come from exactly the collection about to be
+    ranked. The two audit producers leave the actor filters at None and
+    must keep doing so: the probe measures what PRODUCTION retrieval
+    would have surfaced, and production retrieval never carries one. Under auto-scope that
     differs sharply from the whole store — a store spanning several
     projects would otherwise price term rarity against memories the
     caller cannot retrieve.
@@ -627,8 +634,13 @@ def resolve_search_pool(
 
     excluded = set(excluded_scopes) if excluded_scopes else set()
     memories, prefilter_saturated, prefiltered = load_search_candidates(
-        store, query, scopes
+        store, query, scopes, client=client_filter, model=model_filter
     )
+    # The actor filters are absent here on purpose. They are the one
+    # class of filter the prefilter SQL applies itself, so a saturated
+    # slice is already 50 rows that PASS them and there is no post-cap
+    # attrition for the guard to catch — counting them would arm a
+    # starvation reload that can only ever reload the same set.
     post_cap_filter_active = (
         repo_filter is not None or worktree_filter is not None or bool(excluded)
     )
@@ -639,6 +651,8 @@ def resolve_search_pool(
             excluded_scopes=excluded,
             repo_filter=repo_filter,
             worktree_filter=worktree_filter,
+            client_filter=client_filter,
+            model_filter=model_filter,
         )
         if len(survivors) < min_survivors:
             memories = store.load_all()
@@ -653,14 +667,17 @@ def resolve_search_pool(
     def _corpus_stats(terms: list[str]) -> CorpusStats | None:
         from .. import index as _index
 
-        def _admit(memory_scopes: list[str], origin: Any) -> bool:
+        def _admit(memory_scopes: list[str], origin: Any, actor: Any) -> bool:
             return candidate_admitted(
                 memory_scopes,
                 origin,
+                actor,
                 scope_filter=set(scopes) if scopes else None,
                 excluded=excluded,
                 repo_filter=repo_filter,
                 worktree_filter=worktree_filter,
+                client_filter=client_filter,
+                model_filter=model_filter,
             )
 
         resolved = _index.corpus_document_frequencies(store.root, terms, admit=_admit)
@@ -684,6 +701,8 @@ async def memory_search(
     auto_scope: bool = True,
     since_prior_session: bool = False,
     mode: str | None = None,
+    client: str | None = None,
+    model: str | None = None,
     ctx: Context | None = None,
 ) -> list[dict[str, Any]]:
     """Body of the ``memory_search`` MCP tool — pre-Round-2 was a method
@@ -817,6 +836,8 @@ async def memory_search(
             excluded_scopes=set(state.disabled_scopes),
             repo_filter=repo_filter,
             worktree_filter=worktree_filter,
+            client_filter=client,
+            model_filter=model,
             min_survivors=max_results,
         )
         memories = pool.memories
@@ -848,6 +869,8 @@ async def memory_search(
         excluded_scopes=set(state.disabled_scopes),
         repo_filter=repo_filter,
         worktree_filter=worktree_filter,
+        client_filter=client,
+        model_filter=model,
         max_results=max_results,
         half_life_days=ranking.half_life_days,
         mode=cast(SearchMode, resolved_mode),
@@ -1144,6 +1167,12 @@ async def memory_search(
         "search",
         query=query,
         scopes_filter=scopes,
+        # Recorded so a replay can tell an empty result that means
+        # 'nothing matched' from one that means 'nothing this writer
+        # wrote matched'. Omitted from the payload when unset, like
+        # every other optional field the recorder takes.
+        client_filter=client,
+        model_filter=model,
         max_results=max_results,
         returned=[h["id"] for h in out],
         relevance=[h["relevance"] for h in out],

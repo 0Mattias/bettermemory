@@ -594,6 +594,11 @@ class MemorySummary(BaseModel):
     updated: datetime
     last_verified_at: datetime | None = None
     category: Category | None = None
+    #: Who wrote the record, when the writing request declared anything.
+    #: Carried on the summary so an unfiltered listing shows the exact
+    #: spellings the `client` / `model` filters match on — an exact-match
+    #: filter whose values cannot be discovered is a guessing game.
+    actor: Actor | None = None
 
 
 class TombstonedMemory(BaseModel):

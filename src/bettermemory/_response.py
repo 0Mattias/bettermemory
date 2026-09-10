@@ -261,7 +261,7 @@ class ResponseBuilder:
             path_drift_missing=0,
             commit_drift_count=None,
         )
-        return {
+        row: dict[str, Any] = {
             "id": summary.id,
             "scopes": summary.scopes,
             "confidence": summary.confidence.value,
@@ -275,6 +275,25 @@ class ResponseBuilder:
             "verification": verification.to_dict(),
             "staleness_verdict": verdict,
         }
+        # The COMPACT actor, not `actor_to_dict`'s full shape: this is
+        # the cheap-triage view, and the two declared fields the `client`
+        # / `model` filters read are the whole reason a triage row wants
+        # one — so a curator can see the spellings to filter on. Omitted
+        # entirely when the writer declared neither, which keeps a row
+        # written before 7.10.0 the same shape it has always been.
+        actor = summary.actor
+        if actor is not None:
+            declared = {
+                key: value
+                for key, value in (
+                    ("client", actor.client),
+                    ("model", actor.model),
+                )
+                if value is not None
+            }
+            if declared:
+                row["actor"] = declared
+        return row
 
     def tombstone_summary_to_dict(self, summary: TombstonedSummary) -> dict[str, Any]:
         """Same shape as `summary_to_dict` plus removal metadata.

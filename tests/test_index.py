@@ -2145,7 +2145,7 @@ def test_v4_index_with_stale_spelled_stream_heals_on_construction(
 # ---------------------------------------------------------------------------
 
 
-def _admit_all(_scopes: list[str], _origin: object) -> bool:
+def _admit_all(_scopes: list[str], _origin: object, *_rest: object) -> bool:
     """Admission predicate that keeps everything — the unfiltered
     baseline. The real caller binds `search.candidate_admitted` to a
     request's scope/repo/worktree filters; these tests isolate the
@@ -2261,7 +2261,7 @@ def test_corpus_document_frequencies_counts_only_admitted_rows(
     store.write(content="alpha three", scopes=["tools"], origin=repo_b)
     store.write(content="alpha four", scopes=["tools"], origin=repo_b)
 
-    def admit_only_a(_scopes: list[str], origin: object) -> bool:
+    def admit_only_a(_scopes: list[str], origin: object, _actor: object = None) -> bool:
         return getattr(origin, "repo", None) == "git@github.com:example/a.git"
 
     resolved = index.corpus_document_frequencies(
@@ -2282,7 +2282,7 @@ def test_corpus_document_frequencies_returns_none_when_nothing_is_admitted(
     store.write(content="alpha", scopes=["tools"])
 
     resolved = index.corpus_document_frequencies(
-        memory_dir, ["alpha"], admit=lambda _s, _o: False
+        memory_dir, ["alpha"], admit=lambda _s, _o, _a: False
     )
 
     assert resolved is None
@@ -2313,6 +2313,7 @@ def _scope_counts_from_load_all(
         if not candidate_admitted(
             memory.scopes,
             memory.origin,
+            memory.actor,
             scope_filter=None,
             excluded=set(),
             repo_filter=repo_filter,
@@ -2353,6 +2354,7 @@ def test_scope_counts_agree_with_the_load_all_answer(
         return candidate_admitted(
             scopes,
             origin,
+            None,
             scope_filter=None,
             excluded=set(),
             repo_filter=repo_a,
@@ -2461,3 +2463,155 @@ def test_index_round_trips_origin_columns(store: Store, memory_dir: Path) -> Non
         "an upsert must refresh origin_repo, not keep the insert-time value"
     )
     assert after["origin_worktree"] == "/w/two"
+
+
+# The `memories` table exactly as schema v10 shaped it: everything the
+# current schema has except the two v11 actor columns. Hardcoded rather
+# than derived from `_SCHEMA`, for the same reason `_V3_SCHEMA` above is
+# — a literal is a genuine old index, and a derivation would keep
+# agreeing with whatever the current schema happens to be.
+_V10_SCHEMA = """
+CREATE TABLE IF NOT EXISTS meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS memories (
+    rowid INTEGER PRIMARY KEY,
+    id TEXT NOT NULL UNIQUE,
+    created TEXT NOT NULL,
+    updated TEXT NOT NULL,
+    last_verified_at TEXT,
+    confidence TEXT NOT NULL,
+    category TEXT,
+    body TEXT NOT NULL,
+    body_fts TEXT NOT NULL DEFAULT '',
+    scopes_text TEXT NOT NULL,
+    scopes_fts TEXT NOT NULL DEFAULT '',
+    scopes_json TEXT NOT NULL,
+    filename TEXT NOT NULL DEFAULT '',
+    origin_repo TEXT,
+    origin_worktree TEXT,
+    provenance TEXT,
+    verified_locally_at TEXT,
+    content_sha256 TEXT,
+    verified_head TEXT
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+    body_fts, scopes_fts,
+    content='memories', content_rowid='rowid',
+    tokenize='unicode61'
+);
+
+CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
+    INSERT INTO memories_fts(rowid, body_fts, scopes_fts)
+    VALUES (new.rowid, new.body_fts, new.scopes_fts);
+END;
+
+CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
+    INSERT INTO memories_fts(memories_fts, rowid, body_fts, scopes_fts)
+    VALUES ('delete', old.rowid, old.body_fts, old.scopes_fts);
+END;
+
+CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
+    INSERT INTO memories_fts(memories_fts, rowid, body_fts, scopes_fts)
+    VALUES ('delete', old.rowid, old.body_fts, old.scopes_fts);
+    INSERT INTO memories_fts(rowid, body_fts, scopes_fts)
+    VALUES (new.rowid, new.body_fts, new.scopes_fts);
+END;
+
+CREATE INDEX IF NOT EXISTS memories_by_updated ON memories(updated DESC);
+
+CREATE TABLE IF NOT EXISTS memory_links (
+    source_id TEXT NOT NULL,
+    type TEXT NOT NULL,
+    target_id TEXT NOT NULL,
+    note TEXT,
+    PRIMARY KEY (source_id, type, target_id, note)
+);
+
+CREATE INDEX IF NOT EXISTS memory_links_by_target ON memory_links(target_id);
+
+CREATE TRIGGER IF NOT EXISTS memory_links_cleanup AFTER DELETE ON memories BEGIN
+    DELETE FROM memory_links
+    WHERE source_id = old.id OR target_id = old.id;
+END;"""
+
+
+def test_genuine_v10_index_migrates_and_repopulates_the_actor_columns(
+    store: Store, memory_dir: Path
+) -> None:
+    """A store carrying a real v10 index opens under v11 without a
+    sqlite error from the columns it lacks, rebuilds from the .md files,
+    and comes back with the actor columns populated from frontmatter —
+    no reindex asked of the user.
+
+    The provenance carry rides along: it is stashed in `meta` across the
+    drop, so a bump that lost it would silently downgrade every row's
+    delivery eligibility."""
+    import json
+
+    from bettermemory.identity import Actor
+
+    declared = store.write(
+        content="tokyo relocation plan",
+        scopes=["tools"],
+        actor=Actor(client="hermes", model="sonnet"),
+    )
+    undeclared = store.write(content="kubernetes networking", scopes=["infrastructure"])
+
+    db_path = index.index_path(memory_dir)
+    index._unlink_index_files(db_path)
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.executescript(_V10_SCHEMA)
+        for path, memory in store.iter_active():
+            conn.execute(
+                "INSERT INTO memories("
+                "id, created, updated, last_verified_at, confidence, category, "
+                "body, body_fts, scopes_text, scopes_fts, scopes_json, filename, "
+                "origin_repo, origin_worktree, provenance, verified_locally_at, "
+                "content_sha256, verified_head) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    memory.id,
+                    memory.created.isoformat(),
+                    memory.updated.isoformat(),
+                    None,
+                    memory.confidence.value,
+                    None,
+                    memory.body,
+                    memory.body,
+                    " " + " ".join(memory.scopes) + " ",
+                    " ".join(memory.scopes),
+                    json.dumps(memory.scopes),
+                    path.name,
+                    None,
+                    None,
+                    "local",
+                    None,
+                    None,
+                    None,
+                ),
+            )
+        conn.execute("INSERT INTO meta VALUES ('schema_version', '10')")
+        conn.execute("INSERT INTO meta VALUES ('provenance_classified', '1')")
+        conn.commit()
+    finally:
+        conn.close()
+
+    # The ONLY thing a user does. No explicit `index.rebuild` here on
+    # purpose: the claim being tested is that the bump costs them
+    # nothing, and a test that reindexes by hand would pass just as
+    # well if it did.
+    Store(memory_dir)
+
+    assert index.status(memory_dir)["schema_version"] == index.SCHEMA_VERSION
+    assert not index.status(memory_dir)["needs_rebuild"]
+    hermes_hits = {mid for mid, _ in index.query(memory_dir, "tokyo", client="hermes")}
+    assert hermes_hits == {declared.id}
+    assert index.query(memory_dir, "kubernetes", client="hermes") == []
+    labels = index.provenance_for(memory_dir, [declared.id, undeclared.id])
+    assert labels[declared.id] == "local"
+    assert labels[undeclared.id] == "local"

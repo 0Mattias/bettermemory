@@ -49,6 +49,7 @@ from .models import (
     snippet_for,
     snippet_window,
 )
+from .identity import Actor, actor_matches
 from .origin import Origin, should_include_for_caller
 from .verify import detect_path_drift
 
@@ -2783,8 +2784,10 @@ def _filter_candidates(
     excluded_scopes: set[str] | None,
     repo_filter: str | None,
     worktree_filter: str | None,
+    client_filter: str | None = None,
+    model_filter: str | None = None,
 ) -> list[Memory]:
-    """Apply scope / excluded-scope / repo / worktree filters.
+    """Apply scope / excluded-scope / repo / worktree / actor filters.
 
     Extracted from `search()` so each search mode walks the same
     pre-filtered candidate list — fairness across rankers requires it,
@@ -2799,10 +2802,13 @@ def _filter_candidates(
         if candidate_admitted(
             memory.scopes,
             memory.origin,
+            memory.actor,
             scope_filter=scope_filter,
             excluded=excluded,
             repo_filter=repo_filter,
             worktree_filter=worktree_filter,
+            client_filter=client_filter,
+            model_filter=model_filter,
         )
     ]
 
@@ -2810,11 +2816,14 @@ def _filter_candidates(
 def candidate_admitted(
     memory_scopes: list[str],
     memory_origin: Origin | None,
+    memory_actor: Actor | None,
     *,
     scope_filter: set[str] | None,
     excluded: set[str],
     repo_filter: str | None,
     worktree_filter: str | None,
+    client_filter: str | None = None,
+    model_filter: str | None = None,
 ) -> bool:
     """Does one memory survive the search filters?
 
@@ -2830,6 +2839,25 @@ def candidate_admitted(
     expressible in SQL at all — any index-side filter would silently
     disagree with the ranked set for exactly the multi-remote stores the
     alternates mechanism exists to serve.
+
+    `client_filter` / `model_filter` (7.12.0) select on the writing
+    request's DECLARED identity, and differ from the repo rule in two
+    ways worth stating where the rule lives:
+
+    * They are exact and case-sensitive, with no normalisation on either
+      side — which is what lets `index.query` ALSO spell them as a SQL
+      `WHERE` (to spend its candidate cap on eligible rows) without the
+      two spellings being able to disagree.
+    * A memory with no actor matches NEITHER. `repo_filter` deliberately
+      passes an unlabelled memory — it is an admission rule, and no
+      origin means global. This is a selection: 'what did this client
+      write' must not answer with everything written before 7.10.0, when
+      nothing recorded a writer at all.
+
+    The filters read only the two DECLARED fields. `principal` — the
+    attested one — is not selectable, and the omission is deliberate:
+    it is None on every unauthenticated transport, so a filter on it
+    could not be measured on any transport this ships with.
     """
     memory_scope_set = set(memory_scopes)
     if excluded and (memory_scope_set & excluded):
@@ -2841,6 +2869,8 @@ def candidate_admitted(
         repo_filter,
         caller_worktree_root=worktree_filter,
     ):
+        return False
+    if not actor_matches(memory_actor, client=client_filter, model=model_filter):
         return False
     return True
 
@@ -3445,6 +3475,8 @@ def search(
     excluded_scopes: set[str] | None = None,
     repo_filter: str | None = None,
     worktree_filter: str | None = None,
+    client_filter: str | None = None,
+    model_filter: str | None = None,
     max_results: int = 5,
     now: datetime | None = None,
     half_life_days: float = 30.0,
@@ -3477,6 +3509,14 @@ def search(
       pass through. No-op without `repo_filter` — a worktree path
       without a repo identifier doesn't carry enough context to
       filter on.
+    - `client_filter` / `model_filter`: the writing request's DECLARED
+      identity (`Memory.actor.client` / `.model`), matched exactly and
+      case-sensitively. Unlike the two filters above, a memory carrying
+      NO actor is dropped rather than passed: these select a writer
+      rather than admitting a caller, and every memory written before
+      7.10.0 has no actor to select on. Declared means forgeable —
+      evidence for attribution and rollback, never a permission
+      boundary.
     - `mode`: ranker selection. `"hybrid"` (default since 2.6.8: RRF
       fusion of keyword + BM25); `"keyword"` (legacy TF + coverage +
       recency scorer with no IDF weighting); `"bm25"` (Okapi BM25 with
@@ -3655,6 +3695,8 @@ def search(
             excluded_scopes=excluded_scopes,
             repo_filter=repo_filter,
             worktree_filter=worktree_filter,
+            client_filter=client_filter,
+            model_filter=model_filter,
         )
         browse_candidates.sort(key=lambda m: (m.updated, m.id), reverse=True)
         return [
@@ -3669,6 +3711,8 @@ def search(
         excluded_scopes=excluded_scopes,
         repo_filter=repo_filter,
         worktree_filter=worktree_filter,
+        client_filter=client_filter,
+        model_filter=model_filter,
     )
     if not candidates:
         return []

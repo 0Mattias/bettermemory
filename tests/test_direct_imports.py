@@ -128,6 +128,8 @@ def test_handlers_list_active_direct_import() -> None:
         ("deps", _MISSING),
         ("scopes", None),
         ("with_bodies", False),
+        ("client", None),
+        ("model", None),
         ("ctx", None),
     ]
 
@@ -246,6 +248,8 @@ def test_handlers_search_direct_import() -> None:
         ("auto_scope", True),
         ("since_prior_session", False),
         ("mode", None),
+        ("client", None),
+        ("model", None),
         ("ctx", None),
     ]
 

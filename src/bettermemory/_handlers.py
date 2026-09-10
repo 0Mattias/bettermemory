@@ -141,7 +141,12 @@ def resolve_index_threshold() -> int:
 
 
 def load_search_candidates(
-    store: Store, query: str, scopes: list[str] | None = None
+    store: Store,
+    query: str,
+    scopes: list[str] | None = None,
+    *,
+    client: str | None = None,
+    model: str | None = None,
 ) -> tuple[list[Any], bool, bool]:
     """Either load all active memories or pre-filter via the FTS5
     index, depending on store size and index health.
@@ -179,6 +184,15 @@ def load_search_candidates(
     is the same exact, space-padded set-membership the authoritative
     `memory_scope_set & scope_filter` applies, so threading it never
     drops a candidate the authoritative pass would have kept.
+
+    `client` / `model` thread into the prefilter for exactly the same
+    reason and with the same guarantee: they are equality on the stored
+    declared string, which is what the authoritative
+    `search.candidate_admitted` applies, so the SQL cannot drop a row the
+    ranker would have kept. Without them a store dominated by one
+    writer's memories spends the whole 50-row cap on that writer and a
+    filtered search for a rarer one comes back empty with matches on
+    disk — the actor-filter form of the scope problem described above.
 
     The current heuristic: walk the index status once. If the
     on-disk index exists, is not flagged `needs_rebuild` (the
@@ -247,7 +261,12 @@ def load_search_candidates(
     # call is a free short-circuit.)
     try:
         candidate_pairs = _index.query(
-            store.root, query, scopes=scopes, max_results=_PREFILTER_CAP
+            store.root,
+            query,
+            scopes=scopes,
+            client=client,
+            model=model,
+            max_results=_PREFILTER_CAP,
         )
         candidate_ids = {cid for cid, _ in candidate_pairs}
         ids = list(candidate_ids)
@@ -392,6 +411,8 @@ class ToolHandlers:
         auto_scope: bool = True,
         since_prior_session: bool = False,
         mode: str | None = None,
+        client: str | None = None,
+        model: str | None = None,
         ctx: Context | None = None,
     ) -> list[dict[str, Any]]:
         return await _handlers_pkg.memory_search(
@@ -403,6 +424,8 @@ class ToolHandlers:
             auto_scope=auto_scope,
             since_prior_session=since_prior_session,
             mode=mode,
+            client=client,
+            model=model,
             ctx=ctx,
         )
 
@@ -642,10 +665,17 @@ class ToolHandlers:
         self,
         scopes: list[str] | None = None,
         with_bodies: bool = False,
+        client: str | None = None,
+        model: str | None = None,
         ctx: Context | None = None,
     ) -> list[dict[str, Any]]:
         return await _handlers_pkg.memory_list(
-            self, scopes=scopes, with_bodies=with_bodies, ctx=ctx
+            self,
+            scopes=scopes,
+            with_bodies=with_bodies,
+            client=client,
+            model=model,
+            ctx=ctx,
         )
 
     async def memory_remove(

@@ -88,18 +88,24 @@ def _git(memory_dir: Path, *args: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_schema_is_ten_with_the_provenance_trust_content_and_anchor_columns(
+def test_schema_is_eleven_with_every_column_added_since_the_origin_pair(
     store: Store, memory_dir: Path
 ) -> None:
+    """The column-set ratchet. Each entry was added by a schema bump
+    whose migration path this suite exercises elsewhere; listing them
+    together is what makes a bump that drops one loud rather than
+    silently degrading the surface that reads it."""
     store.write(content="a memory that opens the index", scopes=["tools"])
     status = index.status(memory_dir)
-    assert status["schema_version"] == index.SCHEMA_VERSION == 10
+    assert status["schema_version"] == index.SCHEMA_VERSION == 11
     with sqlite3.connect(index.index_path(memory_dir)) as conn:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(memories)")}
     assert "provenance" in columns
     assert "verified_locally_at" in columns
     assert "content_sha256" in columns
     assert "verified_head" in columns
+    assert "actor_client" in columns
+    assert "actor_model" in columns
 
 
 def test_creation_id_reads_only_write_side_kinds() -> None:

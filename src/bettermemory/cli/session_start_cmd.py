@@ -447,6 +447,9 @@ def _build_context_block() -> str | None:
         return candidate_admitted(
             scopes,
             memory_origin,
+            # No actor filter: this hint counts what the CALLER can
+            # retrieve, and production retrieval never carries one.
+            None,
             scope_filter=None,
             excluded=set(),
             repo_filter=current.repo,

@@ -336,6 +336,7 @@ class Store:
                     updated=memory.updated,
                     last_verified_at=memory.last_verified_at,
                     category=memory.category,
+                    actor=memory.actor,
                 )
             )
         return out

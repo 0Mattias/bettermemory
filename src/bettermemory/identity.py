@@ -167,6 +167,47 @@ class Actor(BaseModel):
         return out
 
 
+def actor_matches(
+    actor: Actor | None, *, client: str | None, model: str | None
+) -> bool:
+    """Does a record written by `actor` survive a client/model filter?
+
+    The single definition of the actor-selection rule, read by
+    `search.candidate_admitted` (and so by the ranked set and the BM25
+    corpus-IDF denominator alike) and by `memory_list`. It lives here,
+    beside the type it reads, so those surfaces cannot drift apart.
+
+    Two properties the callers depend on:
+
+    * **Exact, case-sensitive, no normalisation.** A declared value has
+      already been through `_clean`, so it is a bounded exact string,
+      and equality here is the same set `index.query`'s SQL `WHERE`
+      selects. Folding either side would break that: `COLLATE NOCASE`
+      folds ASCII only and Python's `.casefold()` does not agree with it
+      beyond ASCII, so the SQL prefilter and this predicate would
+      silently disagree on exactly the non-ASCII client names a filter
+      would be introduced to fold.
+    * **No actor matches no filter.** `None` here is a record whose
+      writer declared nothing — every record written before 7.10.0, and
+      any written since by a client that names itself in no channel. It
+      is not evidence of some OTHER writer, so it is excluded rather
+      than passed. This is where the rule differs from
+      `origin.should_include_for_caller`, which passes an unlabelled
+      memory because that one is an admission rule and an origin-less
+      memory is global. Selection and admission are not the same
+      question, and the two must not be "harmonised".
+    """
+    if client is None and model is None:
+        return True
+    if actor is None:
+        return False
+    if client is not None and actor.client != client:
+        return False
+    if model is not None and actor.model != model:
+        return False
+    return True
+
+
 class Workspace(BaseModel):
     """The WHERE of a request, before git is asked about it.
 

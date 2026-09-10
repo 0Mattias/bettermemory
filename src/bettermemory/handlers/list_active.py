@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from ..identity import actor_matches
 from ..models import utcnow, validate_scope
 from ._shared import Context, _advance_turn
 
@@ -28,7 +29,8 @@ DESC_MEMORY_LIST = (
     "`list -> show -> show` would be wasteful. Don't reach for "
     "`with_bodies` casually — it pulls every memory in scope into "
     "your context, which is the failure mode this project exists "
-    "to avoid. Filter by `scopes` if you only care about a subset."
+    "to avoid. Filter by `scopes` if you only care about a subset, "
+    "or by `client` / `model` — each row's DECLARED actor, exact."
 )
 
 
@@ -36,6 +38,8 @@ async def memory_list(
     deps: "ToolHandlers",
     scopes: list[str] | None = None,
     with_bodies: bool = False,
+    client: str | None = None,
+    model: str | None = None,
     ctx: Context | None = None,
 ) -> list[dict[str, Any]]:
     state = deps.sessions.for_request(ctx)
@@ -48,6 +52,13 @@ async def memory_list(
     # memory_search: consistent verification verdict across rows.
     now = utcnow()
 
+    # The actor filter is a Python predicate on both branches, not an
+    # index `WHERE` like the one `memory_search` gets. The reason is that
+    # a listing has no candidate cap to spend: both branches already walk
+    # every active record, so selecting ids from the index first would
+    # save no reads and would add a second place the rule is spelled.
+    # `actor_matches` is that one place; `search.candidate_admitted`
+    # reads it too.
     if with_bodies:
         out: list[dict[str, Any]] = []
         for memory in deps.store.load_all():
@@ -56,11 +67,15 @@ async def memory_list(
                 continue
             if scopes and not (memory_scopes & set(scopes)):
                 continue
+            if not actor_matches(memory.actor, client=client, model=model):
+                continue
             out.append(deps.responses.memory_to_dict(memory, now=now))
         deps.responses.attach_provenance(out, root=deps.store.root)
         deps.recorder.record(
             "list",
             scopes_filter=scopes,
+            client_filter=client,
+            model_filter=model,
             with_bodies=True,
             count=len(out),
             returned=[m["id"] for m in out],
@@ -71,6 +86,8 @@ async def memory_list(
     for summary in deps.store.list_summaries(scopes=scopes):
         if excluded and (set(summary.scopes) & excluded):
             continue
+        if not actor_matches(summary.actor, client=client, model=model):
+            continue
         out_summary.append(deps.responses.summary_to_dict(summary, now=now))
     # Listing is the cheap-triage view, and provenance is exactly the
     # kind of signal a curator scrolling it should see without a show
@@ -79,6 +96,8 @@ async def memory_list(
     deps.recorder.record(
         "list",
         scopes_filter=scopes,
+        client_filter=client,
+        model_filter=model,
         with_bodies=False,
         count=len(out_summary),
         returned=[s["id"] for s in out_summary],

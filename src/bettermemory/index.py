@@ -74,6 +74,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, NamedTuple
 
 from ._fsutil import flock_excl
+from .identity import Actor
 from .models import Memory
 from .origin import Origin
 from .search import fts_index_text, fts_match_query, tokenizer_fingerprint
@@ -190,7 +191,31 @@ log = logging.getLogger("bettermemory.index")
 # so unlike the three columns above it needs no carry across a drop; it
 # is here so a curation pass can read every stamp's anchor from one
 # query instead of opening every file.
-SCHEMA_VERSION = 10
+#
+# Version 11 (actor columns): `memories` gains `actor_client` and
+# `actor_model`, the two declared fields of the `identity.Actor` the
+# writing request resolved (7.10.0), or NULL when the writer declared
+# nothing — which is every record written before 7.10.0. Straight off
+# the record at every upsert and re-read from frontmatter at every
+# rebuild, so like `verified_head` and unlike the three sticky columns
+# above they need no carry across a drop.
+#
+# Unlike `origin_repo` these ARE a SQL filter, and the difference is
+# the whole reason the column earns its place: a declared value has
+# already been reduced by `identity._clean` to a bounded exact string,
+# so `actor_client = ?` and the Python predicate in
+# `search.candidate_admitted` are provably the same set. No folding is
+# applied on either side — `COLLATE NOCASE` folds ASCII only and
+# Python's `.casefold()` does not agree with it beyond ASCII, so a
+# case-insensitive filter would reintroduce exactly the silent
+# SQL-vs-Python divergence the origin columns exist to avoid.
+#
+# No secondary index is created for them, deliberately. Every query
+# that filters on the columns is driven by the FTS match and narrows
+# an already-small candidate set, and this whole statement block runs
+# against the PRE-migration table on an upgrade, where an index over a
+# column the old `memories` lacks fails the schema script outright.
+SCHEMA_VERSION = 11
 
 # Pinned `search.tokenizer_fingerprint()` digest for the current
 # SCHEMA_VERSION. Consumed only by the ratchet test
@@ -268,7 +293,15 @@ CREATE TABLE IF NOT EXISTS memories (
     -- `memory_verify` last stamped it, straight off the record
     -- (`Memory.verified_head`); NULL when the stamp carries no anchor.
     -- Re-read from frontmatter at every rebuild, so it needs no carry.
-    verified_head TEXT
+    verified_head TEXT,
+    -- Schema v11. The writing request's declared identity, straight off
+    -- `Memory.actor`; NULL when the writer declared nothing. NULL is the
+    -- honest answer and never an empty string: an `Actor` with nothing
+    -- set serialises to `{}` and the writers drop the block entirely, so
+    -- "wrote no name" and "wrote the empty name" are the same state and
+    -- neither one matches a filter.
+    actor_client TEXT,
+    actor_model TEXT
 );
 
 -- The FTS table indexes the PREPROCESSED columns (schema v4): body_fts /
@@ -1022,6 +1055,8 @@ def query(
     text: str,
     *,
     scopes: list[str] | None = None,
+    client: str | None = None,
+    model: str | None = None,
     max_results: int = 100,
 ) -> list[tuple[str, float]]:
     """FTS5 query returning ``[(memory_id, bm25_score), ...]`` sorted
@@ -1032,6 +1067,21 @@ def query(
     OR filter — at least one matching scope must be present on the
     memory. An empty `text` returns an empty list (FTS5 can't match
     on nothing).
+
+    `client` / `model` (schema v11) filter on the writing request's
+    DECLARED identity, exact and case-sensitive. They are here, in the
+    SQL, rather than only in `search.candidate_admitted` because
+    `max_results` is a CAP: a post-cap filter would be handed the
+    globally-highest-BM25 slice and could find none of the requested
+    actor's matches in it, however many the store holds. Applying them
+    here spends the cap on eligible rows. The Python predicate still
+    runs — the `load_all` path has no SQL at all — and the two are the
+    same set by construction, since both are equality on the stored
+    string with no normalisation on either side.
+
+    A row with no declared actor matches NO value of either. That is
+    selection semantics, deliberately unlike `repo_filter`'s admission
+    semantics, where an unlabelled memory passes as global.
 
     Caller is expected to layer additional scoring on top: this is
     the candidate set, not the final ranking. The single source of
@@ -1077,6 +1127,16 @@ def query(
             # has scopes_text=' tools projects:foo ').
             sql += "AND (" + " OR ".join(["m.scopes_text LIKE ?"] * len(scopes)) + ") "
             params.extend(f"% {s} %" for s in scopes)
+
+        # `IS NOT NULL` is implied by `= ?` on a non-NULL parameter, but
+        # it is spelled out so the undeclared rows' exclusion reads as the
+        # deliberate rule it is rather than as SQL trivia.
+        if client is not None:
+            sql += "AND m.actor_client IS NOT NULL AND m.actor_client = ? "
+            params.append(client)
+        if model is not None:
+            sql += "AND m.actor_model IS NOT NULL AND m.actor_model = ? "
+            params.append(model)
 
         sql += "ORDER BY score ASC LIMIT ?"
         params.append(int(max_results))
@@ -1311,7 +1371,7 @@ def corpus_document_frequencies(
     root: Path,
     terms: Sequence[str],
     *,
-    admit: Callable[[list[str], Origin | None], bool],
+    admit: Callable[[list[str], Origin | None, Actor | None], bool],
 ) -> tuple[int, dict[str, int], dict[str, int]] | None:
     """Document frequencies for `terms` over the collection a search will
     actually rank.
@@ -1328,8 +1388,9 @@ def corpus_document_frequencies(
     by construction — and Okapi IDF collapses toward zero for exactly the
     terms that should dominate. Measured at 74x on a 608-memory store.
 
-    `admit` is the caller's admission predicate, taking `(scopes, origin)`
-    and returning whether that memory survives the search filters. It is
+    `admit` is the caller's admission predicate, taking
+    `(scopes, origin, actor)` and returning whether that memory survives
+    the search filters. It is
     `search.candidate_admitted` bound to this request's scope / repo /
     worktree filters — the SAME predicate `_filter_candidates` runs.
     Passing it in rather than filtering in SQL is the whole design:
@@ -1340,8 +1401,16 @@ def corpus_document_frequencies(
     multi-remote stores alternates exist to serve. The columns are read
     OUT and judged in Python; the denominator is provably the ranked set.
 
+    The actor filter rides the same predicate rather than the `WHERE`
+    `query` uses, even though it is SQL-expressible: one predicate over
+    one row shape is what makes the denominator provably the ranked set,
+    and a second spelling of the rule here would be a second thing to
+    keep in agreement for no gain — there is no cap on this scan to
+    spend on eligible rows.
+
     Cost is two FTS lookups per term plus one columnar scan of
-    `(id, scopes_json, origin_repo, origin_worktree)`. That scan is
+    `(id, scopes_json, origin_repo, origin_worktree, actor_client,
+    actor_model)`. That scan is
     O(corpus) — measured 3.8 ms at 1K memories, 17 ms at 5K, 71 ms at 20K
     — so it is honestly linear, just with a constant ~3.6 µs/row against
     the per-file open + YAML parse that `load_all` pays for the same
@@ -1380,7 +1449,8 @@ def corpus_document_frequencies(
         _ensure_schema(conn, path)
         admitted: set[str] = set()
         for row in conn.execute(
-            "SELECT id, scopes_json, origin_repo, origin_worktree FROM memories"
+            "SELECT id, scopes_json, origin_repo, origin_worktree, "
+            "actor_client, actor_model FROM memories"
         ):
             repo = row["origin_repo"]
             worktree = row["origin_worktree"]
@@ -1393,11 +1463,21 @@ def corpus_document_frequencies(
             # That is not a lossy shortcut: `should_include_for_caller`
             # reads only `repo` and `worktree_root`, so the two are
             # indistinguishable to the admission rule.
+            actor_client = row["actor_client"]
+            actor_model = row["actor_model"]
+            # Partial for the same reason the origin above is: the
+            # predicate reads these two fields and nothing else, so a row
+            # that declared only a `session` is None here and to the rule.
+            actor = (
+                Actor(client=actor_client, model=actor_model)
+                if (actor_client is not None or actor_model is not None)
+                else None
+            )
             try:
                 scopes = json.loads(row["scopes_json"])
             except (TypeError, ValueError):
                 continue
-            if admit(list(scopes), origin):
+            if admit(list(scopes), origin, actor):
                 admitted.add(row["id"])
         if not admitted:
             return None
@@ -2071,8 +2151,9 @@ def _upsert_memory(
         "id, created, updated, last_verified_at, confidence, category, "
         "body, body_fts, scopes_text, scopes_fts, scopes_json, filename, "
         "origin_repo, origin_worktree, provenance, verified_locally_at, "
-        "content_sha256, verified_head) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "content_sha256, verified_head, actor_client, actor_model) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+        "?, ?) "
         "ON CONFLICT(id) DO UPDATE SET "
         "created = excluded.created, "
         "updated = excluded.updated, "
@@ -2098,7 +2179,14 @@ def _upsert_memory(
         "memories.content_sha256), "
         # Straight off the record, never COALESCEd: a body edit clears the
         # anchor with the stamp, and the row has to say so.
-        "verified_head = excluded.verified_head",
+        "verified_head = excluded.verified_head, "
+        # Schema v11, the same discipline for the same reason: the row
+        # reports the actor the RECORD carries, so whatever the write path
+        # decided to keep or replace on the file is what the filter sees.
+        # COALESCE here would let a row keep an actor its own frontmatter
+        # no longer names.
+        "actor_client = excluded.actor_client, "
+        "actor_model = excluded.actor_model",
         (
             memory.id,
             memory.created.isoformat(),
@@ -2118,6 +2206,8 @@ def _upsert_memory(
             verified_locally_at,
             content_sha256,
             memory.verified_head,
+            memory.actor.client if memory.actor else None,
+            memory.actor.model if memory.actor else None,
         ),
     )
     _sync_links(conn, memory)
