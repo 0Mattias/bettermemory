@@ -1708,3 +1708,87 @@ def test_prune_unlinks_sidecar_after_flock_release_not_inside(
         "sidecar lockfile must be unlinked post-prune (deferred past "
         "flock release so the unlink lands on Windows too)."
     )
+
+
+def _unreadable_file_is_enforceable() -> bool:
+    import os
+
+    if sys.platform == "win32":
+        return False
+    getuid = getattr(os, "geteuid", None)
+    return getuid is not None and getuid() != 0
+
+
+@pytest.mark.skipif(
+    not _unreadable_file_is_enforceable(),
+    reason="needs POSIX mode bits and a non-root euid",
+)
+def test_list_by_session_warns_about_a_file_it_could_not_read(
+    episode_store: EpisodeStore, caplog: pytest.LogCaptureFixture
+) -> None:
+    """`except (ValueError, KeyError, OSError): continue` conflated the
+    designed skip-this-row signal with "could not read it". The surface
+    still stays up on an unreadable file, but says so, and `locate`
+    answers the by-id question the listing cannot."""
+    import logging
+
+    episode_store.write(session_id="sess_aaaa1111", body="readable", takeaway="one")
+    sealed = episode_store.write(
+        session_id="sess_aaaa1111", body="sealed", takeaway="two"
+    )
+    target = episode_store.episodes_dir / "sess_aaaa1111" / f"{sealed.id}.md"
+    assert target.is_file()
+    target.chmod(0o000)
+    try:
+        with caplog.at_level(logging.WARNING, logger="bettermemory.episodes"):
+            listed = episode_store.list_by_session("sess_aaaa1111")
+        assert [e.takeaway for e in listed] == ["one"]
+        assert any("could not be read" in r.message for r in caplog.records)
+        assert episode_store.locate(sealed.id) == target
+        assert episode_store.locate("01NOTREALLYANEPISODEIDXXXX") is None
+        assert episode_store.locate("../escape") is None
+    finally:
+        target.chmod(0o644)
+
+
+@pytest.mark.skipif(
+    not _unreadable_file_is_enforceable(),
+    reason="needs POSIX mode bits and a non-root euid",
+)
+async def test_episode_promote_names_a_file_it_could_not_read(
+    memory_dir: Path,
+) -> None:
+    """The promote walk went through `list_by_session`, which skipped the
+    unreadable file, and the handler then told the caller the episode
+    "may have been pruned past its TTL or never existed" — about an id
+    the caller was holding and a file sitting on disk."""
+    from bettermemory.config import Config, StorageConfig
+    from bettermemory.server import build_server
+    from bettermemory.session import SessionState
+    from bettermemory.store import Store
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    server = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    written = await _call_episode_tool(
+        server,
+        "episode_write",
+        body="a durable lesson worth promoting",
+        takeaway="keep",
+    )
+    target = next((memory_dir / "episodes").rglob(f"{written['id']}.md"))
+    target.chmod(0o000)
+    try:
+        with pytest.raises(Exception, match="could not be read") as refused:
+            await _call_episode_tool(
+                server, "episode_promote", episode_id=written["id"], scopes=["tools"]
+            )
+        assert "never existed" not in str(refused.value)
+    finally:
+        target.chmod(0o644)
+    with pytest.raises(Exception, match="never existed"):
+        await _call_episode_tool(
+            server,
+            "episode_promote",
+            episode_id="01NOTREALLYANEPISODEIDXXXX",
+            scopes=["tools"],
+        )

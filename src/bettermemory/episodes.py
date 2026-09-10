@@ -26,6 +26,8 @@ write and a read-only loop would otherwise grow it silently.
 
 from __future__ import annotations
 
+import logging
+import os
 import shutil
 import stat
 from dataclasses import dataclass
@@ -43,6 +45,8 @@ from .models import (
 )
 from .origin import Origin
 from .time_utils import ensure_utc, parse_event_ts
+
+log = logging.getLogger("bettermemory.episodes")
 
 
 EPISODES_DIR = "episodes"
@@ -372,15 +376,44 @@ class EpisodeStore:
                 yield entry
 
     def list_by_session(self, session_id: str) -> list[Episode]:
-        """All episodes for one session, oldest first (ULIDs sort by creation)."""
+        """All episodes for one session, oldest first (ULIDs sort by creation).
+
+        A file the parser rejects is skipped silently: that is the
+        designed skip-this-row signal, and doctor's job. A file this
+        process could NOT READ is skipped too — the surface stays up —
+        but with a warning, because "could not read it" is not "it was
+        not there", and a read surface that says nothing has just told
+        the caller the episode does not exist. `locate` is the by-id
+        answer for that case."""
         out: list[Episode] = []
         for path in self._iter_session_paths(session_id):
             try:
                 out.append(self._load_path(path))
-            except (ValueError, KeyError, OSError):
+            except (ValueError, KeyError):
+                continue
+            except OSError as exc:
+                log.warning("episode %s could not be read: %s", path, exc)
                 continue
         out.sort(key=lambda e: e.created)
         return out
+
+    def locate(self, episode_id: str) -> Path | None:
+        """The on-disk file behind `episode_id`, or None when no session
+        directory holds one. A stat, never a parse: this exists so a
+        by-id surface can tell "no such episode" from "the episode is
+        there and could not be read" — `list_by_session` skips the
+        latter, and a caller walking it would otherwise report the
+        second as the first."""
+        if not episode_id or not all(
+            c in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+            for c in episode_id
+        ):
+            return None
+        for session_id in self.iter_session_ids():
+            candidate = self.episodes_dir / session_id / f"{episode_id}.md"
+            if os.path.isfile(candidate):
+                return candidate
+        return None
 
     def list_by_swarm(self, swarm_id: str) -> list[Episode]:
         """All episodes across every session tagged with `swarm_id`,

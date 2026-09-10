@@ -354,6 +354,26 @@ async def episode_promote(
         if episode is not None:
             break
     if episode is None or episode_session_id is None:
+        # The walk skips a file it could not read, so "not found" here
+        # has two causes and the caller is holding an id for one of
+        # them. One stat tells them apart before the pruned-or-never-
+        # existed answer goes out about a file that is sitting on disk.
+        located = deps.episode_store.locate(episode_id)
+        if located is not None:
+            try:
+                episode = deps.episode_store._load_path(located)
+                episode_session_id = located.parent.name
+            except OSError as exc:
+                raise ValueError(
+                    f"episode {episode_id!r} exists at {located} but could not "
+                    f"be read: {exc}"
+                ) from exc
+            except (ValueError, KeyError) as exc:
+                raise ValueError(
+                    f"episode {episode_id!r} exists at {located} but could not "
+                    f"be parsed: {exc}"
+                ) from exc
+    if episode is None or episode_session_id is None:
         raise ValueError(
             f"no episode with id {episode_id!r} (it may have been pruned "
             "past its TTL or never existed)"
