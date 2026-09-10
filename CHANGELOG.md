@@ -7,6 +7,71 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 7.12.0 - 2026-09-10
+
+### Added
+
+- `3af7f7f` feat(search): read the actor back through client and model
+  filters. 7.10.0 recorded who wrote a memory and rendered it on every
+  read surface; nothing selected on it. `memory_search` and
+  `memory_list` now take `client` and `model`, matched against the
+  writing request's declared actor (`actor.client` / `actor.model`).
+  Both are optional and both default to off: omit them and the ranking,
+  the candidate set and every response shape are what 7.11.0 served.
+
+  Schema v11 carries `actor_client` / `actor_model` on the index row,
+  straight off the record at every upsert and re-read from frontmatter
+  at every rebuild — so, like `verified_head`, they need no carry across
+  the drop a version bump performs, and an existing store repopulates
+  them on its next automatic rebuild with no `reindex` asked of anyone.
+  Unlike `origin_repo`, which `index.py` documents as deliberately NOT a
+  SQL filter, these are one: a declared value has already been reduced
+  by `identity._clean` to a bounded exact string, so `index.query`'s
+  `WHERE` and the Python predicate are provably the same set. That is
+  what earns the `WHERE`, and the reason it is worth having is the
+  candidate cap — the FTS prefilter hands the ranker at most 50 rows by
+  relevance, so a store dominated by one writer would spend the whole
+  cap on that writer and a filtered search for a rarer one would come
+  back empty with the match sitting on disk. No folding is applied on
+  either side: `COLLATE NOCASE` folds ASCII only and Python's
+  `.casefold()` does not agree with it beyond ASCII, so a
+  case-insensitive filter would reintroduce exactly the silent
+  SQL-versus-Python divergence the origin columns exist to avoid.
+
+  `identity.actor_matches` is the single definition of the rule.
+  `search.candidate_admitted` reads it, which is what keeps the ranked
+  set and the BM25 corpus-IDF denominator narrowing together —
+  `corpus_document_frequencies` selects the two new columns and binds
+  them into the same predicate, so document frequencies are never
+  computed over a collection the caller cannot retrieve. `memory_list`
+  reads it too, and applies it in Python rather than through the index:
+  both of its branches already walk every active record, so an index
+  pre-selection would save no reads and would only add a second place
+  the rule is spelled.
+
+  A record whose writer declared nothing matches NO value — every
+  memory written before 7.10.0, and any written since by a client that
+  names itself in no channel. This is selection, not admission: a repo
+  filter deliberately passes an origin-less memory as global, but "what
+  did this client write" must not answer with everything recorded
+  before writers were recorded at all. A filtered result is therefore a
+  listing of labelled memories and never a census of who wrote what;
+  the census — how many records carry no actor, and which spellings
+  exist — belongs to the `memory_health` per-actor slice that follows
+  this unit. So that an exact-match filter is not a guessing game in
+  the meantime, `memory_list`'s body-stripped rows now carry a compact
+  `actor` (`{client, model}`, each key present only when declared, the
+  key omitted entirely when neither is): an unfiltered listing is how
+  the spellings are read rather than guessed.
+
+  The values are DECLARED by the calling client and therefore
+  forgeable. These filters are evidence — for attribution, per-model
+  telemetry and the targeted rollback still to come — and never a
+  permission boundary: `principal`, the one attested field, stays
+  deliberately unfilterable, being `null` on every unauthenticated
+  transport. `SECURITY.md` continues to record what that means for a
+  client that lies.
+
 ## 7.11.0 - 2026-09-10
 
 ### Added
