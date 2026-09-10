@@ -4306,3 +4306,121 @@ def test_pull_sees_a_file_whose_name_git_quotes(
 
     labels = _index.provenance_for(other_dir, [anchor.id, second.id])
     assert labels[second.id] == "synced"
+
+
+# ---------------------------------------------------------------------------
+# Git declining to answer is not "not a repo"
+# ---------------------------------------------------------------------------
+
+
+def _git_refuses(root: Path, message: str) -> Any:
+    """A `_run_git` stand-in: `rev-parse --show-toplevel` exits 128 with
+    `message`, the way git answers a repo whose objects this uid may not
+    read; everything else runs for real."""
+    real = sync._run_git
+
+    def _run(cwd: Path, args: list[str], *, check: bool = True) -> Any:
+        if args[:2] == ["rev-parse", "--show-toplevel"]:
+            return subprocess.CompletedProcess(
+                ["git", *args], 128, stdout="", stderr=f"fatal: {message}\n"
+            )
+        return real(cwd, args, check=check)
+
+    return _run
+
+
+def test_is_repo_raises_when_git_could_not_answer(
+    memory_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`_is_repo` read every non-zero exit as "not a git working tree",
+    and a missing binary too. So `push`, `pull` and `auto` told a user
+    whose store git refused to open to run `sync init` first, and
+    `init` would have run `git init` over a repo it could not read.
+    "not a git repository" is git's measured no; everything else is
+    git declining to answer, and the wrapper says so."""
+    real_run_git = sync._run_git
+    sync.init(memory_dir)
+    assert sync._is_repo(memory_dir) is True
+    plain = memory_dir.parent / "plain"
+    plain.mkdir()
+    assert sync._is_repo(plain) is False, "git's measured no still reads False"
+
+    monkeypatch.setattr(
+        sync,
+        "_run_git",
+        _git_refuses(
+            memory_dir, f"detected dubious ownership in repository at '{memory_dir}'"
+        ),
+    )
+    with pytest.raises(sync.SyncError, match="could not determine") as refused:
+        sync._is_repo(memory_dir)
+    assert "dubious ownership" in str(refused.value)
+    for op in (sync.push, sync.pull, sync.auto):
+        with pytest.raises(sync.SyncError, match="could not determine") as err:
+            op(memory_dir)
+        assert "sync init" not in str(err.value)
+
+    monkeypatch.setattr(sync, "_run_git", real_run_git)
+
+    def _no_git() -> str:
+        raise sync.SyncError("git executable not found on PATH")
+
+    monkeypatch.setattr(sync, "_require_git", _no_git)
+    with pytest.raises(sync.SyncError, match="not found on PATH"):
+        sync._is_repo(memory_dir)
+
+
+def test_status_says_when_git_could_not_answer(
+    memory_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`status()` never raises, and used to render the refused repo as
+    `is_repo=False, has_changes=False` — a store that is not a repo and
+    has nothing pending, handed to a cron or a monitor, while the store
+    was a repo holding uncommitted edits. Now `is_repo` is None and
+    `error` carries git's words."""
+    sync.init(memory_dir)
+    Store(memory_dir).write(content="an uncommitted edit", scopes=["tools"])
+    assert sync.status(memory_dir).has_changes is True
+
+    monkeypatch.setattr(
+        sync,
+        "_run_git",
+        _git_refuses(
+            memory_dir, f"detected dubious ownership in repository at '{memory_dir}'"
+        ),
+    )
+    st = sync.status(memory_dir)
+    assert st.is_repo is None
+    assert st.error is not None and "dubious ownership" in st.error
+    assert st.has_changes is False and st.untracked == [] and st.modified == []
+    payload = st.to_dict()
+    assert payload["is_repo"] is None
+    assert "dubious ownership" in str(payload["error"])
+
+    plain = memory_dir.parent / "plain"
+    plain.mkdir()
+    monkeypatch.undo()
+    st = sync.status(plain)
+    assert st.is_repo is False and st.error is None
+    assert st.to_dict()["error"] is None
+
+
+def test_cli_sync_status_names_a_repo_git_would_not_open(
+    memory_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    sync.init(memory_dir)
+    monkeypatch.setattr(
+        sync,
+        "_run_git",
+        _git_refuses(
+            memory_dir, f"detected dubious ownership in repository at '{memory_dir}'"
+        ),
+    )
+    _run_cli(["sync", "status"], monkeypatch=monkeypatch, directory=memory_dir)
+    out = capsys.readouterr().out
+    assert "Could not read the git state" in out
+    assert "dubious ownership" in out
+    assert "is not a git repo" not in out
+    assert "sync init" not in out

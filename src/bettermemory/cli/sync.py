@@ -289,6 +289,12 @@ def _cli_sync_status(*, json_out: bool) -> None:
         sys.stdout.write(_json.dumps(st.to_dict(), indent=2) + "\n")
         return
 
+    if st.is_repo is None:
+        sys.stdout.write(
+            f"Could not read the git state of {directory}: {st.error}\n"
+            "Nothing below is known — this is not a clean store.\n"
+        )
+        return
     if not st.is_repo:
         sys.stdout.write(
             f"{directory} is not a git repo. Run `bettermemory sync init` "

@@ -2404,7 +2404,7 @@ def _check_sync_tracked_ignored(directory: Path) -> Diagnosis:
     # would be circular. Same pattern as `_check_index_health`'s `index`
     # import. `_GITIGNORE_LINES` stays the single canonical pattern
     # list; duplicating it here would let the two drift.
-    from .sync import _GITIGNORE_LINES, _is_repo, _run_git
+    from .sync import _GITIGNORE_LINES, SyncError, _is_repo, _run_git
 
     if not directory.exists():
         return Diagnosis(
@@ -2414,11 +2414,26 @@ def _check_sync_tracked_ignored(directory: Path) -> Diagnosis:
         )
     # `_is_repo` is top-of-worktree-only (a store nested inside some
     # parent repo is not a sync repo — that nested shape is
-    # `store_nested_in_parent_repo`'s finding, not this check's) and
-    # returns False when git itself is missing — both degrade to
-    # "nothing to check", matching the sync wrapper's own notion of an
-    # initialised store.
-    if not _is_repo(directory):
+    # `store_nested_in_parent_repo`'s finding, not this check's). It
+    # RAISES when git could not answer — no binary, a broken gitfile,
+    # an object store this uid may not read. That is still "nothing this
+    # check can list" (the store is not a sync repo git can open, and
+    # the enclosing repos stay `store_nested_in_parent_repo`'s), but the
+    # message carries git's words rather than the measured "not a sync
+    # repo" a plain directory earns.
+    try:
+        is_repo = _is_repo(directory)
+    except SyncError as exc:
+        return Diagnosis(
+            name="sync_tracked_ignored",
+            status="ok",
+            message=(
+                "Store is not a git sync repo this process can open — nothing "
+                f"to check here ({exc}). `store_nested_in_parent_repo` covers "
+                "the enclosing repos."
+            ),
+        )
+    if not is_repo:
         return Diagnosis(
             name="sync_tracked_ignored",
             status="ok",
@@ -4873,9 +4888,14 @@ def _fix_sync_gitignore(
     # Same lazy-import rationale as `_check_sync_tracked_ignored`: a
     # top-level `from .sync import …` here would be circular (sync
     # imports `DOCTOR_PROBE_FILENAME` from this module).
-    from .sync import _is_repo, _reconcile_gitignore
+    from .sync import SyncError, _is_repo, _reconcile_gitignore
 
-    if not _is_repo(directory):
+    try:
+        if not _is_repo(directory):
+            return None
+    except SyncError:
+        # A store git could not open is not one a gitignore refresh can
+        # help; the diagnosis that led here already said so.
         return None
     gitignore = directory / ".gitignore"
     try:

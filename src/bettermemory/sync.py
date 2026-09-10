@@ -450,9 +450,18 @@ class SyncError(RuntimeError):
 @dataclass
 class SyncStatus:
     """Snapshot of the memory dir's git state. Returned by
-    ``status()``; rendered to text by the CLI."""
+    ``status()``; rendered to text by the CLI.
 
-    is_repo: bool
+    `is_repo` is three-valued: True, False when git looked and said
+    "not a git repository", and None when git could not answer at all —
+    no binary, or an exit the wrapper cannot read as either (`dubious
+    ownership` on a store whose objects this uid cannot read). `error`
+    carries git's own words for that last case and is None otherwise.
+    Before the split a store that IS a repo, with dozens of uncommitted
+    edits, read `is_repo=False, has_changes=False` to a cron or a
+    monitor whenever git refused to speak."""
+
+    is_repo: bool | None
     branch: str | None
     has_changes: bool
     untracked: list[str]
@@ -464,10 +473,12 @@ class SyncStatus:
     # (`quarantine.py`). Read off the sidecar whether or not the
     # directory is a repo: the sidecar governs the store, not git.
     quarantined: int = 0
+    error: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
             "is_repo": self.is_repo,
+            "error": self.error,
             "branch": self.branch,
             "has_changes": self.has_changes,
             "untracked_count": len(self.untracked),
@@ -899,6 +910,15 @@ def _require_no_unresolved_conflict(root: Path) -> None:
         raise _unresolved_conflict_error(root, unmerged, rebasing)
 
 
+# Git's one non-zero exit that means "no": "fatal: not a git repository
+# (or any of the parent directories): .git", and the discovery-ceiling
+# spelling "(or any parent up to mount point …)". Every other non-zero
+# exit — `dubious ownership`, an unreadable `.git`, a corrupt one — is
+# git declining to answer, and `_is_repo` says so instead of reading it
+# as a plain directory.
+_NOT_A_REPOSITORY_RE = re.compile(r"not a git repository", re.IGNORECASE)
+
+
 def _is_repo(root: Path) -> bool:
     """True iff `root` is the top of a git working tree. Avoids the
     edge case where `root` is *inside* a parent repo but not itself a
@@ -907,17 +927,28 @@ def _is_repo(root: Path) -> bool:
     though: doctor's `store_nested_in_parent_repo` check flags any
     `_GITIGNORE_LINES` sidecar the PARENT repo tracks under the store
     (a leak surface this top-of-worktree gate deliberately makes
-    invisible to sync itself)."""
-    try:
-        result = _run_git(
-            root,
-            ["rev-parse", "--show-toplevel"],
-            check=False,
-        )
-    except SyncError:
-        return False
+    invisible to sync itself).
+
+    Raises `SyncError` when git could not answer — the binary is
+    missing, or `rev-parse` exited non-zero for any reason other than
+    "not a git repository". Both used to read as False, so `push`,
+    `pull` and `auto` told a user whose store git refused to open to
+    "run `bettermemory sync init` first", and `init` would have run
+    `git init` over a repo it could not read. False is a measured no."""
+    result = _run_git(
+        root,
+        ["rev-parse", "--show-toplevel"],
+        check=False,
+    )
     if result.returncode != 0:
-        return False
+        if _NOT_A_REPOSITORY_RE.search(result.stderr or ""):
+            return False
+        stderr = _redact_text(result.stderr.strip())
+        first = stderr.splitlines()[0] if stderr else "no error text"
+        raise SyncError(
+            f"could not determine whether {root} is a git working tree: "
+            f"`git rev-parse --show-toplevel` exited {result.returncode}: {first}"
+        )
     return Path(result.stdout.strip()).resolve() == root.resolve()
 
 
@@ -1019,11 +1050,28 @@ def init(
 def status(root: Path) -> SyncStatus:
     """Snapshot of the repo state. Returns a `SyncStatus` even for
     non-repo directories — the caller can branch on `is_repo`. Never
-    raises; structural problems are surfaced as `is_repo=False`
-    plus empty fields."""
+    raises: a plain directory is `is_repo=False` plus empty fields, and
+    a directory git could not answer for is `is_repo=None` with `error`
+    carrying git's words, since "nothing pending" is not a fact this
+    function has when git would not open the repo."""
     root = Path(root).expanduser().resolve()
     quarantined = len(load_quarantine(root))
-    if not _is_repo(root):
+    try:
+        is_repo = _is_repo(root)
+    except SyncError as exc:
+        return SyncStatus(
+            is_repo=None,
+            branch=None,
+            has_changes=False,
+            untracked=[],
+            modified=[],
+            remote_url=None,
+            ahead=0,
+            behind=0,
+            quarantined=quarantined,
+            error=str(exc),
+        )
+    if not is_repo:
         return SyncStatus(
             is_repo=False,
             branch=None,
