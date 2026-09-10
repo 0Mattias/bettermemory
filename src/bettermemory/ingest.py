@@ -67,6 +67,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -1051,7 +1052,14 @@ def apply_ingest_plan(
 # large (full message transcripts); the cwd field appears on records from
 # the first lines of a session, so a bounded prefix read per file is
 # enough to collect the evidence without ever streaming whole transcripts.
-_SESSION_SCAN_MAX_FILES = 20
+# The file ceiling is a cost bound on a pathological directory, not a
+# sample size: `_session_cwds` reports a scan that hit it as incomplete,
+# and an incomplete scan withholds the origin stamp. At 20 the ceiling
+# was a sample — a project with more sessions than that had its
+# contradicting transcripts sorted past the slice by uuid — so it is now
+# set where a real `~/.claude/projects/<x>/` will not reach it while the
+# read stays one bounded open per file.
+_SESSION_SCAN_MAX_FILES = 2000
 _SESSION_SCAN_MAX_BYTES = 262_144
 _SESSION_SCAN_MAX_LINES = 200
 
@@ -1070,13 +1078,20 @@ def _session_evidence_matches_cwd(source_root: Path, cwd: Path | None) -> bool:
     * ANY observed session cwd resolves elsewhere → False (a colliding
       foreign project shares this directory — skip the stamp);
     * no ``.jsonl`` evidence at all → True (nothing contradicts the
-      sanitized-path match; the pre-existing stamp path stays intact).
+      sanitized-path match; the pre-existing stamp path stays intact);
+    * the scan could not be completed → False. Evidence that was not
+      read is ambiguity, not absence: a transcript this process could
+      not open, or a directory with more sessions than the scan ceiling,
+      may hold exactly the contradicting cwd the rule exists to find,
+      and this guard's own contract is conservative on ambiguity.
     """
     try:
         resolved_cwd = (cwd or Path.cwd()).resolve()
     except OSError:
         return False
-    observed = _session_cwds(source_root.parent)
+    observed, complete = _session_cwds(source_root.parent)
+    if not complete:
+        return False
     if not observed:
         return True
     for raw in observed:
@@ -1089,27 +1104,44 @@ def _session_evidence_matches_cwd(source_root: Path, cwd: Path | None) -> bool:
     return True
 
 
-def _session_cwds(project_dir: Path) -> set[str]:
+def _session_cwds(project_dir: Path) -> tuple[set[str], bool]:
     """Distinct ``cwd`` values from session ``.jsonl`` records in
-    `project_dir`, read with hard per-file and file-count bounds.
+    `project_dir`, and whether the scan was complete.
 
-    Best-effort: unreadable files/lines are skipped individually, and a
-    truncated trailing line from the byte-bounded read simply fails
-    ``json.loads`` and is ignored. Returns an empty set when there is no
-    evidence at all (no ``.jsonl`` files, or none with a ``cwd`` field).
+    Reads a bounded head of every transcript: the byte and line caps are
+    per file, and a session's records all carry the cwd it was started
+    in, so the head is where the evidence is. ``complete`` is False when
+    the directory could not be listed, when any transcript could not be
+    opened, when the file count exceeded `_SESSION_SCAN_MAX_FILES`, or
+    when a transcript's bounded head held no ``cwd`` while the bound
+    truncated it — in each case there is evidence this scan did not
+    read. Three states used to collapse into one empty set: "no
+    transcripts here", "could not read them" and "read the first twenty
+    of two hundred", and the caller stamped an origin on all three.
+
+    Unparseable lines are still skipped individually: a truncated
+    trailing line from the byte-bounded read fails ``json.loads`` and
+    says nothing about completeness.
     """
     out: set[str] = set()
+    complete = True
     try:
-        files = sorted(p for p in project_dir.glob("*.jsonl") if p.is_file())
+        files = sorted(p for p in project_dir.glob("*.jsonl") if os.path.isfile(p))
     except OSError:
-        return out
-    for path in files[:_SESSION_SCAN_MAX_FILES]:
+        return out, False
+    if len(files) > _SESSION_SCAN_MAX_FILES:
+        complete = False
+        files = files[:_SESSION_SCAN_MAX_FILES]
+    for path in files:
         try:
             with path.open("r", encoding="utf-8", errors="replace") as fh:
                 chunk = fh.read(_SESSION_SCAN_MAX_BYTES)
         except OSError:
+            complete = False
             continue
-        for line in chunk.splitlines()[:_SESSION_SCAN_MAX_LINES]:
+        lines = chunk.splitlines()
+        found_in_file = False
+        for line in lines[:_SESSION_SCAN_MAX_LINES]:
             line = line.strip()
             if not line:
                 continue
@@ -1121,7 +1153,13 @@ def _session_cwds(project_dir: Path) -> set[str]:
                 raw = record.get("cwd")
                 if isinstance(raw, str) and raw:
                     out.add(raw)
-    return out
+                    found_in_file = True
+        truncated = len(chunk) >= _SESSION_SCAN_MAX_BYTES or (
+            len(lines) > _SESSION_SCAN_MAX_LINES
+        )
+        if not found_in_file and truncated:
+            complete = False
+    return out, complete
 
 
 # ---------------------------------------------------------------------------
@@ -1384,7 +1422,15 @@ def discover_default_source_root(cwd: Path | None = None) -> Path | None:
     )
     for sanitized in (new_sanitized, legacy_sanitized):
         candidate = projects_dir / sanitized / "memory"
-        if candidate.exists() and candidate.is_dir():
+        # `os.path.isdir`, not `exists() and is_dir()`: pathlib
+        # re-raises EACCES and friends on 3.11-3.13, and this probe sits
+        # on three surfaces (`bettermemory ingest` with no --from, every
+        # `apply_ingest_plan`, doctor's `auto_memory_stranded`) of which
+        # two cannot tell a raise from a miss. An auto-memory directory
+        # this process cannot stat is one it cannot ingest from either,
+        # so "could not determine" lands on the None this function
+        # already means by "none found".
+        if os.path.isdir(candidate):
             return candidate
     return None
 

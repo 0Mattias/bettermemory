@@ -2552,3 +2552,146 @@ class TestCLI:
             "scope(s) not in allowed list: ['projects:other']" in line
             for line in _detail(dry)
         ), dry
+
+
+# ---------------------------------------------------------------------------
+# "Could not determine" is not "none found": the discovery probe and the
+# session-evidence scan both used to publish a positive answer on a read
+# they never completed.
+# ---------------------------------------------------------------------------
+
+
+def _unreadable_dir_is_enforceable() -> bool:
+    """True when this process can actually be locked out of a directory.
+    Windows does not honour POSIX mode bits and root walks through them."""
+    import os
+    import sys
+
+    if sys.platform == "win32":
+        return False
+    getuid = getattr(os, "geteuid", None)
+    return getuid is not None and getuid() != 0
+
+
+@pytest.mark.skipif(
+    not _unreadable_dir_is_enforceable(),
+    reason="needs POSIX mode bits and a non-root euid",
+)
+def test_discover_default_source_root_is_none_when_the_dir_cannot_be_stat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An auto-memory directory this process cannot stat is one it cannot
+    ingest from; the answer is the None "none found" already means, not
+    a PermissionError out of three surfaces (`ingest` with no --from,
+    every `apply_ingest_plan`, doctor's `auto_memory_stranded`) — two of
+    which cannot tell the raise from a miss."""
+    fake_home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+    cwd = tmp_path / "proj"
+    cwd.mkdir()
+    target = _auto_memory_dir_for(cwd, fake_home)
+    target.mkdir(parents=True)
+    assert discover_default_source_root(cwd) == target
+    target.parent.chmod(0o000)
+    try:
+        assert discover_default_source_root(cwd) is None
+    finally:
+        target.parent.chmod(0o755)
+
+
+def _session_layout(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """``(project_dir, source_root, cwd)`` — an auto-memory dir whose
+    parent holds the session transcripts, and the cwd being ingested."""
+    project_dir = tmp_path / "proj-sessions"
+    source_root = project_dir / "memory"
+    source_root.mkdir(parents=True)
+    cwd = tmp_path / "here"
+    cwd.mkdir()
+    return project_dir, source_root, cwd
+
+
+def _transcript(project_dir: Path, name: str, cwd: Path) -> Path:
+    path = project_dir / f"{name}.jsonl"
+    path.write_text(
+        json.dumps({"type": "user", "cwd": str(cwd)}) + "\n", encoding="utf-8"
+    )
+    return path
+
+
+def test_session_evidence_stamps_on_a_complete_agreeing_scan(tmp_path: Path) -> None:
+    from bettermemory.ingest import _session_cwds, _session_evidence_matches_cwd
+
+    project_dir, source_root, cwd = _session_layout(tmp_path)
+    for i in range(3):
+        _transcript(project_dir, f"s{i}", cwd)
+    observed, complete = _session_cwds(project_dir)
+    assert complete is True
+    assert observed == {str(cwd)}
+    assert _session_evidence_matches_cwd(source_root, cwd) is True
+
+
+def test_session_evidence_withholds_the_stamp_when_the_scan_hit_the_ceiling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """More transcripts than the ceiling, with the contradicting cwd
+    sorted past the slice. The old scan read twenty of them, saw only
+    agreement, and stamped `origin = capture(cwd)` on every imported
+    memory — "read the first twenty" was indistinguishable from "read
+    them all". A scan that could not read everything is ambiguity, and
+    the guard's own contract is conservative on ambiguity."""
+    from bettermemory import ingest as _ingest
+
+    monkeypatch.setattr(_ingest, "_SESSION_SCAN_MAX_FILES", 3)
+    project_dir, source_root, cwd = _session_layout(tmp_path)
+    for i in range(3):
+        _transcript(project_dir, f"a{i}", cwd)
+    _transcript(project_dir, "zz-foreign", tmp_path / "elsewhere")
+    observed, complete = _ingest._session_cwds(project_dir)
+    assert complete is False
+    assert str(tmp_path / "elsewhere") not in observed, "sorted past the slice"
+    assert _ingest._session_evidence_matches_cwd(source_root, cwd) is False
+
+
+@pytest.mark.skipif(
+    not _unreadable_dir_is_enforceable(),
+    reason="needs POSIX mode bits and a non-root euid",
+)
+def test_session_evidence_withholds_the_stamp_when_a_transcript_cannot_be_read(
+    tmp_path: Path,
+) -> None:
+    from bettermemory.ingest import _session_cwds, _session_evidence_matches_cwd
+
+    project_dir, source_root, cwd = _session_layout(tmp_path)
+    _transcript(project_dir, "readable", cwd)
+    sealed = _transcript(project_dir, "sealed", tmp_path / "elsewhere")
+    sealed.chmod(0o000)
+    try:
+        observed, complete = _session_cwds(project_dir)
+        assert complete is False
+        assert observed == {str(cwd)}
+        assert _session_evidence_matches_cwd(source_root, cwd) is False
+    finally:
+        sealed.chmod(0o644)
+
+
+def test_session_evidence_withholds_the_stamp_when_a_head_held_no_cwd_and_was_cut(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A transcript whose bounded head carried no `cwd` while the bound
+    truncated it may carry one further down; that file was not read."""
+    from bettermemory import ingest as _ingest
+
+    project_dir, source_root, cwd = _session_layout(tmp_path)
+    _transcript(project_dir, "a", cwd)
+    big = project_dir / "b.jsonl"
+    big.write_text(
+        json.dumps({"type": "summary", "text": "x" * 300})
+        + "\n"
+        + json.dumps({"type": "user", "cwd": str(tmp_path / "elsewhere")})
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(_ingest, "_SESSION_SCAN_MAX_BYTES", 64)
+    observed, complete = _ingest._session_cwds(project_dir)
+    assert complete is False
+    assert _ingest._session_evidence_matches_cwd(source_root, cwd) is False
