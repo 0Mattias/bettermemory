@@ -7,6 +7,102 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 7.10.0 - 2026-09-10
+
+### Added
+
+- `916b4eb` feat(identity): resolve who is calling, and from where.
+  Until now a memory carried `origin{cwd, repo, branch, worktree_root}`
+  and no actor at all — on the live store, 367 of 371 active memories
+  named a directory and not one said which client, model or person
+  wrote it; the workspace was the server's own working directory,
+  reached from every handler through `capture_origin`; and the
+  per-client `SessionRegistry` keyed on a `_meta.client_id` that no
+  known client sends, so every production request, even over HTTP,
+  collapsed into one shared state and the isolation it promised was
+  unreachable. One long-lived gateway process serving many chat
+  platforms from `$HOME` (Hermes Agent: stdio servers take `command`,
+  `args`, `env` and no `cwd`) breaks all three assumptions at once.
+
+  `bettermemory.identity` — a leaf module beside `origin.py` — resolves
+  one `Caller` per request with two blocks that are never merged.
+  `actor{client, client_version, model, principal, session, sources}`:
+  `principal` is attested, read solely through the SDK's
+  `authenticated_principal` (the `(client, issuer, subject)` triple of a
+  verified OAuth token, `None` on every unauthenticated transport);
+  everything else is declared, and `sources` names the channel that
+  supplied each declared field. `workspace{path, source}`: the
+  directory `origin.capture` then describes, and which channel named
+  it. Five channels in precedence order, each recording its own
+  `source`: the principal, `x-bettermemory-client` /
+  `-client-version` / `-model` / `-workspace` headers, `BETTERMEMORY_CLIENT`
+  / `_CLIENT_VERSION` / `_MODEL` / `_WORKSPACE` environment variables,
+  the first `file://` root a roots-capable client offers (asked once per
+  connection by a server middleware, bounded by a two-second timeout,
+  the protocol's deprecation warning silenced on purpose), and the
+  process cwd as a LABELED fallback. The `initialize` handshake's
+  `clientInfo` fills `client` / `client_version` when the client sends
+  one, and the transport's `mcp-session-id` fills `session`. Declared
+  values are bounded client input: trimmed, no control characters, at
+  most 256 characters, dropped otherwise.
+
+  The caller is published through a `ContextVar` at the handler entry
+  (`sessions.for_request`, so `SessionState` and `SessionRegistry`
+  alike) and, on the wire path, by the middleware for the request's
+  task. Three consumers read it. `Store.write` takes `actor` and stamps
+  it beside `origin`, whose new `source` field says which channel chose
+  the directory; the staged pending-write payload carries the actor
+  through its JSON sidecar and a server restart. `Recorder.record`
+  stamps `actor` on every event when it is non-empty; the Stop and
+  prompt-recall hooks publish a transcript-sourced actor (client
+  `claude-code`, the transcript's model, the transcript id as the
+  session) beside the `client_model` field eval already slices on.
+  `SessionRegistry` keys on what can differ between two requests
+  reaching one process — the principal, the transport session, and
+  header-declared `client` / `model`, as a prefixed composite — and
+  never on the per-process channels (`env`, `client-info`), so a stdio
+  client keeps the default bucket its sidecar rows are filed under.
+  The `_meta.client_id` read is retired; the suite's forged `Context`
+  (`tests/_mcp.py`) now carries headers, a session and `clientInfo`
+  instead. `bettermemory init --client X` writes `BETTERMEMORY_CLIENT`
+  into the entry it patches, keeping a value the user set.
+
+  Four gates, each pinned in `tests/test_identity.py`. G1, silence is
+  unchanged: a client that declares nothing produces frontmatter
+  byte-identical to 7.9.0 — the `actor` block is emitted only when
+  something is set and `origin.source` only when it is not
+  `process-cwd`, proven by comparing the written file to a document
+  rebuilt from the 7.9.0 key set alone. G2, the registry separates:
+  two clients declaring different identities against one server get
+  two `SessionState`s, pending writes and disabled scopes cannot cross,
+  and env / `clientInfo` do not split the bucket. G3, the source is
+  honest: each channel resolves with its own label, the cwd fallback
+  reads `process-cwd` on every surface, and the Hermes shape — a server
+  started in a home directory with `BETTERMEMORY_WORKSPACE` naming a
+  git checkout — records the checkout, its remote and branch, and
+  `source: env` in the file. G4, attestation cannot be forged: a
+  request carrying a declared client, a declared model, a
+  `x-bettermemory-principal` header and a bearer token that no verifier
+  saw resolves `principal: None`; a verified token resolves the SDK's
+  own compact triple beside the declared client, and `principal` never
+  appears in `sources`. The one visible change on existing records:
+  `memory_show`, `memory_list(with_bodies=True)` and the `committed`
+  response now carry `source: "process-cwd"` inside a non-null
+  `origin` that names no channel — the read surfaces label the fallback
+  the file leaves implicit — and `actor` (the full shape, nulls
+  included) when the writer declared something.
+
+  Identity is evidence — for attribution, filtering, per-model
+  telemetry and targeted rollback — and never a permission boundary:
+  no RBAC, no per-agent auth, no tenant isolation, and `memory_show`
+  stays unrestricted. `SECURITY.md` records what a client that lies
+  about itself can and cannot do; `docs/api.md` (Identity) carries the
+  precedence table and the on-disk shape; `docs/clients.md` the
+  declaration recipe. Nothing yet selects on the actor — the filters,
+  the `memory_health` slice and the per-actor rollback are the next
+  units in `docs/ROADMAP.md`. `docs/swarm-convergence-plan.md` Phase 2
+  (swarm provenance on durable memory) ships here, generalized.
+
 ## 7.9.0 - 2026-09-09
 
 ### Fixed
