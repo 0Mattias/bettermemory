@@ -14,7 +14,7 @@ from .._response import isoformat_optional
 from ..events import iter_all_events
 from ..conflicts import ConflictQueue, split_judgeable
 from ..health import (
-    curation_counts,
+    curation_counts_with_coverage,
     find_prior_session_boundary,
     is_hook_telemetry_event,
 )
@@ -35,7 +35,7 @@ DESC_MEMORY_SCOPE_OVERVIEW = (
     "session unless explicitly asked.\n\n"
     "Returns `{current_repo, current_cwd, auto_scope, scopes: "
     "{scope: count}, total, disabled_scopes, curation_pending, "
-    "curation_pending_new_since_last_session, "
+    "curation_pending_new_since_last_session, curation_unmeasured, "
     "recently_removed_in_worktree, proposals_pending, "
     "pending_writes}`. "
     "`proposals_pending` is the count of write-reflex proposals the "
@@ -64,16 +64,17 @@ DESC_MEMORY_SCOPE_OVERVIEW = (
     # measured against.
     "`unaccounted` = memories that entered outside every recorded "
     "path. "
-    "Any non-zero `dead` or `drifted` is a cue to suggest a "
-    "curation pass when the conversation has time. Non-zero "
-    "`silent_misses` / `cold_endorsement_memories` means the "
-    "audit-turn telemetry has actionable backlog. `silent_misses` "
-    "counts events; `unique_silent_miss_memories` counts the "
-    "distinct memories those misses pointed at (dedup'd by top-hit "
-    "id). `cold_endorsement_memories` counts distinct "
-    "memories (NOT turns) with `retrieval_count >= N` AND zero "
-    "explicit applies — usually a sign the memory is over-surfaced "
-    "or stale.\n\n"
+    "`curation_unmeasured` names legs whose 0 is not a measurement "
+    "(git or the index did not answer); never read a listed leg's 0 "
+    "as clean. "
+    "Non-zero `dead` or `drifted` is a cue to suggest a curation "
+    "pass when there is time; non-zero `silent_misses` / "
+    "`cold_endorsement_memories` is actionable audit backlog. "
+    "`silent_misses` counts events; `unique_silent_miss_memories` "
+    "the distinct top-hit memories behind them. "
+    "`cold_endorsement_memories` counts distinct memories (NOT "
+    "turns) retrieved >= N times with zero explicit applies — "
+    "over-surfaced or stale.\n\n"
     "`recently_removed_in_worktree` is the integer count of "
     "tombstones removed in the trailing 7 days; under "
     "`auto_scope=True` it's filtered to this worktree (tombstones "
@@ -192,7 +193,7 @@ async def memory_scope_overview(
     hook_telemetry_events = sum(
         1 for ev in events_snapshot if is_hook_telemetry_event(ev)
     )
-    curation = curation_counts(
+    curation, unmeasured = curation_counts_with_coverage(
         all_memories,
         events_snapshot,
         window_days=30,
@@ -264,8 +265,9 @@ async def memory_scope_overview(
         # model branches on "no baseline" vs. "nothing new" rather
         # than collapsing the two cases.
         curation_delta: dict[str, int] | None = None
+        unmeasured_delta: list[str] = []
     else:
-        curation_delta = curation_counts(
+        curation_delta, unmeasured_delta = curation_counts_with_coverage(
             all_memories,
             events_snapshot,
             window_days=30,
@@ -334,6 +336,12 @@ async def memory_scope_overview(
     # nothing ever re-surfaced the dangling confirmation.
     pending_writes = len(state.pending_writes)
 
+    # The legs whose 0 is not a measurement, across both views. Kept
+    # OUTSIDE the two integer rollups so their pinned key sets and
+    # integer-only contract stand; a model that reads a listed leg's 0
+    # as a clean bill is reading a number nobody measured.
+    curation_unmeasured = sorted(set(unmeasured) | set(unmeasured_delta))
+
     deps.recorder.record(
         "scope_overview",
         auto_scope=auto_scope,
@@ -342,6 +350,7 @@ async def memory_scope_overview(
         scope_count=len(sorted_scopes),
         curation_pending=curation,
         curation_pending_new_since_last_session=curation_delta,
+        curation_unmeasured=curation_unmeasured,
         prior_session_boundary=isoformat_optional(prior_boundary),
         recently_removed_in_worktree=recent_removed,
         proposals_pending=proposals_pending,
@@ -356,6 +365,7 @@ async def memory_scope_overview(
         "disabled_scopes": sorted(state.disabled_scopes),
         "curation_pending": curation,
         "curation_pending_new_since_last_session": curation_delta,
+        "curation_unmeasured": curation_unmeasured,
         "recently_removed_in_worktree": recent_removed,
         "proposals_pending": proposals_pending,
         "pending_writes": pending_writes,

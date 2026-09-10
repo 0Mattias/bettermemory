@@ -4234,7 +4234,12 @@ def test_every_production_dead_weight_call_arms_the_telemetry_gate() -> None:
     """
     import ast
 
-    gated = {"compute_health", "curation_counts", "find_demotion_candidates"}
+    gated = {
+        "compute_health",
+        "curation_counts",
+        "curation_counts_with_coverage",
+        "find_demotion_candidates",
+    }
     repo_root = Path(__file__).resolve().parents[1]
     src_root = repo_root / "src"
     ungated: list[str] = []
@@ -4759,3 +4764,107 @@ def test_cross_repo_drift_excludes_the_callers_own_repo(tmp_path: Path) -> None:
     )
     report = compute_health([m], [], caller_origin=caller, now=_utc(2026, 4, 1))
     assert report.cross_repo_drift is None
+
+
+# ---------------------------------------------------------------------------
+# A 0 the rollup did not measure is named, not published as clean.
+# ---------------------------------------------------------------------------
+
+
+def test_curation_counts_names_the_drifted_leg_it_could_not_measure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`commit_author_timestamps` returns None for "git not on PATH, not a
+    repo, no commits, parse error on every line" and its own timeout;
+    the cheap rollup left `drifted` at its 0 initialiser with no else
+    and `memory_scope_overview` published that 0 at session start as a
+    measured clean bill on the repo-aware staleness leg. A caller whose
+    origin capture could not run git at all is the same leg, unasked."""
+    from bettermemory import health as _health
+    from bettermemory.health import curation_counts_with_coverage
+    from bettermemory.origin import Origin
+
+    repo = "git@github.com:owner/foo.git"
+    verified = _memory(created=_utc(2026, 1, 1), last_verified_at=_utc(2026, 4, 25))
+    verified = verified.model_copy(
+        update={
+            "origin": Origin(cwd=str(tmp_path), repo=repo, worktree_root=str(tmp_path))
+        }
+    )
+    caller = Origin(cwd=str(tmp_path), repo=repo, worktree_root=str(tmp_path))
+
+    monkeypatch.setattr(_health, "commit_author_timestamps", lambda cwd: None)
+    counts, unmeasured = curation_counts_with_coverage(
+        [verified], [], caller_origin=caller, now=_utc(2026, 5, 1)
+    )
+    assert counts["drifted"] == 0
+    assert unmeasured == ["drifted"]
+
+    monkeypatch.setattr(
+        _health, "commit_author_timestamps", lambda cwd: [_utc(2026, 1, 1)]
+    )
+    counts, unmeasured = curation_counts_with_coverage(
+        [verified], [], caller_origin=caller, now=_utc(2026, 5, 1)
+    )
+    assert counts["drifted"] == 0
+    assert unmeasured == [], "git answered: a measured zero"
+
+    unknown = Origin(cwd=str(tmp_path))
+    unknown._git_indeterminate = True
+    counts, unmeasured = curation_counts_with_coverage(
+        [verified], [], caller_origin=unknown, now=_utc(2026, 5, 1)
+    )
+    assert unmeasured == ["drifted"], "capture could not run git: unasked"
+
+    nowhere = Origin(cwd=str(tmp_path))
+    counts, unmeasured = curation_counts_with_coverage(
+        [verified], [], caller_origin=nowhere, now=_utc(2026, 5, 1)
+    )
+    assert unmeasured == [], "git said 'not a repository': nothing to drift against"
+
+    # The one-valued wrapper is the same walk with the coverage dropped.
+    monkeypatch.setattr(_health, "commit_author_timestamps", lambda cwd: None)
+    assert (
+        curation_counts([verified], [], caller_origin=caller, now=_utc(2026, 5, 1))[
+            "drifted"
+        ]
+        == 0
+    )
+
+
+def test_curation_counts_names_the_unaccounted_leg_it_could_not_measure(
+    memory_dir: Path,
+) -> None:
+    """`index.provenance_rows` returns None for "could not look" and `[]`
+    for "looked, found none" — deliberately, its sibling says, "so a
+    caller can tell". The rollup's bare truthiness test collapsed them
+    and published `unaccounted: 0` off an index nobody could open."""
+    from bettermemory import index
+    from bettermemory.health import curation_counts_with_coverage
+    from bettermemory.store import Store
+
+    store = Store(memory_dir)
+    memory = store.write(content="the auth service listens on port 8443", scopes=["t"])
+    index.rebuild(memory_dir, store.iter_active())
+    mems = [memory]
+
+    counts, unmeasured = curation_counts_with_coverage(
+        mems, [], index_root=memory_dir, now=_utc(2026, 5, 1)
+    )
+    assert counts["unaccounted"] == 0
+    assert unmeasured == [], "a readable index that labels nothing unaccounted"
+
+    index_file = index.index_path(memory_dir)
+    index_file.write_bytes(index_file.read_bytes()[:100])
+    counts, unmeasured = curation_counts_with_coverage(
+        mems, [], index_root=memory_dir, now=_utc(2026, 5, 1)
+    )
+    assert counts["unaccounted"] == 0
+    assert unmeasured == ["unaccounted"]
+
+    counts, unmeasured = curation_counts_with_coverage(
+        [], [], index_root=memory_dir, now=_utc(2026, 5, 1)
+    )
+    assert unmeasured == [], (
+        "no memories in scope: nothing the index could have labelled"
+    )

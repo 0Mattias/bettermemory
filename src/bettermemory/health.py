@@ -3486,13 +3486,61 @@ def curation_counts(
     hook_telemetry_events: int | None = None,
     index_root: Path | None = None,
 ) -> dict[str, int]:
-    """Cheap summary of curation pressure.
+    """The counts half of `curation_counts_with_coverage`, for callers
+    that read the rollup as pressure and treat an unmeasured leg's 0 as
+    "no pressure" (the one-shot `curation_hint`). A surface that
+    PUBLISHES the counts must call the two-valued form and say which
+    legs did not answer."""
+    return curation_counts_with_coverage(
+        memories,
+        events,
+        window_days=window_days,
+        verification_stale_days=verification_stale_days,
+        cold_endorsement_min_retrievals=cold_endorsement_min_retrievals,
+        cold_endorsement_ratio_threshold=cold_endorsement_ratio_threshold,
+        caller_origin=caller_origin,
+        now=now,
+        since=since,
+        tombstoned_ids=tombstoned_ids,
+        hook_telemetry_events=hook_telemetry_events,
+        index_root=index_root,
+    )[0]
 
-    Returns
+
+def curation_counts_with_coverage(
+    memories: Iterable[Memory],
+    events: Iterable[dict[str, Any]],
+    *,
+    window_days: int = 30,
+    verification_stale_days: int = 30,
+    cold_endorsement_min_retrievals: int = _COLD_ENDORSEMENT_MIN_RETRIEVALS,
+    cold_endorsement_ratio_threshold: float = 0.0,
+    caller_origin: Origin | None = None,
+    now: datetime | None = None,
+    since: datetime | None = None,
+    tombstoned_ids: set[str] | None = None,
+    hook_telemetry_events: int | None = None,
+    index_root: Path | None = None,
+) -> tuple[dict[str, int], list[str]]:
+    """Cheap summary of curation pressure, and the legs it could not measure.
+
+    Returns ``(counts, unmeasured)``. `counts` is
     ``{"stale", "never_verified", "drifted", "cold", "dead",
     "silent_misses", "unique_silent_miss_memories",
     "cold_endorsement_memories", "unaccounted"}`` —
-    integer counts only, no row materialisation. `unaccounted` is the
+    integer counts only, no row materialisation. `unmeasured` names the
+    legs whose 0 is not a measurement: ``"drifted"`` when git could not
+    answer for the caller's repo (the binary missing, a timeout, an
+    unreadable object store — `commit_author_timestamps` returns None
+    for all of them, and `origin.capture()` marks the origin
+    indeterminate when it could not run git at all), ``"unaccounted"``
+    when the index could not be read (`provenance_rows` returns None,
+    deliberately, for absent and unusable alike) while there were
+    memories to classify. Both legs used to publish a clean 0 through
+    the same branch a measured 0 takes, at session start, on the two
+    headline integrity claims; `_compute_commit_drift_debt` already
+    returns None for the first condition so its caller can tell, and
+    this is the same courtesy for the cheap rollup. `unaccounted` is the
     one count that reads index state rather than event state: the
     memories the index labels as having entered the store outside every
     recorded path (`provenance.py`). It needs `index_root` and stays 0
@@ -3826,11 +3874,23 @@ def curation_counts(
                 if ratio < ratio_threshold:
                     cold_endorsement_memories += 1
 
+    unmeasured: list[str] = []
     drifted = 0
-    if caller_origin is not None and caller_origin.repo and caller_origin.cwd:
+    if caller_origin is not None and caller_origin.git_indeterminate:
+        # `capture()` could not run git at all, so the null repo below
+        # is "unknown", not "not a repository": the leg was never asked.
+        unmeasured.append("drifted")
+    elif caller_origin is not None and caller_origin.repo and caller_origin.cwd:
         cwd_path = Path(caller_origin.cwd)
         timestamps = commit_author_timestamps(cwd_path)
-        if timestamps is not None:
+        if timestamps is None:
+            # Git could not answer for a caller that IS in a repo: no
+            # binary, a timeout, an object store it cannot read. The
+            # sibling `_compute_commit_drift_debt` returns None here so
+            # its caller can tell; the cheap rollup used to leave the
+            # 0 initialiser in place and publish it as measured.
+            unmeasured.append("drifted")
+        else:
             # One rev-parse for the whole pass — the root the per-memory
             # anchor resolution reuses, and the head the reachable walks
             # are keyed on.
@@ -3903,14 +3963,23 @@ def curation_counts(
         from . import index as _index
 
         unaccounted_ids = _index.provenance_rows(index_root, label="unaccounted")
-        if unaccounted_ids:
+        if unaccounted_ids is None:
+            # `provenance_rows` returns None, deliberately, for "could
+            # not look" — absent or unusable index — and `[]` for
+            # "looked and found none". A bare truthiness test collapsed
+            # them into the same 0. With no memories in scope there is
+            # nothing the index could have labelled, so the leg is
+            # trivially measured; otherwise it was not asked.
+            if mem_list:
+                unmeasured.append("unaccounted")
+        elif unaccounted_ids:
             if since_aware is None:
                 unaccounted = len(unaccounted_ids)
             else:
                 in_window = {m.id for m in mem_list}
                 unaccounted = sum(1 for i in unaccounted_ids if i in in_window)
 
-    return {
+    counts = {
         "stale": stale,
         "never_verified": never_verified,
         "drifted": drifted,
@@ -3921,6 +3990,7 @@ def curation_counts(
         "cold_endorsement_memories": cold_endorsement_memories,
         "unaccounted": unaccounted,
     }
+    return counts, unmeasured
 
 
 def find_prior_session_boundary(

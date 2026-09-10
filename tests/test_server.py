@@ -7743,3 +7743,30 @@ async def test_the_trust_rule_leaves_unstamped_and_local_records_alone(
     assert shown["provenance"] == "local"
     assert shown["verification"]["status"] == "fresh"
     assert shown["staleness_verdict"] == "fresh"
+
+
+async def test_scope_overview_names_the_legs_it_could_not_measure(
+    memory_dir: Path,
+) -> None:
+    """`curation_pending` is pinned to integer counts, and two of its legs
+    used to publish a 0 nobody measured — `unaccounted` off an index
+    that could not be read. The unmeasured legs ride a sibling list so
+    the integer contract stands and the 0 stops reading as clean."""
+    from bettermemory import index
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    server = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(server, "memory_write", content="x", scopes=["tools"])
+    overview = await _call(server, "memory_scope_overview", auto_scope=False)
+    assert overview["curation_unmeasured"] == []
+    assert overview["curation_pending"]["unaccounted"] == 0
+
+    index_file = index.index_path(memory_dir)
+    index_file.write_bytes(index_file.read_bytes()[:100])
+    overview = await _call(server, "memory_scope_overview", auto_scope=False)
+    assert overview["curation_unmeasured"] == ["unaccounted"]
+    assert overview["curation_pending"]["unaccounted"] == 0
+    assert set(overview["curation_pending"]) == set(
+        overview["curation_pending_new_since_last_session"]
+        or overview["curation_pending"]
+    ), "the integer rollups' key sets are untouched"
