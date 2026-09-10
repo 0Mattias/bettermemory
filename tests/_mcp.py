@@ -106,8 +106,8 @@ def fake_ctx(
     It lives HERE, rather than in each test module, because it is
     knowledge about the SDK's request shape and that knowledge has moved
     twice: mcp 1.x exposed a `Context.client_id` property, 2.x left the
-    key reachable only through `_meta` (which no client sends), and 7.10.0
-    retired that key for the resolved actor.
+    key reachable only through the request's metadata map (which no
+    client sends), and 7.10.0 retired that key for the resolved actor.
 
     Returned as `Any` so strict mypy accepts it where `for_request` expects
     a real `Context`; the stand-in is structurally compatible and the cast

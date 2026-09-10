@@ -608,7 +608,10 @@ def test_init_patch_writes_canonical_shape(
 ) -> None:
     """End-to-end: `init --client X --config-path Y` writes the canonical
     `{type, command, args, env}` entry. This is the shape Claude Code's
-    own `claude mcp add` produces."""
+    own `claude mcp add` produces — plus, since 7.10.0, the one
+    declaration a stdio server can receive out of band: `env` names the
+    client (`BETTERMEMORY_CLIENT`), so every write it records says which
+    client made it."""
     target = tmp_path / "claude_desktop_config.json"
     _run_main(
         [
@@ -626,7 +629,7 @@ def test_init_patch_writes_canonical_shape(
     assert entry["type"] == "stdio"
     assert "command" in entry
     assert entry["args"] == []
-    assert entry["env"] == {}
+    assert entry["env"] == {"BETTERMEMORY_CLIENT": "claude-desktop"}
 
 
 def test_unknown_subcommand_exits_nonzero(

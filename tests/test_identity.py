@@ -400,9 +400,7 @@ class _Roots:
             await anyio.sleep(self.delay)
         from mcp import types
 
-        return types.ListRootsResult(
-            roots=[types.Root(uri=uri) for uri in self.uris]  # type: ignore[arg-type]
-        )
+        return types.ListRootsResult(roots=[types.Root(uri=uri) for uri in self.uris])
 
 
 def _ctx_with_session(session: Any) -> Any:
@@ -557,10 +555,11 @@ def test_g3_capture_labels_the_fallback_and_honours_a_declaration(
 
     monkeypatch.delenv(ENV_WORKSPACE)
     assert identity.workspace_declaration() is None
+    via_header = tmp_path / "via-header"
     identity.publish(
-        Caller(workspace=identity.Workspace(path="/via/header", source=SOURCE_HEADER))
+        Caller(workspace=identity.Workspace(path=str(via_header), source=SOURCE_HEADER))
     )
-    assert identity.workspace_declaration() == (Path("/via/header"), SOURCE_HEADER)
+    assert identity.workspace_declaration() == (via_header, SOURCE_HEADER)
 
 
 # ---------------------------------------------------------------------------
@@ -592,8 +591,8 @@ def test_g4_a_declared_identity_never_populates_the_principal() -> None:
 def test_g4_an_attested_principal_is_read_only_from_the_sdk_binding() -> None:
     from mcp.server.auth.middleware.auth_context import auth_context_var
     from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
-    from mcp.server.auth.provider import AccessToken
-    from mcp.server.request_state import compact_json, principal_components
+    from mcp.server.auth.provider import AccessToken, principal_components
+    from mcp.server.request_state import compact_json
 
     token = AccessToken(
         token="opaque",
