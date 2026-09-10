@@ -2680,6 +2680,13 @@ def _scan_parent_index_for_sidecars(
     ]
     hits: list[tuple[Path, str, str, list[str]]] = []
     first_error: Diagnosis | None = None
+    # Enclosing repos whose index could not be listed. They were NOT
+    # examined, and a finding from a level that did answer must say so
+    # rather than list them under `scanned_parent_toplevels` — the
+    # first draft reported the error only when no level found a hit, so
+    # an outer repo with a corrupt index vanished behind an inner
+    # repo's warn while the warn claimed to have scanned it.
+    unlisted: list[Path] = []
     for parent_top, prefix, leak_route in levels:
         listing = _run_git(
             parent_top,
@@ -2687,6 +2694,7 @@ def _scan_parent_index_for_sidecars(
             check=False,
         )
         if listing.returncode != 0:
+            unlisted.append(parent_top)
             if first_error is None:
                 first_error = Diagnosis(
                     name="store_nested_in_parent_repo",
@@ -2742,10 +2750,22 @@ def _scan_parent_index_for_sidecars(
     # Only noted when the walk actually found more than one enclosing
     # repo, so single-nesting diagnoses keep their established shape.
     scanned_note: dict[str, Any] = (
-        {"scanned_parent_toplevels": [str(top) for top, _, _ in levels]}
+        {
+            "scanned_parent_toplevels": [
+                str(top) for top, _, _ in levels if top not in unlisted
+            ]
+        }
         if len(levels) > 1
         else {}
     )
+    unlisted_sentence = ""
+    if unlisted:
+        scanned_note["unlisted_parent_toplevels"] = [str(top) for top in unlisted]
+        noun = "repo was" if len(unlisted) == 1 else "repos were"
+        unlisted_sentence = (
+            f" {len(unlisted)} enclosing {noun} NOT examined because its index "
+            f"could not be listed: {', '.join(str(top) for top in unlisted)}."
+        )
     if not hits:
         if first_error is not None:
             return first_error
@@ -2783,7 +2803,7 @@ def _scan_parent_index_for_sidecars(
                 f"repo at {parent_top}. {leak_route} the parent's own "
                 f"`git add -A` / commit / push flows keep shipping these files "
                 f"(which can carry plaintext captures) to wherever that repo "
-                f"pushes."
+                f"pushes.{unlisted_sentence}"
             ),
             fix_hint=(
                 f"In {parent_top}/.gitignore ignore the store's transient "
@@ -2831,7 +2851,7 @@ def _scan_parent_index_for_sidecars(
             + ". Git does not auto-untrack at any nesting level, so each "
             "parent's own `git add -A` / commit / push flows keep shipping "
             "these files (which can carry plaintext captures) to wherever "
-            "that repo pushes."
+            f"that repo pushes.{unlisted_sentence}"
         ),
         fix_hint=(
             "In each parent repo's .gitignore ignore the store's transient "
@@ -3357,7 +3377,15 @@ def _readable_anchor(raw: str, root: Path) -> Path | None:
             return None
     except (OSError, ValueError):  # pragma: no cover - defensive
         return None
-    if not resolved.is_file() or resolved.suffix not in _ANCHOR_TEXT_SUFFIXES:
+    # `os.path.isfile`, the house pattern (`verify._worktree_root_is_live`,
+    # `handlers/_shared._validate_declared_claims`): `Path.is_file()`
+    # re-raises EACCES and friends on 3.11-3.13, and this was the one
+    # probe on the anchor chain sitting outside its own `try`, so an
+    # attested path under a directory this process cannot traverse
+    # turned the whole check into `_safe`'s "check raised
+    # PermissionError … this is a bettermemory bug". Cannot-stat is
+    # exactly the "cannot judge it" this method's None already means.
+    if not os.path.isfile(resolved) or resolved.suffix not in _ANCHOR_TEXT_SUFFIXES:
         return None
     return resolved
 
@@ -3660,8 +3688,34 @@ def _check_memory_content_evidence(directory: Path) -> Diagnosis:
                 changed.append(
                     {"id": memory.id, "filename": path.name, "provenance": label}
                 )
-    except PARSE_SKIP_EXCEPTIONS:
-        pass
+    except PARSE_SKIP_EXCEPTIONS as exc:
+        # `iter_active` skips per-file parse failures on its own, so what
+        # reaches this arm is the WALK failing: an unlistable store
+        # directory, a store that vanished mid-walk. The files it never
+        # reached were never compared, and this is the store's one
+        # tamper-evidence surface, so "could not look" must not read as
+        # "looked, and every file matched". `changed: None` is the shape
+        # the no-index return above already uses for "not compared".
+        return Diagnosis(
+            name="memory_content_evidence",
+            status="fail",
+            message=(
+                "Could not read the store to compare content evidence "
+                f"({exc.__class__.__name__}: {exc}). {checked} memory "
+                "file(s) were compared before the walk stopped; the rest "
+                "were not examined."
+            ),
+            fix_hint=(
+                "Check that the storage directory is listable and readable "
+                "by this process, then re-run doctor."
+            ),
+            details={
+                "checked": checked,
+                "changed": None,
+                "unanchored": unanchored,
+                "unreadable": unreadable,
+            },
+        )
     details: dict[str, Any] = {
         "checked": checked,
         "changed": changed,

@@ -7602,3 +7602,83 @@ def test_dropped_is_not_an_absence_cue() -> None:
     false exemption in the set."""
     body = "The `rescue_leg` ranker still runs; the dropped rows are re-queued."
     assert not _absence_claimed(body, "rescue_leg")
+
+
+# ---------------------------------------------------------------------------
+# "Could not determine" is not a verdict: two probes on the doctor surface
+# that published one.
+# ---------------------------------------------------------------------------
+
+
+def _unreadable_dir_is_enforceable() -> bool:
+    """True when this process can actually be locked out of a directory.
+    Windows does not honour POSIX mode bits and root walks through them."""
+    import sys
+
+    if sys.platform == "win32":
+        return False
+    getuid = getattr(os, "geteuid", None)
+    return getuid is not None and getuid() != 0
+
+
+@pytest.mark.skipif(
+    not _unreadable_dir_is_enforceable(),
+    reason="needs POSIX mode bits and a non-root euid",
+)
+def test_an_attested_path_that_cannot_be_stat_is_declined_not_a_crash(
+    tmp_path: Path,
+) -> None:
+    """`_readable_anchor`'s docstring says None means "this method cannot
+    judge it". Its `resolved.is_file()` sat outside the `try` and
+    re-raised EACCES on 3.11-3.13, so one attested path under an
+    untraversable directory turned the whole `attestation_anchors` check
+    into `_safe`'s "check raised PermissionError … this is a bettermemory
+    bug". Cannot-stat is exactly the case the None was written for."""
+    from bettermemory.doctor import _readable_anchor
+
+    root = tmp_path / "repo"
+    (root / "src").mkdir(parents=True)
+    anchor = root / "src" / "mod.py"
+    anchor.write_text("def handler(): pass\n", encoding="utf-8")
+    assert _readable_anchor("src/mod.py", root) == anchor.resolve()
+    (root / "src").chmod(0o000)
+    try:
+        assert _readable_anchor("src/mod.py", root) is None
+    finally:
+        (root / "src").chmod(0o755)
+
+
+@_needs_git
+def test_store_nested_in_parent_repo_names_the_level_it_could_not_list(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two enclosing repos: the outer one's index is unreadable, the
+    inner one tracks a sidecar. The inner hit used to discard the outer
+    error entirely and then list BOTH toplevels under
+    `scanned_parent_toplevels` — a finding that claimed to have scanned
+    a repo it never examined. The warn now names the unlisted level in
+    its message and details, and drops it from the scanned list."""
+    grand, parent, store = _grandparent_repo_with_doubly_nested_store(
+        tmp_path, monkeypatch
+    )
+    (store / PROPOSALS_FILENAME).write_text(
+        '{"content": "my staging DB password is hunter2"}\n', encoding="utf-8"
+    )
+    # The INNER repo (parent) tracks the sidecar; the OUTER (grand) has
+    # a corrupt index so `git ls-files` there exits non-zero.
+    _git_in(parent, "add", "-A")
+    _git_in(parent, "commit", "-m", "track the sidecar")
+    (grand / ".git" / "index").write_bytes(b"\0garbage\0" * 8)
+    listing = subprocess.run(
+        ["git", "ls-files"], cwd=grand, capture_output=True, text=True, check=False
+    )
+    assert listing.returncode != 0, "premise: the outer index is unlistable"
+
+    diag = _check_store_nested_in_parent_repo(store)
+    assert diag.status == "warn"
+    assert diag.details["tracked_sidecars"] == [f"memory-store/{PROPOSALS_FILENAME}"]
+    assert diag.details["parent_toplevel"] == str(parent.resolve())
+    assert diag.details["unlisted_parent_toplevels"] == [str(grand.resolve())]
+    assert str(grand.resolve()) not in diag.details["scanned_parent_toplevels"]
+    assert "NOT examined" in diag.message
+    assert str(grand.resolve()) in diag.message

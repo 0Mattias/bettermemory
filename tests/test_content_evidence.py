@@ -15,6 +15,8 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from bettermemory import index
 from bettermemory.doctor import _check_memory_content_evidence
 from bettermemory.migrate import _write_repaired, MigrationReport
@@ -190,3 +192,39 @@ def test_atomic_write_post_returns_the_hash_of_what_it_wrote(tmp_path: Path) -> 
     target = tmp_path / "x.md"
     sha = _atomic_write_post(target, post)
     assert sha == index.file_sha256(target)
+
+
+def test_a_walk_that_stops_is_not_a_clean_bill(
+    memory_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The check's ok message is "All N memory files match the bytes the
+    store last wrote". Its outer `except PARSE_SKIP_EXCEPTIONS: pass`
+    caught the WALK failing — `iter_active` already skips per-file parse
+    failures on its own — and still fell through to that message, so an
+    unlistable store directory read as a store where every file matched.
+    This is the store's one tamper-evidence surface; "could not look"
+    now says so, with `changed: None` like the no-index return."""
+    from bettermemory.doctor import _check_memory_content_evidence
+    from bettermemory.store import Store
+
+    store = Store(memory_dir)
+    store.write(content="the auth service listens on port 8443", scopes=["t"])
+    store.write(content="the cache service listens on port 6379", scopes=["t"])
+    index.rebuild(memory_dir, store.iter_active())
+    assert _check_memory_content_evidence(memory_dir).status == "ok"
+
+    real_iter_active = Store.iter_active
+
+    def _stops_after_one(self: Store):  # type: ignore[no-untyped-def]
+        for i, pair in enumerate(real_iter_active(self)):
+            if i == 1:
+                raise PermissionError(13, "Permission denied", str(memory_dir))
+            yield pair
+
+    monkeypatch.setattr(Store, "iter_active", _stops_after_one)
+    diag = _check_memory_content_evidence(memory_dir)
+    assert diag.status == "fail"
+    assert "could not read the store" in diag.message.lower()
+    assert "match the bytes" not in diag.message
+    assert diag.details["changed"] is None
+    assert diag.details["checked"] == 1
