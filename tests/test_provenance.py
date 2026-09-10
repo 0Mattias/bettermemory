@@ -552,3 +552,59 @@ def test_gather_episode_evidence_skips_the_hook_rows(memory_dir: Path) -> None:
     later = now + timedelta(seconds=1)
     assert evidence.label(_episode(later, written)) == "local"
     assert evidence.label(_episode(later)) == "unaccounted"
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git not on PATH")
+def test_a_sync_repo_git_cannot_answer_for_reads_untracked_not_unaccounted(
+    store: Store, memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rule 6's None meant one thing — "not a sync repo" — and silently
+    carried three more: git missing, a non-zero exit, a timeout. On
+    all three the classifier fell through to `unaccounted`, the label
+    doctor publishes as a finding and body delivery refuses, for every
+    file the store's own repo might well track. A store whose objects
+    a container's uid cannot read answers every repo command with
+    `fatal: detected dubious ownership`, exit 128, which is the shape
+    reproduced here. Could-not-ask is honest silence: `untracked`."""
+    _git(memory_dir, "init", "-q")
+    _recorder(memory_dir).record("search", returned=[], relevance=[])
+    a, a_name = _plant(tmp_path, memory_dir, "scratch-a", "committed in the sync repo")
+    b, _ = _plant(tmp_path, memory_dir, "scratch-b", "never committed")
+    _git(memory_dir, "add", "--", a_name)
+    _git(memory_dir, "commit", "-q", "-m", "pulled")
+    evidence = provenance.gather_evidence(memory_dir)
+    assert evidence.tracked_files is not None and a_name in evidence.tracked_files
+    assert evidence.tracked_files_unavailable is False
+
+    real_run = subprocess.run
+
+    def _dubious(cmd: list[str], *args: Any, **kwargs: Any) -> Any:
+        if "ls-files" in cmd:
+            return subprocess.CompletedProcess(
+                cmd,
+                128,
+                stdout="",
+                stderr=f"fatal: detected dubious ownership in repository at '{memory_dir}'\n",
+            )
+        return real_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(provenance.subprocess, "run", _dubious)
+    evidence = provenance.gather_evidence(memory_dir)
+    assert evidence.tracked_files is None
+    assert evidence.tracked_files_unavailable is True, (
+        "a sync repo git would not answer for"
+    )
+    _rebuild(store)
+    assert index.provenance_for(memory_dir, [a, b]) == {a: "untracked", b: "untracked"}
+
+    monkeypatch.setattr(provenance.shutil, "which", lambda name: None)
+    evidence = provenance.gather_evidence(memory_dir)
+    assert evidence.tracked_files is None
+    assert evidence.tracked_files_unavailable is True, "no git binary at all"
+
+    # Not a sync repo at all is the measured None it always was.
+    plain = tmp_path / "plain-store"
+    plain.mkdir()
+    evidence = provenance.gather_evidence(plain)
+    assert evidence.tracked_files is None
+    assert evidence.tracked_files_unavailable is False

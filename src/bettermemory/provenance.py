@@ -145,9 +145,14 @@ def _id_field(event: Mapping[str, Any], key: str) -> str | None:
 class Evidence:
     """Everything the classifier reads, gathered once per rebuild.
 
-    `tracked_files` is None when the store root is not a sync repo (or
-    git is unavailable), which disables rule 6 rather than misreading a
-    parent repo's tracking as the store's own.
+    `tracked_files` is None when the store root is not a sync repo,
+    which disables rule 6 rather than misreading a parent repo's
+    tracking as the store's own. That is a MEASURED answer. When the
+    root is a sync repo but git could not say what it tracks — no
+    binary, a non-zero exit (`dubious ownership` on a bind-mounted or
+    sudo-created store), a timeout — `tracked_files` is None too and
+    `tracked_files_unavailable` is True: rule 6 was not asked, and the
+    classifier must not fall through to the hand-planted label on it.
     """
 
     has_events: bool
@@ -155,6 +160,7 @@ class Evidence:
     local_ids: frozenset[str]
     pulled_files: frozenset[str]
     tracked_files: frozenset[str] | None
+    tracked_files_unavailable: bool = False
     # Schema v8 (`verified_locally_at`): the latest local `verify` event
     # per memory id and the latest `sync_pull` event per file, the two
     # instants `classify_trust` compares.
@@ -192,12 +198,14 @@ def gather_evidence(root: Path) -> Evidence:
                 previous = pulled_at.get(base)
                 if previous is None or ts > previous:
                     pulled_at[base] = ts
+    tracked_files, tracked_unavailable = _tracked_files(root)
     return Evidence(
         has_events=has_events,
         oldest_event_at=oldest,
         local_ids=frozenset(local_ids),
         pulled_files=frozenset(pulled),
-        tracked_files=_tracked_files(root),
+        tracked_files=tracked_files,
+        tracked_files_unavailable=tracked_unavailable,
         verified_at=verified_at,
         pulled_at=pulled_at,
     )
@@ -279,6 +287,15 @@ def classify(
         return UNTRACKED
     if evidence.tracked_files is not None and filename in evidence.tracked_files:
         return SYNCED
+    if evidence.tracked_files_unavailable:
+        # Rule 6 could not be asked: the store IS a sync repo, and git
+        # would not say what it tracks. The file may well have arrived
+        # by a pull older than the `sync_pull` event, which is exactly
+        # the case rule 6 exists to catch, and `unaccounted` is the
+        # finding doctor publishes and the label body delivery refuses.
+        # Honest silence, not suspicion — the label that already means
+        # "the evidence could not speak to this".
+        return UNTRACKED
     return UNACCOUNTED
 
 
@@ -290,12 +307,18 @@ def is_sync_repo(root: Path) -> bool:
     return (root / ".git").exists()
 
 
-def _tracked_files(root: Path) -> frozenset[str] | None:
+def _tracked_files(root: Path) -> tuple[frozenset[str] | None, bool]:
+    """``(tracked, unavailable)``: the top-level entries the store's own
+    repo tracks, or None. `unavailable` is True only when the root IS a
+    sync repo and git could not answer — the three failures below used
+    to return the same None as "not a sync repo", and rule 6's fall-
+    through then labelled every uncommitted file hand-planted."""
     if not is_sync_repo(root):
-        return None
+        return None, False
     binary = shutil.which("git")
     if binary is None:
-        return None
+        log.warning("provenance: store %s is a sync repo but git is not on PATH", root)
+        return None, True
     try:
         result = subprocess.run(
             [binary, "ls-files", "-z"],
@@ -309,14 +332,21 @@ def _tracked_files(root: Path) -> frozenset[str] | None:
         )
     except (OSError, subprocess.SubprocessError) as exc:
         log.warning("provenance: git ls-files failed in %s: %s", root, exc)
-        return None
+        return None, True
     if result.returncode != 0:
-        return None
+        first = (result.stderr or "").strip().splitlines()
+        log.warning(
+            "provenance: git ls-files exited %s in %s: %s",
+            result.returncode,
+            root,
+            first[0] if first else "",
+        )
+        return None, True
     # Memories live at the store root; tombstones, episodes and the
     # sidecars live in subdirectories or dotfiles. Top-level entries only.
     return frozenset(
         entry for entry in result.stdout.split("\0") if entry and "/" not in entry
-    )
+    ), False
 
 
 # ---------------------------------------------------------------------------
