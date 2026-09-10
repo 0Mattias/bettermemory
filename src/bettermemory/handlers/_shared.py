@@ -24,7 +24,7 @@ from typing import Any, TypeAlias
 
 from mcp.server.mcpserver import Context as _SDKContext
 
-from ..claims import check_claim, parse_claims
+from ..claims import check_claim, claim_reason_is_indeterminate, parse_claims
 from ..events import Recorder, iter_events_backward
 from ..models import Category, Confidence, Source, validate_scope
 from ..session import PendingUseToken, SessionState
@@ -327,12 +327,29 @@ def _validate_declared_claims(
         for claim in parsed
         if (reason := check_claim(claim, root)) is not None
     ]
-    if failures:
-        detail = "; ".join(f"{rendered}: {reason}" for rendered, reason in failures)
+    # Two refusals, not one. A claim the tree CONTRADICTS is the
+    # caller's to fix; a claim the tree could not be READ for is not a
+    # counterexample and must not be reported as one — the tree said
+    # nothing. Both still refuse: a claim is declared true-right-now,
+    # and an unchecked claim is not a checked one.
+    contradicted = [
+        pair for pair in failures if not claim_reason_is_indeterminate(pair[1])
+    ]
+    unchecked = [pair for pair in failures if claim_reason_is_indeterminate(pair[1])]
+    if contradicted:
+        detail = "; ".join(f"{rendered}: {reason}" for rendered, reason in contradicted)
         raise ValueError(
-            f"{len(failures)} claim(s) do not hold against the worktree — "
+            f"{len(contradicted)} claim(s) do not hold against the worktree — "
             f"{detail}. Claims are declared true-right-now; fix the claim "
             "(or the tree) before declaring it."
+        )
+    if unchecked:
+        detail = "; ".join(f"{rendered}: {reason}" for rendered, reason in unchecked)
+        raise ValueError(
+            f"{len(unchecked)} claim(s) could not be checked against the "
+            f"worktree — {detail}. A claim is declared true-right-now, and an "
+            "unchecked claim is not a checked one: declare it from a machine "
+            "that can read the tree, or drop it."
         )
     return [claim.render() for claim in parsed]
 

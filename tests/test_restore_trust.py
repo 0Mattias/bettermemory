@@ -340,3 +340,43 @@ def test_a_dead_origin_worktree_keeps_the_anchor(
     assert strip.verified_head is False
     memory, _ = restore_with_trust_check(store, mid)
     assert memory.verified_head == "c" * 40
+
+
+def _unreadable_dir_is_enforceable() -> bool:
+    """True when this process can actually be locked out of a directory.
+    Windows does not honour POSIX mode bits and root walks through them."""
+    import sys
+
+    if sys.platform == "win32":
+        return False
+    getuid = getattr(os, "geteuid", None)
+    return getuid is not None and getuid() != 0
+
+
+@pytest.mark.skipif(
+    not _unreadable_dir_is_enforceable(),
+    reason="needs POSIX mode bits and a non-root euid",
+)
+def test_a_claim_that_could_not_be_read_is_not_a_counterexample(
+    memory_dir: Path, tmp_path: Path
+) -> None:
+    """The origin root is live and readable, the claimed file sits under
+    a directory this process cannot traverse. `check_claim` reports it
+    as could-not-read, and the strip used to read any non-None reason as
+    "the origin tree contradicts this claim" — dropping the claim and
+    clearing the stamp on a stat that never answered. An unreadable
+    claim stays, exactly as one under a dead root stays."""
+    root = _tree(tmp_path)
+    store = Store(memory_dir)
+    mid = _seed(store, root, claims=["pkg/mod.py::TIMEOUT=30"])
+    (root / "pkg").chmod(0o000)
+    try:
+        strip = trust_strip_for(store.load_tombstone(mid))
+        assert strip.claims == []
+        assert strip.any is False
+        memory, applied = restore_with_trust_check(store, mid)
+    finally:
+        (root / "pkg").chmod(0o755)
+    assert applied == strip
+    assert memory.claims == ["pkg/mod.py::TIMEOUT=30"]
+    assert memory.last_verified_at is not None

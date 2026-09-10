@@ -574,3 +574,62 @@ def test_a_claim_follows_symlinks_because_resolution_does(tmp_path: Path) -> Non
 
     assert check_claim(parse_claim("!src/link.py"), tmp_path) is None
     assert "does not exist" in (check_claim(parse_claim("src/link.py"), tmp_path) or "")
+
+
+# ---------------------------------------------------------------------------
+# The three answers a claim check gives are two, to a caller that only
+# sees "non-None": every could-not-read reason carries the marker a
+# consumer branches on, and no contradiction does.
+# ---------------------------------------------------------------------------
+
+
+def test_a_contradiction_is_never_reported_as_indeterminate(tmp_path: Path) -> None:
+    from bettermemory.claims import claim_reason_is_indeterminate
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "mod.py").write_text("TIMEOUT = 30\n")
+    for spec in (
+        "src/missing.py",
+        "src/mod.py::absent_symbol",
+        "src/mod.py::TIMEOUT=60",
+    ):
+        reason = check_claim(parse_claim(spec), tmp_path)
+        assert reason is not None, spec
+        assert not claim_reason_is_indeterminate(reason), (spec, reason)
+    assert check_claim(parse_claim("!src/mod.py"), tmp_path) is not None
+    assert not claim_reason_is_indeterminate(
+        check_claim(parse_claim("!src/mod.py"), tmp_path) or ""
+    )
+
+
+@pytest.mark.skipif(
+    not _unreadable_dir_is_enforceable(),
+    reason="needs POSIX mode bits and a non-root euid",
+)
+def test_every_could_not_read_reason_carries_the_marker(tmp_path: Path) -> None:
+    """Both polarities of the stat that did not answer, and the read
+    that failed after the stat did: each is the marker, by name, so the
+    verify refusal and the restore strip can tell "the tree contradicts
+    this" from "the tree could not be read for this"."""
+    from bettermemory.claims import claim_reason_is_indeterminate
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "mod.py").write_text("def handler(): pass\n")
+    (tmp_path / "src").chmod(0o000)
+    try:
+        for spec in ("!src/mod.py", "src/mod.py", "src/mod.py::handler"):
+            reason = check_claim(parse_claim(spec), tmp_path)
+            assert reason is not None, spec
+            assert claim_reason_is_indeterminate(reason), (spec, reason)
+    finally:
+        (tmp_path / "src").chmod(0o755)
+    # The third site: the stat answered, the read did not.
+    unreadable = tmp_path / "src" / "sealed.py"
+    unreadable.write_text("def handler(): pass\n")
+    unreadable.chmod(0o000)
+    try:
+        reason = check_claim(parse_claim("src/sealed.py::handler"), tmp_path)
+        assert reason is not None
+        assert claim_reason_is_indeterminate(reason), reason
+    finally:
+        unreadable.chmod(0o644)

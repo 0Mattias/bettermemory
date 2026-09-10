@@ -109,6 +109,7 @@ __all__ = [
     "parse_claims",
     "load_claims",
     "check_claim",
+    "claim_reason_is_indeterminate",
     "claim_paths",
     "claim_is_addressable",
     "governed_claim_paths",
@@ -478,6 +479,24 @@ def _is_regular_file(target: Path) -> bool:
     return os.path.isfile(target)
 
 
+# The phrase every "could not determine" reason carries. `check_claim`
+# answers three ways — None (the claim holds), a reason the tree
+# CONTRADICTS the claim, and a reason the tree could not be READ — and
+# a caller acting on a non-None reason (the verify refusal, the restore
+# strip, the declared-claims gate) has to tell the last two apart: an
+# unreadable claim is not a counterexample. Carried in the string rather
+# than as a third return type so `bench/rot`, which constructs and reads
+# the same reasons, stays byte-identical; the three sites below bind it
+# by name so the marker and the prose cannot drift apart.
+INDETERMINATE_REASON_MARKER = "could not be read"
+
+
+def claim_reason_is_indeterminate(reason: str) -> bool:
+    """True when `reason` says the oracle could not look — never that it
+    looked and the claim failed."""
+    return INDETERMINATE_REASON_MARKER in reason
+
+
 def check_claim(claim: Claim, root: Path) -> str | None:
     """The declare-time oracle: None when the claim holds, else why not.
 
@@ -519,15 +538,15 @@ def check_claim(claim: Claim, root: Path) -> str | None:
             # `!path` claim affirmed while the file sat on disk — a
             # false clean on the trust path, not a missed alarm.
             return (
-                f"path {claim.rel_path!r} could not be read in the "
+                f"path {claim.rel_path!r} {INDETERMINATE_REASON_MARKER} in the "
                 "worktree, so its absence cannot be confirmed — an "
                 "absence claim is only as good as a stat that answered"
             )
         return None
     if occupancy is None:
         return (
-            f"path {claim.rel_path!r} could not be read in the worktree "
-            "— the claim may well hold, but nothing here can say so"
+            f"path {claim.rel_path!r} {INDETERMINATE_REASON_MARKER} in the "
+            "worktree — the claim may well hold, but nothing here can say so"
         )
     if not _is_regular_file(target):
         return f"path {claim.rel_path!r} does not exist in the worktree"
@@ -541,7 +560,7 @@ def check_claim(claim: Claim, root: Path) -> str | None:
             )
         source = target.read_text(encoding="utf-8", errors="replace")
     except (OSError, ValueError):
-        return f"{claim.rel_path!r} could not be read"
+        return f"{claim.rel_path!r} {INDETERMINATE_REASON_MARKER}"
     try:
         parsed = ast.parse(source)
     except (SyntaxError, ValueError, RecursionError):

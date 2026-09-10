@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ..claims import check_claim, load_claims
+from ..claims import check_claim, claim_reason_is_indeterminate, load_claims
 from ..models import Memory, TombstonedMemory
 from ..origin import commit_reachable
 from ..store import MemoryNotFoundError, NotTombstonedError, Store
@@ -107,7 +107,16 @@ def trust_strip_for(tombstone: TombstonedMemory) -> TrustStrip:
         root_path = Path(live_root).resolve(strict=False)
         for raw in tombstone.claims:
             parsed = load_claims([raw])
-            if parsed and check_claim(parsed[0], root_path) is not None:
+            if not parsed:
+                continue
+            reason = check_claim(parsed[0], root_path)
+            # Dropped only on a CONTRADICTION. A claim whose file this
+            # process could not read is one the tree said nothing
+            # about, and a restore that strips it — and clears the
+            # stamp with it — would be manufacturing a counterexample
+            # out of a stat that did not answer. It stays, exactly as
+            # a claim under a dead root stays.
+            if reason is not None and not claim_reason_is_indeterminate(reason):
                 dropped_claims.append(raw)
     dropped_paths = (
         unverifiable_attestations(tombstone.verified_paths, worktree_root=live_root)

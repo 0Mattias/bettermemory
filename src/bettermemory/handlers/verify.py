@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .._response import isoformat, isoformat_optional
-from ..claims import check_claim, load_claims
+from ..claims import check_claim, claim_reason_is_indeterminate, load_claims
 from ..origin import head_sha, repos_match
 from ..store import ConcurrentUpdateError, MemoryNotFoundError, TombstonedError
 from ..symbols import check_symbol_citations
@@ -66,14 +66,33 @@ def _refuse_stale_stored_claims(stored: list[str], origin_root: str | None) -> N
         for claim in load_claims(stored)
         if (reason := check_claim(claim, root)) is not None
     ]
-    if failures:
-        detail = "; ".join(f"{rendered}: {reason}" for rendered, reason in failures)
+    # The root was readable, so the guard above passed; the claimed FILE
+    # one level down may still not be. That is not "no longer hold" —
+    # an accusation about a tree nothing read — and the refusal has to
+    # say which it is. Both refuse, because a stamp asserts the whole
+    # record still matches reality and an unchecked claim is not a
+    # checked one; only the diagnosis and the remedy differ.
+    contradicted = [
+        pair for pair in failures if not claim_reason_is_indeterminate(pair[1])
+    ]
+    unchecked = [pair for pair in failures if claim_reason_is_indeterminate(pair[1])]
+    if contradicted:
+        detail = "; ".join(f"{rendered}: {reason}" for rendered, reason in contradicted)
         raise ValueError(
-            f"cannot verify: {len(failures)} stored claim(s) no longer "
+            f"cannot verify: {len(contradicted)} stored claim(s) no longer "
             f"hold — {detail}. A verify stamps the whole record fresh, "
             "and its claims are part of the record. memory_update the "
             "body first (body edits clear claims), or re-declare "
             "corrected claims by passing claims=[...] on this call."
+        )
+    if unchecked:
+        detail = "; ".join(f"{rendered}: {reason}" for rendered, reason in unchecked)
+        raise ValueError(
+            f"cannot verify: {len(unchecked)} stored claim(s) could not be "
+            f"checked here — {detail}. A verify stamps the whole record "
+            "fresh, and an unchecked claim is not a checked one. Verify from "
+            "a machine that can read the tree, or re-declare corrected "
+            "claims by passing claims=[...] on this call."
         )
 
 
@@ -375,9 +394,22 @@ async def memory_verify(
         ):
             origin_root = caller.worktree_root
     if verified_paths:
+        # A RELATIVE attestation is judged against the memory's recorded
+        # worktree, and a root this machine cannot see cannot say a
+        # path under it is missing — every relative entry would read
+        # as fabricated at once, the constant-function failure
+        # `_worktree_root_is_live` documents. Anchor only a live root;
+        # with none, `unverifiable_attestations` skips relative entries
+        # as could-not-ask and still judges absolute ones, which were
+        # attested as on-this-machine observations. Same gate the
+        # stored-list arm below and `handlers/restore` apply.
         unseen = unverifiable_attestations(
             verified_paths,
-            worktree_root=origin_root,
+            worktree_root=(
+                origin_root
+                if origin_root is not None and _worktree_root_is_live(origin_root)
+                else None
+            ),
         )
         if unseen:
             raise ValueError(

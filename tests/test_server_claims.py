@@ -736,3 +736,123 @@ async def test_addressable_claim_on_the_same_file_still_narrows(
     shown = await _call(server, "memory_show", id=memory_id)
     assert shown["commit_drift"]["status"] == "clean"
     assert shown["staleness_verdict"] == "fresh"
+
+
+@pytest.mark.skipif(
+    not _unreadable_dir_is_enforceable(),
+    reason="needs POSIX mode bits and a non-root euid",
+)
+async def test_verify_names_a_stored_claim_it_could_not_check_without_accusing_it(
+    memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """7.7.0 guarded the worktree ROOT; the claimed file one level down
+    can still sit under a directory this process cannot traverse. The
+    refusal used to read "stored claim(s) no longer hold", an accusation
+    about a tree nothing read. It still refuses — a stamp asserts the
+    record still matches reality — but says what happened."""
+    repo = _make_repo(tmp_path)
+    state = SessionState()
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    import bettermemory._handlers as handlers_module
+    import bettermemory.server as server_module
+
+    server = build_server(
+        config=cfg,
+        store=Store(memory_dir),
+        state=state,
+        recorder=Recorder(root=memory_dir, session_id=state.session_id),
+    )
+    origin = Origin(cwd=str(repo), repo=_REMOTE, branch="main", worktree_root=str(repo))
+
+    def fake_capture(cwd: Path | None = None) -> Origin:
+        return origin
+
+    monkeypatch.setattr(handlers_module, "capture_origin", fake_capture)
+    monkeypatch.setattr(server_module, "capture_origin", fake_capture)
+
+    written = await _call(
+        server,
+        "memory_write",
+        content="The drift gate lives in `pkg/mod.py`.",
+        scopes=["tools"],
+        claims=["pkg/mod.py::handler"],
+    )
+    assert written["status"] == "committed"
+
+    (repo / "pkg").chmod(0o000)
+    try:
+        with pytest.raises(Exception, match="could not be checked here") as refused:
+            await _call(server, "memory_verify", id=written["id"])
+        assert "no longer hold" not in str(refused.value)
+        # A fresh declaration under the same shadow gets the same
+        # honesty from the shared gate: "could not be checked", not
+        # "do not hold".
+        with pytest.raises(Exception, match="could not be checked against") as declared:
+            await _call(
+                server,
+                "memory_write",
+                content="The other gate lives in `pkg/mod.py` too.",
+                scopes=["tools"],
+                claims=["pkg/mod.py::other"],
+            )
+        assert "do not hold" not in str(declared.value)
+    finally:
+        (repo / "pkg").chmod(0o755)
+
+
+async def test_a_relative_attestation_under_a_dead_root_is_could_not_ask(
+    memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A synced record carries another host's `worktree_root`. Judging a
+    fresh `verified_paths` list against that root made every relative
+    entry read as a fabricated attestation ("do not exist on this
+    machine") — the constant-function failure `_worktree_root_is_live`
+    exists to close, and the gate the stored-list arm and the restore
+    strip already apply. Relative entries under a dead root are now
+    could-not-ask; an absolute entry is still judged, since it was
+    attested as an on-this-machine observation."""
+    repo = _make_repo(tmp_path)
+    state = SessionState()
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    import bettermemory._handlers as handlers_module
+    import bettermemory.server as server_module
+
+    server = build_server(
+        config=cfg,
+        store=Store(memory_dir),
+        state=state,
+        recorder=Recorder(root=memory_dir, session_id=state.session_id),
+    )
+    dead = tmp_path / "never-here"
+    origin = Origin(cwd=str(dead), repo=_REMOTE, branch="main", worktree_root=str(dead))
+
+    def fake_capture(cwd: Path | None = None) -> Origin:
+        return origin
+
+    monkeypatch.setattr(handlers_module, "capture_origin", fake_capture)
+    monkeypatch.setattr(server_module, "capture_origin", fake_capture)
+    del repo  # the caller is NOT standing in a checkout of the record's repo
+
+    written = await _call(
+        server,
+        "memory_write",
+        content="The drift gate lives in `pkg/mod.py`.",
+        scopes=["tools"],
+    )
+    stamped = await _call(
+        server, "memory_verify", id=written["id"], verified_paths=["pkg/mod.py"]
+    )
+    assert stamped["verified"] == written["id"]
+    assert stamped["last_verified_at"] is not None
+    assert stamped["verified_paths"] == ["pkg/mod.py"]
+
+    absent = tmp_path / "absent.toml"
+    with pytest.raises(Exception, match="do not exist on this machine"):
+        await _call(
+            server,
+            "memory_verify",
+            id=written["id"],
+            verified_paths=[str(absent)],
+        )
