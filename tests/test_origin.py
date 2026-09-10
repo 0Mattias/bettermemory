@@ -1994,3 +1994,77 @@ def test_the_walk_reads_a_non_ascii_path_as_its_own_spelling(tmp_path: Path) -> 
     assert walk is not None
     assert list(walk.touched) == ["src/modül.py"]
     assert walk.shas_touching(["src/modül.py"]) == set(walk.commits)
+
+
+# ---------------------------------------------------------------------------
+# "Git said no" and "git could not be asked" are different answers.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_capture_marks_the_origin_indeterminate_when_git_cannot_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`capture()` returns a null `repo` / `worktree_root` both when git
+    looked and said "not a repository" and when git could not run at
+    all. Every consumer keying a shield on the null — the hook's
+    project-cohort suppression, the worktree-anchored session bridge,
+    the auto-scope filter — read both as "the caller is nowhere". The
+    origin now says which it was, on a private attribute that never
+    reaches frontmatter or an event payload."""
+    from bettermemory import origin as _origin
+
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    set_git_discovery_ceiling(plain, monkeypatch)
+    answered = _origin.capture(plain)
+    assert answered.repo is None and answered.worktree_root is None
+    assert answered.git_indeterminate is False, "git ran and said no"
+
+    def _no_binary(*args: Any, **kwargs: Any) -> Any:
+        raise FileNotFoundError(errno.ENOENT, "No such file or directory", "git")
+
+    monkeypatch.setattr(_origin.subprocess, "run", _no_binary)
+    unknown = _origin.capture(plain)
+    assert unknown.cwd == str(plain.resolve())
+    assert unknown.repo is None and unknown.worktree_root is None
+    assert unknown.git_indeterminate is True, "git could not be asked"
+    assert "git_indeterminate" not in unknown.model_dump()
+    assert "_git_indeterminate" not in unknown.model_dump()
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_commit_reachable_gives_no_answer_when_git_could_not_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`commit_reachable` folded a merge-base that could not run — a
+    timeout, a failed spawn — into the same None its non-zero exit
+    took, then asked `head_sha` to tell "not a repository" apart, and
+    `head_sha` can succeed on its own faster call. So a timeout read as
+    False, and `handlers/restore` reads False as "strip the anchor for
+    good". Could-not-ask is None; a measured "never here" is still
+    False."""
+    from bettermemory import origin as _origin
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    set_git_discovery_ceiling(repo, monkeypatch)
+    _init_repo(repo)
+    _commit_file(
+        repo, "a.txt", content="a\n", when=datetime(2025, 1, 1, tzinfo=timezone.utc)
+    )
+    head = _git_out(repo, "rev-parse", "HEAD")
+    assert _origin.commit_reachable(repo, head) is True
+    assert _origin.commit_reachable(repo, "a" * 40) is False, "measured: never here"
+
+    real_run = _origin.subprocess.run
+
+    def _merge_base_hangs(cmd: list[str], *args: Any, **kwargs: Any) -> Any:
+        if "merge-base" in cmd:
+            raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout", 1.0))
+        return real_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(_origin.subprocess, "run", _merge_base_hangs)
+    assert _origin.head_sha(repo) == head, "premise: the cheaper probe still answers"
+    assert _origin.commit_reachable(repo, head) is None, "could not ask: no answer"
+    assert _origin.commit_reachable(repo, "a" * 40) is None

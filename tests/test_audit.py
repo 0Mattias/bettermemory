@@ -2707,3 +2707,50 @@ def test_unrelated_session_still_does_not_shield_with_anchor_present() -> None:
     )
     assert report.verdict == "miss"
     assert report.recent_retrieval_count == 0
+
+
+def test_an_indeterminate_origin_declines_to_declare_a_miss() -> None:
+    """`origin.capture()` returns a null `repo` both when git said "not a
+    repository" and when git could not be asked at all — no binary, a
+    timeout. The project-cohort shield reads the null as "the caller is
+    nowhere" and stands down, so a turn asked from inside the matching
+    repo while git was unreachable was published as a `miss` against
+    the model. A miss is a verdict; could-not-ask never manufactures
+    one. The measured null (git answered "no") still misses."""
+    repo = "git@github.com:owner/foo.git"
+    mem = Memory(
+        id=generate_ulid(),
+        created=_utc(2026, 1, 1),
+        updated=_utc(2026, 1, 1),
+        scopes=["projects:foo"],
+        confidence=Confidence.MEDIUM,
+        source=Source.EXPLICIT,
+        body="foo indexer notes about the ingestion pipeline",
+        origin=Origin(cwd="/tmp/foo", repo=repo, worktree_root="/tmp/foo"),
+    )
+    nowhere = Origin(cwd="/tmp/foo")
+    assert nowhere.git_indeterminate is False
+    answered = probe_for_miss(
+        [mem],
+        "foo indexer notes",
+        recent_events=[],
+        session_id="sess_x",
+        now=_utc(2026, 5, 1),
+        caller_origin=nowhere,
+    )
+    assert answered.verdict == "miss"
+    assert answered.suppressed_by is None
+
+    unknown = Origin(cwd="/tmp/foo")
+    unknown._git_indeterminate = True
+    declined = probe_for_miss(
+        [mem],
+        "foo indexer notes",
+        recent_events=[],
+        session_id="sess_x",
+        now=_utc(2026, 5, 1),
+        caller_origin=unknown,
+    )
+    assert declined.top_hits[0].relevance == "high", "the hit still clears"
+    assert declined.verdict == "ok"
+    assert declined.suppressed_by == "origin_indeterminate"

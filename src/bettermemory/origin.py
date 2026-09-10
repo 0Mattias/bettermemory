@@ -98,6 +98,24 @@ class Origin(BaseModel):
     # for how `repos_match` consumes them.
     _repo_url_alternates: tuple[str, ...] = PrivateAttr(default=())
 
+    # Whether `capture()` could run git AT ALL. `repo` and `worktree_root`
+    # are null both when git looked and said "not a repository" and when
+    # git could not be asked — no binary on PATH, a timeout, an OSError
+    # from the spawn — and the two mean opposite things to every consumer
+    # that keys a shield on them: the first is a caller standing nowhere,
+    # the second is a caller standing somewhere this process cannot see.
+    # PRIVATE like the alternates above: never serialized into frontmatter
+    # or an event payload; a fact about this capture, not about a memory.
+    _git_indeterminate: bool = PrivateAttr(default=False)
+
+    @property
+    def git_indeterminate(self) -> bool:
+        """True when this origin's null `repo` / `worktree_root` are the
+        product of git not answering rather than of git answering "no".
+        Consumers that would open a scope boundary on a null must treat
+        this as "could not tell" and hold the boundary instead."""
+        return self._git_indeterminate
+
 
 # ---------------------------------------------------------------------------
 # Capture
@@ -140,7 +158,7 @@ def capture(cwd: Path | None = None) -> Origin:
         resolved = cwd.resolve()
     cwd_str = str(resolved)
 
-    worktree_root = _git_worktree_root(resolved)
+    worktree_root, indeterminate = _probe_worktree_root(resolved)
     repo_url: str | None = None
     repo_url_alternates: tuple[str, ...] = ()
     if worktree_root:
@@ -153,6 +171,9 @@ def capture(cwd: Path | None = None) -> Origin:
         branch=branch,
         worktree_root=worktree_root,
     )
+    # The first probe is the one that decides whether git ran; the two
+    # gated on it cannot fail differently once it has answered.
+    origin._git_indeterminate = indeterminate
     if repo_url is not None:
         # Register the remote's other official spellings (raw multi-URL
         # values, unexpanded insteadOf aliases) so `repos_match` can keep
@@ -526,39 +547,25 @@ def _log_subcommand(args: tuple[str, ...]) -> str:
     return args[i] if i < len(args) else ""
 
 
-def _git(
-    cwd: Path, *args: str, timeout: float = 1.0, empty_ok: bool = False
-) -> str | None:
-    """Run a git command from `cwd`. Returns trimmed stdout on success,
-    None on any failure. Short timeout so a hanging git never stalls a
-    memory_write — the write is the user-facing operation; origin is
-    nice-to-have.
+def _git_result(
+    cwd: Path, *args: str, timeout: float = 1.0
+) -> subprocess.CompletedProcess[str] | None:
+    """Run a git command from `cwd` and return the completed process, or
+    None ONLY when git could not run at all — no binary on PATH, the
+    timeout, an OSError from the spawn. A non-zero exit is an ANSWER
+    ("not a repository", "not an ancestor", "no such commit") and comes
+    back as the process, exit code and stderr intact, for the caller to
+    read. `_git` below folds both into one None for the callers that
+    only want stdout; the probes that must tell "git said no" from "git
+    could not be asked" (`_probe_worktree_root`, `commit_reachable`)
+    read this directly.
 
-    `empty_ok` splits "git ran fine, no output" from "git could not run":
-    with it True a zero-exit call with EMPTY stdout returns ``""`` instead
-    of None, so a caller can tell a clean-but-empty result (`git log --
-    <specs>` listing no commit) apart from an actual failure (non-zero
-    exit, missing binary, timeout — still None). Default False keeps the
-    historical ``out or None`` collapse every other caller relies on.
-
-    Failure logging is tiered so the common "not a repo" case stays
-    silent while operationally interesting failures (missing binary,
-    timeouts, safe.directory rejection, corrupted .git) reach the log:
-
-    * `FileNotFoundError` / `OSError` → WARNING. The git binary isn't
-      reachable; every origin capture for this process will fail the
-      same way. `doctor` and verbose-mode users want to see this.
-    * `subprocess.TimeoutExpired` → WARNING. A hanging git is rare
-      enough that surfacing it is worth more than the noise.
-    * Non-zero exit → DEBUG with stderr. The vast majority of these are
-      "fatal: not a git repository" from a non-repo cwd, which is fully
-      expected (memories written outside any repo get `repo=None`).
-      DEBUG keeps the signal available to anyone who flips the log
-      level (or to `doctor`) without spamming WARNING for every memory
-      written from a home directory or a freshly-cloned scratch dir.
+    Failure logging is tiered so the operationally interesting failures
+    (missing binary, timeouts) reach the log at WARNING while the
+    per-call non-zero exits, which `_git` logs at DEBUG, stay out of it.
     """
     try:
-        result = subprocess.run(
+        return subprocess.run(
             ["git", *args],
             cwd=str(cwd),
             capture_output=True,
@@ -588,20 +595,63 @@ def _git(
     except OSError as exc:
         log.warning("git invocation failed in %s: %s", cwd, exc)
         return None
+
+
+def _log_nonzero_exit(
+    args: tuple[str, ...], result: subprocess.CompletedProcess[str], cwd: Path
+) -> None:
+    """DEBUG-level note of a non-zero git exit. Trimmed to stderr's first
+    line — git's "fatal: ..." messages are one-liners; deeper output is
+    rare and not worth flooding the log with. Empty stderr is still
+    logged so the returncode itself is at least visible."""
+    stderr = (result.stderr or "").strip().splitlines()
+    first = stderr[0] if stderr else ""
+    log.debug(
+        "git %s exited %s in %s: %s",
+        _log_subcommand(args),
+        result.returncode,
+        cwd,
+        first,
+    )
+
+
+def _git(
+    cwd: Path, *args: str, timeout: float = 1.0, empty_ok: bool = False
+) -> str | None:
+    """Run a git command from `cwd`. Returns trimmed stdout on success,
+    None on any failure. Short timeout so a hanging git never stalls a
+    memory_write — the write is the user-facing operation; origin is
+    nice-to-have. Built on `_git_result`, which keeps the two kinds of
+    failure apart for the callers that need them apart.
+
+    `empty_ok` splits "git ran fine, no output" from "git could not run":
+    with it True a zero-exit call with EMPTY stdout returns ``""`` instead
+    of None, so a caller can tell a clean-but-empty result (`git log --
+    <specs>` listing no commit) apart from an actual failure (non-zero
+    exit, missing binary, timeout — still None). Default False keeps the
+    historical ``out or None`` collapse every other caller relies on.
+
+    Failure logging is tiered so the common "not a repo" case stays
+    silent while operationally interesting failures (missing binary,
+    timeouts, safe.directory rejection, corrupted .git) reach the log:
+
+    * `FileNotFoundError` / `OSError` → WARNING. The git binary isn't
+      reachable; every origin capture for this process will fail the
+      same way. `doctor` and verbose-mode users want to see this.
+    * `subprocess.TimeoutExpired` → WARNING. A hanging git is rare
+      enough that surfacing it is worth more than the noise.
+    * Non-zero exit → DEBUG with stderr. The vast majority of these are
+      "fatal: not a git repository" from a non-repo cwd, which is fully
+      expected (memories written outside any repo get `repo=None`).
+      DEBUG keeps the signal available to anyone who flips the log
+      level (or to `doctor`) without spamming WARNING for every memory
+      written from a home directory or a freshly-cloned scratch dir.
+    """
+    result = _git_result(cwd, *args, timeout=timeout)
+    if result is None:
+        return None
     if result.returncode != 0:
-        # Trim stderr to the first line — git's "fatal: ..." messages are
-        # one-liners; deeper output is rare and not worth flooding the log
-        # with. Empty stderr is still logged so the returncode itself is
-        # at least visible at DEBUG.
-        stderr = (result.stderr or "").strip().splitlines()
-        first = stderr[0] if stderr else ""
-        log.debug(
-            "git %s exited %s in %s: %s",
-            _log_subcommand(args),
-            result.returncode,
-            cwd,
-            first,
-        )
+        _log_nonzero_exit(args, result, cwd)
         return None
     out = result.stdout.strip()
     if empty_ok:
@@ -672,23 +722,43 @@ def _git_branch(cwd: Path) -> str | None:
     return _git(cwd, "symbolic-ref", "--short", "HEAD")
 
 
-def _git_worktree_root(cwd: Path) -> str | None:
-    # `rev-parse --show-toplevel` returns the absolute path of the
-    # working tree root — for a primary checkout, the repo root; for
-    # a worktree (`git worktree add`), the worktree's own root, which
-    # *differs* between sibling worktrees of the same repository.
-    # That difference is exactly what the auto-scope filter needs to
-    # tell two worktrees of one repo apart. Resolved through `Path`
-    # to normalise symlink hops on macOS' `/var` → `/private/var`
-    # idiom, so a memory captured under one symlink form still
-    # compares equal to a caller that resolves the other.
-    raw = _git(cwd, "rev-parse", "--show-toplevel")
-    if raw is None:
-        return None
+def _probe_worktree_root(cwd: Path) -> tuple[str | None, bool]:
+    """``(worktree_root, indeterminate)`` for `cwd`.
+
+    `rev-parse --show-toplevel` returns the absolute path of the working
+    tree root — for a primary checkout, the repo root; for a worktree
+    (`git worktree add`), the worktree's own root, which *differs*
+    between sibling worktrees of the same repository. That difference
+    is exactly what the auto-scope filter needs to tell two worktrees of
+    one repo apart. Resolved through `Path` to normalise symlink hops on
+    macOS' `/var` → `/private/var` idiom, so a memory captured under one
+    symlink form still compares equal to a caller that resolves the
+    other.
+
+    `indeterminate` is True only when git could not RUN — the answer is
+    then unknown, not "no". Git exiting non-zero ("not a git repository")
+    is the measured no this probe has always reported as None.
+    """
+    result = _git_result(cwd, "rev-parse", "--show-toplevel")
+    if result is None:
+        return None, True
+    if result.returncode != 0:
+        _log_nonzero_exit(("rev-parse", "--show-toplevel"), result, cwd)
+        return None, False
+    raw = result.stdout.strip()
+    if not raw:
+        return None, False
     try:
-        return str(Path(raw).resolve())
+        return str(Path(raw).resolve()), False
     except OSError:
-        return raw
+        return raw, False
+
+
+def _git_worktree_root(cwd: Path) -> str | None:
+    """The worktree root alone, for callers that treat "could not ask"
+    and "not a repository" the same way (doctor's attestation-anchor
+    scoping declines on either)."""
+    return _probe_worktree_root(cwd)[0]
 
 
 def is_full_commit_sha(value: object) -> bool:
@@ -774,13 +844,22 @@ def commit_reachable(cwd: Path | None, sha: str) -> bool | None:
     loaders guarantee that — so the only argv it can form is a revision."""
     if cwd is None or not is_full_commit_sha(sha):
         return None
-    raw = _git(cwd, "merge-base", "--is-ancestor", sha, "HEAD", empty_ok=True)
-    if raw is not None:
+    result = _git_result(cwd, "merge-base", "--is-ancestor", sha, "HEAD")
+    if result is None:
+        # Git could not be asked — no binary, a timeout, a failed spawn.
+        # That is no answer, and the restore re-check reads False as
+        # "strip the anchor for good", so it must not be manufactured
+        # from a question that never reached git. (Before this split a
+        # timeout here landed on the `head_sha` probe below, which can
+        # succeed on its own faster call and turn the timeout into a
+        # False.)
+        return None
+    if result.returncode == 0:
         return True
+    _log_nonzero_exit(("merge-base", "--is-ancestor"), result, cwd)
     # A non-zero exit is "not an ancestor", "no such commit" and "not a
-    # repository" alike, all folded into None by `_git`. Tell the last
-    # apart with the cheapest question that answers differently for it:
-    # can git see a HEAD here at all?
+    # repository" alike. Tell the last apart with the cheapest question
+    # that answers differently for it: can git see a HEAD here at all?
     return False if head_sha(cwd) is not None else None
 
 

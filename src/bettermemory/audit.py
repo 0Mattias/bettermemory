@@ -396,9 +396,12 @@ class MissReport:
     `suppressed_by` (optional, additive) names which shield turned a
     threshold-clearing top hit into an ``"ok"`` verdict:
     ``"retrieval"`` (a retrieval event already fired in the lookback
-    window) or ``"project_cohort"`` (the caller works inside the same
+    window), ``"project_cohort"`` (the caller works inside the same
     git project the top hit was written from — see
-    `_caller_in_top_hit_project`). ``None`` on every other branch,
+    `_caller_in_top_hit_project`) or ``"origin_indeterminate"`` (git
+    could not be asked where the caller stands, so the cohort shield
+    could not be evaluated and no miss may be declared). ``None`` on
+    every other branch,
     including genuine misses and below-threshold oks. The field exists
     so verdict CONSUMERS can differ where their questions differ: the
     silent-miss audit keeps treating the project cohort as
@@ -1072,6 +1075,16 @@ def probe_for_miss(
     elif recent_retrieval_count > 0:
         verdict = "ok"
         suppressed_by = "retrieval"
+    elif caller_origin is not None and caller_origin.git_indeterminate:
+        # Git could not be asked where the caller stands, so the
+        # project-cohort shield below cannot be evaluated: its "the
+        # model has this project's source open" argument needs a
+        # project, and a null `repo` here means "unknown", not "none".
+        # A miss is a verdict against the model; could-not-ask never
+        # manufactures one. Named so the delivery lane and the audit
+        # telemetry can see it was this, not a cohort match.
+        verdict = "ok"
+        suppressed_by = "origin_indeterminate"
     elif _caller_in_top_hit_project(top_hits[:1], memories, caller_origin):
         # Caller is working inside the same git project the
         # threshold-deciding top hit was written from. The model already

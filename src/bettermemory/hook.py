@@ -517,7 +517,12 @@ def run_audit(
     # Capture once; reused for the probe's auto-scope and stamped on the
     # hook's events so episode_handoff can worktree-match this turn's
     # session (queue #28). The hook runs as a fresh process in the
-    # turn's cwd, so this reflects the user's working repo.
+    # turn's cwd, so this reflects the user's working repo. When git
+    # could not be asked (`caller_origin.git_indeterminate`) the nulls
+    # below mean "unknown", not "nowhere": the two shields that key on
+    # `worktree_root` then match every window, which errs toward
+    # suppressing a miss, and `probe_for_miss` declines to declare one
+    # outright (`suppressed_by="origin_indeterminate"`).
     caller_origin = capture_origin()
     # Reconstruct the session-disabled scope set from the event log so the
     # probe shields the same scopes the in-process audit would. Without
@@ -873,6 +878,15 @@ def run_prompt_recall(
     store = Store(root)
     recent = list(iter_events_window(root, REAUDIT_DEDUP_WINDOW_SECONDS))
     caller_origin = capture_origin()
+    if caller_origin.git_indeterminate:
+        # Delivery is scope-gated on the caller's repo and worktree, and
+        # git could not say what they are. A null repo here would open
+        # the auto-scope filter to every project's memories on a prompt
+        # that asked for none of them, and the scope-toggle replay to
+        # every concurrent window's toggles. No delivery is the only
+        # honest answer; the Stop-hook audit reads the same origin and
+        # declines to call the turn a miss for the same reason.
+        return None
     excluded_scopes = _disabled_scopes_from_events(
         recent, worktree_root=caller_origin.worktree_root
     )

@@ -3183,3 +3183,66 @@ def test_run_prompt_recall_names_a_remote_stamp_on_the_pointer(tmp_path: Path) -
     assert block is not None
     assert f"- {memory_id} [infrastructure] [provenance: synced]" in block
     assert "unverified here" not in block
+
+
+def test_run_audit_declines_a_miss_when_git_could_not_be_asked(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The Stop hook captures origin with `capture_origin()` and reads a
+    null `repo` as "the caller is nowhere", which drops the project-
+    cohort shield. When the null came from git not answering — no
+    binary, a timeout — the caller may well be inside the matching
+    repo, and the turn used to be logged as a `search_miss`. The
+    measured null (git said "not a repository") still misses."""
+    from bettermemory.origin import Origin
+
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    _write_miss_memory(mem_dir)
+
+    unknown = Origin(cwd=str(tmp_path))
+    unknown._git_indeterminate = True
+    monkeypatch.setattr("bettermemory.hook.capture_origin", lambda *a, **k: unknown)
+    result = run_audit(
+        user_message=_MISS_QUERY,
+        assistant_response=None,
+        session_id="claude-origin-unknown",
+        config=_miss_config(mem_dir),  # type: ignore[arg-type]
+    )
+    assert result["verdict"] == "ok"
+    assert not [e for e in iter_events(mem_dir) if e["kind"] == "search_miss"]
+
+    nowhere = Origin(cwd=str(tmp_path))
+    monkeypatch.setattr("bettermemory.hook.capture_origin", lambda *a, **k: nowhere)
+    result = run_audit(
+        user_message=_MISS_QUERY,
+        assistant_response=None,
+        session_id="claude-origin-nowhere",
+        config=_miss_config(mem_dir),  # type: ignore[arg-type]
+    )
+    assert result["verdict"] == "miss"
+
+
+def test_run_prompt_recall_delivers_nothing_when_git_could_not_be_asked(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Delivery is scope-gated on the caller's repo and worktree. With
+    git unreachable a null repo would open the auto-scope filter to
+    every project's memories on a prompt that asked for none of them;
+    the recall lane delivers nothing and records nothing."""
+    from bettermemory.origin import Origin
+
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    _write_miss_memory(mem_dir)
+
+    unknown = Origin(cwd=str(tmp_path))
+    unknown._git_indeterminate = True
+    monkeypatch.setattr("bettermemory.hook.capture_origin", lambda *a, **k: unknown)
+    block = run_prompt_recall(
+        prompt=_MISS_QUERY,
+        session_id="transcript-origin-unknown",
+        config=_miss_config(mem_dir),  # type: ignore[arg-type]
+    )
+    assert block is None
+    assert not [e for e in iter_events(mem_dir) if e["kind"] == "prompt_recall"]
