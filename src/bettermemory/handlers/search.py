@@ -1105,7 +1105,13 @@ async def memory_search(
             # spot_check_required (`ResponseBuilder.apply_trust`, applied
             # by `attach_provenance` above), and the file's stamp must
             # not put a verdict back that the rule took away.
-            if out[0].get("verification", {}).get("status") != "remote":
+            # Nor when the rule could not run at all (`trust_unavailable`,
+            # an unreadable index): that demotion is for a stamp of
+            # unknown origin, and the file's stamp is exactly what it
+            # declines to trust.
+            if out[0].get("verification", {}).get("status") != "remote" and not out[
+                0
+            ].get("trust_unavailable"):
                 out[0]["staleness_verdict"] = compute_staleness_verdict(
                     verification=top_verification,
                     # Claim-anchored subset, matching every other verdict

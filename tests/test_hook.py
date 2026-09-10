@@ -3246,3 +3246,28 @@ def test_run_prompt_recall_delivers_nothing_when_git_could_not_be_asked(
     )
     assert block is None
     assert not [e for e in iter_events(mem_dir) if e["kind"] == "prompt_recall"]
+
+
+def test_run_prompt_recall_names_a_label_it_could_not_read(tmp_path: Path) -> None:
+    """The recall pointer carries `[provenance: <label>]` for a record that
+    did not enter through the store's own paths. With the index
+    unreadable no label can be derived, and the pointer used to render
+    as a plain local record — the one delivery that reaches the model
+    without a tool call, announcing nothing. It now says so."""
+    from bettermemory import index
+
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    memory_id = _write_miss_memory(mem_dir)
+    store = Store(mem_dir)
+    index.rebuild(mem_dir, store.iter_active())
+    index_file = index.index_path(mem_dir)
+    index_file.write_bytes(index_file.read_bytes()[:100])
+
+    block = run_prompt_recall(
+        prompt=_MISS_QUERY,
+        session_id="transcript-index-torn",
+        config=_miss_config(mem_dir),  # type: ignore[arg-type]
+    )
+    assert block is not None and memory_id in block
+    assert "[provenance: unknown, index unreadable]" in block

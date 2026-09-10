@@ -8,6 +8,7 @@ flow has something to commit on the next turn.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from typing import TYPE_CHECKING, Any
 
@@ -131,6 +132,7 @@ async def memory_show(
     # the no-inbound show stays at two connections.
     index_reads = _links_payload(deps, memory)
     verified_locally_at = index_reads.pop("_verified_locally_at")
+    trust_unavailable = index_reads.pop("_trust_unavailable")
     # Issue a use-token for this show before returning so the
     # auto-`record_use` flow has something to commit on the next
     # turn if the model doesn't override.
@@ -182,11 +184,19 @@ async def memory_show(
     # before the event so the log records what the caller was told: a
     # synced record whose stamp this host never made reads
     # `verification.status: "remote"` and spot_check_required.
-    deps.responses.apply_trust(
-        response,
-        provenance=response["provenance"],
-        verified_locally_at=verified_locally_at,
-    )
+    if trust_unavailable:
+        # The index could not be read, so the rule below has nothing to
+        # read: neither the label nor whether this host made the stamp.
+        # `provenance: null` alone said "not classified yet", which is a
+        # different and benign state; this says the question could not
+        # be asked, and demotes a stamp of unknown origin.
+        deps.responses.apply_trust_unavailable(response)
+    else:
+        deps.responses.apply_trust(
+            response,
+            provenance=response["provenance"],
+            verified_locally_at=verified_locally_at,
+        )
     deps.recorder.record(
         "show",
         id=memory.id,
@@ -296,6 +306,13 @@ def _links_payload(deps: "ToolHandlers", memory: Any) -> dict[str, Any]:
             }
             for link in memory.links
         ]
+    # Whether the index could be read at all — the except arm below is
+    # one way it cannot; an absent file, which `links_for_with_status`
+    # reports as the same `(…, 0, False, None, None)` an unclassified
+    # row gets, is the other. `os.path.exists`, not `Path.exists()`,
+    # for the usual re-raise reason; one stat beside the open the links
+    # query already pays.
+    trust_unavailable = False
     try:
         # The sixth element is the row's local-verification stamp (schema
         # v8), read on the same open so the show path stays one index
@@ -308,6 +325,7 @@ def _links_payload(deps: "ToolHandlers", memory: Any) -> dict[str, Any]:
             provenance,
             verified_locally_at,
         ) = _index.links_for_with_status(deps.store.root, memory.id)
+        trust_unavailable = not os.path.exists(_index.index_path(deps.store.root))
     except (OSError, ValueError, sqlite3.DatabaseError, _index.IndexVersionError):
         # A torn/truncated index raises DatabaseError; an on-disk
         # schema_version newer than this reader raises
@@ -331,7 +349,9 @@ def _links_payload(deps: "ToolHandlers", memory: Any) -> dict[str, Any]:
         # `needs_rebuild` drive the fallback), so it's dropped here.
         inbound, indexed_count, needs_rebuild = [], 0, False
         provenance = verified_locally_at = None
+        trust_unavailable = True
     out["provenance"] = provenance
+    out["_trust_unavailable"] = trust_unavailable
     # Carried to the handler under a private key: the trust rule
     # (`ResponseBuilder.apply_trust`) needs the assembled response, with
     # its `verification` block, not this links payload.

@@ -54,6 +54,14 @@ from .verify import (
     verdict_from_signals,
 )
 
+# The recommendation a stamped row carries when the index could not be
+# read (`ResponseBuilder.apply_trust_unavailable`). One string, so the
+# three read surfaces and the tests say the same thing.
+TRUST_UNAVAILABLE_RECOMMENDATION = (
+    "The index could not be read, so whether this host made this stamp "
+    "is unknown. Run `bettermemory reindex`, then read again."
+)
+
 
 __all__ = ["ResponseBuilder", "isoformat", "isoformat_optional"]
 
@@ -506,6 +514,14 @@ class ResponseBuilder:
         from . import index as _index
 
         rows = _index.trust_for(root, ids)
+        if rows is None:
+            # The index could not be read: no row's label or local stamp
+            # is knowable, so the rule cannot run and must not be read
+            # as having run clean. Every row says so, and a stamped row
+            # loses the verdict a stamp of unknown origin was carrying.
+            for row in out:
+                self.apply_trust_unavailable(row)
+            return
         for row in out:
             trust = rows.get(row.get("id", ""))
             if trust is not None:
@@ -514,6 +530,31 @@ class ResponseBuilder:
                     provenance=trust.provenance,
                     verified_locally_at=trust.verified_locally_at,
                 )
+
+    def apply_trust_unavailable(self, row: dict[str, Any]) -> None:
+        """Mutate one response row for an index that could not be read.
+
+        The trust rule (`apply_trust`) needs the row's label and this
+        host's local-verification stamp, and the index is the only place
+        either lives. With it unreadable — absent, torn, version-skewed —
+        nobody can say whether the file's `last_verified_at` is this
+        host's or arrived inside a `sync pull`, which is exactly the
+        question the rule exists to answer. So `trust_unavailable: true`
+        on every row, and a row that CARRIES a stamp drops to
+        `spot_check_required` with a recommendation naming the remedy.
+        The file's own verification block stays — the file did say it —
+        but the rollup a model branches on must not read a stamp of
+        unknown origin as fresh. Rows with no stamp already read `never`.
+        Called in place of `apply_trust`, never alongside it.
+        """
+        row["trust_unavailable"] = True
+        raw = row.get("last_verified_at")
+        if not isinstance(raw, str) or not raw:
+            return
+        verification = row.get("verification")
+        if isinstance(verification, dict):
+            verification["recommendation"] = TRUST_UNAVAILABLE_RECOMMENDATION
+        row["staleness_verdict"] = "spot_check_required"
 
     def apply_trust(
         self,

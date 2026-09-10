@@ -1169,16 +1169,27 @@ class TrustRow(NamedTuple):
     verified_locally_at: str | None
 
 
-def trust_for(root: Path, ids: list[str]) -> dict[str, TrustRow]:
+def trust_for(root: Path, ids: list[str]) -> dict[str, TrustRow] | None:
     """`{id: TrustRow}` for every id whose row carries a classified
-    label. The read `_response.attach_provenance` pays once per
-    response; same omissions and the same never-raises degrade as
-    `provenance_for`."""
+    label, or None when the index could not be read at all — absent,
+    torn, version-skewed, unopenable. The read
+    `_response.attach_provenance` pays once per response.
+
+    None rather than `{}` because the two mean different things to the
+    trust rule (6.6.0). `{}` is "these rows are unclassified": the rule
+    stands down per row, and a rebuild is what classifies. None is
+    "nothing here can say how ANY row entered": `verified_locally_at` is
+    the one fact separating a stamp this host made from one that arrived
+    inside a pulled file, it lives only in this index, and a stamp of
+    unknown origin must not read as this host's on the strength of an
+    index nobody could open. Same split `provenance_rows` and
+    `provenance_counts` already make, for the same reason. Never
+    raises."""
     if not ids:
         return {}
     path = index_path(root)
     if not path.exists():
-        return {}
+        return None
     conn: sqlite3.Connection | None = None
     try:
         conn = _connect(path)
@@ -1196,7 +1207,7 @@ def trust_for(root: Path, ids: list[str]) -> dict[str, TrustRow]:
                 out[row["id"]] = TrustRow(row["provenance"], row["verified_locally_at"])
         return out
     except (sqlite3.Error, ValueError, IndexVersionError, OSError):
-        return {}
+        return None
     finally:
         if conn is not None:
             conn.close()

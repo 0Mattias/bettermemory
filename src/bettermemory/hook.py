@@ -739,6 +739,7 @@ def _render_recall_block(
     *,
     provenance: str | None = None,
     remote_stamp: bool = False,
+    trust_unavailable: bool = False,
 ) -> str:
     """Render the injected context block for a miss-verdict report.
 
@@ -781,7 +782,13 @@ def _render_recall_block(
         scopes = (", ".join(kept) + ", …") if kept else "…"
     snippet = " ".join(hit.snippet.split())
     pointer = f"- {hit.id} [{scopes}]"
-    if provenance is not None and provenance != "local":
+    if trust_unavailable:
+        # The index could not be read, so the label is not "local by
+        # default": this is the one delivery that reaches the model
+        # without a tool call, and a record of unknown provenance must
+        # announce itself here exactly as an `unaccounted` one does.
+        pointer += " [provenance: unknown, index unreadable]"
+    elif provenance is not None and provenance != "local":
         qualifier = ", unverified here" if remote_stamp else ""
         pointer += f" [provenance: {provenance}{qualifier}]"
     frame = (
@@ -916,7 +923,8 @@ def run_prompt_recall(
     from . import index as _index
 
     top_hit = report.top_hits[0]
-    trust = _index.trust_for(root, [top_hit.id]).get(top_hit.id)
+    rows = _index.trust_for(root, [top_hit.id])
+    trust = rows.get(top_hit.id) if rows is not None else None
     provenance = trust.provenance if trust is not None else None
     remote_stamp = (
         trust is not None
@@ -925,7 +933,10 @@ def run_prompt_recall(
         and _carries_a_stamp(store, top_hit.id)
     )
     block = _render_recall_block(
-        report, provenance=provenance, remote_stamp=remote_stamp
+        report,
+        provenance=provenance,
+        remote_stamp=remote_stamp,
+        trust_unavailable=rows is None,
     )
     recorder = Recorder(
         root=root,
