@@ -463,8 +463,10 @@ def test_load_transcript_does_not_hang_on_fifo(tmp_path: Path) -> None:
     """Regression for the 2.6.4 audit. `_load_transcript` opened the
     path through `bounded_tail_read` with no regular-file guard —
     pointed at a FIFO with no writer, `open("rb")` blocks forever,
-    hanging `consolidate --llm --from-transcript`. The `is_file()`
-    guard rejects non-regular paths up front.
+    hanging `consolidate --llm --from-transcript`. The regular-file
+    guard (an `os.stat` + `S_ISREG`, since 7.9.0; `is_file()` before)
+    rejects non-regular paths up front — and since 7.9.0 says so by
+    raising, rather than returning the "" an empty file returns.
 
     Runs `_load_transcript` in a daemon thread: with the guard it
     returns instantly; without it the thread stays blocked in
@@ -480,17 +482,23 @@ def test_load_transcript_does_not_hang_on_fifo(tmp_path: Path) -> None:
 
     fifo = tmp_path / "pipe"
     os.mkfifo(fifo)
-    result: list[str] = []
-    worker = threading.Thread(
-        target=lambda: result.append(_load_transcript(fifo)), daemon=True
-    )
+    outcome: list[object] = []
+
+    def _attempt() -> None:
+        try:
+            outcome.append(_load_transcript(fifo))
+        except OSError as exc:
+            outcome.append(exc)
+
+    worker = threading.Thread(target=_attempt, daemon=True)
     worker.start()
     worker.join(timeout=5)
     assert not worker.is_alive(), (
-        "_load_transcript hung on a writer-less FIFO — the is_file() "
+        "_load_transcript hung on a writer-less FIFO — the regular-file "
         "guard before bounded_tail_read is missing"
     )
-    assert result == [""]
+    assert len(outcome) == 1 and isinstance(outcome[0], OSError)
+    assert "not a regular file" in str(outcome[0])
 
 
 def test_load_transcript_survives_raw_unicode_line_separators(
@@ -625,18 +633,19 @@ def test_build_transcript_cluster_returns_none_for_empty_file(
     assert cluster is None
 
 
-def test_build_transcript_cluster_returns_none_for_missing_file(
+def test_build_transcript_cluster_raises_for_missing_file(
     tmp_path: Path,
 ) -> None:
-    """A missing transcript path is silently skipped; the caller
-    upstream surfaces it as a LLMClusterFailure when the consolidate
-    pass needs to report the misconfiguration."""
-    cluster = build_transcript_cluster(
-        transcript_path=tmp_path / "does-not-exist.txt",
-        memories=[],
-        events=[],
-    )
-    assert cluster is None
+    """A missing transcript path raises, so `consolidate_llm` can record
+    it as the transcript lane's failure. The previous contract said the
+    caller "surfaces it as a LLMClusterFailure", and nothing did: the
+    None was the same None an empty file produced."""
+    with pytest.raises(FileNotFoundError, match="does not exist"):
+        build_transcript_cluster(
+            transcript_path=tmp_path / "does-not-exist.txt",
+            memories=[],
+            events=[],
+        )
 
 
 def test_consolidate_with_from_transcript_runs_propose_new(tmp_path: Path) -> None:
@@ -1750,3 +1759,68 @@ def test_demote_tier_preserves_a_verify_landing_mid_pass(tmp_path: Path) -> None
     # The concurrent attestation survives the retag.
     assert demoted.last_verified_at is not None
     assert demoted.verified_paths == ["src/deploy.py"]
+
+
+def _unreadable_file_is_enforceable() -> bool:
+    import os
+    import sys
+
+    if sys.platform == "win32":
+        return False
+    getuid = getattr(os, "geteuid", None)
+    return getuid is not None and getuid() != 0
+
+
+def test_load_transcript_tells_absent_and_unreadable_from_empty(tmp_path: Path) -> None:
+    """`_load_transcript` returned "" for a missing path, an unreadable
+    one, a directory and a genuinely empty file alike, and
+    `build_transcript_cluster` turned every "" into "no cluster". Only
+    the empty file is that; the rest raise with the reason."""
+    from bettermemory.consolidate import _load_transcript
+
+    empty = tmp_path / "empty.txt"
+    empty.write_text("   \n", encoding="utf-8")
+    assert _load_transcript(empty).strip() == ""
+    with pytest.raises(FileNotFoundError, match="does not exist"):
+        _load_transcript(tmp_path / "does-not-exist.txt")
+    with pytest.raises(OSError, match="not a regular file"):
+        _load_transcript(tmp_path)
+
+
+@pytest.mark.skipif(
+    not _unreadable_file_is_enforceable(),
+    reason="needs POSIX mode bits and a non-root euid",
+)
+def test_load_transcript_raises_for_a_file_it_cannot_read(tmp_path: Path) -> None:
+    from bettermemory.consolidate import _load_transcript
+
+    sealed = tmp_path / "sealed.md"
+    sealed.write_text("[user] something\n", encoding="utf-8")
+    sealed.chmod(0o000)
+    try:
+        with pytest.raises(OSError, match="could not be read"):
+            _load_transcript(sealed)
+    finally:
+        sealed.chmod(0o644)
+
+
+def test_consolidate_records_a_transcript_it_could_not_load_as_a_failure(
+    tmp_path: Path,
+) -> None:
+    """A mistyped `--from-transcript` produced a clean report — "0
+    proposals", no Failures block — indistinguishable from an empty
+    transcript. The lane the caller asked for did not run, and the
+    report now says so under `transcript-facts`."""
+    store = _make_store_with_existing(tmp_path)
+    provider = FakeProvider(proposals=[])
+    report = consolidate_llm(
+        store, provider, apply=False, from_transcript=str(tmp_path / "typo.md")
+    )
+    assert [f.cluster_id for f in report.failures] == ["transcript-facts"]
+    assert "does not exist" in report.failures[0].reason
+    assert report.proposals == []
+
+    empty = tmp_path / "empty.md"
+    empty.write_text("\n\n", encoding="utf-8")
+    report = consolidate_llm(store, provider, apply=False, from_transcript=str(empty))
+    assert report.failures == [], "genuinely empty: nothing to propose, nothing failed"

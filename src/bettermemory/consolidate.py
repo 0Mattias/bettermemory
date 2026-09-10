@@ -81,7 +81,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+import stat
 from collections import Counter, defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -1878,9 +1880,10 @@ def build_transcript_cluster(
     The transcript text is flattened to a readable form: a
     Claude Code session JSONL gets its `user` / `assistant` text
     blocks extracted in order; any other content is read verbatim and
-    handed to the LLM as-is. Returns `None` for an unreadable or
-    empty transcript so the caller can surface the failure as one bad
-    input rather than tanking the whole pass.
+    handed to the LLM as-is. Returns `None` for an EMPTY transcript
+    (nothing to propose from); an absent or unreadable one raises out
+    of `_load_transcript`, and `consolidate_llm` records it as the
+    transcript lane's failure rather than tanking the whole pass.
 
     The cluster's "members" are the most-recently-updated memories,
     capped at `_TRANSCRIPT_CLUSTER_MEMORY_CAP`. The LLM sees them as
@@ -1930,20 +1933,33 @@ def _load_transcript(path: Path) -> str:
     - anything else → read verbatim. Plain-text and Markdown
       transcripts pass through unchanged.
 
-    Returns an empty string when the path doesn't exist, can't be
-    read, or contains no recoverable content — the caller treats
-    that as "no transcript to consolidate from" and skips the
-    cluster.
+    Returns an empty string only when the file was read and holds no
+    recoverable content — the caller treats that as "no transcript to
+    consolidate from" and skips the cluster. A path that does not
+    exist, is not a regular file, or could not be read RAISES (`OSError`
+    with the reason), so `consolidate_llm` can record the lane as
+    failed: all three used to return the same "" as an empty file, and
+    a mistyped `--from-transcript` produced a clean "0 proposals" with
+    no Failures block.
     """
     # Reject anything that isn't a regular file before opening it.
     # `bounded_tail_read` opens the path in binary mode; a FIFO with
     # no writer would block `open()` indefinitely, hanging
-    # `consolidate --llm --from-transcript`. `is_file()` stats without
-    # opening (no block) and is False for FIFOs, devices, directories,
-    # and missing paths — all "no transcript", same as the OSError
-    # branch. `hook.py` guards its transcript path the same way.
-    if not path.is_file():
-        return ""
+    # `consolidate --llm --from-transcript`. An explicit `os.stat` —
+    # not `Path.is_file()`, which re-raises EACCES on 3.11-3.13 and
+    # folds it into False on 3.14 — tells absent, unreadable and
+    # not-a-regular-file apart without opening anything. `hook.py`
+    # guards its transcript path the same way.
+    try:
+        mode = os.stat(path).st_mode
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(f"transcript {path} does not exist") from exc
+    except OSError as exc:
+        raise OSError(f"transcript {path} could not be read: {exc}") from exc
+    if not stat.S_ISREG(mode):
+        raise OSError(
+            f"transcript {path} is not a regular file (a directory, FIFO or device)"
+        )
     try:
         # `bounded_tail_read` enforces the byte cap (not chars) so a
         # multibyte UTF-8 transcript can't bypass it — see 2.6.3 fix.
@@ -1954,8 +1970,8 @@ def _load_transcript(path: Path) -> str:
         raw = bounded_tail_read(path, _TRANSCRIPT_READ_CAP_BYTES).decode(
             "utf-8", errors="replace"
         )
-    except OSError:
-        return ""
+    except OSError as exc:
+        raise OSError(f"transcript {path} could not be read: {exc}") from exc
     if path.suffix.lower() != ".jsonl":
         return raw
 
@@ -2125,6 +2141,7 @@ def consolidate_llm(
     # transcript is empty or all-whitespace; failures during read are
     # surfaced as a LLMClusterFailure rather than bubbling up so one
     # bad input doesn't tank the whole pass.
+    transcript_failure: str | None = None
     if from_transcript is not None:
         try:
             transcript_cluster = build_transcript_cluster(
@@ -2134,6 +2151,7 @@ def consolidate_llm(
             )
         except Exception as exc:  # noqa: BLE001 — surface as failure
             transcript_cluster = None
+            transcript_failure = str(exc)
             log.warning(
                 "consolidate --llm --from-transcript: failed to load %s: %s",
                 from_transcript,
@@ -2147,6 +2165,13 @@ def consolidate_llm(
         cluster_count=len(clusters),
         applied=apply,
     )
+    if transcript_failure is not None:
+        # The lane the caller asked for did not run. A log line alone
+        # left the report reading "0 proposals" with no Failures block
+        # — the same output a genuinely empty transcript produces.
+        report.failures.append(
+            LLMClusterFailure(cluster_id="transcript-facts", reason=transcript_failure)
+        )
 
     for cluster in clusters:
         try:
