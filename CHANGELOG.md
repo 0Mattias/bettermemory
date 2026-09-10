@@ -7,6 +7,64 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 7.11.0 - 2026-09-10
+
+### Added
+
+- `6c4eda5` feat(init): a Hermes Agent target that splices its YAML
+  config. 7.10.0 built the identity resolver for the shape Hermes Agent
+  has — one gateway process serving many chat platforms from `$HOME`,
+  stdio servers launched with `command`, `args` and `env` and no cwd —
+  and `bettermemory init` could not register the server with it: every
+  target in `KNOWN_CLIENTS` was a JSON `mcpServers` object written by
+  `patch_client_config`, and Hermes reads a YAML map under a top-level
+  `mcp_servers` key in `~/.hermes/config.yaml`. `bettermemory init
+  --client hermes` writes that entry — the stdio keys Hermes documents,
+  and no `type` — with `BETTERMEMORY_CLIENT: hermes` in its `env`
+  block, so a Hermes write on a shared store carries `actor.client:
+  hermes` with `source: env` while Claude Code's carry `client-info`.
+
+  `patch_hermes_config` is the YAML twin of the JSON patcher under the
+  same discipline: the private `<target>.bettermemory.lock` sidecar,
+  the pre-read signature re-checked before the write (both arms now
+  live in one `_refuse_if_moved`, shared by both paths), the atomic
+  replace, and the same merge rules — init owns `command`, `args` and
+  `env`, the user's other keys survive, `env` deep-merges, a
+  `BETTERMEMORY_CLIENT` the user set wins, and the keys that would make
+  the entry an HTTP server (`url`, `headers`, `auth`, `identity_header`)
+  are shed. The edit is a splice, not a round-trip: PyYAML drops
+  comments, and a Hermes config is a commented, hand-ordered document
+  its owner maintains, so `yaml.compose` locates the `mcp_servers` key
+  and the entry and only that region changes — a missing block is
+  appended after the last line, a missing entry is inserted as the
+  block's first child at the children's indentation, an existing entry
+  is replaced in place with the blank and comment lines after it left
+  alone, and a null or flow-style block is rewritten as a block mapping.
+  Before anything is written the spliced text is parsed again and must
+  load to exactly the intended entry with every other key and server
+  unchanged; a splice that fails that check is refused, never written.
+  Measured on the owner's real config: one appended block, 203 lines
+  untouched, a second run a noop, and a server launched the Hermes way
+  (from `$HOME`, the entry's env, no cwd) writing a memory that reads
+  `actor.client: hermes`, `actor.sources.client: env` and
+  `origin.source: process-cwd`.
+
+  `ClientPaths` gains a `format` field (the JSON `mcpServers` default,
+  `hermes-yaml` for Hermes), additive for every existing constructor.
+  `doctor`'s `mcp_client_configs` reads every client through one loader
+  keyed on it (`read_server_entries`), so a Hermes config is judged
+  like the others instead of reported `unreadable` as malformed JSON,
+  and its fix hint names `hermes`. `init --client hermes --print-only`
+  prints the YAML block; the `--json` view carries `snippet_yaml`
+  beside the canonical `snippet` and a `format` per client; the
+  show-and-tell client list derives from the registry; and a test pins
+  the argparse `--client` choices to `KNOWN_CLIENTS`. `docs/clients.md`
+  gains the Hermes section, including why the entry declares no
+  workspace (one gateway serves many projects, and the labeled cwd
+  fallback is the honest record; `BETTERMEMORY_WORKSPACE` in the `env`
+  block overrides it for a single-project install); README and
+  `docs/installation.md` list the target.
+
 ## 7.10.0 - 2026-09-10
 
 ### Added
