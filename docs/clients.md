@@ -105,6 +105,29 @@ bettermemory init --client cline --config-path \
 
 Reload the VS Code window after the patch.
 
+## Hermes Agent
+
+```sh
+bettermemory init --client hermes
+```
+
+Patches `~/.hermes/config.yaml`. Hermes reads MCP servers from a YAML map under a top-level `mcp_servers` key, so this target writes the entry as YAML rather than as the JSON snippet below — the stdio keys Hermes documents (`command`, `args`, `env`) and no `type`:
+
+```yaml
+mcp_servers:
+  bettermemory:
+    command: /absolute/path/to/bettermemory
+    args: []
+    env:
+      BETTERMEMORY_CLIENT: hermes
+```
+
+The patch is a splice, not a rewrite. Only the `bettermemory` entry is inserted or replaced; every other line of the file — your key order, your comments, the commented-out sections Hermes's installer leaves for you — stays exactly as it was. Keys you add to the entry (`idle_timeout_seconds`, `enabled`, a `tools` filter) survive a re-run, and a `BETTERMEMORY_CLIENT` you set yourself is kept. `bettermemory init --client hermes --print-only` prints the YAML entry without writing anything.
+
+Two things follow from Hermes's shape. One gateway process serves every chat platform from one directory and passes no `cwd` to a stdio server, so a memory written from Hermes records the gateway's own directory with `origin.source: process-cwd` — a labeled fallback, not a project. If your Hermes work is one project, add `BETTERMEMORY_WORKSPACE: /path/to/project` to the `env` block and writes record that project, its git remote and branch instead. And Hermes recycles idle stdio servers, so per-process session state (a pending `memory_write` confirmation, a scope disabled for the session) does not outlive a quiet gap between tool calls; the store itself is unaffected.
+
+A running interactive Hermes session reloads its MCP connections when the file changes; a gateway started before the patch reads the block at its next start.
+
 ## Other clients
 
 For anything not listed, run `bettermemory init` (no flags) to print the canonical snippet plus known config locations. Copy by hand into your client's MCP config file. If your client doesn't accept raw JSON config, embed the `mcp` SDK directly — see [`../examples/programmatic_client.py`](../examples/programmatic_client.py) for the wire-protocol shape.
@@ -150,6 +173,7 @@ If you find a client whose snippet shape isn't this, please file an issue.
 | Cursor          | `~/.cursor/mcp.json` or `<repo>/.cursor/mcp.json` | yes |
 | Continue        | `~/.continue/config.json` (legacy shape; current Continue wants a YAML list in `config.yaml` — see caveat above) | writes + warns |
 | Cline           | VS Code `globalStorage/saoudrizwan.claude-dev/...` | yes (default VS Code only) |
+| Hermes Agent    | `~/.hermes/config.yaml` (a YAML `mcp_servers` map, spliced in place) | yes |
 
 ## Declaring who is calling
 

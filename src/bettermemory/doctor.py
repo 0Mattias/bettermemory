@@ -57,7 +57,12 @@ from .durability import sentence_around
 from .eval import is_admin_recorded_event
 from .events import EVENT_LOG_FILENAME, iter_all_events
 from .health import is_hook_telemetry_event
-from .init import KNOWN_CLIENTS, command_launches_bettermemory, find_binary
+from .init import (
+    KNOWN_CLIENTS,
+    command_launches_bettermemory,
+    find_binary,
+    read_server_entries,
+)
 from .models import Memory, looks_truncated
 from .store import (
     Store,
@@ -3959,17 +3964,22 @@ def _check_mcp_client_configs() -> Diagnosis:
         return resolved_version_memo[0]
 
     for client_name, getter in KNOWN_CLIENTS.items():
-        for path in getter().paths:
+        client_paths = getter()
+        for path in client_paths.paths:
             if not path.exists():
                 continue
             try:
-                text = path.read_text(encoding="utf-8")
-                data = json.loads(text) if text.strip() else {}
+                # One loader per document shape (`init.read_server_entries`):
+                # the JSON `mcpServers` object, or Hermes's YAML `mcp_servers`
+                # map — so a Hermes config is judged like every other client's
+                # instead of read as malformed JSON.
+                mcp = read_server_entries(path, config_format=client_paths.format)
             # UnicodeDecodeError sits beside the other two: one client
             # config with a non-UTF8 byte is that FILE's finding, not a
             # doctor crash — without it, `_safe` converted the escape
-            # into a whole-check "file an issue" fail.
-            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            # into a whole-check "file an issue" fail. A parse failure
+            # arrives as the loader's ValueError.
+            except (OSError, UnicodeDecodeError, ValueError) as exc:
                 findings.append(
                     {
                         "client": client_name,
@@ -3978,11 +3988,6 @@ def _check_mcp_client_configs() -> Diagnosis:
                         "error": str(exc),
                     }
                 )
-                continue
-            if not isinstance(data, dict):
-                continue
-            mcp = data.get("mcpServers")
-            if not isinstance(mcp, dict):
                 continue
             for entry_name, entry in mcp.items():
                 if not isinstance(entry, dict):
@@ -4124,7 +4129,7 @@ def _check_mcp_client_configs() -> Diagnosis:
             ),
             fix_hint=(
                 "Run `bettermemory init --client claude-code` (or "
-                "claude-desktop / cursor / continue) to register."
+                "claude-desktop / cursor / cline / hermes) to register."
             ),
             details={"resolved_binary": resolved_binary, "findings": findings},
         )

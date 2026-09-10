@@ -29,7 +29,7 @@ Anything else that speaks MCP:
 
 ```sh
 uv tool install bettermemory
-bettermemory init --client claude-desktop   # or cursor / cline / claude-code
+bettermemory init --client claude-desktop   # or cursor / cline / claude-code / hermes
 ```
 
 Restart the client. `bettermemory doctor` exits 0 when it's wired
@@ -79,7 +79,7 @@ Everywhere else, steps are idempotent and safe to re-run:
 1. `uv tool install bettermemory` — or `pipx install bettermemory`,
    or `pip install bettermemory` into a venv. Python 3.11–3.14.
 2. `bettermemory init --client claude-code` — likewise
-   `claude-desktop`, `cursor`, `cline`. For any other MCP host, plain
+   `claude-desktop`, `cursor`, `cline`, `hermes`. For any other MCP host, plain
    `bettermemory init` prints the canonical `mcpServers` JSON snippet
    plus known config locations. (Continue needs a hand-written YAML
    entry — see [docs/clients.md][clients-continue].)

@@ -25,7 +25,7 @@ script on `$PATH`.
 ## 2. Register with your MCP client
 
 ```sh
-bettermemory init --client claude-code      # or claude-desktop / cursor / continue / cline
+bettermemory init --client claude-code      # or claude-desktop / cursor / continue / cline / hermes
 ```
 
 Idempotently merges the bettermemory entry into the right config file,

@@ -19,7 +19,14 @@ def add_subparser(
         "--client",
         type=str,
         default=None,
-        choices=["claude-code", "claude-desktop", "cursor", "continue", "cline"],
+        choices=[
+            "claude-code",
+            "claude-desktop",
+            "cursor",
+            "continue",
+            "cline",
+            "hermes",
+        ],
         help=(
             "Auto-patch the named client's MCP config. Without this "
             "flag, init runs in show-and-tell mode: prints the snippet "
@@ -95,7 +102,7 @@ def run(args: argparse.Namespace) -> None:
             config_path=_Path(args.config_path) if args.config_path else None,
         )
     except (OSError, ValueError) as exc:
-        # The config-patch write (patch_client_config -> mkdir /
+        # The config-patch write (patch_client_config / patch_hermes_config -> mkdir /
         # atomic_write_bytes) can fail on an unwritable or non-directory
         # --config-path parent (PermissionError / NotADirectoryError /
         # ENOSPC). Render a clean error + exit 2 instead of a raw

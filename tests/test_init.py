@@ -13,14 +13,23 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
+from bettermemory.identity import ENV_CLIENT
 from bettermemory.init import (
     DEFAULT_SERVER_NAME,
+    FORMAT_HERMES_YAML,
+    FORMAT_MCP_SERVERS_JSON,
+    HERMES_SERVERS_KEY,
     KNOWN_CLIENTS,
     LEGACY_SERVER_NAME,
     cli_init,
     find_binary,
+    hermes_snippet,
+    hermes_snippet_text,
     patch_client_config,
+    patch_hermes_config,
+    read_server_entries,
     server_snippet,
 )
 
@@ -540,6 +549,7 @@ def test_cli_init_show_and_tell_prints_snippet_and_locations(
     assert "cursor" in out
     assert "continue" in out
     assert "cline" in out
+    assert "hermes" in out
     assert "--client" in out
 
 
@@ -581,6 +591,7 @@ def test_cli_init_json_output_is_machine_readable(
         "cursor",
         "continue",
         "cline",
+        "hermes",
     }
 
 
@@ -1244,3 +1255,471 @@ def test_recognizer_ignores_with_dependency_position() -> None:
         "uv", ["run", "--with", "bettermemory", "other-mcp-server"], binary
     )
     assert not launches("uvx", ["--with", "bettermemory", "other-mcp-server"], binary)
+
+
+# ---------------------------------------------------------------------------
+# Hermes Agent — the YAML `mcp_servers` target (7.11.0)
+# ---------------------------------------------------------------------------
+
+# The shape of a real Hermes config: hand-ordered keys, an inline comment,
+# and the commented tail Hermes's own installer leaves for the owner to
+# uncomment. Everything outside the spliced region has to survive the
+# patch byte for byte.
+_HERMES_DOC = (
+    "# Hermes Agent configuration\n"
+    "model:\n"
+    "  default: z-ai/glm-5.3-flash\n"
+    "  provider: openrouter\n"
+    "agent:\n"
+    "  max_turns: 500   # keep\n"
+    "memory:\n"
+    "  memory_enabled: false\n"
+    "\n"
+    "# ── Security ────────────────────────────────\n"
+    "# security:\n"
+    "#   redact_secrets: true\n"
+)
+
+
+def _hermes_entry(binary: str, client: str = "hermes") -> dict[str, Any]:
+    return {"command": binary, "args": [], "env": {ENV_CLIENT: client}}
+
+
+def _hermes_block(binary: str, *, indent: int = 0) -> str:
+    """The YAML lines `patch_hermes_config` writes for a fresh entry, at a
+    given indentation — what a splice test compares its region to."""
+    text = hermes_snippet_text({DEFAULT_SERVER_NAME: _hermes_entry(binary)})
+    pad = " " * indent
+    return "".join(pad + line for line in text.splitlines(keepends=True))
+
+
+def _hermes_text(binary: str) -> str:
+    return hermes_snippet_text(hermes_snippet(binary=binary, client="hermes"))
+
+
+def test_hermes_client_is_registered_with_the_yaml_format() -> None:
+    """`KNOWN_CLIENTS["hermes"]` points at `~/.hermes/config.yaml` and
+    carries the YAML format; every other client keeps the JSON default,
+    so the new field is additive for them."""
+    hermes = KNOWN_CLIENTS["hermes"]()
+    assert hermes.format == FORMAT_HERMES_YAML
+    assert hermes.paths[0] == Path.home() / ".hermes" / "config.yaml"
+    for key, getter in KNOWN_CLIENTS.items():
+        if key != "hermes":
+            assert getter().format == FORMAT_MCP_SERVERS_JSON, key
+
+
+def test_hermes_snippet_declares_the_client_and_carries_no_type_key() -> None:
+    """Hermes documents `command`, `args` and `env` for a stdio server and
+    no `type`; the JSON snippet's `type: stdio` must not leak into the
+    YAML. The env block carries the one out-of-band declaration."""
+    snippet = hermes_snippet(binary="/x/bm", client="hermes")
+    assert snippet == {
+        HERMES_SERVERS_KEY: {DEFAULT_SERVER_NAME: _hermes_entry("/x/bm")}
+    }
+    text = hermes_snippet_text(snippet)
+    assert text.startswith(f"{HERMES_SERVERS_KEY}:\n")
+    assert "type" not in text
+    assert "mcpServers" not in text
+    assert yaml.safe_load(text) == snippet
+    undeclared = hermes_snippet(binary="/x/bm")
+    assert undeclared[HERMES_SERVERS_KEY][DEFAULT_SERVER_NAME]["env"] == {}
+
+
+def test_patch_hermes_appends_a_block_and_keeps_every_owner_byte(
+    tmp_path: Path,
+) -> None:
+    """G1. A config with no `mcp_servers` key gains one block after its
+    last line — comments, ordering and the commented tail untouched."""
+    target = tmp_path / "config.yaml"
+    target.write_text(_HERMES_DOC, encoding="utf-8")
+    result = patch_hermes_config(target, binary="/x/bm", client="hermes")
+    assert result["action"] == "added"
+    assert result["binary"] == "/x/bm"
+    assert result["path"] == str(target)
+    patched = target.read_text(encoding="utf-8")
+    assert patched == _HERMES_DOC + "\n" + _hermes_text("/x/bm")
+    loaded = yaml.safe_load(patched)
+    assert loaded[HERMES_SERVERS_KEY] == {DEFAULT_SERVER_NAME: _hermes_entry("/x/bm")}
+    before = yaml.safe_load(_HERMES_DOC)
+    assert {k: v for k, v in loaded.items() if k != HERMES_SERVERS_KEY} == before
+
+
+def test_patch_hermes_inserts_into_an_existing_block_keeping_siblings(
+    tmp_path: Path,
+) -> None:
+    """A block with other servers gains ours as its first child; the
+    sibling, its comment, the blank line and the keys after the block
+    are the same bytes as before."""
+    doc = (
+        "model:\n"
+        "  default: z-ai/glm-5.3-flash\n"
+        "mcp_servers:\n"
+        "  # the filesystem server\n"
+        "  filesystem:\n"
+        "    command: npx\n"
+        "    args: ['-y', 'some-server']\n"
+        "\n"
+        "# tail comment\n"
+        "updates:\n"
+        "  check: true\n"
+    )
+    target = tmp_path / "config.yaml"
+    target.write_text(doc, encoding="utf-8")
+    result = patch_hermes_config(target, binary="/x/bm", client="hermes")
+    assert result["action"] == "added"
+    patched = target.read_text(encoding="utf-8")
+    old = doc.splitlines(keepends=True)
+    new = patched.splitlines(keepends=True)
+    key_line = old.index("mcp_servers:\n")
+    inserted = _hermes_block("/x/bm", indent=2).splitlines(keepends=True)
+    assert new == old[: key_line + 1] + inserted + old[key_line + 1 :]
+    loaded = yaml.safe_load(patched)
+    assert loaded["mcp_servers"]["filesystem"] == {
+        "command": "npx",
+        "args": ["-y", "some-server"],
+    }
+    assert loaded["mcp_servers"][DEFAULT_SERVER_NAME] == _hermes_entry("/x/bm")
+    assert loaded["updates"] == {"check": True}
+
+
+def test_patch_hermes_replaces_an_existing_entry_in_place(tmp_path: Path) -> None:
+    """Our entry is rewritten where it stands; the blank line, the
+    comment and the sibling after it, and the keys before the block, do
+    not move."""
+    doc = (
+        "model:\n"
+        "  default: z-ai/glm-5.3-flash\n"
+        "mcp_servers:\n"
+        "  bettermemory:\n"
+        "    command: /old/bm\n"
+        "    args: []\n"
+        "    env: {}\n"
+        "\n"
+        "  # the filesystem server\n"
+        "  filesystem:\n"
+        "    command: npx\n"
+        "updates:\n"
+        "  check: true\n"
+    )
+    target = tmp_path / "config.yaml"
+    target.write_text(doc, encoding="utf-8")
+    result = patch_hermes_config(target, binary="/new/bm", client="hermes")
+    assert result["action"] == "updated"
+    old = doc.splitlines(keepends=True)
+    new = target.read_text(encoding="utf-8").splitlines(keepends=True)
+    start = old.index("  bettermemory:\n")
+    end = old.index("\n", start)
+    replaced = _hermes_block("/new/bm", indent=2).splitlines(keepends=True)
+    assert new == old[:start] + replaced + old[end:]
+
+
+def test_patch_hermes_is_idempotent_and_updates_only_on_change(
+    tmp_path: Path,
+) -> None:
+    """G2. A second run is a noop that leaves the mtime alone; a changed
+    binary is an update that touches only the command line."""
+    target = tmp_path / "config.yaml"
+    target.write_text(_HERMES_DOC, encoding="utf-8")
+    first = patch_hermes_config(target, binary="/x/bm", client="hermes")
+    assert first["action"] == "added"
+    once = target.read_text(encoding="utf-8")
+    mtime = target.stat().st_mtime_ns
+    second = patch_hermes_config(target, binary="/x/bm", client="hermes")
+    assert second["action"] == "noop"
+    assert target.stat().st_mtime_ns == mtime
+    assert target.read_text(encoding="utf-8") == once
+    third = patch_hermes_config(target, binary="/new/bm", client="hermes")
+    assert third["action"] == "updated"
+    expected = once.replace("command: /x/bm", "command: /new/bm")
+    assert target.read_text(encoding="utf-8") == expected
+
+
+def test_patch_hermes_keeps_user_keys_and_a_declared_client(tmp_path: Path) -> None:
+    """G3. The user's `env` (a relocated store, a client they named
+    themselves), Hermes-only keys and `enabled` survive; the HTTP-only
+    `url` is shed so the stdio entry cannot become a hybrid."""
+    doc = (
+        "mcp_servers:\n"
+        "  bettermemory:\n"
+        "    command: /old/bm\n"
+        "    args: []\n"
+        "    env:\n"
+        "      BETTERMEMORY_DIR: /custom/store\n"
+        "      BETTERMEMORY_CLIENT: hermes-desk\n"
+        "    idle_timeout_seconds: 600\n"
+        "    enabled: true\n"
+        "    url: https://old.example/mcp\n"
+    )
+    target = tmp_path / "config.yaml"
+    target.write_text(doc, encoding="utf-8")
+    result = patch_hermes_config(target, binary="/new/bm", client="hermes")
+    assert result["action"] == "updated"
+    loaded = yaml.safe_load(target.read_text(encoding="utf-8"))
+    assert loaded["mcp_servers"]["bettermemory"] == {
+        "command": "/new/bm",
+        "args": [],
+        "env": {
+            "BETTERMEMORY_DIR": "/custom/store",
+            "BETTERMEMORY_CLIENT": "hermes-desk",
+        },
+        "idle_timeout_seconds": 600,
+        "enabled": True,
+    }
+    again = patch_hermes_config(target, binary="/new/bm", client="hermes")
+    assert again["action"] == "noop"
+
+
+@pytest.mark.parametrize(
+    "block",
+    [
+        "mcp_servers:\n",
+        "mcp_servers: {}\n",
+        "mcp_servers: {filesystem: {command: npx, args: []}}  # inline\n",
+    ],
+)
+def test_patch_hermes_rewrites_null_and_flow_blocks_as_block_mappings(
+    tmp_path: Path, block: str
+) -> None:
+    """A null or flow-style `mcp_servers` cannot take a child textually;
+    the key's span becomes a block mapping carrying every entry it had
+    plus ours, an inline comment kept on the key line, the neighbouring
+    keys untouched."""
+    doc = "a: 1\n" + block + "b: 2\n"
+    target = tmp_path / "config.yaml"
+    target.write_text(doc, encoding="utf-8")
+    result = patch_hermes_config(target, binary="/x/bm", client="hermes")
+    assert result["action"] == "added"
+    patched = target.read_text(encoding="utf-8")
+    assert patched.startswith("a: 1\nmcp_servers:")
+    assert patched.endswith("b: 2\n")
+    loaded = yaml.safe_load(patched)
+    assert loaded["a"] == 1
+    assert loaded["b"] == 2
+    assert loaded["mcp_servers"][DEFAULT_SERVER_NAME] == _hermes_entry("/x/bm")
+    if "filesystem" in block:
+        assert loaded["mcp_servers"]["filesystem"] == {"command": "npx", "args": []}
+        assert "mcp_servers: # inline\n" in patched
+
+
+@pytest.mark.parametrize(
+    ("doc", "message"),
+    [
+        ("mcp_servers: [\n", "not valid YAML"),
+        ("- a\n- b\n", "block mapping at its root"),
+        ("{a: 1}\n", "block mapping at its root"),
+        ("mcp_servers: [1, 2]\n", "not a mapping"),
+        ("mcp_servers: text\n", "not a mapping"),
+    ],
+)
+def test_patch_hermes_refuses_documents_it_cannot_splice(
+    tmp_path: Path, doc: str, message: str
+) -> None:
+    """The JSON path's refusals, on YAML: a document that does not parse,
+    a root that is not a block mapping, a `mcp_servers` that is not a
+    mapping. Each is a ValueError and the file is left byte-identical."""
+    target = tmp_path / "config.yaml"
+    target.write_text(doc, encoding="utf-8")
+    with pytest.raises(ValueError, match=message):
+        patch_hermes_config(target, binary="/x/bm", client="hermes")
+    assert target.read_text(encoding="utf-8") == doc
+
+
+def test_patch_hermes_aborts_when_config_changes_under_us(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """G4. The JSON path's signature guard, on the YAML path: a write that
+    lands between the baseline snapshot and the pre-write re-check aborts
+    with ValueError and the racing writer's bytes are what remain."""
+    from bettermemory import init as init_mod
+
+    target = tmp_path / "config.yaml"
+    target.write_text("a: 1\n", encoding="utf-8")
+    real_sig = init_mod._config_signature
+    calls: list[int] = []
+    raced = "a: 1\ngrew_under_us: xxxxxxxxxxxxxxxxxxxx\n"
+
+    def racing_sig(path: Path) -> tuple[int, int]:
+        calls.append(1)
+        sig = real_sig(path)
+        if len(calls) == 1:
+            path.write_text(raced, encoding="utf-8")
+        return sig
+
+    monkeypatch.setattr(init_mod, "_config_signature", racing_sig)
+    with pytest.raises(ValueError, match="changed under us"):
+        patch_hermes_config(target, binary="/x/bm", client="hermes")
+    assert target.read_text(encoding="utf-8") == raced
+
+
+def test_patch_hermes_aborts_when_target_created_under_us(tmp_path: Path) -> None:
+    """G4, create path: a file that appears between the read and the
+    write is somebody else's brand-new config, not ours to replace."""
+    calls = {"n": 0}
+
+    class CreatedUnderUs(type(Path())):  # type: ignore[misc]
+        def exists(self, **kwargs: Any) -> bool:
+            calls["n"] += 1
+            return calls["n"] > 1
+
+    target = CreatedUnderUs(tmp_path / "created" / "config.yaml")
+    with pytest.raises(ValueError, match="created under us"):
+        patch_hermes_config(target, binary="/x/bm", client="hermes")
+    assert calls["n"] >= 2
+    assert not Path(str(target)).exists()
+
+
+@pytest.mark.parametrize(
+    "bad_block",
+    [
+        "mcp_servers: [broken\n",
+        "mcp_servers:\n  somebody_else:\n    command: x\n",
+    ],
+)
+def test_patch_hermes_refuses_a_splice_that_does_not_parse_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, bad_block: str
+) -> None:
+    """The splice is checked before the write: a rendering that fails to
+    parse, or parses to the wrong entry, is refused and the file is left
+    as it was. Only a monkeypatched renderer can make the check fire —
+    which is the point of having it."""
+    from bettermemory import init as init_mod
+
+    monkeypatch.setattr(init_mod, "_dump_yaml_block", lambda *a, **k: bad_block)
+    target = tmp_path / "config.yaml"
+    target.write_text(_HERMES_DOC, encoding="utf-8")
+    with pytest.raises(ValueError, match="did not parse back"):
+        patch_hermes_config(target, binary="/x/bm", client="hermes")
+    assert target.read_text(encoding="utf-8") == _HERMES_DOC
+
+
+def test_patch_hermes_creates_and_fills_empty_or_comment_only_files(
+    tmp_path: Path,
+) -> None:
+    """A missing file is created with just the block; a comment-only file
+    keeps its comment and gains the block after a blank line."""
+    fresh = tmp_path / "new" / "config.yaml"
+    assert patch_hermes_config(fresh, binary="/x/bm", client="hermes")["action"] == (
+        "added"
+    )
+    assert fresh.read_text(encoding="utf-8") == _hermes_text("/x/bm")
+    commented = tmp_path / "config.yaml"
+    commented.write_text("# nothing here yet\n", encoding="utf-8")
+    result = patch_hermes_config(commented, binary="/x/bm", client="hermes")
+    assert result["action"] == "added"
+    assert commented.read_text(encoding="utf-8") == (
+        "# nothing here yet\n\n" + _hermes_text("/x/bm")
+    )
+
+
+def test_read_server_entries_reads_each_document_shape(tmp_path: Path) -> None:
+    """The loader doctor reads every client through: the JSON `mcpServers`
+    object and the YAML `mcp_servers` map; nothing registered is an empty
+    map, a file that does not parse is the caller's `unreadable`."""
+    json_path = tmp_path / "c.json"
+    json_path.write_text(
+        json.dumps({"mcpServers": {"x": {"command": "y"}}}), encoding="utf-8"
+    )
+    assert read_server_entries(json_path) == {"x": {"command": "y"}}
+    yaml_path = tmp_path / "c.yaml"
+    yaml_path.write_text("mcp_servers:\n  x:\n    command: y\n", encoding="utf-8")
+    assert read_server_entries(yaml_path, config_format=FORMAT_HERMES_YAML) == {
+        "x": {"command": "y"}
+    }
+    empty = tmp_path / "empty.yaml"
+    empty.write_text("", encoding="utf-8")
+    assert read_server_entries(empty, config_format=FORMAT_HERMES_YAML) == {}
+    listy = tmp_path / "list.json"
+    listy.write_text("[1]", encoding="utf-8")
+    assert read_server_entries(listy) == {}
+    json_path.write_text("{nope", encoding="utf-8")
+    with pytest.raises(ValueError, match="not valid JSON"):
+        read_server_entries(json_path)
+    yaml_path.write_text("mcp_servers: [\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="not valid YAML"):
+        read_server_entries(yaml_path, config_format=FORMAT_HERMES_YAML)
+
+
+def test_cli_init_hermes_print_only_prints_the_yaml_block(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("bettermemory.init.find_binary", lambda: "/fake/bm")
+    target = tmp_path / "config.yaml"
+    cli_init(**_shared_kwargs(client="hermes", config_path=target, print_only=True))
+    assert not target.exists()
+    out = capsys.readouterr().out
+    body, _, note = out.partition("\n#")
+    assert yaml.safe_load(body) == hermes_snippet(binary="/fake/bm", client="hermes")
+    assert "mcpServers" not in out
+    assert str(target) in note
+
+
+def test_cli_init_hermes_json_view_carries_the_yaml_and_the_patch(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("bettermemory.init.find_binary", lambda: "/fake/bm")
+    target = tmp_path / "config.yaml"
+    cli_init(**_shared_kwargs(client="hermes", config_path=target, json_out=True))
+    parsed = json.loads(capsys.readouterr().out)
+    assert yaml.safe_load(parsed["snippet_yaml"]) == hermes_snippet(
+        binary="/fake/bm", client="hermes"
+    )
+    assert parsed["clients"]["hermes"]["format"] == FORMAT_HERMES_YAML
+    assert parsed["clients"]["claude-code"]["format"] == FORMAT_MCP_SERVERS_JSON
+    assert parsed["patch"]["action"] == "added"
+    assert parsed["patch"]["path"] == str(target)
+    loaded = yaml.safe_load(target.read_text(encoding="utf-8"))
+    assert loaded["mcp_servers"]["bettermemory"] == _hermes_entry("/fake/bm")
+
+
+def test_cli_init_json_view_omits_the_yaml_for_json_clients(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("bettermemory.init.find_binary", lambda: "/fake/bm")
+    cli_init(
+        **_shared_kwargs(
+            client="cursor", config_path=tmp_path / "mcp.json", json_out=True
+        )
+    )
+    parsed = json.loads(capsys.readouterr().out)
+    assert "snippet_yaml" not in parsed
+
+
+def test_cli_init_hermes_patch_mode_writes_yaml(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("bettermemory.init.find_binary", lambda: "/fake/bm")
+    target = tmp_path / "config.yaml"
+    cli_init(**_shared_kwargs(client="hermes", config_path=target))
+    out = capsys.readouterr().out
+    assert str(target) in out
+    assert "added" in out
+    loaded = yaml.safe_load(target.read_text(encoding="utf-8"))
+    assert loaded["mcp_servers"]["bettermemory"] == _hermes_entry("/fake/bm")
+
+
+def test_cli_client_choices_match_the_registry() -> None:
+    """`cli/init.py` lists the `--client` choices by hand (the CLI module
+    keeps `init.py` off its import path until dispatch); this pins them to
+    `KNOWN_CLIENTS` so a client added on one surface cannot be missing
+    from the other."""
+    import argparse
+
+    from bettermemory.cli.init import add_subparser
+
+    init_parser = add_subparser(argparse.ArgumentParser().add_subparsers())
+    choices = next(
+        action.choices
+        for action in init_parser._actions
+        if "--client" in action.option_strings
+    )
+    assert choices is not None
+    assert set(choices) == set(KNOWN_CLIENTS)

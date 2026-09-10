@@ -68,7 +68,7 @@ from bettermemory.doctor import (
     run_diagnostics,
     run_fixes,
 )
-from bettermemory.init import ClientPaths
+from bettermemory.init import FORMAT_HERMES_YAML, ClientPaths
 
 if TYPE_CHECKING:  # annotation-only: the tests below import Store locally,
     # matching this file's idiom, so there is no runtime module-level name.
@@ -1901,6 +1901,68 @@ def test_mcp_client_configs_ok_when_path_matches(
     diag = _check_mcp_client_configs()
     assert diag.status == "ok"
     assert "1 client config(s)" in diag.message
+
+
+def _tmp_hermes_client(tmp_path: Path) -> dict[str, Any]:
+    """A Hermes-shaped client: one YAML config, the YAML format."""
+    return {
+        "hermes": lambda: ClientPaths(
+            name="hermes",
+            description="Hermes Agent (test)",
+            paths=(tmp_path / "config.yaml",),
+            format=FORMAT_HERMES_YAML,
+        ),
+    }
+
+
+def test_mcp_client_configs_reads_a_hermes_yaml_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """G6 of the Hermes target: a Hermes config is a YAML `mcp_servers`
+    map; doctor reads it through the shared loader and judges the entry
+    like any other client's instead of reporting the file unreadable as
+    malformed JSON."""
+    real_binary = tmp_path / "bettermemory"
+    real_binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    (tmp_path / "config.yaml").write_text(
+        "model:\n"
+        "  default: x\n"
+        "mcp_servers:\n"
+        "  bettermemory:\n"
+        f"    command: {real_binary}\n"
+        "    args: []\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "bettermemory.doctor.KNOWN_CLIENTS", _tmp_hermes_client(tmp_path)
+    )
+    monkeypatch.setattr("bettermemory.doctor.find_binary", lambda: str(real_binary))
+    diag = _check_mcp_client_configs()
+    assert diag.status == "ok"
+    (finding,) = diag.details["findings"]
+    assert finding["client"] == "hermes"
+    assert finding["matches_resolved_binary"] is True
+    assert "status" not in finding
+
+
+def test_mcp_client_configs_reports_a_broken_hermes_config_unreadable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Hermes config that does not parse is that file's `unreadable`
+    finding, naming YAML — not a doctor crash and not a JSON complaint."""
+    real_binary = tmp_path / "bettermemory"
+    real_binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    (tmp_path / "config.yaml").write_text("mcp_servers: [\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "bettermemory.doctor.KNOWN_CLIENTS", _tmp_hermes_client(tmp_path)
+    )
+    monkeypatch.setattr("bettermemory.doctor.find_binary", lambda: str(real_binary))
+    diag = _check_mcp_client_configs()
+    (finding,) = diag.details["findings"]
+    assert finding["status"] == "unreadable"
+    assert "YAML" in finding["error"]
 
 
 def test_mcp_client_configs_ok_for_uvx_runner_shape(

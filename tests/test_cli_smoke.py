@@ -28,6 +28,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+import yaml
 
 from bettermemory.config import Config, load_config
 from bettermemory.events import iter_events
@@ -630,6 +631,29 @@ def test_init_patch_writes_canonical_shape(
     assert "command" in entry
     assert entry["args"] == []
     assert entry["env"] == {"BETTERMEMORY_CLIENT": "claude-desktop"}
+
+
+def test_init_patch_hermes_writes_the_yaml_shape(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """End-to-end: `init --client hermes --config-path Y` writes Hermes's
+    YAML `mcp_servers` map — `command`, `args`, `env` and no `type`, the
+    keys Hermes documents for a stdio server — with the client declared
+    in `env` like every other target."""
+    target = tmp_path / "config.yaml"
+    _run_main(
+        ["init", "--client", "hermes", "--config-path", str(target)],
+        monkeypatch=monkeypatch,
+        storage=tmp_path,
+    )
+    entry = yaml.safe_load(target.read_text(encoding="utf-8"))["mcp_servers"][
+        "bettermemory"
+    ]
+    assert set(entry) == {"command", "args", "env"}
+    assert entry["args"] == []
+    assert entry["env"] == {"BETTERMEMORY_CLIENT": "hermes"}
 
 
 def test_unknown_subcommand_exits_nonzero(

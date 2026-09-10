@@ -37,9 +37,12 @@ import os
 import platform
 import shutil
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
+
+import yaml
 
 from . import _fsutil
 from .identity import ENV_CLIENT
@@ -51,16 +54,31 @@ from .prompts import SYSTEM_PROMPT_ADDENDUM
 # ---------------------------------------------------------------------------
 
 
+#: A JSON document with an object under `mcpServers` — the shape Claude
+#: Code, Claude Desktop, Cursor, Cline and legacy Continue share, written
+#: by `patch_client_config`.
+FORMAT_MCP_SERVERS_JSON = "mcpServers-json"
+#: Hermes Agent's `~/.hermes/config.yaml`: a YAML map under a top-level
+#: `mcp_servers` key, one entry per server name, written by
+#: `patch_hermes_config`.
+FORMAT_HERMES_YAML = "hermes-yaml"
+#: The top-level key Hermes reads its MCP servers from.
+HERMES_SERVERS_KEY = "mcp_servers"
+
+
 @dataclass(frozen=True)
 class ClientPaths:
     """A known MCP client and the candidate config paths we know about
     for it. `paths[0]` is the default target when `--client` is set
     without `--config-path`; later entries are alternatives surfaced in
-    show-and-tell mode so the user knows their options."""
+    show-and-tell mode so the user knows their options. `format` names
+    the document shape at those paths, which decides the patcher init
+    runs and the loader `doctor` reads entries through."""
 
     name: str
     description: str
     paths: tuple[Path, ...]
+    format: str = FORMAT_MCP_SERVERS_JSON
 
 
 def _claude_code_paths() -> ClientPaths:
@@ -160,14 +178,35 @@ def _cline_paths() -> ClientPaths:
     )
 
 
+def _hermes_paths() -> ClientPaths:
+    """Hermes Agent (Nous Research). One long-lived gateway process reads
+    `~/.hermes/config.yaml` at startup and registers every server in its
+    `mcp_servers` map; an interactive session reloads the map when the
+    file changes. Stdio servers take `command`, `args` and `env` — no
+    cwd — so the entry declares the client and says nothing about a
+    workspace: the gateway serves many projects from one directory, and
+    the labeled process-cwd fallback is the honest record of that (a
+    `BETTERMEMORY_WORKSPACE` in the `env` block overrides it for a
+    single-project install; see docs/clients.md)."""
+    return ClientPaths(
+        name="hermes",
+        description="Hermes Agent",
+        paths=(Path.home() / ".hermes" / "config.yaml",),
+        format=FORMAT_HERMES_YAML,
+    )
+
+
 # Registry. Keys are the values accepted by `--client`. Adding a new
-# client is one entry here plus a getter above.
+# client is one entry here plus a getter above (and its `format`, when
+# the file is not a JSON `mcpServers` object). `cli/init.py` lists the
+# same keys as argparse choices; a test pins the two together.
 KNOWN_CLIENTS: dict[str, Callable[[], ClientPaths]] = {
     "claude-code": _claude_code_paths,
     "claude-desktop": _claude_desktop_paths,
     "cursor": _cursor_paths,
     "continue": _continue_paths,
     "cline": _cline_paths,
+    "hermes": _hermes_paths,
 }
 
 
@@ -281,6 +320,55 @@ def server_snippet(
             }
         }
     }
+
+
+def hermes_snippet(
+    *,
+    name: str = DEFAULT_SERVER_NAME,
+    binary: str | None = None,
+    client: str | None = None,
+) -> dict[str, Any]:
+    """The `mcp_servers` entry Hermes Agent reads from `~/.hermes/config.yaml`:
+    the stdio keys Hermes documents (`command`, `args`, `env`) and no
+    `type`, which Hermes does not define. `client` lands in `env` as
+    `BETTERMEMORY_CLIENT`, the only out-of-band channel a stdio server
+    has (`identity.SOURCE_ENV`); `None` leaves `env` empty."""
+    if binary is None:
+        binary = find_binary()
+    env: dict[str, Any] = {ENV_CLIENT: client} if client else {}
+    return {HERMES_SERVERS_KEY: {name: {"command": binary, "args": [], "env": env}}}
+
+
+def hermes_snippet_text(snippet: Mapping[str, Any]) -> str:
+    """`hermes_snippet` rendered as the YAML block a user pastes into
+    `~/.hermes/config.yaml`."""
+    return _dump_yaml_block(snippet)
+
+
+def _dump_yaml_block(data: Mapping[str, Any], *, indent: int = 0, step: int = 2) -> str:
+    """Render `data` as block-style YAML, every non-blank line shifted right
+    by `indent` columns and nested mappings stepping in by `step`. The
+    pure-Python SafeDumper the store also uses (store.py says why),
+    insertion order kept, no line wrapping so a long binary path stays on
+    one line; an empty list or map still renders inline (`[]`, `{}`),
+    which is the shape Hermes's own examples use."""
+    if not 2 <= step <= 9:
+        step = 2  # outside this range PyYAML falls back to 2, silently
+    text: str = yaml.dump(
+        dict(data),
+        Dumper=yaml.SafeDumper,
+        sort_keys=False,
+        default_flow_style=False,
+        indent=step,
+        allow_unicode=True,
+        width=100_000,
+    )
+    if indent == 0:
+        return text
+    pad = " " * indent
+    return "".join(
+        pad + line if line.strip() else line for line in text.splitlines(keepends=True)
+    )
 
 
 def command_launches_bettermemory(
@@ -670,19 +758,9 @@ def patch_client_config(
         #    CREATED it under us. Without this arm the skeleton doc below
         #    would silently replace the client's brand-new config: the same
         #    clobber class the signature guard closes, on the create path.
-        if baseline_sig is None and target_path.exists():
-            raise ValueError(
-                f"config at {target_path} was created under us between read "
-                f"and write (another process, likely the running client, "
-                f"wrote it). Nothing was modified; re-run init."
-            )
         # 2. The file existed and its mtime/size signature moved.
-        if baseline_sig is not None and _config_signature(target_path) != baseline_sig:
-            raise ValueError(
-                f"config at {target_path} changed under us between read and "
-                f"write (another process, likely the running client, wrote "
-                f"it). Nothing was modified; re-run init."
-            )
+        # Both arms live in `_refuse_if_moved`, shared with the YAML path.
+        _refuse_if_moved(target_path, baseline_sig)
 
         # Atomic + durable write via `_fsutil.atomic_write_bytes`: a plain
         # `target_path.write_text(...)` here would truncate the file before
@@ -706,6 +784,351 @@ def patch_client_config(
         if healed_lock is not None:
             result["removed_stale_lockfile"] = str(healed_lock)
         return result
+
+
+def _refuse_if_moved(target_path: Path, baseline_sig: tuple[int, int] | None) -> None:
+    """The pre-write half of the concurrency guard both patchers share.
+
+    `baseline_sig` is the `_config_signature` snapshotted before the read
+    (`None` when the file did not exist then). Two shapes abort, each as
+    a ValueError the CLI renders as a clean "re-run" message: the file
+    was CREATED under us by a non-locking writer, so the skeleton we
+    built would replace the client's brand-new config; or it existed and
+    its mtime/size signature moved, so the bytes we read are not the
+    bytes on disk. The re-check sits as late as possible before the
+    atomic replace; the few milliseconds after it stay unguarded, which
+    no shared lock protocol between the processes can close."""
+    if baseline_sig is None and target_path.exists():
+        raise ValueError(
+            f"config at {target_path} was created under us between read "
+            f"and write (another process, likely the running client, "
+            f"wrote it). Nothing was modified; re-run init."
+        )
+    if baseline_sig is not None and _config_signature(target_path) != baseline_sig:
+        raise ValueError(
+            f"config at {target_path} changed under us between read and "
+            f"write (another process, likely the running client, wrote "
+            f"it). Nothing was modified; re-run init."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Hermes Agent: the YAML `mcp_servers` map
+# ---------------------------------------------------------------------------
+
+
+#: The keys that make a Hermes entry an HTTP server (`url`, `headers`,
+#: `auth`, `identity_header`); shed from the stdio entry init writes so it
+#: cannot become a hybrid Hermes refuses or misreads — the JSON path's
+#: `url`/`headers` rule, extended to Hermes's own HTTP keys.
+_HERMES_HTTP_ONLY_KEYS = ("url", "headers", "auth", "identity_header")
+
+_YAML_NULL_TAG = "tag:yaml.org,2002:null"
+
+
+def _mapping_pair(
+    node: yaml.MappingNode, key: str
+) -> tuple[yaml.Node, yaml.Node] | None:
+    """The `(key, value)` node pair under `key` in a composed mapping — the
+    LAST one when the key repeats, which is the one SafeLoader keeps, so
+    the splice and the loaded document agree on which entry is live."""
+    found: tuple[yaml.Node, yaml.Node] | None = None
+    for key_node, value_node in node.value:
+        if isinstance(key_node, yaml.ScalarNode) and key_node.value == key:
+            found = (key_node, value_node)
+    return found
+
+
+def _splice_hermes_entry(
+    text: str,
+    servers_pair: tuple[yaml.Node, yaml.Node] | None,
+    *,
+    name: str,
+    entry: dict[str, Any],
+    servers: dict[str, Any],
+) -> str:
+    """Return `text` with the `name` entry of `mcp_servers` set to `entry`,
+    touching nothing else.
+
+    Four shapes, decided by what `yaml.compose` found:
+
+    * no `mcp_servers` key — a block carrying only our entry is appended
+      after the last line of the file;
+    * `mcp_servers:` with a null value, or a flow mapping (`{}`,
+      `{a: {...}}`) — the key's span is rewritten as a block mapping
+      holding every entry it had plus ours, a trailing comment on that
+      line kept on the key line;
+    * a block mapping without our entry — ours is inserted as its first
+      child, at the children's own indentation;
+    * a block mapping with our entry — that entry's lines are replaced,
+      and the blank and comment lines after it (which belong to the next
+      sibling, or to the owner) are left where they are.
+
+    `servers` is the loaded `mcp_servers` map (empty when absent or
+    null); it feeds only the rewrite of a null or flow block, where the
+    other entries have to be rendered again."""
+    lines = text.splitlines(keepends=True)
+
+    if servers_pair is None:
+        block = _dump_yaml_block({HERMES_SERVERS_KEY: {name: entry}})
+        prefix = text
+        if prefix and not prefix.endswith("\n"):
+            prefix += "\n"
+        if prefix.strip():
+            prefix += "\n"
+        return prefix + block
+
+    key_node, value_node = servers_pair
+    key_col = key_node.start_mark.column
+
+    block_map = value_node if isinstance(value_node, yaml.MappingNode) else None
+    if block_map is None or block_map.flow_style:
+        merged = dict(servers)
+        merged[name] = entry
+        block = _dump_yaml_block({HERMES_SERVERS_KEY: merged}, indent=key_col)
+        start = key_node.start_mark.index
+        value_end = value_node.end_mark.index
+        newline = text.find("\n", value_end)
+        line_end = len(text) if newline == -1 else newline + 1
+        rest = text[value_end:line_end].strip()
+        first, sep, remainder = block.partition("\n")
+        first = first.lstrip(" ")
+        if rest:
+            first = f"{first} {rest}"
+        return text[:start] + first + sep + remainder + text[line_end:]
+
+    child_col = block_map.value[0][0].start_mark.column
+    step = child_col - key_col if child_col > key_col else 2
+
+    entry_pair = _mapping_pair(block_map, name)
+    if entry_pair is None:
+        block = _dump_yaml_block({name: entry}, indent=child_col, step=step)
+        insert_at = key_node.start_mark.line + 1
+        return "".join(lines[:insert_at]) + block + "".join(lines[insert_at:])
+
+    entry_key, entry_value = entry_pair
+    entry_col = entry_key.start_mark.column
+    inner_step = step
+    if (
+        isinstance(entry_value, yaml.MappingNode)
+        and not entry_value.flow_style
+        and entry_value.value
+    ):
+        inner_col = entry_value.value[0][0].start_mark.column
+        if inner_col > entry_col:
+            inner_step = inner_col - entry_col
+    start_line = entry_key.start_mark.line
+    if entry_value.end_mark.index >= len(text):
+        end_line = len(lines)
+    elif isinstance(entry_value, yaml.CollectionNode) and not entry_value.flow_style:
+        # A block collection's end mark is the next token, at the start
+        # of a later line: exclusive.
+        end_line = entry_value.end_mark.line
+    else:
+        # A scalar or flow value ends mid-line: take that line whole.
+        end_line = entry_value.end_mark.line + 1
+    while end_line - 1 > start_line:
+        tail = lines[end_line - 1].strip()
+        if tail == "" or tail.startswith("#"):
+            end_line -= 1
+        else:
+            break
+    block = _dump_yaml_block({name: entry}, indent=entry_col, step=inner_step)
+    return "".join(lines[:start_line]) + block + "".join(lines[end_line:])
+
+
+def _splice_holds(
+    reparsed: Any, before: dict[str, Any], *, name: str, entry: dict[str, Any]
+) -> bool:
+    """True when the patched document carries `entry` under `name` and
+    nothing else moved: every other top-level key and every other server
+    compares equal to the document read before the splice."""
+    if not isinstance(reparsed, dict):
+        return False
+    after_servers = reparsed.get(HERMES_SERVERS_KEY)
+    if not isinstance(after_servers, dict) or after_servers.get(name) != entry:
+        return False
+    before_servers = before.get(HERMES_SERVERS_KEY)
+    if not isinstance(before_servers, dict):
+        before_servers = {}
+    if {k: v for k, v in before_servers.items() if k != name} != {
+        k: v for k, v in after_servers.items() if k != name
+    }:
+        return False
+    return {k: v for k, v in before.items() if k != HERMES_SERVERS_KEY} == {
+        k: v for k, v in reparsed.items() if k != HERMES_SERVERS_KEY
+    }
+
+
+def patch_hermes_config(
+    target_path: Path,
+    *,
+    name: str = DEFAULT_SERVER_NAME,
+    binary: str | None = None,
+    client: str | None = None,
+) -> dict[str, Any]:
+    """Idempotently merge the bettermemory entry into Hermes Agent's
+    `config.yaml` — the YAML twin of `patch_client_config`, under the
+    same discipline: the private `<target>.bettermemory.lock` flock, the
+    pre-read signature re-checked before the write, the atomic replace,
+    and the same result dict (`action` is `added`, `updated` or `noop`).
+
+    Merge semantics match the JSON path. init owns `command`, `args` and
+    `env`; every other key on an existing entry (`idle_timeout_seconds`,
+    `enabled`, a `tools` filter, …) survives; `env` is deep-merged and
+    `BETTERMEMORY_CLIENT` is set only when absent, so a value the user
+    declared wins. The HTTP-only keys are shed so a stdio entry cannot
+    turn into a hybrid.
+
+    The edit is a SPLICE, not a round-trip. PyYAML drops comments, and a
+    Hermes config is a commented, hand-ordered document the owner
+    maintains; rewriting it whole would erase that. `yaml.compose` gives
+    the position of the `mcp_servers` key and of our entry, and only that
+    region changes (`_splice_hermes_entry` lists the shapes). Before
+    anything is written the spliced text is parsed again and must load to
+    exactly the intended entry with every other key and server unchanged;
+    a splice that fails that check is refused, never written.
+
+    Raises ValueError when the file is not valid YAML, its root is not a
+    block mapping, `mcp_servers` is present but not a mapping, the splice
+    fails its own re-parse, or the file changed on disk mid-write — the
+    same "fix by hand or re-run" conditions the JSON path refuses on."""
+    if binary is None:
+        binary = find_binary()
+
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    healed_lock = _heal_stale_sidecar_lockfile(target_path)
+
+    with _fsutil.flock_excl(target_path, lock_suffix=".bettermemory.lock"):
+        baseline_sig: tuple[int, int] | None = None
+        text = ""
+        if target_path.exists():
+            baseline_sig = _config_signature(target_path)
+            text = target_path.read_text(encoding="utf-8")
+        try:
+            root = yaml.compose(text, Loader=yaml.SafeLoader)
+            loaded = yaml.safe_load(text)
+        except yaml.YAMLError as exc:
+            raise ValueError(
+                f"existing config at {target_path} is not valid YAML: {exc}. "
+                f"Fix the file by hand or remove it before re-running init."
+            ) from exc
+        root_map: yaml.MappingNode | None = None
+        if isinstance(root, yaml.MappingNode) and not root.flow_style:
+            root_map = root
+        elif root is not None:
+            raise ValueError(
+                f"existing config at {target_path} does not have a block "
+                f"mapping at its root; expected top-level `key: value` lines."
+            )
+        document: dict[str, Any] = loaded if isinstance(loaded, dict) else {}
+
+        servers_pair = (
+            _mapping_pair(root_map, HERMES_SERVERS_KEY)
+            if root_map is not None
+            else None
+        )
+        if servers_pair is not None:
+            value_node = servers_pair[1]
+            is_null = (
+                isinstance(value_node, yaml.ScalarNode)
+                and value_node.tag == _YAML_NULL_TAG
+            )
+            if not is_null and not isinstance(value_node, yaml.MappingNode):
+                raise ValueError(
+                    f"existing `{HERMES_SERVERS_KEY}` field in {target_path} is "
+                    f"not a mapping; expected one entry per server name."
+                )
+        loaded_servers = document.get(HERMES_SERVERS_KEY)
+        servers: dict[str, Any] = (
+            loaded_servers if isinstance(loaded_servers, dict) else {}
+        )
+        existing_raw = servers.get(name)
+        existing_entry: dict[str, Any] = (
+            existing_raw if isinstance(existing_raw, dict) else {}
+        )
+
+        # The same union the JSON path builds: the user's keys survive, `env`
+        # deep-merges, the declared client is set only when absent, and the
+        # keys that would make the entry an HTTP server are shed.
+        new_entry: dict[str, Any] = dict(existing_entry)
+        merged_env: dict[str, Any] = {}
+        if isinstance(existing_entry.get("env"), dict):
+            merged_env.update(existing_entry["env"])
+        if client is not None:
+            merged_env.setdefault(ENV_CLIENT, client)
+        new_entry["command"] = binary
+        new_entry["args"] = []
+        new_entry["env"] = merged_env
+        for http_only_key in _HERMES_HTTP_ONLY_KEYS:
+            new_entry.pop(http_only_key, None)
+
+        if name in servers and servers[name] == new_entry:
+            return {"action": "noop", "path": str(target_path), "name": name}
+        action = "updated" if name in servers else "added"
+
+        new_text = _splice_hermes_entry(
+            text, servers_pair, name=name, entry=new_entry, servers=servers
+        )
+        # The splice is checked, not trusted: the patched document has to
+        # load back to exactly the intended entry with every other key and
+        # every other server unchanged, or nothing is written.
+        try:
+            reparsed = yaml.safe_load(new_text)
+        except yaml.YAMLError:
+            reparsed = None
+        if not _splice_holds(reparsed, document, name=name, entry=new_entry):
+            raise ValueError(
+                f"refusing to write {target_path}: the patched document did "
+                f"not parse back to the intended `{HERMES_SERVERS_KEY}.{name}` "
+                f"entry with everything else unchanged. Nothing was modified; "
+                f"add the entry by hand (`bettermemory init --client hermes "
+                f"--print-only` prints it)."
+            )
+
+        _refuse_if_moved(target_path, baseline_sig)
+        _fsutil.atomic_write_bytes(target_path, new_text.encode("utf-8"))
+        result: dict[str, Any] = {
+            "action": action,
+            "path": str(target_path),
+            "name": name,
+            "binary": binary,
+        }
+        if healed_lock is not None:
+            result["removed_stale_lockfile"] = str(healed_lock)
+        return result
+
+
+def read_server_entries(
+    path: Path, *, config_format: str = FORMAT_MCP_SERVERS_JSON
+) -> dict[str, Any]:
+    """The server map of one client config, read by document shape: the
+    object under `mcpServers` for the JSON clients, the mapping under
+    `mcp_servers` for Hermes. An empty file, a non-object root or an
+    absent key read as an empty map — nothing registered — while a file
+    that does not parse raises ValueError, so `doctor` can tell "nothing
+    here" from "cannot read", the distinction its `unreadable` finding
+    exists for. OSError and UnicodeDecodeError propagate untouched."""
+    text = path.read_text(encoding="utf-8")
+    data: Any
+    if config_format == FORMAT_HERMES_YAML:
+        try:
+            data = yaml.safe_load(text) if text.strip() else {}
+        except yaml.YAMLError as exc:
+            raise ValueError(f"not valid YAML: {exc}") from exc
+        key = HERMES_SERVERS_KEY
+    else:
+        try:
+            data = json.loads(text) if text.strip() else {}
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"not valid JSON: {exc.msg} (line {exc.lineno}, col {exc.colno})"
+            ) from exc
+        key = "mcpServers"
+    if not isinstance(data, dict):
+        return {}
+    servers = data.get(key)
+    return servers if isinstance(servers, dict) else {}
 
 
 # ---------------------------------------------------------------------------
@@ -734,11 +1157,11 @@ def _print_show_and_tell(
             print(f"    [{mark}] {p}")
     print()
     print("To auto-patch one of these, re-run with --client:")
-    print("  bettermemory init --client claude-code")
-    print("  bettermemory init --client claude-desktop")
-    print("  bettermemory init --client cursor")
-    print("  bettermemory init --client continue")
-    print("  bettermemory init --client cline")
+    for key in KNOWN_CLIENTS:
+        print(f"  bettermemory init --client {key}")
+    print()
+    print("Hermes Agent reads the same entry as YAML under `mcp_servers`;")
+    print("  `bettermemory init --client hermes --print-only` prints that shape.")
     print()
     print("Verify the install once you've restarted the client:")
     print('  ask the model "what memory tools do you have?"')
@@ -785,6 +1208,30 @@ def _print_patch_summary(
         print(SYSTEM_PROMPT_ADDENDUM)
 
 
+def _client_view(client_paths: ClientPaths) -> dict[str, Any]:
+    """One client's row in the `--json` view."""
+    return {
+        "description": client_paths.description,
+        "paths": [str(p) for p in client_paths.paths],
+        "default_target": str(client_paths.paths[0]),
+        "format": client_paths.format,
+    }
+
+
+def _patch_for(
+    client_paths: ClientPaths,
+    target: Path,
+    *,
+    name: str,
+    binary: str,
+    client: str | None,
+) -> dict[str, Any]:
+    """Run the patcher the client's `format` calls for."""
+    if client_paths.format == FORMAT_HERMES_YAML:
+        return patch_hermes_config(target, name=name, binary=binary, client=client)
+    return patch_client_config(target, name=name, binary=binary, client=client)
+
+
 def cli_init(
     *,
     client: str | None,
@@ -799,11 +1246,26 @@ def cli_init(
     `name=None` resolves to `DEFAULT_SERVER_NAME`. Keeping the default
     in the module-level constant rather than the argparse layer means
     the snippet/patch helpers and the CLI agree on what "default" means
-    even when callers don't go through argparse."""
+    even when callers don't go through argparse.
+
+    The client's `format` picks the writer and the printed shape: the
+    JSON `mcpServers` snippet for every JSON client, the YAML
+    `mcp_servers` block for Hermes."""
     if name is None:
         name = DEFAULT_SERVER_NAME
+    if client is not None and client not in KNOWN_CLIENTS:
+        # argparse choices= should catch this, but stay defensive.
+        raise ValueError(
+            f"unknown client {client!r}; choose from {sorted(KNOWN_CLIENTS.keys())}"
+        )
     binary = find_binary()
     snippet = server_snippet(name=name, binary=binary, client=client)
+    client_paths = KNOWN_CLIENTS[client]() if client is not None else None
+    yaml_text: str | None = None
+    if client_paths is not None and client_paths.format == FORMAT_HERMES_YAML:
+        yaml_text = hermes_snippet_text(
+            hermes_snippet(name=name, binary=binary, client=client)
+        )
 
     # Continue's current released schema takes `mcpServers` as a LIST in
     # `config.yaml`; the object-in-`config.json` shape this client target
@@ -819,25 +1281,22 @@ def cli_init(
             "binary": binary,
             "snippet": snippet,
             "clients": {
-                key: {
-                    "description": getter().description,
-                    "paths": [str(p) for p in getter().paths],
-                    "default_target": str(getter().paths[0]),
-                }
-                for key, getter in KNOWN_CLIENTS.items()
+                key: _client_view(getter()) for key, getter in KNOWN_CLIENTS.items()
             },
         }
+        if yaml_text is not None:
+            out["snippet_yaml"] = yaml_text
         if with_addendum:
             out["system_prompt_addendum"] = SYSTEM_PROMPT_ADDENDUM
-        if client is not None and not print_only:
-            target = config_path or KNOWN_CLIENTS[client]().paths[0]
-            out["patch"] = patch_client_config(
-                target, name=name, binary=binary, client=client
+        if client_paths is not None and not print_only:
+            target = config_path or client_paths.paths[0]
+            out["patch"] = _patch_for(
+                client_paths, target, name=name, binary=binary, client=client
             )
         print(json.dumps(out, indent=2))
         return
 
-    if client is None:
+    if client_paths is None:
         _print_show_and_tell(
             binary=binary,
             snippet=snippet,
@@ -845,20 +1304,17 @@ def cli_init(
         )
         return
 
-    if client not in KNOWN_CLIENTS:
-        # argparse choices= should catch this, but stay defensive.
-        raise ValueError(
-            f"unknown client {client!r}; choose from {sorted(KNOWN_CLIENTS.keys())}"
-        )
-
-    target = config_path or KNOWN_CLIENTS[client]().paths[0]
+    target = config_path or client_paths.paths[0]
 
     if print_only:
-        print(json.dumps(snippet, indent=2))
+        if yaml_text is not None:
+            print(yaml_text, end="")
+        else:
+            print(json.dumps(snippet, indent=2))
         print(f"\n# Save the above to: {target}")
         return
 
-    result = patch_client_config(target, name=name, binary=binary, client=client)
+    result = _patch_for(client_paths, target, name=name, binary=binary, client=client)
     _print_patch_summary(
         result=result,
         binary=binary,
