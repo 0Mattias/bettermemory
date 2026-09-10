@@ -707,7 +707,15 @@ class Config:
 
         if resolved_cwd is not None:
             project_dir = resolved_cwd / PROJECT_DIR_NAME
-            if project_dir.is_dir():
+            # `os.path.isdir` rather than `Path.is_dir()`: the latter
+            # re-raises EACCES and friends on 3.11-3.13 (and answers
+            # False on 3.14), so a cwd whose children cannot be stat'd
+            # aborted every entry path — CLI, server startup, both
+            # hooks — instead of taking the global fallback the
+            # unreadable-cwd branch above already takes. "Could not
+            # stat the project store" and "there is no project store"
+            # both mean the store this process can use lives elsewhere.
+            if os.path.isdir(project_dir):
                 return project_dir.resolve()
 
         return (Path.home() / GLOBAL_DIR_NAME).resolve()

@@ -1364,3 +1364,44 @@ def test_every_deprecated_key_is_a_real_behavior_field() -> None:
     for key in _DEPRECATED_BEHAVIOR_KEYS:
         assert hasattr(BehaviorConfig(), key), key
         assert key in DEFAULT_CONFIG, key
+
+
+def _unreadable_dir_is_enforceable() -> bool:
+    """True when this process can actually be locked out of a directory.
+    Windows does not honour POSIX mode bits and root walks through them."""
+    import os
+    import sys
+
+    if sys.platform == "win32":
+        return False
+    getuid = getattr(os, "geteuid", None)
+    return getuid is not None and getuid() != 0
+
+
+@pytest.mark.skipif(
+    not _unreadable_dir_is_enforceable(),
+    reason="needs POSIX mode bits and a non-root euid",
+)
+def test_resolved_directory_falls_back_to_global_when_cwd_children_are_unstattable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cwd whose children cannot be stat'd takes the global fallback,
+    the same degrade the deleted-cwd branch already takes.
+
+    `Path.is_dir()` re-raises EACCES on 3.11-3.13, so the project-store
+    probe aborted every entry path — CLI, server startup, both hooks —
+    with a traceback; on 3.14 it answered False and fell through, which
+    is the answer, but only by accident of interpreter. The probe now
+    asks `os.path.isdir`, which answers the same way on all four."""
+    monkeypatch.delenv(ENV_DIR_OVERRIDE, raising=False)
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    _set_fake_home(monkeypatch, fake_home)
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    cwd.chmod(0o000)
+    try:
+        resolved = Config().resolved_directory(cwd=cwd)
+    finally:
+        cwd.chmod(0o755)
+    assert resolved == (fake_home / ".claude-memory").resolve()
