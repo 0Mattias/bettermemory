@@ -7,6 +7,51 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 7.14.0 - 2026-09-11
+
+### Added
+
+- `2f1166c` feat(health): read the actor back as a per-actor slice and
+  census. The identity resolver's second consumer. 7.10.0 stamped a
+  per-request actor on every record and event and 7.12.0 read it back
+  as `client` / `model` filters; `memory_health` now answers the
+  question those filters deliberately refuse — who wrote what, and
+  which spellings exist to filter on. The new `actor_slices` field is
+  `{declared, undeclared}`, each entry `{client, memories,
+  memories_in_window, events, searches, applies, models, principals}`,
+  keyed on the declared client because that is the axis
+  `memory_search` and `memory_list` select on.
+
+  Two counts reconcile **exactly**, which is stronger than
+  `scope_health` can promise: a memory carries many scopes and is
+  counted under each, but it carries exactly one actor, so
+  `sum(declared.memories) + undeclared.memories ==
+  total_active_memories` and the same holds for `events` against
+  `total_events`. `memories` is store-wide for that reason and
+  `memories_in_window` is the separate "written this run" read.
+
+  `undeclared` is a first-class bucket and is always present,
+  including at zero. On any store with history it is the majority —
+  every record written before 7.10.0 carries no actor block, and an
+  actor that declared only a model has no client, so it lands there
+  too while its model spelling still surfaces in that bucket's
+  counters. A list naming only declared actors would read as complete
+  while describing a fraction of the store, which is the
+  could-not-ask-manufactures-a-verdict class this project publishes a
+  third value for everywhere else.
+
+  The pivot is computed in Python from the memories and events
+  `compute_health` is handed, not off the index's v11 actor columns:
+  those serve the search prefilter, and an index may legitimately sit
+  a row behind disk between a write and a rebuild, which would put the
+  two invariants above in disagreement with themselves. The spelling
+  census reports declared values only — an empty dict means this
+  client declared none, never a manufactured `<unset>` key.
+
+  Additive: no schema bump, no migration, no reindex. `memory_health`
+  registers only under `full_tool_surface`, so the per-turn lean
+  description budget is untouched.
+
 ## 7.13.0 - 2026-09-11
 
 ### Fixed
