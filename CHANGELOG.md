@@ -7,6 +7,42 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 7.15.1 - 2026-09-11
+
+### Fixed
+
+- `d192ee2` fix(docs): citations name where the content is, not where
+  it was. `0a322ba` moved planned work out of `docs/ROADMAP.md`, leaving
+  a seventeen-line pointer that says the project publishes no roadmap.
+  The citations stayed. A tree-wide sweep found fifty-three mentions, of
+  which thirty-six either claimed the file carries content it no longer
+  has or promised that an open item is "on the roadmap".
+
+  Two reached a user. `bettermemory eval --usage-replay` closed its
+  report with "Read these numbers against the declared flip bars in
+  docs/ROADMAP.md (the usage-signal flags entry)", naming a section of a
+  file that carries neither, and `bettermemory eval --help` repeated it.
+  Following either landed on "This project does not publish a roadmap."
+  Both surfaces now say the thresholds are maintainer-held and
+  unpublished. The thresholds themselves are deliberately not restated
+  here: `UsageReplayReport` already documents why one measured report
+  read against one declared entry is what keeps them from drifting.
+
+  `SECURITY.md` and `docs/api.md` promised three open items were "on the
+  roadmap"; they now call them known gaps, which is what they are.
+  `docs/swarm-convergence-plan.md` called the per-actor `memory_health`
+  slice and the targeted rollback unshipped and pointed at the retired
+  file for them — both shipped, generalized to the actor axis that
+  section already describes, as 7.14.0 and 7.15.0.
+
+  `tests/test_roadmap_citations.py` ratchets the class. The doc-claims
+  walk could not see it: that walk extracts path claims only from
+  backticked tokens and asks only whether the path exists, and the path
+  does exist. Every surviving mention is allowlisted with its reason,
+  and two further tests render the report and format the help rather
+  than reading the source constants, so a revert of the printed string
+  fails both.
+
 ## 7.15.0 - 2026-09-11
 
 ### Added
