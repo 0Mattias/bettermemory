@@ -487,10 +487,17 @@ attested OAuth principal, each declared field naming its channel — and
 its `origin` names the channel that chose the workspace. That is
 `swarm_id` / `agent_id` generalized from "which cohort" to "which
 client, model and person, through which channel", with the same
-conditional-frontmatter discipline the episode writer uses. The
-`memory_search(swarm_id=)` filter and the per-swarm `memory_health`
-slice are NOT shipped; `docs/ROADMAP.md` carries them as the next
-units.
+conditional-frontmatter discipline the episode writer uses.
+
+The filter half then shipped in v7.12.0, also generalized:
+`memory_search(client=, model=)` and `memory_list(client=, model=)`
+select on the declared actor, over schema-v11 index columns. Read
+`identity.actor_matches` for the rule — exact, case-sensitive, and a
+record whose writer declared nothing matches no value, so a filtered
+result is a listing of labelled memories rather than a census of who
+wrote what. The per-swarm `memory_health` slice — which is where that
+census belongs — and the targeted rollback are still unshipped;
+`docs/ROADMAP.md` carries them as the next units.
 
 Generalize the episodes `swarm_id` to durable memories.
 
