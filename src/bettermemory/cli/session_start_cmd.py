@@ -353,18 +353,31 @@ def _build_context_block() -> str | None:
 
     status = _index.status(directory)
     # Mirrors `_handlers.load_search_candidates`' index-trust gate:
-    # absent, corrupt, or `needs_rebuild` (a schema migration dropped the
-    # data tables and only incrementally-touched memories are back) all
-    # mean the index cannot be believed. Deliberately WITHOUT that gate's
-    # `indexed_count < resolve_index_threshold()` arm — that threshold is
-    # a search-performance tradeoff, not a correctness signal, and a
-    # 40-memory store's counts are exactly as true as a 4000-memory
-    # store's.
-    if not status.get("exists") or status.get("corrupt") or status.get("needs_rebuild"):
+    # absent, unreadable, or `needs_rebuild` (a schema migration dropped
+    # the data tables and only incrementally-touched memories are back)
+    # all mean the index cannot be believed. Deliberately WITHOUT that
+    # gate's `indexed_count < resolve_index_threshold()` arm — that
+    # threshold is a search-performance tradeoff, not a correctness
+    # signal, and a 40-memory store's counts are exactly as true as a
+    # 4000-memory store's.
+    if (
+        not status.get("exists")
+        or _index.index_unreadable(status)
+        or status.get("needs_rebuild")
+    ):
+        # The remedy has to match the CAUSE. Under a version skew the
+        # index is fine and this process is old, so `reindex` is not
+        # just unhelpful, it cannot work in either direction; only a
+        # client restart loads the upgraded package.
+        remedy = (
+            _index.unreadable_remedy(status)
+            if _index.index_unreadable(status)
+            else _index.INDEX_CORRUPT_REMEDY
+        )
         print(
             "[bettermemory] session-start: search index unusable "
             f"({_index.index_path(directory)}) — skipping the hint. "
-            "`bettermemory reindex` rebuilds it.",
+            f"{remedy}",
             file=sys.stderr,
         )
         return None

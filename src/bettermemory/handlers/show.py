@@ -12,7 +12,11 @@ import os
 import sqlite3
 from typing import TYPE_CHECKING, Any
 
-from .._response import isoformat, isoformat_optional
+from .._response import (
+    isoformat,
+    isoformat_optional,
+    trust_unavailable_recommendation,
+)
 from ..models import utcnow
 from ..store import MemoryNotFoundError, TombstonedError
 from ..verify import (
@@ -198,7 +202,10 @@ async def memory_show(
         # `provenance: null` alone said "not classified yet", which is a
         # different and benign state; this says the question could not
         # be asked, and demotes a stamp of unknown origin.
-        deps.responses.apply_trust_unavailable(response)
+        deps.responses.apply_trust_unavailable(
+            response,
+            recommendation=trust_unavailable_recommendation(deps.store.root),
+        )
     else:
         deps.responses.apply_trust(
             response,

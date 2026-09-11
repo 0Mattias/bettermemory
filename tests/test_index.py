@@ -275,8 +275,10 @@ def test_unknown_schema_version_refuses_on_read(tmp_path: Path) -> None:
 
     with pytest.raises(index.IndexVersionError):
         # query() `_ensure_schema`s directly and surfaces the version
-        # mismatch; status() catches it and reports corrupt=True; rebuild()
-        # recovers by dropping + recreating (the two tests below).
+        # mismatch; status() catches it and reports schema_skew=True —
+        # NOT corrupt, the index is intact and this reader is old
+        # (7.13.0, tests/test_version_skew.py); rebuild() recovers by
+        # dropping + recreating (the two tests below).
         index.query(root, "anything")
 
 
@@ -312,10 +314,16 @@ def test_rebuild_recovers_from_newer_schema_version(
     store: Store, memory_dir: Path
 ) -> None:
     """An on-disk schema_version newer than this code makes
-    `_ensure_schema` raise IndexVersionError — whose own message tells
-    the user to run `bettermemory reindex`. rebuild() must therefore
-    recover by dropping + recreating, not crash with the very error it
-    instructs the user to resolve with this command."""
+    `_ensure_schema` raise IndexVersionError — whose own message still
+    names `bettermemory reindex` for the deliberate-downgrade case.
+    rebuild() must therefore recover by dropping + recreating, not
+    crash with the very error it instructs the user to resolve with
+    this command.
+
+    The classification asserted below is `schema_skew`, not `corrupt`:
+    7.13.0 split the two, because a store in this state is not damaged
+    — only the reader is old. `tests/test_version_skew.py` pins that
+    contract; here it is the premise for the recovery claim."""
     store.write(content="alpha indexer note", scopes=["tools"])
     # Poison the on-disk schema version to a future value.
     index_file = index.index_path(memory_dir)
@@ -328,7 +336,7 @@ def test_rebuild_recovers_from_newer_schema_version(
         conn.commit()
     finally:
         conn.close()
-    assert index.status(memory_dir).get("corrupt") is True
+    assert index.status(memory_dir).get("schema_skew") is True
 
     count = index.rebuild(memory_dir, store.iter_active())
 

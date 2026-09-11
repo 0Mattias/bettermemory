@@ -85,6 +85,16 @@ uv lock
 #    re-runs the file after tagging.
 pytest tests/test_plugin.py tests/test_version.py tests/test_changelog.py -q
 
+# 5b. IF THIS RELEASE BUMPS `index.SCHEMA_VERSION`, it is a COORDINATED
+#     upgrade, not a library upgrade. After re-pointing the editable
+#     server venv and `uv tool` at the new version, RESTART the MCP
+#     clients. A running server keeps the code it imported, so the
+#     first upgraded process to touch the index migrates it out from
+#     under every still-running one; from that moment those servers are
+#     readers too old for the file. Since 7.13.0 they say so accurately
+#     (`schema_skew`, remedy: restart) instead of reporting the store
+#     as corrupt, but the fix is still the restart, and only a restart.
+
 # 6. Commit, tag, re-check the changelog against the tag, then push.
 #    The tag-window coverage check only sees the new tag once it
 #    exists, and a coverage gap caught here costs a local re-tag

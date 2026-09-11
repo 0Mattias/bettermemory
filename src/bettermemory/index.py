@@ -68,7 +68,7 @@ import logging
 import os
 import sqlite3
 import time
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, NamedTuple
@@ -89,10 +89,13 @@ log = logging.getLogger("bettermemory.index")
 # doesn't support drops the file and forces a rebuild rather than
 # risk misinterpreting the rows. Migration semantics:
 #
-#   - on-disk > code SCHEMA_VERSION: raise IndexVersionError. The
-#     caller (Store / CLI) should delete the index file and run
-#     `bettermemory reindex`. We don't downgrade because we don't
-#     know what newer columns the existing rows depend on.
+#   - on-disk > code SCHEMA_VERSION: raise IndexVersionError. We don't
+#     downgrade because we don't know what newer columns the existing
+#     rows depend on. The usual cause is not damage but SKEW: this
+#     process is running code older than whatever last touched the
+#     index, so the remedy is to restart the client and load the
+#     upgraded package (`_newer_version_error` carries the wording).
+#     `status()` reports this as `schema_skew`, never as `corrupt`.
 #   - on-disk < code SCHEMA_VERSION: drop the data tables, recreate
 #     empty, and set `meta.needs_rebuild = '1'`. The flag is cleared
 #     ONLY by a successful `rebuild()` — never by the incremental
@@ -673,18 +676,53 @@ def _ensure_schema(
 
 
 class IndexVersionError(RuntimeError):
-    """Raised when the on-disk index schema is newer than this code."""
+    """Raised when the on-disk index schema is newer than this code.
+
+    Carries both version numbers as ATTRIBUTES so a caller that has to
+    CLASSIFY the state rather than propagate it — `status()`, which
+    never raises — reads them off the object instead of parsing the
+    message text. `on_disk` is the schema found in `meta`; `reader` is
+    the `SCHEMA_VERSION` this process was built against. Both are None
+    only when the error is constructed by hand instead of through
+    `_newer_version_error`.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        on_disk: int | None = None,
+        reader: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.on_disk = on_disk
+        self.reader = reader
 
 
 def _newer_version_error(on_disk: int) -> IndexVersionError:
     """Uniform error for an on-disk schema newer than this reader.
     Raised by `_ensure_schema`'s primary version check and by the
     under-lock re-check (a newer-version migrator can win the race
-    while an older one waits on the migration flock)."""
+    while an older one waits on the migration flock).
+
+    The remedy names the CLIENT RESTART first, because the usual cause
+    is not a damaged file. A schema bump strands every already-running
+    process on the previous version — a long-lived MCP server keeps the
+    code it imported until its client restarts — so the first upgraded
+    process to touch the index migrates it out from under them. Neither
+    direction of `reindex` resolves that: run by this older binary it
+    refuses for the same reason, run by the newer one it rewrites the
+    index at a schema this reader still cannot read. Deleting the index
+    only helps a deliberate downgrade, so it is named second.
+    """
     return IndexVersionError(
         f"index schema version {on_disk} is newer than this "
-        f"reader supports (max {SCHEMA_VERSION}); delete the "
-        f"index file and run `bettermemory reindex`"
+        f"reader supports (max {SCHEMA_VERSION}); this process is "
+        f"running older code — restart the client so it loads the "
+        f"upgraded package. If you downgraded deliberately, delete "
+        f"the index file and run `bettermemory reindex`",
+        on_disk=on_disk,
+        reader=SCHEMA_VERSION,
     )
 
 
@@ -1944,9 +1982,27 @@ def links_for_with_status(
 def status(root: Path) -> dict[str, Any]:
     """Diagnostic snapshot of the index file. Used by
     `bettermemory doctor` to surface index health and by the reindex
-    CLI to report before/after counts. Never raises — a missing index
-    file returns `exists=False`; a corrupt, version-skewed, or
-    unreadable one returns the degraded `corrupt=True` shape."""
+    CLI to report before/after counts. Never raises.
+
+    THREE degraded shapes, deliberately not two:
+
+    - A missing index file returns `exists=False`.
+    - A torn, locked or otherwise unreadable one returns
+      `corrupt=True`.
+    - An index whose schema is NEWER than this reader supports returns
+      `schema_skew=True` carrying both version numbers, and NO
+      `corrupt` key (7.13.0). Nothing is wrong with that index or with
+      the store behind it; this process is too old to read it, which is
+      the ordinary state of every already-running server between a
+      schema bump and a client restart. Calling that corruption tells
+      the user their data is damaged when it is not, and sends them to
+      `reindex`, which cannot fix it in either direction. Could-not-ask
+      never manufactures a verdict.
+
+    A caller deciding whether the index is USABLE must not test
+    `corrupt` alone: `index_unreadable()` is the single definition of
+    that question and covers both unreadable states.
+    """
     path = index_path(root)
     if not path.exists():
         return {"exists": False, "path": str(path)}
@@ -1988,7 +2044,25 @@ def status(root: Path) -> dict[str, Any]:
             }
         finally:
             conn.close()
-    except (OSError, ValueError, sqlite3.DatabaseError, IndexVersionError) as exc:
+    except IndexVersionError as exc:
+        # Deliberately its OWN branch, ahead of the corruption tuple
+        # below. The file is intact and perfectly readable — by a newer
+        # reader. `_ensure_schema` parsed the on-disk version before
+        # raising, so both numbers are knowable and both are published:
+        # a caller can say exactly which side is behind, and the remedy
+        # is a client restart rather than a reindex (the reasoning is
+        # on `_newer_version_error`).
+        return {
+            "exists": True,
+            "path": str(path),
+            "schema_skew": True,
+            "schema_version": exc.on_disk,
+            "reader_schema_version": (
+                exc.reader if exc.reader is not None else SCHEMA_VERSION
+            ),
+            "error": str(exc),
+        }
+    except (OSError, ValueError, sqlite3.DatabaseError) as exc:
         # OSError is load-bearing for the never-raises contract:
         # `_connect`'s `path.parent.mkdir` can raise EACCES/EROFS, and
         # `path.stat()` raises FileNotFoundError when a concurrent
@@ -2006,6 +2080,55 @@ def status(root: Path) -> dict[str, Any]:
             "corrupt": True,
             "error": str(exc),
         }
+
+
+def index_unreadable(status: Mapping[str, Any]) -> bool:
+    """True when a `status()` snapshot says this process cannot USE the
+    index: torn (`corrupt`) or newer than this reader (`schema_skew`).
+
+    The single definition of that question, so every router and every
+    reporter narrows on the same rule instead of respelling it. Callers
+    that once tested `status.get("corrupt")` for ROUTING must call this
+    instead: since 7.13.0 a version-skewed index no longer sets
+    `corrupt`, and a router still testing the old key alone would fall
+    THROUGH to the `indexed_count` comparisons below it — against a
+    count that is None in both degraded shapes, which is how a silent
+    wrong answer gets published instead of a fallback.
+
+    Composition stays with the caller. This answers "unreadable", not
+    "absent" (`exists`) and not "rebuild-pending" (`needs_rebuild`):
+    those are different states, and the surfaces that report rather
+    than route give them different answers.
+    """
+    return bool(status.get("corrupt") or status.get("schema_skew"))
+
+
+# The two remedies an unreadable index can have. Separate constants
+# because they are not interchangeable: `reindex` repairs a torn file
+# and CANNOT resolve a version skew in either direction (run by the
+# older binary it refuses for the same reason; run by the newer one it
+# rewrites the index at a schema the older reader still cannot read).
+# One definition each, so doctor, the Store warning, the session-start
+# hint and the trust surfaces cannot drift into telling the user
+# different things about the same state.
+SCHEMA_SKEW_REMEDY = (
+    "Restart the client so this process loads the upgraded bettermemory "
+    "package; `bettermemory reindex` cannot resolve a version skew."
+)
+INDEX_CORRUPT_REMEDY = (
+    "Run `bettermemory reindex` to rebuild the index from canonical disk state."
+)
+
+
+def unreadable_remedy(status: Mapping[str, Any]) -> str:
+    """The remedy sentence for a `status()` snapshot `index_unreadable`
+    accepted. Version skew earns the restart; everything else earns the
+    rebuild. Callers that have already branched on the cause can use the
+    constants directly; this exists so a caller that has NOT branched
+    still cannot print the wrong one."""
+    if status.get("schema_skew"):
+        return SCHEMA_SKEW_REMEDY
+    return INDEX_CORRUPT_REMEDY
 
 
 def flag_needs_rebuild(root: Path) -> bool:
@@ -2457,7 +2580,10 @@ __all__ = [
     "TOKENIZER_FINGERPRINT",
     "IndexVersionError",
     "filenames_for_ids",
+    "INDEX_CORRUPT_REMEDY",
+    "SCHEMA_SKEW_REMEDY",
     "index_path",
+    "index_unreadable",
     "indexed_ids",
     "links_for",
     "links_for_with_status",

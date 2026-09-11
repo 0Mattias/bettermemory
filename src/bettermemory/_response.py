@@ -56,12 +56,40 @@ from .verify import (
 )
 
 # The recommendation a stamped row carries when the index could not be
-# read (`ResponseBuilder.apply_trust_unavailable`). One string, so the
-# three read surfaces and the tests say the same thing.
+# read (`ResponseBuilder.apply_trust_unavailable`). One string each, so
+# the three read surfaces and the tests say the same thing.
 TRUST_UNAVAILABLE_RECOMMENDATION = (
     "The index could not be read, so whether this host made this stamp "
     "is unknown. Run `bettermemory reindex`, then read again."
 )
+# The same state with a different CAUSE and a different repair. A
+# version-skewed index is intact; this process is older than whatever
+# last migrated it, which is every long-lived server's state between a
+# schema bump and a client restart. `reindex` cannot resolve that in
+# either direction, so telling the user to run it is worse than saying
+# nothing — it sends them to repair data that was never damaged.
+TRUST_UNAVAILABLE_SCHEMA_SKEW_RECOMMENDATION = (
+    "The index is newer than this process can read, so whether this host "
+    "made this stamp is unknown. Restart the client to load the upgraded "
+    "package, then read again."
+)
+
+
+def trust_unavailable_recommendation(root: Path) -> str:
+    """Which of the two recommendations an unreadable index earns.
+
+    Call only AFTER a read has already come back unreadable (`trust_for`
+    returning None, or `_links_payload` setting the flag): the meta-only
+    `status()` open it costs is then paid on a path that is already
+    degraded, and never on the happy path. Resolve once per response and
+    pass the result down — `attach_provenance` decorates every row from
+    one call rather than reopening the index per row. `status()` never
+    raises."""
+    from . import index as _index
+
+    if _index.status(root).get("schema_skew"):
+        return TRUST_UNAVAILABLE_SCHEMA_SKEW_RECOMMENDATION
+    return TRUST_UNAVAILABLE_RECOMMENDATION
 
 
 __all__ = ["ResponseBuilder", "isoformat", "isoformat_optional"]
@@ -568,8 +596,14 @@ class ResponseBuilder:
             # is knowable, so the rule cannot run and must not be read
             # as having run clean. Every row says so, and a stamped row
             # loses the verdict a stamp of unknown origin was carrying.
+            #
+            # ONE `status()` read decides which remedy all of those rows
+            # carry. Resolved here rather than inside the per-row helper
+            # so an unreadable index costs one extra meta open per
+            # response instead of one per hit.
+            recommendation = trust_unavailable_recommendation(root)
             for row in out:
-                self.apply_trust_unavailable(row)
+                self.apply_trust_unavailable(row, recommendation=recommendation)
             return
         for row in out:
             trust = rows.get(row.get("id", ""))
@@ -580,7 +614,12 @@ class ResponseBuilder:
                     verified_locally_at=trust.verified_locally_at,
                 )
 
-    def apply_trust_unavailable(self, row: dict[str, Any]) -> None:
+    def apply_trust_unavailable(
+        self,
+        row: dict[str, Any],
+        *,
+        recommendation: str = TRUST_UNAVAILABLE_RECOMMENDATION,
+    ) -> None:
         """Mutate one response row for an index that could not be read.
 
         The trust rule (`apply_trust`) needs the row's label and this
@@ -595,6 +634,13 @@ class ResponseBuilder:
         but the rollup a model branches on must not read a stamp of
         unknown origin as fresh. Rows with no stamp already read `never`.
         Called in place of `apply_trust`, never alongside it.
+
+        `recommendation` is the remedy the row carries, which depends on
+        WHY the index could not be read — `trust_unavailable_recommendation`
+        resolves it, and the caller passes the result so one degraded
+        response pays one status() read rather than one per row. It
+        defaults to the torn-index wording, so a caller that has not
+        classified the cause still says something true.
         """
         row["trust_unavailable"] = True
         raw = row.get("last_verified_at")
@@ -602,7 +648,7 @@ class ResponseBuilder:
             return
         verification = row.get("verification")
         if isinstance(verification, dict):
-            verification["recommendation"] = TRUST_UNAVAILABLE_RECOMMENDATION
+            verification["recommendation"] = recommendation
         row["staleness_verdict"] = "spot_check_required"
 
     def apply_trust(
@@ -1219,9 +1265,11 @@ class ResponseBuilder:
                 # same candidate-scan fallback below instead of mapping the
                 # failure to an empty links map, which killed the
                 # `superseded_by` suppression signal exactly when the index
-                # was broken. `status()` reports these states `corrupt=True`,
-                # so `_handlers.load_search_candidates` served `memories`
-                # via `load_all` — the scan's corpus is already paid for.
+                # was broken. `index.index_unreadable()` accepts every one of
+                # these states (`corrupt`, or `schema_skew` for the newer-
+                # version store), so `_handlers.load_search_candidates`
+                # served `memories` via `load_all` — the scan's corpus is
+                # already paid for.
                 links_map, unusable = {}, True
             if not unusable:
                 # A clear flag doesn't finish the truth table:

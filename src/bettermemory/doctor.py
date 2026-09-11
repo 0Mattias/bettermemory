@@ -878,15 +878,20 @@ def _check_index_health(directory: Path, load: _MemoryLoad | None = None) -> Dia
     on-disk file count.
 
     A status()-visible unhealthy index (corrupt meta, missing,
-    rebuild-pending) never breaks correctness —
+    rebuild-pending, schema-skewed) never breaks correctness —
     `_handlers.load_search_candidates` routes every `memory_search` to a
     full `load_all` — but the degradation to a linear scan is silent, and a
     count divergence additionally means stale filename lookups and link
     annotations. Page-level corruption is worse: that routing keys off
     the same meta-only `status()`, so nothing falls back and the first
     read to touch a damaged page raises — doctor is the surface that
-    has to catch it. Every unhealthy state shares the one repair:
-    `bettermemory reindex`. The count comparison
+    has to catch it. Every unhealthy state shares the one repair —
+    `bettermemory reindex` — EXCEPT version skew, whose index is not
+    damaged at all: this install is simply older than whatever last
+    migrated the index, and only restarting the client so it loads the
+    upgraded package resolves it (`index.SCHEMA_SKEW_REMEDY`). That
+    branch is checked first, and never says "corrupt". The count
+    comparison
     reuses the S4 divergence machinery
     (`store.count_active_memory_files` +
     `store.count_unparseable_memory_files`) so doctor and the startup
@@ -948,6 +953,27 @@ def _check_index_health(directory: Path, load: _MemoryLoad | None = None) -> Dia
                 f"to a linear scan."
             ),
             fix_hint=fix,
+            details=details,
+        )
+    if status.get("schema_skew"):
+        # The state an operator most needs told apart from corruption,
+        # and the reason they are here: something said "corrupt" about
+        # a store with nothing wrong with it. The index is intact and
+        # NEWER than this install, which is what every already-running
+        # server sees between a schema bump and a client restart. The
+        # word "corrupt" must not appear, and the fix is the restart —
+        # `reindex` cannot resolve a skew in either direction.
+        return Diagnosis(
+            name="index_health",
+            status="warn",
+            message=(
+                f"Index at {status.get('path')} is at schema version "
+                f"{status.get('schema_version')}; this install supports "
+                f"{status.get('reader_schema_version')}. The index and the "
+                f"memories behind it are intact — this process is running "
+                f"older code. memory_search falls back to a linear scan."
+            ),
+            fix_hint=index.SCHEMA_SKEW_REMEDY,
             details=details,
         )
     if status.get("corrupt"):

@@ -234,8 +234,17 @@ def load_search_candidates(
     # `indexed_count` can cross the threshold while every untouched
     # pre-upgrade memory is missing, so the count is not a coverage
     # signal until `rebuild()` clears the flag. Treat the index as
-    # unusable outright — same routing as corrupt/absent.
-    if not status.get("exists") or status.get("corrupt") or status.get("needs_rebuild"):
+    # unusable outright — same routing as unreadable/absent.
+    #
+    # `index_unreadable` rather than `status.get("corrupt")`: a
+    # version-skewed index reports `schema_skew` and no `corrupt` key
+    # (7.13.0), and testing the old key alone would fall through to the
+    # `indexed_count` read below against a None count.
+    if (
+        not status.get("exists")
+        or _index.index_unreadable(status)
+        or status.get("needs_rebuild")
+    ):
         return store.load_all(), False, False
     indexed_count = int(status.get("indexed_count", 0) or 0)
     if indexed_count < resolve_index_threshold():

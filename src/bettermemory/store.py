@@ -2736,6 +2736,25 @@ def _warn_on_index_divergence(root: Path) -> None:
         # operation; don't compound it with a noisy startup warning.
         return
 
+    if status.get("schema_skew"):
+        # NOT a divergence and NOT corruption: the index is intact and
+        # this process is running older code, which is every long-lived
+        # server's state between a schema bump and a client restart.
+        # Saying "corrupt" here was the loudest way this defect reached
+        # a user, because it fires at every Store construction.
+        _DIVERGENCE_WARNED_ROOTS.add(root)
+        _INDEX_LOG.warning(
+            "bettermemory: FTS5 index at %s is at schema %s; this process "
+            "supports %s (disk=%d memories). %s Search falls back to a "
+            "full scan until then.",
+            status.get("path", root / ".index.sqlite"),
+            status.get("schema_version"),
+            status.get("reader_schema_version"),
+            disk_count,
+            _index.SCHEMA_SKEW_REMEDY,
+        )
+        return
+
     if status.get("corrupt"):
         # An unreadable index is a divergence we should always flag —
         # the indexed count is unknowable, so we report what we can:
@@ -2743,11 +2762,11 @@ def _warn_on_index_divergence(root: Path) -> None:
         _DIVERGENCE_WARNED_ROOTS.add(root)
         _INDEX_LOG.warning(
             "bettermemory: FTS5 index at %s is corrupt (disk=%d memories). "
-            "Run `bettermemory reindex` to rebuild the index from "
-            "canonical disk state. Search results may be incomplete or "
+            "%s Search results may be incomplete or "
             "include stale references until then.",
             status.get("path", root / ".index.sqlite"),
             disk_count,
+            _index.INDEX_CORRUPT_REMEDY,
         )
         return
 
