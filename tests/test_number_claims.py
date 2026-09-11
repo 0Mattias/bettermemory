@@ -207,11 +207,6 @@ _DOC_SURFACE_EXCLUSIONS: dict[str, str] = {
         "satisfy a linter is worse than the drift. tests/test_doc_claims.py "
         "tiers it out of its living-document rules for the same reason."
     ),
-    "docs/ROADMAP.md": (
-        "A plan. Its figures quote past runs and set targets for work not "
-        "yet done. tests/test_doc_claims.py exempts it from path claims on "
-        "the same grounds: a plan describes a tree that does not exist."
-    ),
     "docs/swarm-convergence-plan.md": (
         "A plan document, exempt from path claims in the doc-claims module "
         "for the same reason. It quotes a survey's figures and proposes "

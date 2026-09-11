@@ -116,8 +116,11 @@ Reading the table:
   [2026-07-22](eval/widening-labeling-2026-07-22.md) ·
   [2026-07-29](eval/widening-labeling-2026-07-29.md) — ended with the
   w2 candidate dropped per the pre-registered precision band and its
-  refined successor declined on the confidence interval;
-  see ROADMAP's "Not planned" for the reopening bar.)
+  refined successor declined on the confidence interval — a 95%
+  Wilson floor of 0.500 on n = 21. Reopening means pre-registering
+  n >= ~80 promotions and the interval criterion BEFORE labelling;
+  at the observed point estimate the floor clears 0.60 only near
+  n = 71.)
 - n=1. This measures one user's store, workload, and retrieval
   discipline. Run `bettermemory eval` on your own log — anomalies are
   exactly the calibration data the threshold rule needs.

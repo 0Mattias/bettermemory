@@ -165,6 +165,17 @@ Every major bump ships with:
 - A `Migration` section in the release's `CHANGELOG.md` entry (or its own `docs/migrations/<from>-to-<to>.md` if substantial) walking the user through the upgrade; 4.0.0, 5.0.0, 6.0.0 and 7.0.0 are the examples.
 - A `bettermemory migrate <subcommand>` for any breaking on-disk-format change. The migration is idempotent (re-running is safe) and atomic per file (`.tmp` plus rename). See `bettermemory migrate origin` (a 0.x to 0.x migration that shipped before this policy was written) for the existing pattern.
 
+## High-leverage contributions
+
+- Run `bettermemory eval` against your own usage and file anomalies.
+  The silent-miss threshold rule is calibrated on one user's data;
+  more distributions is the open question.
+- Setup notes for MCP clients beyond the ones in
+  [docs/clients.md](docs/clients.md).
+- Reports of stored memories that misled you in a way the verification
+  surface did not catch — those locate exactly where the drift
+  detection needs to widen.
+
 ## Project values
 
 These are not rules so much as the trade-offs the project makes consistently. Use them to judge whether a change is in or out of scope:

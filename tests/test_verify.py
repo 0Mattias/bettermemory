@@ -4149,8 +4149,10 @@ def test_report_to_dict_carries_a_populated_claim_anchored_missing() -> None:
 # did NOT come out, because the dry run recorded in
 # `bench/rot/results/escalation-off-60d-2026-07-31.json` scores the
 # subtraction itself as `never_flag`. The gate was retracted rather than
-# honoured; the write-up is in the rot-bench notes and the standing
-# decision in `docs/ROADMAP.md`. So these tests pin SHIPPED behaviour
+# honoured, and the standing decision is: the switch stays True, and
+# reopening needs a measured REPLACEMENT signal rather than a
+# subtraction. Write-up in the rot-bench notes. So these tests pin
+# SHIPPED behaviour
 # (the leg escalates) and, separately, pin that flipping the switch does
 # exactly one thing.
 #
@@ -4176,9 +4178,8 @@ def test_commit_leg_escalates_today() -> None:
     `_COMMIT_DRIFT_ESCALATES` having been flipped deliberately, the
     disjunction lost a term by accident; if it fails *because* someone
     flipped it, the number that justifies the flip has to be a measured
-    replacement signal, not the 3.4 — see the retraction in
-    the rot-bench notes and the `Not planned` entry in
-    `docs/ROADMAP.md`.
+    replacement signal, not the 3.4 — see the retraction in the
+    rot-bench notes, and the artifact this guard pins below.
     """
     from bettermemory.verify import _COMMIT_DRIFT_ESCALATES
 
@@ -4263,7 +4264,13 @@ def test_the_retraction_artifact_resolves_from_every_citation() -> None:
     Both halves are asserted: the exact string still appears in the file
     that cites it, and the file it names is on disk. The first half is
     why this cannot pass by accident after a rename — moving the
-    artifact means updating three citations and this list together.
+    artifact means updating the citation and this list together.
+
+    `docs/ROADMAP.md` used to be the second citer and is no longer:
+    the repo stopped carrying planned and not-planned work, so the
+    retraction's prose moved out with it. The source comment in
+    `verify.py` is now the only in-repo pointer to the evidence,
+    which is exactly why it is still guarded here.
     """
     root = Path(__file__).resolve().parents[1]
     artifact = "escalation-off-60d-2026-07-31.json"
@@ -4272,7 +4279,6 @@ def test_the_retraction_artifact_resolves_from_every_citation() -> None:
     # the other two are repo-root anchored).
     citations = [
         ("src/bettermemory/verify.py", f"bench/rot/results/{artifact}", root),
-        ("docs/ROADMAP.md", f"bench/rot/results/{artifact}", root),
     ]
 
     checked = 0
@@ -4289,7 +4295,7 @@ def test_the_retraction_artifact_resolves_from_every_citation() -> None:
         )
         checked += 1
 
-    assert checked == 2, f"expected two live citations, checked {checked}"
+    assert checked == 1, f"expected one live citation, checked {checked}"
 
 
 def test_the_commit_escalation_switch_has_exactly_one_reader() -> None:

@@ -261,9 +261,13 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 _EVENTS_MODULE = "src/bettermemory/events.py"
 
 _CHANGELOG = "CHANGELOG.md"
+# Plans propose files that do not exist yet, so a path claim in one is
+# not a claim about this tree. `docs/ROADMAP.md` LEFT this set when the
+# repo stopped carrying planned work: what remains there is a pointer
+# to the changelog, and a pointer is held to the same standard as any
+# other living document.
 _PLAN_DOCS = frozenset(
     {
-        "docs/ROADMAP.md",
         "docs/swarm-convergence-plan.md",
         "docs/v1.6-plan.md",
     }
