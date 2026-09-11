@@ -262,13 +262,14 @@ _EVENTS_MODULE = "src/bettermemory/events.py"
 
 _CHANGELOG = "CHANGELOG.md"
 # Plans propose files that do not exist yet, so a path claim in one is
-# not a claim about this tree. `docs/ROADMAP.md` LEFT this set when the
-# repo stopped carrying planned work: what remains there is a pointer
-# to the changelog, and a pointer is held to the same standard as any
-# other living document.
+# not a claim about this tree. Two documents LEFT this set when the
+# repo stopped carrying planned work: `docs/ROADMAP.md`, now a pointer
+# to the changelog, and `docs/swarm-convergence-plan.md`, now a record
+# of measured and shipped work with its unbuilt phases removed. Both
+# are held to the same standard as any other living document — which
+# immediately found a stale proposed filename in the second.
 _PLAN_DOCS = frozenset(
     {
-        "docs/swarm-convergence-plan.md",
         "docs/v1.6-plan.md",
     }
 )
@@ -1772,7 +1773,7 @@ def test_illustrative_cue_suppresses_path_claim() -> None:
 def test_plan_docs_exempt_from_path_claims() -> None:
     """Plans propose files that do not exist yet; that is what a plan is."""
     text = "add a `tests/bench_not_real_xyz.py` harness"
-    assert check_paths("docs/swarm-convergence-plan.md", text) == []
+    assert check_paths("docs/v1.6-plan.md", text) == []
     assert len(check_paths("docs/clients.md", text)) == 1
 
 

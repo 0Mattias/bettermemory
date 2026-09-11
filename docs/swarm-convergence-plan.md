@@ -1,13 +1,15 @@
-# Swarm convergence plan
+# Swarm convergence
 
 Making "a fleet of agents converges on one memory store" a true,
 benchmarked claim instead of a marketing line.
 
-Status: partly shipped. **Phase 0** (fleet benchmark, `bench/swarm.py`),
-**Phase 1** (index-backed by-id lookup) and **Phase 1b** (sharded
-event-log active file, v3.24.0) have shipped; **Phases 2-5 remain
-spec.** So this is a plan doc with a shipped prefix, not a pure design
-doc — read each phase's own heading for its state. The
+**This is a record of measured and shipped work, not a plan.** Phase 0
+(fleet benchmark, `bench/swarm.py`), Phase 1 (index-backed by-id
+lookup), Phase 1b (sharded event-log active file, v3.24.0) and Phase 2
+(swarm provenance, generalized into the identity resolver and shipped
+as v7.10.0) are all done, and the numbers below were measured rather
+than projected. The three phases this document once specified and never
+built are no longer tracked here. The
 [CHANGELOG](../CHANGELOG.md) is the source of truth for what actually
 exists, including the errata correcting what the 3.24.0 entry claimed.
 
@@ -350,24 +352,26 @@ corruption, byte-identical totals, because the workload is seeded.
 Ordered by leverage-over-risk. Each phase is independently shippable
 and moves the honest claim forward (see the claim ladder at the end).
 
-### Phase 0 — Benchmark the floor (do this first, always)
+### Phase 0 — Benchmark the floor — SHIPPED
 
-Replace the invented "200+" with a measured number before building
-anything.
+Replaced the invented "200+" with a measured number before anything
+was built on top of it.
 
-- New `bettermemory bench` (or a `tests/bench_swarm.py` harness)
-  extending the existing spawn-N-processes model: `--agents N --ops M
-  --mix write,search,update,verify`. Real spawned interpreters, shared
-  store, no mocks — same discipline as `test_concurrency.py`.
+- `bench/swarm.py` extends the existing spawn-N-processes model:
+  `--agents N --ops M --mix write,search,update,verify`. Real spawned
+  interpreters, shared store, no mocks — the same discipline as
+  `tests/test_concurrency.py`.
 - Emits: throughput (ops/sec), p50/p99 op latency, CAS-reject rate,
   mean lock-wait split by lock (event log vs memory file vs index),
   and the full correctness-invariant check at the end.
-- Becomes the **regression gate** every later phase runs against.
+- Is the **regression gate** every later phase ran against.
 
-Deliverable: a sentence you can post. "Benchmarked at N agents, X
-ops/sec sustained, zero corruption across the invariant suite."
-Whatever N and X are, they're real. This single step converts the
-category of claim from marketing to fact.
+What it bought: the claim stopped being marketing. What it did NOT
+buy is an ops/sec figure — the sweep's absolute rate is dominated by
+machine conditions no run controlled for, so the reproducible result
+is the structural evidence (identical event-log totals, zero
+corruption), not a number. The Phase 0 results section above is the
+measurement; this section is what was built to take it.
 
 ### Phase 1b — Shard the event log — SHIPPED 2026-07-19 (v3.24.0)
 
@@ -511,60 +515,18 @@ Generalize the episodes `swarm_id` to durable memories.
   attribution per agent, and targeted rollback ("agent 7 drifted —
   tombstone its cohort's contributions, leave everyone else's").
 
-Risk: low, purely additive. This is the backbone Phases 3-4 stand on.
+Risk: low, purely additive. It is also the backbone the unbuilt
+convergence phases would have stood on.
 
-### Phase 3 — Convergent dedup (collapse concurrent rediscovery)
+### Phases 3 to 5 — not tracked here
 
-Two halves, one goal: M agents find the same fact, store keeps one.
-
-- **(a) In-flight claim reservation.** A small `inflight_claims` table
-  in the existing index SQLite db (WAL, already multi-process). Before
-  a swarm agent commits a *new* memory, it reserves a content
-  fingerprint (reuse the dedup tokenizer's raw token-set / a simhash).
-  A peer mid-write on a matching fingerprint makes the later writer
-  attach a corroboration to the winner instead of creating a
-  duplicate. Closes the committed-store-only blind spot.
-- **(b) Swarm-aware consolidation.** Extend the existing
-  `consolidate` pass with a cohort mode that folds same-run near-dups
-  into one memory, unioning provenance (all M agents) and boosting
-  confidence by corroboration count. New mode on an existing engine,
-  not a new engine.
-
-Risk: medium. (a) touches the hot write path — keep it best-effort and
-behind the same "index failure never fails the canonical write"
-contract the index upsert already honors. (b) is offline and safe.
-
-### Phase 4 — Disjoint-merge instead of CAS-reject
-
-Turn most same-memory swarm conflicts into automatic convergence.
-
-- Only engages *when the CAS would otherwise reject*. The caller
-  already carries the pre-edit snapshot (`updated`); load the common
-  ancestor and attempt a structured 3-way merge on the body. Memories
-  are short; sentence/line-level 3-way resolves disjoint additions
-  cleanly.
-- Irreconcilable overlap still raises `ConcurrentUpdateError` —
-  Property 1 (safety) is never traded for convergence. Last-writer
-  reject stays the fallback; merge is the optimization on top.
-- Append-only frontmatter (verified_paths, links, corroborations)
-  unions rather than conflicts.
-
-Risk: medium-high (merge correctness). Mitigated by gating strictly
-behind the existing CAS, requiring the ancestor snapshot, and heavy
-property tests through the Phase 0 harness. Ship dark behind a config
-flag first.
-
-### Phase 5 — Cross-host convergence (optional, hardest)
-
-Auto-resolve `sync` instead of producing git conflicts.
-
-- Memories are per-file with monotonic `updated`. That makes a
-  per-file CRDT with the frontmatter as state tractable: last-writer
-  by `updated` for scalars, union for append-only lists, tombstone
-  wins over active (delete propagates). `sync pull` applies the merge
-  function instead of leaving a conflict.
-- Highest risk and effort; genuinely optional. Everything above is
-  single-host / shared-filesystem and stands without it.
+Three phases were specified in this document and never built:
+convergent dedup (in-flight claim reservation plus a swarm-aware
+consolidation mode), disjoint-merge behind the existing CAS, and
+cross-host convergence via a per-file CRDT on `sync`. They were spec
+for unbuilt work, which this repository no longer carries — see
+[ROADMAP](ROADMAP.md) for what replaced that habit. What stays below is
+what was measured and what shipped.
 
 ## Test gate
 
@@ -574,7 +536,7 @@ processes, never mocks — mocks are a regression guard layered on top
 of a live run, never a substitute (house rule). No phase merges until
 its benchmark number is recorded in this doc.
 
-## The claim ladder — what each phase licenses you to claim
+## The claim ladder — what shipped work licenses you to claim
 
 - **Today:** "multiple agents can safely share one store." (True,
   small-scale, unmeasured.)
@@ -601,17 +563,11 @@ its benchmark number is recorded in this doc.
   order on a machine whose condition drifts, which confounds "more
   agents" with "later in the run". Say which lock you removed, or say
   nothing.
-- **+ Phases 2-3:** "a fleet converges: independent agents collapse
-  onto shared memories with provenance, instead of multiplying them."
-- **+ Phase 4:** "agents enrich the same memory concurrently and both
-  contributions survive."
-- **+ Phase 5:** "the fleet converges across machines, not just one
-  host."
 
-## Recommended cut line
+## What this licenses the project to say
 
-Phases **0-2** are the high-leverage, low-risk core. They make this
-claim fully true and defensible:
+Phases **0-2** were the high-leverage, low-risk core and are done.
+They make this claim true and defensible:
 
 > Built for agent fleets: multiple agents share one store with no
 > global event-log append lock, benchmarked at N agents with zero
@@ -624,8 +580,3 @@ property; do not post the unqualified version until it is. Note also
 what this blurb does *not* say: it claims zero corruption at N agents,
 which the benchmark does evidence reproducibly, and it claims no ops/s
 figure, which the benchmark currently cannot.)
-
-Phase 3 makes "converge" a strong word. Phase 4 makes it a strong
-demo. Phase 5 is the cross-machine stretch. Recommendation: land 0-2
-as the first milestone, re-post from a place of measured truth, then
-decide 3-5 against real fleet usage rather than a launch deadline.

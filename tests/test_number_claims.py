@@ -208,9 +208,14 @@ _DOC_SURFACE_EXCLUSIONS: dict[str, str] = {
         "tiers it out of its living-document rules for the same reason."
     ),
     "docs/swarm-convergence-plan.md": (
-        "A plan document, exempt from path claims in the doc-claims module "
-        "for the same reason. It quotes a survey's figures and proposes "
-        "work that was never all done."
+        "A dated benchmark record. Its figures are what the Phase 0 sweep "
+        "measured on the day it ran, and the document itself argues at "
+        "length that the absolute rate is dominated by machine conditions "
+        "no run controlled for — so a live re-run moves every number and "
+        "would turn the record red. Same frozen-measurement grounds as "
+        "CHANGELOG.md above. It is NO LONGER exempt from path claims: "
+        "the unbuilt phases left the file, and dropping that exemption "
+        "immediately caught a proposed filename Phase 0 never shipped."
     ),
     "docs/api.md": (
         "States schema and payload sizes throughout the reference prose. "
