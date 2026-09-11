@@ -1799,8 +1799,38 @@ def test_desc_memory_health_enumerates_report_bucket_keys() -> None:
         "audited_total",
         "miss_total",
         "unique_miss_memories",
+        # `actor_slices` payload shape — the two halves of the pivot
+        # (`declared` / `undeclared`) and the per-entry fields
+        # documented inline so a model knows what it can read and
+        # which spellings it can pass to the `client` / `model`
+        # filters. Same category as the `recommendations` row shape
+        # above: field reference, not bucket names. (`declared` and
+        # the brace-listed entry fields are not matched by the regex
+        # anyway — they ride inside one backticked brace group — but
+        # `undeclared` is called out separately in the prose because
+        # its always-present-at-zero contract needs stating.)
+        "client",
+        "models",
+        "principals",
+        "undeclared",
     }
-    extracted = all_ticked - NON_BUCKET
+    # Report METADATA is subtracted from BOTH sides. It is already out
+    # of `expected` below; without the same subtraction here, naming a
+    # metadata field in bucket prose breaks the equality even though
+    # nothing drifted. `actor_slices` names two of them on purpose —
+    # its counts reconcile exactly against `total_active_memories` and
+    # `total_events`, and that invariant cannot be stated without
+    # naming what it reconciles against. A metadata name is never a
+    # bucket name, in either direction, so this is the rule rather
+    # than a per-field exception.
+    METADATA = {
+        "generated_at",
+        "window_days",
+        "total_active_memories",
+        "total_events",
+        "distinct_sessions",
+    }
+    extracted = all_ticked - NON_BUCKET - METADATA
 
     # DERIVED from `HealthReport.to_dict()`, not hand-listed. The
     # hand-listed version of this set is how `telemetry_coverage` shipped
@@ -1826,16 +1856,8 @@ def test_desc_memory_health_enumerates_report_bucket_keys() -> None:
             distinct_sessions=0,
         ).to_dict()
     )
-    # Report metadata — surfaced in the same DESC string but ABOVE the
-    # sliced region, because they describe the run rather than name a
-    # bucket.
-    METADATA = {
-        "generated_at",
-        "window_days",
-        "total_active_memories",
-        "total_events",
-        "distinct_sessions",
-    }
+    # METADATA is defined above the extraction, because it is
+    # subtracted from both sides — see the comment there.
     # Keys that are real wire keys and deliberately NOT in the bucket
     # region. Each needs a reason, because "exclude it" is also how a key
     # goes undocumented:

@@ -39,7 +39,7 @@ import bisect
 import json
 import os
 import re
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -627,6 +627,97 @@ class ScopeHealth:
 
 
 @dataclass
+class ActorSlice:
+    """One actor's footprint on the store — the 7.13.0-era read of the
+    per-request caller `identity.py` has stamped on every record and
+    event since 7.10.0.
+
+    Keyed on `client`, because that is the axis a caller can act on:
+    `memory_search(client=...)` / `memory_list(client=...)` select with
+    it (7.12.0), and `identity.actor_matches` is the single definition
+    both of those read. `client=None` is the `undeclared` bucket — see
+    `ActorSlices.undeclared`, which is this same type.
+
+    **Exactly one slice per memory.** Unlike `ScopeHealth`, whose counts
+    deliberately over-sum (a memory carries many scopes and is counted
+    under each), a memory carries exactly ONE actor, so the counts here
+    reconcile exactly against the report's own totals. `ActorSlices`
+    states both invariants and `compute_health` maintains them.
+
+    `models` and `principals` are the CENSUS half: which spellings
+    actually exist under this client, so a caller knows what it can
+    pass to the `model` filter. Declared values only. An empty dict is
+    a measurement — "this client declared none" — never a `<unset>`
+    key, which would put a manufactured spelling into a census whose
+    whole job is to report the real ones.
+    """
+
+    client: str | None
+    # Store-wide, NOT windowed: this is the count that reconciles
+    # against `total_active_memories`.
+    memories: int = 0
+    # The "what did this agent write this run" read. Memories whose
+    # `created` falls inside `window_days`. Always <= `memories`.
+    memories_in_window: int = 0
+    events: int = 0
+    searches: int = 0
+    applies: int = 0
+    models: dict[str, int] = field(default_factory=dict)
+    principals: dict[str, int] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "client": self.client,
+            "memories": self.memories,
+            "memories_in_window": self.memories_in_window,
+            "events": self.events,
+            "searches": self.searches,
+            "applies": self.applies,
+            "models": dict(self.models),
+            "principals": dict(self.principals),
+        }
+
+
+@dataclass
+class ActorSlices:
+    """Per-actor pivot on the store, plus the bucket for everything that
+    declared no actor at all.
+
+    `undeclared` is a FIRST-CLASS bucket and is always present, never an
+    omission. On any store with history it is the majority: every record
+    written before 7.10.0 carries no actor block, and a slice list that
+    named only declared actors would describe a small fraction of the
+    store while looking complete. That is the "could-not-ask
+    manufactures a verdict" class this project publishes a third value
+    for everywhere else, and the same rule applies to a census of who
+    wrote what. Present at zero so "nobody undeclared" and "the field
+    isn't there" cannot read the same.
+
+    It is structurally the same `ActorSlice` type as a named actor, so
+    the two invariants below have no special case:
+
+    * `sum(s.memories for s in declared) + undeclared.memories ==
+      total_active_memories`
+    * `sum(s.events for s in declared) + undeclared.events ==
+      total_events`
+
+    A record whose actor block exists but names no `client` lands in
+    `undeclared` too — it declared no value on the axis this pivot is
+    keyed on — while its `model` / `principal` spellings still surface
+    in that bucket's counters, so nothing it did declare is lost.
+    """
+
+    declared: list[ActorSlice] = field(default_factory=list)
+    undeclared: ActorSlice = field(default_factory=lambda: ActorSlice(client=None))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "declared": [s.to_dict() for s in self.declared],
+            "undeclared": self.undeclared.to_dict(),
+        }
+
+
+@dataclass
 class VerificationDebt:
     """Curation pivot for verification staleness.
 
@@ -1201,6 +1292,16 @@ class HealthReport:
     # neighbor check keeps the bucket actionable: if it fires, there's
     # almost always a real typo to fix.
     rare_scopes: list[str] = field(default_factory=list)
+    # Per-actor pivot — "what did the fleet's seventh agent write this
+    # run" — plus the census of which client / model / principal
+    # spellings exist to pass to the 7.12.0 filters. Keyed on the
+    # declared `client`, with an always-present `undeclared` bucket for
+    # records and events whose writer named none (every memory written
+    # before 7.10.0, and any client that names itself in no channel).
+    # Counts reconcile EXACTLY against `total_active_memories` and
+    # `total_events` — see `ActorSlices` for both invariants and why
+    # this pivot can promise an exactness `scope_health` cannot.
+    actor_slices: ActorSlices = field(default_factory=ActorSlices)
     # Use-events whose memory_id resolved to nothing (neither active nor
     # tombstoned). High counts hint at the model fabricating ULIDs in
     # `memory_record_use` — a quality signal worth surfacing.
@@ -1321,6 +1422,7 @@ class HealthReport:
             "scope_distribution": dict(self.scope_distribution),
             "scope_health": [s.to_dict() for s in self.scope_health],
             "rare_scopes": list(self.rare_scopes),
+            "actor_slices": self.actor_slices.to_dict(),
             "orphan_use_events": self.orphan_use_events,
             "verification_debt": self.verification_debt.to_dict(),
             "cross_repo_drift": (
@@ -1372,6 +1474,12 @@ class _AccumulatorRollups:
     marker_fires: Counter[str]
     marker_overrides: Counter[str]
     sessions: set[str]
+    # Per-actor event footprint keyed by declared `client`, `None` for
+    # undeclared. Counts EVERY event, so it reconciles against
+    # `total_events` below.
+    actor_events: Counter[str | None]
+    actor_searches: Counter[str | None]
+    actor_applies: Counter[str | None]
     total_events: int
     orphan_use_events: int
     # Per-audit `(ts, verdict_or_None)` records. The verdict rides
@@ -1496,6 +1604,15 @@ class _StatsAccumulator:
         self._marker_fires: Counter[str] = Counter()
         self._marker_overrides: Counter[str] = Counter()
         self._sessions: set[str] = set()
+        # Per-actor event footprint, keyed by declared `client` with
+        # `None` for "this event's writer declared no client". Read in
+        # ONE place (`_note_actor`, from `handle_event`) rather than
+        # per-kind, so the pivot counts every event the report counts
+        # and the `events` invariant in `ActorSlices` holds by
+        # construction rather than by keeping N handlers in step.
+        self._actor_events: Counter[str | None] = Counter()
+        self._actor_searches: Counter[str | None] = Counter()
+        self._actor_applies: Counter[str | None] = Counter()
         self._total_events = 0
         self._orphan_use_events = 0
         # Audit telemetry is buffered as `(ts, verdict)` pairs and
@@ -1607,6 +1724,8 @@ class _StatsAccumulator:
         sess = ev.get("session") or ev.get("session_id")
         if isinstance(sess, str) and sess and not self._is_admin_recorded_event(ev):
             self._sessions.add(sess)
+
+        self._note_actor(ev)
 
         kind = ev.get("kind")
         handler = self._HANDLERS.get(kind) if isinstance(kind, str) else None
@@ -1840,6 +1959,41 @@ class _StatsAccumulator:
         if is_hook_telemetry_event(ev):
             self._hook_telemetry_events += 1
 
+    def _note_actor(self, ev: dict[str, Any]) -> None:
+        """Attribute one event to its writer's declared `client`.
+
+        Deliberately NOT a `_handle_<kind>` method: those are dispatch
+        targets and `test_handlers_table_matches_handle_methods` pins
+        the table against them. This runs for EVERY event from
+        `handle_event`, which is the point — the per-actor `events`
+        count has to reconcile against `total_events`, and a per-kind
+        hook would only ever see the kinds that have handlers.
+
+        A malformed `actor` (anything but a dict) and a non-string
+        `client` both read as undeclared rather than raising: this is a
+        census over an append-only log that older writers and other
+        clients also append to, and one bad line must not blank the
+        whole pivot. Same defensive posture as the `session` read
+        above.
+        """
+        actor = ev.get("actor")
+        client: str | None = None
+        if isinstance(actor, dict):
+            raw = actor.get("client")
+            if isinstance(raw, str) and raw:
+                client = raw
+        self._actor_events[client] += 1
+        kind = ev.get("kind")
+        if kind == "search":
+            self._actor_searches[client] += 1
+        elif kind == "use" and ev.get("outcome") == "applied":
+            # Per EVENT, not per id: this pivot answers "how much did
+            # this actor settle", and one `memory_record_use` call
+            # carrying five ids is one act of settlement. The per-id
+            # counts stay on `MemoryStats.applied_count`, which is the
+            # basis the dead-weight and endorsement rules read.
+            self._actor_applies[client] += 1
+
     def _append_resolution(self, mid: str, kind: str, ts_str: Any, note: Any) -> None:
         # Defensive against malformed events: a missing or non-string
         # timestamp would still be useful in the timeline (the kind
@@ -1862,6 +2016,9 @@ class _StatsAccumulator:
             marker_fires=self._marker_fires,
             marker_overrides=self._marker_overrides,
             sessions=self._sessions,
+            actor_events=self._actor_events,
+            actor_searches=self._actor_searches,
+            actor_applies=self._actor_applies,
             total_events=self._total_events,
             orphan_use_events=self._orphan_use_events,
             silent_miss_audited=self._silent_miss_audited,
@@ -1898,6 +2055,65 @@ class _StatsAccumulator:
         "silent_miss_cutoff": _handle_silent_miss_cutoff,
         "miss_ack": _handle_miss_ack,
     }
+
+
+def _build_actor_slices(
+    *,
+    memories: Counter[str | None],
+    memories_in_window: Counter[str | None],
+    models: "defaultdict[str | None, Counter[str]]",
+    principals: "defaultdict[str | None, Counter[str]]",
+    events: Counter[str | None],
+    searches: Counter[str | None],
+    applies: Counter[str | None],
+) -> ActorSlices:
+    """Fold the memory-side and event-side per-actor counters into one
+    pivot, with the undeclared bucket split out.
+
+    The key set is the UNION of every counter's keys, not the memory
+    counter's alone. An actor that only searched this window wrote no
+    memory, and dropping it would silently lose the events it is
+    accountable for — and with them the `events` invariant. The reverse
+    (a client that wrote before 7.10.0 and has never searched since)
+    is just as real.
+
+    `None` is pulled out into `undeclared` rather than sorted among the
+    named clients: it is the answer "nobody declared", and leaving it
+    in a list of names would invite a consumer to render it as a client
+    called None. It is emitted even when every counter is empty, so a
+    fully-attributed store still publishes the bucket at zero.
+
+    Declared slices sort by memory count descending, then by client
+    name, so the render order is stable across runs for a consumer
+    diffing two reports.
+    """
+    keys: set[str | None] = (
+        set(memories)
+        | set(memories_in_window)
+        | set(models)
+        | set(principals)
+        | set(events)
+        | set(searches)
+        | set(applies)
+    )
+
+    def slice_for(key: str | None) -> ActorSlice:
+        return ActorSlice(
+            client=key,
+            memories=memories.get(key, 0),
+            memories_in_window=memories_in_window.get(key, 0),
+            events=events.get(key, 0),
+            searches=searches.get(key, 0),
+            applies=applies.get(key, 0),
+            models=dict(models[key]) if key in models else {},
+            principals=dict(principals[key]) if key in principals else {},
+        )
+
+    declared = sorted(
+        (slice_for(k) for k in keys if k is not None),
+        key=lambda s: (-s.memories, s.client or ""),
+    )
+    return ActorSlices(declared=declared, undeclared=slice_for(None))
 
 
 def compute_health(
@@ -2004,6 +2220,11 @@ def compute_health(
     origin_worktree_by_id: dict[str, str | None] = {}
     claims_by_id: dict[str, tuple[str, ...]] = {}
     verified_head_by_id: dict[str, str | None] = {}
+    actor_memories: Counter[str | None] = Counter()
+    actor_memories_in_window: Counter[str | None] = Counter()
+    actor_models: defaultdict[str | None, Counter[str]] = defaultdict(Counter)
+    actor_principals: defaultdict[str | None, Counter[str]] = defaultdict(Counter)
+
     for m in memories:
         by_id[m.id] = MemoryStats(
             id=m.id,
@@ -2015,6 +2236,23 @@ def compute_health(
             last_corroborated=m.last_corroborated,
             category=m.category,
         )
+        # Per-actor census, keyed on the declared `client` with None
+        # for "declared nothing on this axis". `m.actor` is absent on
+        # every memory written before 7.10.0, and an actor that
+        # declared only a model has a None client — both land in the
+        # undeclared bucket, whose model/principal counters still
+        # record what they DID declare.
+        actor = m.actor
+        actor_client = actor.client if actor is not None else None
+        actor_memories[actor_client] += 1
+        created_at = _ensure_utc(m.created)
+        if created_at is not None and created_at >= cutoff:
+            actor_memories_in_window[actor_client] += 1
+        if actor is not None:
+            if actor.model:
+                actor_models[actor_client][actor.model] += 1
+            if actor.principal:
+                actor_principals[actor_client][actor.principal] += 1
         origin_repo_by_id[m.id] = m.origin.repo if m.origin else None
         origin_worktree_by_id[m.id] = m.origin.worktree_root if m.origin else None
         anchor_paths_by_id[m.id] = commit_drift_anchor_paths(m.body, m.verified_paths)
@@ -2052,6 +2290,27 @@ def compute_health(
 
     scope_distribution = Counter(
         scope for stats in by_id.values() for scope in stats.scopes
+    )
+
+    # Per-actor pivot. Built from the memory walk above and the event
+    # rollups together, in Python, from the arguments this function was
+    # handed — deliberately NOT off the index's v11 actor columns.
+    # `compute_health` is pure over memories + events and never sees an
+    # index (`provenance` is the one index-backed field and it is
+    # populated a layer up, in `report_for_directory`); the events half
+    # has no index at all; and an index can legitimately sit a row
+    # behind disk between a write and a rebuild, which would put this
+    # report's own reconciliation invariants in disagreement with
+    # themselves. The v11 columns serve `memory_search`'s SQL
+    # prefilter, which is what they were added for.
+    actor_slices = _build_actor_slices(
+        memories=actor_memories,
+        memories_in_window=actor_memories_in_window,
+        models=actor_models,
+        principals=actor_principals,
+        events=rollups.actor_events,
+        searches=rollups.actor_searches,
+        applies=rollups.actor_applies,
     )
 
     # Dead weight: the memory IS being retrieved within the window but
@@ -2330,6 +2589,7 @@ def compute_health(
         scope_distribution=dict(scope_distribution),
         scope_health=scope_health,
         rare_scopes=rare_scopes,
+        actor_slices=actor_slices,
         orphan_use_events=orphan_use_events,
         verification_debt=verification_debt,
         commit_drift_debt=commit_drift_debt,
@@ -3034,6 +3294,33 @@ def render_text(report: HealthReport) -> str:
             f"cold={sh.cold:<3} contradicted={sh.contradicted:<3} "
             f"applied={sh.applied_total}"
         )
+
+    lines.append("")
+    slices = report.actor_slices
+    lines.append(f"Actors ({len(slices.declared)} declared):")
+    if not slices.declared:
+        lines.append("  (none declared)")
+    for sl in slices.declared:
+        spellings = ""
+        if sl.models:
+            spellings += f"  models={','.join(sorted(sl.models))}"
+        if sl.principals:
+            spellings += f"  principals={','.join(sorted(sl.principals))}"
+        lines.append(
+            f"  {(sl.client or ''):<20} memories={sl.memories:<5} "
+            f"in-window={sl.memories_in_window:<5} events={sl.events:<6} "
+            f"searches={sl.searches:<5} applies={sl.applies}{spellings}"
+        )
+    # Always printed, including at zero. On any store with history this
+    # is the majority bucket (every record written before 7.10.0), and
+    # a census that showed only declared actors would read as complete
+    # while describing a fraction of the store.
+    und = slices.undeclared
+    lines.append(
+        f"  {'(undeclared)':<20} memories={und.memories:<5} "
+        f"in-window={und.memories_in_window:<5} events={und.events:<6} "
+        f"searches={und.searches:<5} applies={und.applies}"
+    )
 
     lines.append("")
     lines.append(
