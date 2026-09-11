@@ -7,6 +7,58 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 7.13.0 - 2026-09-11
+
+### Fixed
+
+- `5ccb89c` fix(index): version skew is not corruption, and restart is
+  not reindex. A schema bump is a coordinated upgrade, not a library
+  upgrade: the first upgraded process to touch the store migrates the
+  index, and every already-running server — which keeps the code it
+  imported until its client restarts — becomes a reader too old for the
+  file in front of it. `index.status()` folded that state into the same
+  `corrupt=True` shape as a torn database, so a store with nothing wrong
+  with it reported as damaged on every surface that reads the index, and
+  every one of them prescribed `bettermemory reindex`. That advice
+  cannot work in either direction: run by the older binary it refuses
+  for the same reason, run by the newer one it rewrites the index at a
+  schema the older reader still cannot read. Only restarting the client
+  resolves it. Found by dogfooding the 7.12.0 cut (schema 10 to 11) on a
+  live store, where the false `corrupt` reading stood for about an hour.
+
+  `status()` now publishes a third state instead of collapsing into one
+  of the two it had: `schema_skew: true` carrying `schema_version` (the
+  on-disk schema, which is perfectly readable) and
+  `reader_schema_version`, with no `corrupt` key. `IndexVersionError`
+  carries both numbers as attributes, so the classification reads them
+  off the exception rather than parsing its own message. This is the
+  7.9.0 "could not ask" doctrine applied to a case that predated it: the
+  index being unreadable *by this process* and the index being damaged
+  are different states with different remedies.
+
+  Dropping `corrupt` from that shape moves every caller that routed on
+  it, so `index.index_unreadable()` is now the single definition of
+  "this process cannot use this index" and each router composes it
+  exactly where it composed the old key. The session-start hint is where
+  that mattered: its next gate compares the indexed count against the
+  disk count, and a gate reading the old key alone fell through to
+  announce a divergence between an index that was fine and a disk that
+  was fine.
+
+  The remedy is two constants rather than one — `SCHEMA_SKEW_REMEDY` and
+  `INDEX_CORRUPT_REMEDY` — and `doctor`, the Store startup warning, the
+  session-start hint and the trust surfaces select between them on the
+  cause. Under skew `doctor` reports the two schema versions and never
+  says "corrupt"; a stamped row demoted by an unreadable index carries
+  a recommendation naming the client restart instead of the reindex.
+  The trust rule itself is unchanged: `verified_locally_at` lives only
+  in the index, so an index this process cannot read still means the
+  rule cannot run, whatever the cause.
+
+  `docs/release.md` gains the step this defect was really about: when a
+  release bumps `index.SCHEMA_VERSION`, restart the MCP clients after
+  re-pointing the venvs.
+
 ## 7.12.0 - 2026-09-10
 
 ### Added
