@@ -167,6 +167,20 @@ Since 6.5.0 a restore stamps the record's provenance `local` and records a `rest
 
 - `scopes: list[str] | None = None`. Filter as in `memory_list`.
 
+### `bettermemory rollback --by-actor <client> [--since <ISO_TS>]`
+
+CLI-only; no MCP surface — a targeted destructive rollback driven by an in-session model is a different risk posture, so this is the same CLI-only posture `--acknowledge-misses-before` holds. The identity resolver's third consumer (7.15.0): it removes the memories one actor wrote and leaves every other actor's in place. Each removal is an ordinary tombstone, so `bettermemory tombstones restore <ID>` — or `memory_restore` — puts a record back, with its `actor` intact and therefore selectable again.
+
+- `--by-actor CLIENT` is **required**. Exact, case-sensitive, read through `identity.actor_matches` — the same rule the `client` filters on `memory_search` and `memory_list` select with. There is no default: a rollback with no selector would mean the whole store.
+- `--since ISO_TS` filters `created`, never `updated`, because a record's `actor` and its `created` are stamped by the same write event; pairing a write-time actor with an edit-time timestamp would be incoherent. Requires an explicit UTC offset or trailing `Z` (a naive timestamp is refused, as on `--acknowledge-misses-before`). A far-future value only **warns** here, because it selects nothing rather than hiding everything.
+- `--apply` alone does **not** commit: it requires `--yes` as well and otherwise exits non-zero. This is the widest-blast-radius command in the tool, so it takes the accept-gate posture `consolidate --llm --apply` already carries rather than a weaker one.
+
+Two properties worth knowing before running it. **It selects authorship, not influence** — the `actor` is stamped at write time and never restamped (`Store.update` takes no actor), so a record this client wrote and another later rewrote IS removed, while one it only edited is not; the rendered report says so in its own header. And **a record that declared no client is never selected**: an absent actor is not evidence of some other writer, so it is excluded rather than swept in (the rule `identity.actor_matches` states, and the reason it deliberately differs from `origin.should_include_for_caller`). Because that is the overwhelming majority of any store with history, the report prints the declined count as a first-class line — the same count `memory_health.actor_slices.undeclared` carries — so a small selection can never be misread as "the store is mostly this actor's".
+
+The report's four populations partition the active set **exactly** (`selected + declined_undeclared + other_actor + out_of_window == total_active`), for the same reason `actor_slices` can promise its invariants: a memory carries exactly one actor. It is asserted on every run, not documented and hoped for.
+
+This is deliberately **not** a `consolidate` flag. `consolidate` runs its four structural passes unconditionally before any mode flag fires, so a rollback riding along would also commit whole-store dedup tombstones and demotions; and on a command whose every other flag tunes those passes, `--by-actor` would read as a scope filter rather than a removal.
+
 ## Verification
 
 ### `memory_verify(id, note?, verified_paths?, verified_commits?, verified_versions?, verified_absent_paths?, claims?)`

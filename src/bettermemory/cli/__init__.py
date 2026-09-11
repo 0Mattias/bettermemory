@@ -44,6 +44,7 @@ from . import (
     proposals,
     reindex,
     rename_scope,
+    rollback,
     serve,
     session_start_cmd,
     sync,
@@ -117,6 +118,7 @@ def _build_parser() -> tuple[
         "migrate": migrate.add_subparser(sub),
         "export": export.add_subparser(sub),
         "tombstones": tombstones.add_subparser(sub),
+        "rollback": rollback.add_subparser(sub),
         "episodes": episodes.add_subparser(sub),
         "sync": sync.add_subparser(sub),
         "reindex": reindex.add_subparser(sub),
@@ -168,6 +170,9 @@ def main() -> None:
         return
     if cmd == "tombstones":
         tombstones.run(args, root_parser=parser, sub_parser=subparsers["tombstones"])
+        return
+    if cmd == "rollback":
+        rollback.run(args)
         return
     if cmd == "episodes":
         episodes.run(args, sub_parser=subparsers["episodes"])

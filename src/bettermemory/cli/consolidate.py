@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..config import Config
 from ..store import Store
-from ._common import cli_context, cli_recorder
+from ._common import cli_context, cli_recorder, parse_iso_cutoff
 
 if TYPE_CHECKING:
     from ..events import Recorder
@@ -524,7 +524,6 @@ def _cli_consolidate_acknowledge_misses(
     was written.
     """
     import json as _json
-    from datetime import datetime, timedelta, timezone
 
     from ..events import Recorder, iter_all_events
 
@@ -542,82 +541,17 @@ def _cli_consolidate_acknowledge_misses(
         )
         raise SystemExit(1)
 
-    # Validate the cutoff up front. Accept both `Z` and explicit-offset
-    # ISO forms (matching the Recorder's emission) — `_parse_ts` in
-    # health.py does the same swap, but we re-implement here to keep
-    # the CLI path from importing a private health helper.
-    try:
-        parsed = datetime.fromisoformat(cutoff_ts.replace("Z", "+00:00"))
-    except ValueError:
-        # Bare-date convenience hint: a tired oncall who types
-        # `2026-05-25` (legitimate intent: midnight UTC of that day)
-        # would otherwise just see "invalid ISO timestamp" and have to
-        # guess the format. fromisoformat() *does* accept bare dates
-        # since 3.11, so this branch only fires for genuinely malformed
-        # input — but pointing out the midnight-UTC spelling is the
-        # cheap-help.
-        import re as _re
-
-        bare_date_hint = ""
-        if _re.fullmatch(r"\d{4}-\d{2}-\d{2}", cutoff_ts):
-            bare_date_hint = f" (or '{cutoff_ts}T00:00:00Z' if you meant midnight UTC)"
-        sys.stderr.write(
-            f"acknowledge-misses-before: invalid ISO timestamp "
-            f"{cutoff_ts!r}. Expected e.g. '2026-05-25T05:25:35Z'"
-            f"{bare_date_hint}.\n"
-        )
-        raise SystemExit(1) from None
-
-    # Reject naive timestamps. A bare `2026-05-25T10:00:00` from a
-    # non-UTC user produces a cutoff several hours off-by-zone with no
-    # warning — the rollup compares aware datetimes, so the
-    # discrepancy would only show up days later as a confusing
-    # miss-rate skew. Forcing the user to spell out the offset (or
-    # write `Z`) makes the assumption part of the input.
-    if parsed.tzinfo is None:
-        # If the user typed a bare date, the parse SUCCEEDED (3.11+
-        # fromisoformat accepts it) but produced a naive midnight — so
-        # the hint here is the same as the parse-error branch above:
-        # spell out the offset.
-        sys.stderr.write(
-            f"acknowledge-misses-before: ISO timestamp {cutoff_ts!r} "
-            f"is missing a UTC offset. Pass an explicit offset or "
-            f"trailing `Z` (e.g. '{cutoff_ts}T00:00:00Z' for midnight "
-            f"UTC, or '2026-05-25T01:25:35-04:00' for an explicit "
-            f"offset) so the cutoff isn't silently interpreted as "
-            f"your local zone.\n"
-        )
-        raise SystemExit(1)
-
-    # Refuse far-future cutoffs. A typo like `2126-05-25T00:00:00Z`
-    # parses and validates fine but writes a cutoff a century out;
-    # subsequent `memory_health` runs report `audited_total=0,
-    # miss_total=0` forever and the rollup looks "clean". A small
-    # forward-grace is fine (the existing test exercises `now + 1min`
-    # to clear a freshly-fired miss); a day is generous for legitimate
-    # admin "drop everything up through tomorrow" intent. Beyond that
-    # the input is almost certainly a typo or pasted-wrong-year.
-    now_utc = datetime.now(timezone.utc)
-    far_future_grace = timedelta(hours=24)
-    if parsed > now_utc + far_future_grace:
-        sys.stderr.write(
-            f"acknowledge-misses-before: cutoff {cutoff_ts!r} is more "
-            f"than 24 hours in the future (now is "
-            f"{now_utc.isoformat().replace('+00:00', 'Z')}). This is "
-            f"almost always a typo — a year-2126 cutoff would silently "
-            f"hide every audited event in the log indefinitely. Pass a "
-            f"timestamp at or before "
-            f"{(now_utc + far_future_grace).isoformat().replace('+00:00', 'Z')}.\n"
-        )
-        raise SystemExit(1)
-
-    # Normalize to UTC-Z so every cutoff event in the log uses the same
-    # representation, regardless of which offset the caller passed. The
-    # rollup compares aware datetimes, so this is a presentation detail
-    # rather than a correctness one — but consistent formatting makes
-    # the events easier to eyeball.
-    canonical_cutoff = (
-        parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    # Validate the cutoff up front, through the shared CLI parser
+    # (`_common.parse_iso_cutoff`) that `rollback --since` also uses:
+    # accepts `Z` and explicit offsets, rejects naive input, hints the
+    # midnight-UTC spelling for a bare date, and — on THIS flag —
+    # refuses a far-future value, because a typo'd century would write
+    # a cutoff that hides every audited event in the log indefinitely
+    # while the rollup reads "clean" forever.
+    _, canonical_cutoff = parse_iso_cutoff(
+        cutoff_ts,
+        flag="acknowledge-misses-before",
+        far_future="refuse",
     )
 
     recorder = Recorder(
