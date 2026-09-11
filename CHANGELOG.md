@@ -7,6 +7,64 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 7.15.0 - 2026-09-11
+
+### Added
+
+- `910060f` feat(rollback): remove one actor's writes, leave everyone
+  else's. The identity resolver's third and last consumer. 7.10.0
+  stamped a per-request actor on every record, 7.12.0 read it back as
+  `client` / `model` filters and 7.14.0 pivoted the store by it;
+  `bettermemory rollback --by-actor <client> [--since <ISO_TS>]` now
+  removes by it. One agent's contributions leave the active set, every
+  other actor's stay, and because each removal is an ordinary tombstone
+  `bettermemory tombstones restore <ID>` puts a record back with its
+  `actor` intact — so it is selectable by the same filter again.
+
+  Deliberately its own command rather than a `consolidate` flag.
+  `consolidate` runs its four structural passes unconditionally before
+  any mode flag fires, and documents `--llm` as extending them, so a
+  destructive rollback riding that precedent would also commit
+  whole-store dedup tombstones and category demotions across every
+  actor. Beyond that mechanical trap, every other flag on `consolidate`
+  tunes those passes, so `--by-actor` sitting among them would read as
+  a scope filter rather than as a removal.
+
+  `--apply` alone does not commit: it requires `--yes` as well and
+  otherwise exits non-zero. This is the widest-blast-radius command in
+  the tool — one flag value can select every record an agent ever wrote
+  — so it takes the accept-gate posture `consolidate --llm --apply`
+  already carries rather than a weaker one.
+
+  Selection reads `identity.actor_matches` rather than respelling the
+  rule, which means a record declaring no client is never selected: an
+  absent actor is not evidence of some other writer. On any store with
+  history that is the overwhelming majority, so the report prints the
+  declined count as a first-class line — the same value
+  `memory_health.actor_slices.undeclared` carries — and a small
+  selection cannot be misread as "the store is mostly this actor's".
+  The report's four populations partition the active set exactly
+  (`selected + declined_undeclared + other_actor + out_of_window ==
+  total_active`), asserted on every run rather than documented.
+
+  It selects **authorship, not influence**: the `actor` is stamped at
+  write time and never restamped, so a record this client wrote and
+  another later rewrote is removed, while one it only edited is not.
+  The rendered report states that in its own header, because it is not
+  what "roll back this agent's contributions" otherwise sounds like.
+
+  `--since` filters `created`, never `updated`, since a record's actor
+  and its creation timestamp are stamped by the same write event. The
+  ISO-timestamp discipline moved to a shared `_common.parse_iso_cutoff`
+  that `consolidate --acknowledge-misses-before` now also uses, with
+  the far-future rule as a parameter: a refusal there, where a typo'd
+  century would hide the audit log indefinitely, and a warning here,
+  where it selects nothing and destroys nothing.
+
+  No schema bump (index stays at 11), no migration, and no MCP surface
+  — a targeted destructive rollback driven by an in-session model is a
+  different risk posture, so this is CLI-only.
+
 ## 7.14.0 - 2026-09-11
 
 ### Added
