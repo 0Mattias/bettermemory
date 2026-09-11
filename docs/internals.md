@@ -81,8 +81,9 @@ declared claims on `memory_write` / `memory_verify` (3.40.0).
   "verify to restore delivery" line, which converts the tier's
   verification debt into pressure to pay it. Delivery records nothing
   (the session-start negative mandate is untouched), so v1 adoption is
-  deliberately unmeasured; docs/ROADMAP.md records the two rejected
-  instrumentation shapes and why.
+  deliberately unmeasured; two instrumentation shapes were considered
+  and rejected, both because they would have re-corrupted the cadence
+  census the mandate exists to protect.
 - Claims about the user always stage for confirmation before commit.
 - Write gates instead of trust: durability check (rejects transient
   state), credential check (rejects secret-shaped tokens), duplicate

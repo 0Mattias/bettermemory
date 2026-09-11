@@ -177,7 +177,7 @@ async def test_a_growing_edit_that_ends_mid_sentence_commits(
     filename. Without the length comparison this edit is refused, and so is
     every future edit to any body that legitimately ends on an identifier or
     a list item. That is the 0.4% false-positive rate turned into a
-    permanent refusal, which is precisely the trade the roadmap entry
+    permanent refusal, which is precisely the trade that was
     rejected for a gate.
     """
     server, _ = server_with_events

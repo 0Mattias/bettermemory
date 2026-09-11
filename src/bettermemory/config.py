@@ -599,9 +599,9 @@ class BehaviorConfig:
     # regardless is 9% of the resident tool surface. A schema-deferring
     # client already pays under 1% by fetching schemas on demand, which is
     # why the server instructions name the four tools to load first rather
-    # than offering a preset. Full measurement in docs/ROADMAP.md; the
-    # per-tool figures are re-derived on every run by
-    # tests/test_resident_footprint.py.
+    # than offering a preset. The per-tool figures are re-derived on
+    # every run by tests/test_resident_footprint.py, which is where the
+    # full measurement lives.
     full_tool_surface: bool = True
 
 

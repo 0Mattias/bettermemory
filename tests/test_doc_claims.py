@@ -190,10 +190,11 @@ What is deliberately NOT checked
   ambiguous. Such files are skipped outright.
 * **Commit messages.** Several real instances lived there, but they are
   immutable and not shipped prose. Out of scope by definition.
-* **Planning documents' path claims.** ``docs/ROADMAP.md`` and the
-  ``*-plan.md`` files propose files that do not exist yet — that is what
-  a plan is. Their line-refs and symbol claims *are* checked, since those
-  cite current code.
+* **Planning documents' path claims.** The ``*-plan.md`` files propose
+  files that do not exist yet — that is what a plan is. Their line-refs
+  and symbol claims *are* checked, since those cite current code.
+  ``_PLAN_DOCS`` below carries the membership, which the retired
+  planning document left when this repo stopped carrying plans.
 * **Placeholder paths.** ``src/mod.py``, ``docs/spec.md``, ``src/x.py``
   are syntax examples, not assertions of existence. Stems in
   ``_PLACEHOLDER_STEMS`` are skipped. This is an extractor rule, not an

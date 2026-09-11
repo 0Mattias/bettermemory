@@ -22,8 +22,8 @@ This is the same thing `swarm_id` already means for episodes today (a
 coordinator's cohort, N:1 fan-in).
 
 This is NOT multi-user, and it does not add RBAC, per-agent auth, or
-tenant isolation. "Many users on one store" stays where the
-[roadmap](ROADMAP.md) puts it: a different product, not planned. If a
+tenant isolation. "Many users on one store" stays where this project has always
+put it: a different product, not planned. If a
 future need is "two people share a store with different permissions,"
 that is out of scope here and stays out.
 
@@ -500,8 +500,11 @@ select on the declared actor, over schema-v11 index columns. Read
 record whose writer declared nothing matches no value, so a filtered
 result is a listing of labelled memories rather than a census of who
 wrote what. The per-swarm `memory_health` slice — which is where that
-census belongs — and the targeted rollback are still unshipped;
-`docs/ROADMAP.md` carries them as the next units.
+census belongs — and the targeted rollback have both since shipped,
+generalized to the actor axis the rest of this section describes:
+`memory_health.actor_slices` in v7.14.0, and `bettermemory rollback
+--by-actor` in v7.15.0, which removes one actor's writes and leaves
+everyone else's.
 
 Generalize the episodes `swarm_id` to durable memories.
 

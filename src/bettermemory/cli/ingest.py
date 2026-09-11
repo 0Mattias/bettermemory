@@ -223,10 +223,10 @@ def _cli_ingest(
         # the list is checked against `--scope` values and anything a
         # source file carries.
         #
-        # Still NOT enforced on this path, and `docs/ROADMAP.md` carries
-        # them: the `max_content_bytes` / `min_content_tokens` /
-        # `max_scopes_per_write` caps, which live in the same
-        # `_validate_write_payload` and which no gate reads either.
+        # Still NOT enforced on this path: the `max_content_bytes` /
+        # `min_content_tokens` / `max_scopes_per_write` caps, which live
+        # in the same `_validate_write_payload` and which no gate reads
+        # either.
         #
         # `force` has to arrive here too, not only at plan time — the apply
         # loop runs its own dedup gate, so a plan computed under --force was

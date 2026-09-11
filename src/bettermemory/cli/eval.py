@@ -116,7 +116,8 @@ def add_subparser(
             "under the pinned improvement rule, check the "
             "outcome_demotion invariant, and print the density "
             "preconditions. Measurements only — read the output against "
-            "the declared bars in docs/ROADMAP.md. Honours `--since` "
+            "the declared bars, which are maintainer-held and not "
+            "published in this repository. Honours `--since` "
             "and `--json`; ignores the rate-mode knobs."
         ),
     )
@@ -226,7 +227,7 @@ def _cli_eval(
       the `turn_audited` stream (needs 3.14+ per-turn top_hits).
       Answers "what would a widened rule flag that v1 misses?".
     - ``--usage-replay``: aggregate the per-turn usage-toggle captures
-      for the usage-signal flip bars (docs/ROADMAP.md). Answers "when
+      for the usage-signal flip bars (maintainer-held). Answers "when
       a usage flag changed a top-1, was the flag's pick better?".
     - ``--report``: one publishable markdown document composing the
       rate trio (window vs all-time), per-model telemetry, the

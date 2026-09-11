@@ -797,7 +797,7 @@ _WRITE_GATES: tuple[WriteGate, ...] = (
 #   to offer, and it scopes the transient and dedup checks to the
 #   LLM-authored claim while the credential scan and the size cap judge the
 #   provenance-stamped text. So it is policy review, not a mechanical
-#   reroute (`docs/ROADMAP.md` carries it as such).
+#   reroute; `tests/test_proposals_gate_parity.py` pins the divergence.
 #
 # What deliberately stays OUT of this function: recorder events,
 # `_corroborate_duplicate`, and SessionState staging. Those need `recorder`

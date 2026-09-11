@@ -6451,7 +6451,7 @@ _DESC_BUDGET_PRESSURE = _DESC_BUDGET_CEILING - 100
 # Two numbers worth writing down for whoever budgets the next field-pin. The
 # precedent said this shape costs ~141 (ba6360e +120, 0bf7a49 +21) against 110
 # of headroom, i.e. it overran the HARD ceiling, not merely the warning — the
-# roadmap's "~112-150" low end was already too optimistic. And the schema half
+# earlier "~112-150" low end was already too optimistic. And the schema half
 # was never the constraint: `acknowledge_truncation` cost 60 characters against
 # 371 of remainder headroom under `_REMAINDER_CEILING`. Description prose was
 # the whole blocker, which is why reclamation and not a ceiling bump was the

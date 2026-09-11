@@ -2078,11 +2078,11 @@ def render_widening_preview_text(report: WideningPreviewReport) -> str:
 # ---------------------------------------------------------------------------
 #
 # The counting lane above answers "how MANY turns would a widened rule
-# flag"; the flip decision the roadmap gates on needs "WHICH turns,
-# against WHICH memories, on what evidence" — without that, a big
-# delta is uninterpretable (it could be one over-matched memory or a
-# genuinely wide blind spot). This lane dumps the flagged cohort so a
-# human (or the model itself) can precision-label it.
+# flag"; the flip decision the declared bars gate on needs "WHICH
+# turns, against WHICH memories, on what evidence" — without that, a
+# big delta is uninterpretable (it could be one over-matched memory or
+# a genuinely wide blind spot). This lane dumps the flagged cohort so
+# a human (or the model itself) can precision-label it.
 #
 # Evidence per turn is exactly what the `turn_audited` event already
 # carries — no new logging: the redacted `probe_query`
@@ -2521,15 +2521,16 @@ def render_widening_detail_text(report: WideningDetailReport) -> str:
 # ---------------------------------------------------------------------------
 #
 # The usage-aware ranking flags (`search.USAGE_FLAG_NAMES`) ship default-
-# off with declared flip bars in docs/ROADMAP.md. The bars' replay clause
-# reads exact per-turn toggle captures: `probe_for_miss` computes, inside
-# the production ranker, what each flag-enabled probe's top-1 would have
-# been with that one flag toggled off, and the capture lands additively
-# on `turn_audited` / `prompt_recall` events (`usage_active` +
-# `usage_toggles`). This section AGGREGATES those captures over a window
-# and judges each changed top-1 under a pinned rule. It measures; it
-# never decides — the bars are read against docs/ROADMAP.md by a human
-# (or a session acting for one), and an unread bar is a hold.
+# off with declared flip bars the maintainer holds. The bars' replay
+# clause reads exact per-turn toggle captures: `probe_for_miss`
+# computes, inside the production ranker, what each flag-enabled
+# probe's top-1 would have been with that one flag toggled off, and
+# the capture lands additively on `turn_audited` / `prompt_recall`
+# events (`usage_active` + `usage_toggles`). This section AGGREGATES
+# those captures over a window and judges each changed top-1 under a
+# pinned rule. It measures; it never decides — the bars are
+# maintainer-held and read by a human (or a session acting for one),
+# and an unread bar is a hold.
 #
 # Why aggregation-only, and why no reconstruction lane for pre-capture
 # history: the factors multiply per-LEG scores before RRF rank fusion,
@@ -2722,7 +2723,7 @@ class UsageFlagReplay:
 class UsageReplayReport:
     """Everything the usage-signal flip-bar read consumes, in one shape.
 
-    Measurements only — the declared thresholds live in docs/ROADMAP.md
+    Measurements only — the declared thresholds are maintainer-held
     and are deliberately NOT duplicated here, so the read compares one
     measured report against one declared entry and nothing in between
     can drift. `turns_without_capture` folds together pre-capture
@@ -3157,10 +3158,11 @@ def render_usage_replay_text(report: UsageReplayReport) -> str:
             else:
                 lines.append("    violations: 0")
     lines.append("")
-    lines.append("Read these numbers against the declared flip bars in docs/ROADMAP.md")
     lines.append(
-        "(the usage-signal flags entry). This surface measures; it never flips."
+        "Read these numbers against the usage-signal flip bars, which are "
+        "maintainer-held and not published in this repository."
     )
+    lines.append("This surface measures; it never flips.")
     return "\n".join(lines) + "\n"
 
 

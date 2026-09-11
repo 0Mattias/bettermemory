@@ -437,7 +437,7 @@ class MissReport:
     # subset whose single-flag toggle CHANGES the top-1 memory to the
     # counterfactual winner's raw coverage features (see
     # `search._compute_usage_toggles`). Recorded so the usage-signal
-    # flip bars (docs/ROADMAP.md) are readable from the event log
+    # flip bars (maintainer-held) are readable from the event log
     # alone — `eval.compute_usage_replay` is the consumer.
     usage_active: tuple[str, ...] = ()
     usage_toggles: dict[str, Any] | None = None
@@ -549,8 +549,9 @@ def turn_audited_fields(
     # is the per-flag denominator ("the flag had live signal on this
     # turn"); `usage_toggles` carries only the flags whose toggle
     # changed the top-1, with the counterfactual winner's raw features.
-    # Together they make the usage-signal flip bars (docs/ROADMAP.md)
-    # readable from the log alone via `eval.compute_usage_replay`.
+    # Together they make the usage-signal flip bars — maintainer-held,
+    # not published here — readable from the log alone via
+    # `eval.compute_usage_replay`.
     if report.usage_active:
         fields["usage_active"] = list(report.usage_active)
     if report.usage_toggles:

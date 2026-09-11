@@ -57,8 +57,8 @@ if TYPE_CHECKING:
 # how links surface at retrieval) moved to docs/api.md's "Inter-memory
 # links" section. That reclaimed 658 characters of the always-resident
 # description budget, which is what let the truncation gate below ship at
-# all; see docs/ROADMAP.md. Re-measure `_DESC_BASELINE` before trimming
-# further — this tail is no longer the cheap reclamation it was.
+# all. Re-measure `_DESC_BASELINE` before trimming further — this tail
+# is no longer the cheap reclamation it was.
 DESC_MEMORY_LINKS_TAIL = (
     " Each `links` entry is `{type, target_id (a ULID), note?}`. The types: "
     "`supersedes` (prefer this over the target), `contradicts` (both cannot "

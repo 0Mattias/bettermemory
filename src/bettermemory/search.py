@@ -3302,8 +3302,8 @@ def _hybrid_fuse(
 
 # Closed set of usage-aware ranking flags the toggle capture can report on.
 # Order is presentation order; the names are the `[behavior]` keys verbatim
-# so the offline reader (`eval.compute_usage_replay`) and the ROADMAP's
-# declared flip bars talk about the same identifiers.
+# so the offline reader (`eval.compute_usage_replay`) and the declared
+# flip bars talk about the same identifiers.
 USAGE_FLAG_NAMES: tuple[str, ...] = (
     "endorsement_boost",
     "outcome_demotion",
@@ -3572,10 +3572,10 @@ def search(
       toggle is a property of THIS CALL's ranker inputs, not of any
       memory. The silent-miss probe (`audit.probe_for_miss`) is the
       consumer: the capture lands on `turn_audited` / `prompt_recall`
-      events so the usage-signal flip bars (docs/ROADMAP.md) can be
-      read from the log alone. `None` (the default) skips the capture
-      entirely — byte-stable in both output and cost — and the dict
-      stays empty when no usage input carries live signal.
+      events so the usage-signal flip bars can be read from the log
+      alone. `None` (the default) skips the capture entirely —
+      byte-stable in both output and cost — and the dict stays empty
+      when no usage input carries live signal.
     - `rescue_expansion`: hybrid-mode only, DEFAULT OFF. When True,
       two query-time repairs from the retrieval campaign run:
       (a) listed discourse-filler words (`expansion.QUERY_FILLER_WORDS`)

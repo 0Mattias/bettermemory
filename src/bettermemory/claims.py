@@ -383,7 +383,8 @@ def claim_is_addressable(claim: Claim) -> bool:
     cost on a file the caller already cited; the alternative is a
     silent false-fresh on the trust surface, which is not a trade this
     project makes. Recovering that precision needs the assignment's line
-    span read from the worktree at scoring time (see ROADMAP).
+    span read from the worktree at scoring time (an open item, tracked
+    outside this repository).
 
     Deliberately NOT a `claim_level_drift` change: the bench imports
     that function and `docs/api.md` publishes its measured alert rate,

@@ -2194,7 +2194,7 @@ def test_session_start_exits_0_when_the_reader_hung_up(tmp_path: Path) -> None:
 
 # ---------------------------------------------------------------------------
 # The standing tier (`[behavior] standing_tier`) — fresh-verified ambient
-# bodies appended to the hint. Spec settled in docs/ROADMAP.md: cohort is
+# bodies appended to the hint. Spec as settled: cohort is
 # the `ambient` category; a computed-fresh staleness verdict is the
 # admission ticket; hard byte budget with whole-memory truncation only;
 # default OFF; the negative mandate untouched.
@@ -2454,7 +2454,7 @@ def test_standing_tier_records_nothing(
     `test_session_start_records_nothing` holds the mandate for the
     default path; this holds it for the flag-on path with a real
     delivery, which is the run a would-be `standing_delivered` event
-    would land in. The ROADMAP records why no such event exists (both
+    would land in. No such event exists by decision (both
     instrumentation shapes considered would re-corrupt the cadence
     census); this test is what makes that decision enforceable rather
     than archival.

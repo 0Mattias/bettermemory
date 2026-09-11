@@ -572,7 +572,7 @@ class TestComputeUsageReplay:
         the `prompt_recall` and its same-turn `turn_audited` companion
         passed the filters, so replayable_turns / active_turns /
         changed_turns and every judgment double-counted the recall
-        cohort — the ROADMAP bars' "n >= 10 changed turns" hold was
+        cohort — the declared bars' "n >= 10 changed turns" hold was
         crossable with 5 real turns. The kept row must be the recall
         (it records what the model was shown)."""
         t0 = _NOW - timedelta(hours=3)

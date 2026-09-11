@@ -1343,8 +1343,8 @@ def test_openai_provider_disables_sdk_retries(
 # The hand-rolled gates nothing executed
 # ---------------------------------------------------------------------------
 #
-# `docs/ROADMAP.md` and the `_WRITE_GATES` header comment
-# (`src/bettermemory/handlers/write.py`) both defend these gates as a
+# The `_WRITE_GATES` header comment
+# (`src/bettermemory/handlers/write.py`) defends these gates as a
 # DELIBERATE divergence from the shared `apply_write_gates` chain: they judge
 # the LLM-authored claim (`proposal.body`), not the stamped body that
 # persists, and rerouting them would silently change which text each rule

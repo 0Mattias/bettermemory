@@ -93,7 +93,7 @@ the label, never the body. The discipline that protects the surface:
 * The negative mandate is untouched: delivery records nothing, so
   adoption is unmeasured in v1 by decision (both instrumentation
   shapes considered would have re-corrupted the cadence census the
-  mandate exists to protect; the ROADMAP entry records them).
+  mandate exists to protect).
 * A failure anywhere in the standing computation degrades to a stderr
   note and the base hint ships without the section — the proven half
   of the block never rides on the new half.
@@ -149,7 +149,7 @@ _MAX_SCOPES_SHOWN = 5
 # header, overflow count, stale aggregate — are small bounded constants
 # and deliberately outside the budget: the stale line is the tier's
 # verification-pressure mechanism and must appear even when the budget
-# is spent. ~1 KB is the ROADMAP-settled figure: the SessionStart block
+# is spent. ~1 KB is the settled figure: the SessionStart block
 # already carries the scope counts, Claude Code truncates oversized
 # injected blocks wholesale, and a tier that grows past a few short
 # bodies has stopped being "standing context" and become an unread wall.
@@ -668,12 +668,12 @@ def _render_standing(
     trusting that invariant with a TypeError). Ties break on id,
     descending, so two same-second verifies order deterministically.
 
-    The budget walk implements the ROADMAP's two distinct non-fit
-    cases: an entry larger than the WHOLE budget can never be delivered,
-    so it is skipped and the walk continues — otherwise one oversized
-    body would permanently starve everything verified before it — while
-    an entry that merely exceeds the REMAINING budget stops the walk,
-    because delivering an older body after declining a newer one would
+    The budget walk implements two distinct non-fit cases: an entry
+    larger than the WHOLE budget can never be delivered, so it is
+    skipped and the walk continues — otherwise one oversized body would
+    permanently starve everything verified before it — while an entry
+    that merely exceeds the REMAINING budget stops the walk, because
+    delivering an older body after declining a newer one would
     invert the priority order the sort just established. Both cases,
     and everything behind a stop, land in the same "…and K more" count:
     undelivered is undelivered, and the model's remedy for all of them

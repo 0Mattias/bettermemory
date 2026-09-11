@@ -766,7 +766,7 @@ def _render_recall_block(
     so rank 1 is the only hit the ~2%-of-turns fire rate was measured
     for; injecting the rank 2-3 hits would widen delivery beyond the
     measured rule exactly the way the dropped w1/w2 label-widening
-    candidates were measured NOT to earn (docs/ROADMAP.md).
+    candidates were measured NOT to earn.
 
     The block is a POINTER, not a payload: id + scopes + the
     query-biased snippet that cleared the bar, plus the verify-first

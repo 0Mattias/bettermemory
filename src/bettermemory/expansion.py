@@ -1,10 +1,10 @@
 """Committed vocabulary tables for query-time rescue expansion.
 
-The retrieval campaign's Phase-1 lane (see docs/ROADMAP and
-the retrieval-bench notes): the measured gap between a casual query and
-a stored fact is VOCABULARY — the query says "toggles", the memory says
-"feature flags" — and on the gold set that gap is worth 25 recall@1
-points (60% semantic-arm vs 35% lexical, both corpora). These tables
+The retrieval campaign's Phase-1 lane (see the retrieval-bench notes):
+the measured gap between a casual query and a stored fact is
+VOCABULARY — the query says "toggles", the memory says "feature
+flags" — and on the gold set that gap is worth 25 recall@1 points
+(60% semantic-arm vs 35% lexical, both corpora). These tables
 attack it in deterministic code, under the WaC rules the project ships
 by ("the code is the model"):
 

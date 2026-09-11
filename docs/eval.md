@@ -248,8 +248,8 @@ Five additional modes:
   Both lanes share one event-filter pipeline (`_collect_replayable_
   audits`), so the counts and the listed turns can never disagree.
 - `--usage-replay`: the measurement surface for the usage-signal
-  ranking flags' declared flip bars (the top Planned entry in
-  docs/ROADMAP.md). On a store running any of `endorsement_boost` /
+  ranking flags' declared flip bars, which are maintainer-held and
+  not published here. On a store running any of `endorsement_boost` /
   `outcome_demotion` / `corroboration_boost`, every probe records —
   additively, on `turn_audited` and `prompt_recall` events — which
   flags had live signal (`usage_active`: a non-neutral factor on at
@@ -282,8 +282,8 @@ Five additional modes:
   latest-wins semantics; per-event `miss_ack`s reference a
   `search_miss`'s event id, which no audit/recall row carries, so they
   are structurally unjoinable here and not applied. Measurements only:
-  the declared thresholds stay in docs/ROADMAP.md, and an unread bar
-  is a hold.
+  the declared thresholds are maintainer-held and unpublished, and an
+  unread bar is a hold.
 
 All honor `--since`; all but `--report` honor `--json` (the report is
 markdown by construction). Rules live in `eval.THRESHOLD_RULES` /
