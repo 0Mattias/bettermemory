@@ -362,7 +362,7 @@ def _check_storage_directory(cfg: Config) -> tuple[Diagnosis, Path | None]:
     # have flipped `doctor` from exit 0 to exit 1 for every store created
     # before the root got its explicit mode, on the first run after
     # upgrading, breaking the "exits 0 when it's wired correctly" contract
-    # that CI gates rely on. Since the heal is what `Store.__post_init__`
+    # that CI gates rely on. Since the heal is what `Store.ensure()`
     # does on open anyway, and the same helper backs both, the only
     # condition that survives to `warn` here is the one worth a human's
     # attention: a filesystem that refuses the chmod (sandbox, some
@@ -527,11 +527,13 @@ def _check_memory_parse_health(
     warning about corruption nobody can find. The re-read either names a
     file or the check goes green.
     """
-    # Don't construct a Store against a non-existent path: Store.__post_init__
-    # would mkdir it (+ a .tombstones/ subdir), a write side effect from a
-    # read-only probe. Mirrors the sibling checks' `if not directory.exists()`
-    # guard. (The live caller already gates on directory.exists(); this keeps
-    # the helper safe in isolation / if that gate is ever reordered.)
+    # Guard a non-existent path rather than probing it. Until 7.17.0 this
+    # was load-bearing for a sharper reason: constructing a Store would
+    # mkdir the path (+ a .tombstones/ subdir), a write side effect from a
+    # read-only probe. Construction is pure now, so the hazard is gone and
+    # this is an ordinary "nothing to check here" early return — kept
+    # because it still mirrors the sibling checks' `if not
+    # directory.exists()` guard and keeps the helper correct in isolation.
     if not directory.exists():
         return Diagnosis(
             name="memory_parse_health",

@@ -93,6 +93,18 @@ _ALLOWED: dict[tuple[str, str], str] = {
         "The same example, showing how trailing punctuation is stripped."
     ),
     ("src/bettermemory/proposals.py", "and roadmap prose with no"): _PROSE_CLASS,
+    (
+        "tests/test_store_provisioning.py",
+        "is the same instrument `tests/test_roadmap_citations.py`",
+    ): (
+        "Not a citation of the retired planning document at all — it names "
+        "THIS test module, whose filename happens to contain the word. The "
+        "sweep is case-insensitive and filename-blind by design (that width "
+        "is what caught the lowercase 'on the roadmap' class in 7.15.1), so "
+        "a sibling guard that cross-references this one trips it. Keeping "
+        "the cross-reference is worth one allowlist entry: it is how a "
+        "reader of the 7.17.1 ratchet finds the instrument it was modelled on."
+    ),
     ("docs/swarm-convergence-plan.md", "for what replaced that habit"): (
         "Legitimate: the pointer file genuinely explains what replaced the "
         "habit of tracking unbuilt phases in the repository."

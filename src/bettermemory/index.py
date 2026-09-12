@@ -104,7 +104,7 @@ log = logging.getLogger("bettermemory.index")
 #     would re-engage the FTS prefilter as soon as `indexed_count` crossed
 #     its threshold and every untouched pre-upgrade memory would be
 #     silently unreachable in `memory_search`; with it, search routes
-#     to `load_all` until `Store.__post_init__`'s auto-rebuild (or an
+#     to `load_all` until `Store.open()`'s auto-rebuild (or an
 #     explicit `bettermemory reindex`) restores full coverage.
 #
 # Version 2: adds `memories.filename` for id → path lookup (so
@@ -483,8 +483,8 @@ def _ensure_schema(
       version + fingerprint, and set `meta.needs_rebuild = '1'` — all
       in ONE transaction, under a cross-process migration lock (the
       inline comments below name the two races that shape closes).
-      Memory data lives on disk in the .md files; `Store.__post_init__`
-      auto-rebuilds from them on the next construction, and
+      Memory data lives on disk in the .md files; `Store.open()`
+      auto-rebuilds from them the next time a process opens the store, and
       `bettermemory reindex` remains the manual path. While the flag is
       set, `_handlers.load_search_candidates` treats the index as unusable
       and routes to `load_all` — the incremental Store hooks only
@@ -2144,8 +2144,8 @@ def flag_needs_rebuild(root: Path) -> bool:
     Setting the flag is the conservative lever rather than a per-file
     upsert: it is the same mechanism `_ensure_schema` uses for a version
     bump, it fails SAFE (search falls back to the full scan, which is
-    slower but correct), and `Store.__post_init__`'s auto-rebuild clears
-    it on the next construction without the user doing anything.
+    slower but correct), and `Store.open()`'s auto-rebuild clears it the
+    next time a process opens the store, without the user doing anything.
 
     Returns True when the flag landed. Best-effort and never raises: an
     unwritable or absent index is already the degraded case, and a bulk

@@ -117,9 +117,13 @@ class EpisodeStore:
 
     def __post_init__(self) -> None:
         self.root = Path(self.root).expanduser().resolve()
-        # Don't create the directory eagerly. `Store.__post_init__` already
-        # made `root` exist; the episodes subdir is created on first write
-        # so a fresh install with no episodes doesn't leave an empty dir.
+        # Don't create the directory eagerly: the episodes subdir is made on
+        # first write, so a fresh install with no episodes leaves no empty
+        # dir. This used to add "`Store.__post_init__` already made `root`
+        # exist" — true until 7.17.0 made construction pure. Nothing
+        # guarantees the memory root exists by the time an episode is
+        # written, so `episodes_dir.mkdir` below carries `parents=True`
+        # rather than inheriting a promise from a sibling class.
 
     @property
     def episodes_dir(self) -> Path:
@@ -265,7 +269,7 @@ class EpisodeStore:
         # write at `events.py:264`. Best-effort: `fsync_dir` no-ops on
         # Windows and swallows OSError on pseudo-filesystems.
         episodes_dir_was_created = not self.episodes_dir.exists()
-        self.episodes_dir.mkdir(mode=0o700, exist_ok=True)
+        self.episodes_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         if episodes_dir_was_created:
             fsync_dir(self.root)
         session_dir = self._session_dir(session_id)

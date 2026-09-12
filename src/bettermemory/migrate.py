@@ -592,8 +592,8 @@ def migrate_origin_in_directory(
     # admission filter until someone happened to run `reindex`.
     #
     # Flagging is best-effort and fails SAFE: search falls back to the
-    # full scan (slower, correct) and `Store.__post_init__` auto-rebuilds
-    # on the next construction. Dry runs persist nothing, so they must not
+    # full scan (slower, correct) and `Store.open()` auto-rebuilds the next
+    # time a process opens the store. Dry runs persist nothing, so must not
     # flag; likewise a run that changed no file.
     if not dry_run and report.updated:
         from . import index as _index

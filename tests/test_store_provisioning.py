@@ -321,3 +321,89 @@ def test_the_store_free_counters_still_need_no_store() -> None:
         "scan_active_memory_ids",
     ):
         assert hasattr(store_mod, name), f"{name} disappeared without a migration"
+
+
+# ---------------------------------------------------------------------------
+# The 7.17.1 follow-on: what else assumed the constructor provisioned
+# ---------------------------------------------------------------------------
+
+
+def test_episode_write_provisions_an_absent_memory_root(tmp_path: Path) -> None:
+    """`EpisodeStore` must not inherit a promise from a sibling class.
+
+    Its `__post_init__` used to carry "Don't create the directory eagerly.
+    `Store.__post_init__` already made `root` exist" — true until 7.17.0 made
+    construction pure, and then silently false. `episodes_dir.mkdir` had no
+    `parents=True`, so writing an episode to a store nobody had provisioned
+    raised `FileNotFoundError`.
+
+    Not reachable from any shipped entry point — `build_server` and
+    `cli_context` both open through `Store.open()` — which is exactly why the
+    suite stayed green and why this needs its own gate: the hole was in the
+    library contract, where no production path walks."""
+    from bettermemory.episodes import EpisodeStore
+
+    root = tmp_path / "no-memory-root-yet"
+    assert not root.exists()
+
+    episode = EpisodeStore(root).write(
+        session_id="s1", body="written before any memory was", takeaway="t"
+    )
+
+    assert episode.id
+    assert (root / "episodes").is_dir()
+
+
+# Every surviving mention of the old constructor behaviour in `src/`, keyed on
+# CONTENT rather than on a line number. Both are deliberately HISTORICAL — they
+# say what the constructor used to do and why a workaround exists — and both
+# read in the past tense. A mention that asserts the behaviour in the PRESENT
+# is the defect this ratchet exists for.
+_HISTORICAL_POST_INIT_MENTIONS = (
+    "`Store.__post_init__` mkdir'd and auto-rebuilt, write side effects from",
+    '# dir. This used to add "`Store.__post_init__` already made `root`',
+)
+
+
+def test_no_source_prose_claims_the_constructor_still_provisions() -> None:
+    """A published string is a claim, and eleven of them went false at once.
+
+    7.17.0 made construction pure and left eleven comments and docstrings
+    across six files asserting that `Store.__post_init__` mkdirs, chmods, or
+    auto-rebuilds. Each was load-bearing prose — one of them (`episodes.py`)
+    was the stated reason a `mkdir` had no `parents=True`, so the false
+    comment and the real bug were the same defect wearing two hats.
+
+    This is the same instrument `tests/test_roadmap_citations.py` uses for the
+    same class: allowlist what legitimately survives, by content, and fail on
+    anything new."""
+    src = Path(__file__).resolve().parents[1] / "src" / "bettermemory"
+    offenders: list[str] = []
+    for path in sorted(src.rglob("*.py")):
+        for lineno, line in enumerate(path.read_text().splitlines(), 1):
+            if "Store.__post_init__" not in line:
+                continue
+            if any(known in line for known in _HISTORICAL_POST_INIT_MENTIONS):
+                continue
+            offenders.append(
+                f"  {path.relative_to(src.parent.parent)}:{lineno}: {line.strip()}"
+            )
+
+    assert not offenders, (
+        "source prose still describes `Store.__post_init__` as provisioning. "
+        "Since 7.17.0 construction is pure: it normalises the path and does "
+        "nothing else. Point the claim at `Store.ensure()` (provisioning) or "
+        "`Store.open()` (provisioning + the startup checks), or mark it "
+        "explicitly historical and add it to the allowlist above:\n"
+        + "\n".join(offenders)
+    )
+
+
+def test_the_allowlist_has_no_dead_entries() -> None:
+    """An allowlist entry that matches nothing is a claim that went stale in
+    the other direction — it suggests a mention survives when it does not,
+    and it quietly widens the ratchet for whatever lands on that text next."""
+    src = Path(__file__).resolve().parents[1] / "src" / "bettermemory"
+    blob = "\n".join(p.read_text() for p in sorted(src.rglob("*.py")))
+    dead = [known for known in _HISTORICAL_POST_INIT_MENTIONS if known not in blob]
+    assert not dead, f"allowlist entries match nothing in src/: {dead}"

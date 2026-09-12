@@ -326,10 +326,10 @@ class Store:
         user-facing stderr warning — all from a constructor.
 
         The tree had already paid for that twice, in writing.
-        `count_active_memory_files` and its siblings below exist, by
-        their own docstring, "for callers that have no Store instance
-        and must not construct one (`Store.__post_init__` mkdirs and
-        auto-rebuilds — write side effects)"; and
+        `count_active_memory_files` and its siblings below were written
+        for callers that had no Store instance and MUST NOT construct
+        one, precisely because constructing one mkdir'd and auto-rebuilt;
+        and
         `_warn_on_index_divergence` declines a full reconcile partly to
         stay cheap "on every cheap `Store()`", which is what a
         constructor doing four syscalls and a subprocess was not.
@@ -2577,8 +2577,11 @@ def count_active_memory_files(root: Path) -> int:
     """Count the active-memory ``.md`` files under `root` without
     parsing them — the `_iter_active_paths()` filter (regular file, not
     a symlink, `.md` suffix) as a bare count, for callers that have no
-    Store instance and must not construct one (`Store.__post_init__`
-    mkdirs and auto-rebuilds — write side effects). Shared by the S4
+    Store instance. Until 7.17.0 they MUST not have constructed one —
+    `Store.__post_init__` mkdir'd and auto-rebuilt, write side effects from
+    a read — and that is why this function exists. Construction is pure
+    now, so the constraint is historical and a caller may hold a Store;
+    these stay because they also skip the parse. Shared by the S4
     divergence warning below and doctor's index-health check so the two
     disk-vs-`indexed_count` comparisons cannot drift apart. Propagates
     OSError from an unlistable directory; callers pick their own
@@ -2849,7 +2852,7 @@ def _has_confirmed_index_gap(root: Path, disk_paths: dict[str, Path]) -> bool:
 def _warn_on_index_divergence(root: Path) -> None:
     """Compare the on-disk active memories to the FTS5 index and emit a
     one-shot WARNING per root when they genuinely diverge. See
-    ``Store.__post_init__`` for the motivating audit note (S4:
+    ``Store.open`` for the motivating audit note (S4:
     out-of-band ``.md`` writes silently desync the FTS5 index).
 
     Three divergence shapes are surfaced:

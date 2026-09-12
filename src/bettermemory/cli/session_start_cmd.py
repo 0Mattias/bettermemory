@@ -34,9 +34,11 @@ The read is deliberately cheap, and every step of it is a gate rather
 than a fallback:
 
 * `load_config().resolved_directory()` instead of `cli_context()` —
-  `Store.__post_init__` mkdirs, chmods, and can kick off a full index
-  rebuild. None of that belongs in the critical path of opening a
-  session.
+  `cli_context()` opens the store through `Store.open()`, which
+  provisions (mkdir + chmod) and can kick off a full index rebuild. None
+  of that belongs in the critical path of opening a session. Since 7.17.0
+  a bare `Store(...)` would be inert enough to be safe here, but resolving
+  the directory directly stays the narrower dependency.
 * Counts come from the FTS index's columnar scan
   (`index.scope_counts`), never from `Store.load_all()`. `load_all` is
   ~74 % of the equivalent handler's cost, all of it per-file opens and
