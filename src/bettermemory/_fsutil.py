@@ -87,11 +87,66 @@ from __future__ import annotations
 
 import contextlib
 import os
+import stat
 import sys
 import time
 from collections.abc import Generator
 from pathlib import Path
 from typing import BinaryIO
+
+
+def ensure_owner_only_dir(path: Path, *, parents: bool = False) -> None:
+    """Create `path` as an owner-only directory, and heal one that is not.
+
+    The single definition of "a directory this project owns", shared by
+    `Store.ensure` and `EpisodeStore`, because the two drifted apart once and
+    the drift was silent. `Path.mkdir(mode=...)` applies the mode ONLY to the
+    leaf it creates: with `parents=True` every intermediate directory is made
+    at the caller's umask instead. That is how an episode-first write came to
+    leave the memory root at 0o755 while `episodes/` underneath it was 0o700
+    — and the store root is the access-control boundary SECURITY.md names,
+    because a memory's FILENAME embeds the first ~43 chars of its summary, so
+    a world-readable root discloses the gist of the whole store to `ls`
+    whatever the 0o600 bodies say.
+
+    So each ancestor this creates is tightened too, not just the leaf.
+
+    The heal drops group/other bits and leaves an already-restrictive
+    directory alone, so an owner who deliberately went STRICTER than 0o700
+    keeps their choice. Best-effort: POSIX mode bits are meaningless on
+    Windows, and a sandboxed or network filesystem can reject `chmod` on a
+    directory the caller genuinely owns. In both cases the directory is still
+    usable and `doctor` reports the residual exposure — the same guard shape
+    `atomic_write_bytes` uses for its fchmod.
+    """
+    if parents:
+        # Tighten from the outermost directory this call actually creates,
+        # inward. Ancestors that already existed are left alone: they are not
+        # ours, and a user's ~/ is not ours to chmod.
+        missing = [p for p in reversed(path.parents) if not p.exists()]
+        for ancestor in missing:
+            ancestor.mkdir(mode=0o700, exist_ok=True)
+            _tighten_dir_mode(ancestor)
+    path.mkdir(mode=0o700, exist_ok=True)
+    _tighten_dir_mode(path)
+
+
+def _tighten_dir_mode(path: Path) -> None:
+    """Drop group/other bits from `path` when it carries any.
+
+    Exists because `Path.mkdir(mode=...)` only applies to a directory it
+    actually creates — a store that predates the explicit-0o700 change is
+    still whatever the caller's umask produced (0o755 under the usual 022),
+    and nothing else in the lifecycle re-checks it.
+    """
+    if sys.platform == "win32":  # pragma: no cover - non-unix
+        return
+    try:
+        current = stat.S_IMODE(path.stat().st_mode)
+        if current & 0o077:
+            path.chmod(current & 0o700)
+    except OSError:
+        pass
 
 
 def fsync_file(fd: int) -> None:

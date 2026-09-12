@@ -21,6 +21,19 @@ spells out exactly what's stable.
   shipped entry point** — `build_server` and `cli_context` both open
   through `Store.open()` and `memory_health`'s use is read-only — so no
   user could hit it; the hole was in the library contract.
+- **Provisioning no longer leaves a directory world-readable.**
+  `Path.mkdir(parents=True, mode=...)` applies the mode to the LEAF only;
+  every intermediate directory it creates is made at the caller's umask.
+  Two ways in, from opposite directions: `Store.ensure` has always passed
+  `parents=True`, so a store whose parent directories did not exist got
+  them at 0o755 (latent — the usual root's parent is `$HOME`, which
+  already exists); and the `parents=True` added above made the memory
+  ROOT an intermediate directory for the first time, so an episode-first
+  write created it world-readable. That root is the access-control
+  boundary `SECURITY.md` names, because a memory's filename embeds the
+  first ~43 chars of its summary. Both paths now go through one shared
+  definition, `_fsutil.ensure_owner_only_dir`, which tightens every
+  ancestor it creates and deliberately leaves alone any it did not.
 - Ten further sites across `index.py`, `migrate.py`, `doctor.py`,
   `cli/session_start_cmd.py` and `store.py` still described
   `Store.__post_init__` as mkdir'ing, chmod'ing or auto-rebuilding. Each

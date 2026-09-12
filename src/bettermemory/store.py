@@ -26,7 +26,7 @@ from pydantic import ValidationError as PydanticValidationError
 
 from . import _frontmatter as frontmatter
 from ._decorators import best_effort
-from ._fsutil import atomic_write_bytes, flock_excl, fsync_dir
+from ._fsutil import ensure_owner_only_dir, atomic_write_bytes, flock_excl, fsync_dir
 
 # We use a vendored frontmatter parser (`_frontmatter.py`) which pins the
 # pure-Python yaml.SafeLoader / yaml.SafeDumper. Two reasons:
@@ -368,10 +368,13 @@ class Store:
         0o700 keeps their choice; best-effort and POSIX-only."""
         if self._provisioned:
             return self
-        self.root.mkdir(parents=True, mode=0o700, exist_ok=True)
-        _tighten_dir_mode(self.root)
-        (self.root / TOMBSTONE_DIR).mkdir(mode=0o700, exist_ok=True)
-        _tighten_dir_mode(self.root / TOMBSTONE_DIR)
+        # `_fsutil.ensure_owner_only_dir` is the ONE definition of "a
+        # directory this project owns", shared with `EpisodeStore`. The two
+        # hand-rolled it separately once and drifted silently: the episode
+        # side reached `parents=True` without tightening the ancestors it
+        # created, which left the memory ROOT world-readable.
+        ensure_owner_only_dir(self.root, parents=True)
+        ensure_owner_only_dir(self.root / TOMBSTONE_DIR)
         self._provisioned = True
         return self
 

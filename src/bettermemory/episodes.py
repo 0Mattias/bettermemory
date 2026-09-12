@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import Iterator
 
 from . import _frontmatter as frontmatter
-from ._fsutil import atomic_write_bytes, flock_excl, fsync_dir
+from ._fsutil import ensure_owner_only_dir, atomic_write_bytes, flock_excl, fsync_dir
 from .models import (
     Episode,
     SCHEMA_VERSION,
@@ -269,7 +269,12 @@ class EpisodeStore:
         # write at `events.py:264`. Best-effort: `fsync_dir` no-ops on
         # Windows and swallows OSError on pseudo-filesystems.
         episodes_dir_was_created = not self.episodes_dir.exists()
-        self.episodes_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        # The shared definition, NOT a bare mkdir: `parents=True` applies
+        # `mode` to the leaf only, so creating `episodes/` under a memory
+        # root that does not exist yet would leave that ROOT at the
+        # caller's umask — 0o755 under the usual 022, on the directory
+        # SECURITY.md names as the access-control boundary.
+        ensure_owner_only_dir(self.episodes_dir, parents=True)
         if episodes_dir_was_created:
             fsync_dir(self.root)
         session_dir = self._session_dir(session_id)

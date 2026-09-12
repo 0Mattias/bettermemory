@@ -407,3 +407,71 @@ def test_the_allowlist_has_no_dead_entries() -> None:
     blob = "\n".join(p.read_text() for p in sorted(src.rglob("*.py")))
     dead = [known for known in _HISTORICAL_POST_INIT_MENTIONS if known not in blob]
     assert not dead, f"allowlist entries match nothing in src/: {dead}"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX mode bits")
+def test_provisioning_never_leaves_an_ancestor_world_readable(tmp_path: Path) -> None:
+    """`mkdir(parents=True, mode=...)` applies the mode to the LEAF ONLY.
+
+    Every intermediate directory it creates is made at the caller's umask —
+    0o755 under the usual 022. That is the access-control boundary SECURITY.md
+    names: a memory's FILENAME embeds the first ~43 chars of its summary, so a
+    world-readable root discloses the gist of the whole store to `ls` whatever
+    the 0o600 bodies say.
+
+    Two ways in, and they arrived from opposite directions. `Store.ensure`
+    has always passed `parents=True`, so any store whose parent directories
+    did not exist got them at the umask — latent, because the usual root's
+    parent is `$HOME`, which already exists. And 7.17.1's `parents=True` on
+    `episodes_dir` made the memory ROOT an intermediate directory for the
+    first time, so an episode-first write created it world-readable. Both are
+    now the one shared definition, `_fsutil.ensure_owner_only_dir`.
+
+    The umask is forced to 022 rather than trusted: that is precisely the
+    condition the defect needs, so a test under a stricter ambient umask
+    would pass against the unfixed code.
+    """
+    from bettermemory.episodes import EpisodeStore
+
+    previous = os.umask(0o022)
+    try:
+        episode_first = tmp_path / "a" / "b" / "episode-first"
+        EpisodeStore(episode_first).write(session_id="s", body="body", takeaway="t")
+
+        memory_first = tmp_path / "c" / "d" / "memory-first"
+        Store(memory_first).write(content="body", scopes=["gate"])
+    finally:
+        os.umask(previous)
+
+    for created in (
+        episode_first,
+        episode_first / "episodes",
+        episode_first.parent,
+        memory_first,
+        memory_first / ".tombstones",
+        memory_first.parent,
+    ):
+        mode = created.stat().st_mode & 0o777
+        assert mode == 0o700, (
+            f"{created} is {oct(mode)}, want 0o700. A directory this project "
+            "creates must be owner-only, including every ancestor it had to "
+            "create to get there."
+        )
+
+
+def test_an_ancestor_we_did_not_create_is_left_alone(tmp_path: Path) -> None:
+    """Tightening stops at the directories we actually made.
+
+    A user's `~/` or an existing shared parent is not ours to chmod, and
+    silently narrowing one would be a worse defect than the one this fixes."""
+    from bettermemory.episodes import EpisodeStore
+
+    pre_existing = tmp_path / "not-ours"
+    pre_existing.mkdir(mode=0o755)
+
+    EpisodeStore(pre_existing / "store").write(session_id="s", body="b", takeaway="t")
+
+    if sys.platform != "win32":
+        assert pre_existing.stat().st_mode & 0o777 == 0o755, (
+            "provisioning chmod'd a directory it did not create"
+        )
