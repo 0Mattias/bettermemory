@@ -16,10 +16,10 @@ import logging as _logging
 import os
 import stat
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterator, Protocol
 
 import yaml
 from pydantic import ValidationError as PydanticValidationError
@@ -188,6 +188,114 @@ def _tighten_dir_mode(path: Path) -> None:
         pass
 
 
+class MemoryStore(Protocol):
+    """The store surface the rest of bettermemory depends on.
+
+    Phase 1 of the Teams work: a NAME for the seam, so a consumer can
+    say what it needs from a store without naming the local filesystem
+    implementation. It carries exactly the public instance surface of
+    `Store` — every method below is implemented there, and
+    `test_store_satisfies_the_memory_store_protocol` fails if `Store`
+    grows a public method this forgets.
+
+    Three things about it are deliberate.
+
+    **It lives in `store.py`, beside the implementation, not in a new
+    module.** `migrate.py` and `doctor.py` import ten module-level
+    privates from here; splitting the file breaks those at IMPORT, which
+    makes `test_migrate.py` and `test_doctor.py` fail to COLLECT rather
+    than fail to pass — 5.8% of the suite going dark instead of red —
+    and the project turns its own DeprecationWarnings into errors, so
+    there is no warn-then-migrate lane to soften it.
+
+    **The concrete class keeps the name `Store`; the protocol takes the
+    new name.** The reverse is the expensive mistake available here: ten
+    `monkeypatch.setattr(Store, "load_all", ...)` failure-injection
+    sites would then patch a Protocol, which raises nothing and patches
+    nothing, and every one of them would go green while testing
+    nothing — failing OPEN, on exactly the behaviour a shared store
+    changes.
+
+    **`root` is on the protocol, and that is temporary.** Some 59 sites
+    hand a store's root to a sibling subsystem that never goes through
+    a Store at all — the event log, the index, eleven sidecar queues —
+    so a hosted backend still has to present a real local directory
+    today. Removing `root` means giving each of those subsystems its
+    own seam, which is the product rather than this phase. It stays
+    until they have one."""
+
+    root: Path
+
+    def ensure(self) -> "MemoryStore": ...
+    @property
+    def tombstone_dir(self) -> Path: ...
+    def load_all(self) -> list[Memory]: ...
+    def iter_active(self) -> Iterator[tuple[Path, Memory]]: ...
+    def list_summaries(
+        self, scopes: list[str] | None = None
+    ) -> list[MemorySummary]: ...
+    def load_one(self, memory_id: str) -> Memory: ...
+    def show(self, memory_id: str) -> Memory: ...
+    def write(
+        self,
+        *,
+        content: str,
+        scopes: list[str],
+        confidence: Confidence = Confidence.MEDIUM,
+        source: Source = Source.EXPLICIT,
+        origin: Origin | None = None,
+        category: Category | None = None,
+        claims: list[str] | None = None,
+        links: list[Any] | None = None,
+        actor: Actor | dict[str, Any] | None = None,
+    ) -> Memory: ...
+    def update(
+        self,
+        memory: Memory,
+        *,
+        force: bool = False,
+        preserve_verification: bool = False,
+    ) -> Memory: ...
+    def mark_verified(
+        self,
+        memory_id: str,
+        *,
+        verified_paths: list[str] | None = None,
+        verified_commits: list[str] | None = None,
+        verified_versions: list[str] | None = None,
+        verified_absent_paths: list[str] | None = None,
+        claims: list[str] | None = None,
+        verified_head: str | None = None,
+        expected_last_verified_at: datetime | None = None,
+        expected_updated: datetime | None = None,
+        check_expected: bool = False,
+    ) -> Memory: ...
+    def record_corroboration(self, memory_id: str) -> Memory: ...
+    def tombstone(
+        self, memory_id: str, reason: str, *, session_id: str | None = None
+    ) -> Path: ...
+    def load_tombstones(self) -> list[TombstonedMemory]: ...
+    def list_tombstones(
+        self, scopes: list[str] | None = None
+    ) -> list[TombstonedSummary]: ...
+    def load_tombstone(self, memory_id: str) -> TombstonedMemory: ...
+    def restore(
+        self,
+        memory_id: str,
+        *,
+        drop_claims: Iterable[str] = (),
+        drop_verified_paths: Iterable[str] = (),
+        clear_verification: bool = False,
+        drop_verified_head: bool = False,
+    ) -> Memory: ...
+    def rename_scope(
+        self, old: str, new: str, *, include_tombstones: bool = True
+    ) -> dict[str, list[Any]]: ...
+    def prune_tombstones(
+        self, older_than: timedelta, *, now: datetime | None = None
+    ) -> list[str]: ...
+
+
 @dataclass
 class Store:
     """A memory store rooted at a single directory.
@@ -198,51 +306,106 @@ class Store:
     """
 
     root: Path
+    # Set once `ensure()` has provisioned this instance's root, so the
+    # per-write call below costs an attribute read rather than four
+    # syscalls. `compare=False` / `repr=False` keep `Store` equality and
+    # `repr` exactly what they were before provisioning became explicit —
+    # a cache flag is not part of a store's identity.
+    _provisioned: bool = field(default=False, compare=False, repr=False)
 
     # ---- lifecycle --------------------------------------------------------
 
     def __post_init__(self) -> None:
+        """Normalise the root. NOTHING ELSE — construction is pure.
+
+        This used to mkdir the root and the tombstone dir, chmod both,
+        rebuild a flagged index, and run the S4 divergence check, which
+        made `Store(path)` a migration with a filesystem write, a
+        possible `git` subprocess (`_rebuild_index_if_flagged` ->
+        `index.rebuild` -> `provenance.gather_evidence`), and a
+        user-facing stderr warning — all from a constructor.
+
+        The tree had already paid for that twice, in writing.
+        `count_active_memory_files` and its siblings below exist, by
+        their own docstring, "for callers that have no Store instance
+        and must not construct one (`Store.__post_init__` mkdirs and
+        auto-rebuilds — write side effects)"; and
+        `_warn_on_index_divergence` declines a full reconcile partly to
+        stay cheap "on every cheap `Store()`", which is what a
+        constructor doing four syscalls and a subprocess was not.
+
+        Provisioning is now `ensure()`, a precondition every mutator
+        states; the startup checks are `Store.open()`, which the
+        process entry points call and a diagnostic deliberately does
+        not. A read against a root that does not exist reads EMPTY
+        rather than creating it (see `iter_active_memory_paths`)."""
         self.root = Path(self.root).expanduser().resolve()
-        # Explicit 0o700 for the same reason the tombstone dir below takes
-        # it: the store root is the access-control boundary SECURITY.md
-        # names, and a memory's FILENAME embeds the first ~43 chars of its
-        # summary. The 0o600 on the `.md` bodies is therefore worth nothing
-        # against a plain `ls` of a 0o755 root — under the common 022 umask
-        # every local account could read a slug like
-        # `2026-07-20-acquisition-talks-with-northstar-closing-in-…md`.
+
+    def ensure(self) -> "Store":
+        """Provision this store's directories. Idempotent; returns self.
+
+        The precondition of WRITING, not of existing, so every mutator
+        calls it and no reader does. Splitting it out of `__post_init__`
+        is what lets a diagnostic construct a Store without altering the
+        thing it is diagnosing.
+
+        Modes are explicit rather than umask-derived, and both
+        directories take 0o700 for the reason SECURITY.md gives: the
+        store root is the access-control boundary, and a memory's
+        FILENAME embeds the first ~43 chars of its summary, so 0o600 on
+        the `.md` bodies is worth nothing against a plain `ls` of a
+        0o755 root — under the common 022 umask every local account
+        could read a slug like
+        `2026-07-20-acquisition-talks-with-northstar-closing-in-....md`.
+        Tombstones carry the same trust boundary (paths cited in
+        `removed_reason`, body hashes for dedup), so listing them
+        requires the owner too.
+
+        `_tighten_dir_mode` heals a store created before the explicit
+        mode landed: `mkdir(mode=...)` is a no-op on a directory that
+        already exists, so those roots are still 0o755 on disk. It only
+        clears group/other bits, so an owner who went STRICTER than
+        0o700 keeps their choice; best-effort and POSIX-only."""
+        if self._provisioned:
+            return self
         self.root.mkdir(parents=True, mode=0o700, exist_ok=True)
-        # `mkdir(mode=…)` is a no-op on a directory that already exists, so
-        # every store created before this landed is still 0o755 on disk.
-        # Heal it here — but only when the group/other bits are actually
-        # set, so an owner who deliberately went STRICTER than 0o700 keeps
-        # their choice. Best-effort and POSIX-only: Windows has no
-        # meaningful POSIX mode bits, and sandboxed filesystems may refuse
-        # chmod outright (same rationale as `_fsutil.atomic_write_bytes`).
         _tighten_dir_mode(self.root)
-        # Explicit 0o700 — don't rely on the caller's umask. Tombstones
-        # carry the same trust boundary as active memories (paths cited
-        # in `removed_reason`, body hashes for dedup), so directory-listing
-        # them should require the owner just like the active store.
         (self.root / TOMBSTONE_DIR).mkdir(mode=0o700, exist_ok=True)
         _tighten_dir_mode(self.root / TOMBSTONE_DIR)
-        # Schema-upgrade auto-heal, BEFORE the divergence check: when a
-        # SCHEMA_VERSION bump emptied the index (`meta.needs_rebuild`),
-        # rebuild it from the canonical .md files now, so the migration
-        # resolves as an INFO note instead of the S4 WARNING below.
-        _rebuild_index_if_flagged(self)
-        # S4: one-shot startup divergence check. The FTS5 index is a
-        # derived cache kept consistent with disk only via Store hooks
-        # (`_index_upsert_quietly` / `_index_remove_quietly` under the
-        # per-file flock in every mutator). Any code path that writes
-        # `.md` files directly — an external editor, `sync pull`, a
-        # sub-agent using the generic `Write` tool on a memory file
-        # path instead of `memory_write` — leaves the index stale with
-        # no warning. `memory_search` then ranks against stale
-        # candidate ids and `filenames_for_ids` returns paths that may
-        # not exist. The warning surfaces the divergence at the first
-        # opportunity so the user can run `bettermemory reindex`
-        # before it cascades into a wrong answer.
-        _warn_on_index_divergence(self.root)
+        self._provisioned = True
+        return self
+
+    @classmethod
+    def open(cls, root: Path | str) -> "Store":
+        """Construct, provision, and run the once-per-process STARTUP
+        checks. What a process ENTRY POINT wants; not what a diagnostic
+        wants.
+
+        The two checks moved here from `__post_init__` because neither
+        is a property of having a Store object — both are things a
+        program does when it starts up against a store:
+
+        * `_rebuild_index_if_flagged` is the schema-upgrade auto-heal.
+          It runs BEFORE the divergence check so that a `SCHEMA_VERSION`
+          bump which emptied the index (`meta.needs_rebuild`) resolves
+          as an INFO note instead of the S4 WARNING below.
+        * `_warn_on_index_divergence` is the S4 one-shot check. The FTS5
+          index is a derived cache kept consistent with disk only via
+          Store hooks under the per-file flock, so any path that writes
+          `.md` files directly — an external editor, `sync pull`, a
+          sub-agent using a generic write tool on a memory file path —
+          leaves it stale with no warning, and `memory_search` then
+          ranks against stale ids. Surfacing it at startup is what keeps
+          it from cascading into a wrong answer.
+
+        `bettermemory doctor` must NOT use this: rebuilding the index it
+        was asked to inspect destroys the evidence, and emitting the
+        divergence warning from inside a diagnostic reports the
+        constructor's opinion rather than the check's."""
+        store = cls(Path(root)).ensure()
+        _rebuild_index_if_flagged(store)
+        _warn_on_index_divergence(store.root)
+        return store
 
     @property
     def tombstone_dir(self) -> Path:
@@ -449,6 +612,9 @@ class Store:
         job (they need the origin worktree, which this primitive only
         carries, never resolves). Mirrors the `mark_verified` split.
         """
+        # Provisioning is a precondition of writing, not of existing:
+        # `__post_init__` is pure, so every mutator states it here.
+        self.ensure()
         now = utcnow()
         memory = Memory(
             id=generate_ulid(),
@@ -562,6 +728,9 @@ class Store:
               on the tmp write or rename, EACCES on the directory. The MCP
               handler boundary translates this to a structured `ValueError`.
         """
+        # Provisioning is a precondition of writing, not of existing:
+        # `__post_init__` is pure, so every mutator states it here.
+        self.ensure()
         existing_path = self._find_path_for_id(memory.id)
         if existing_path is None:
             raise MemoryNotFoundError(f"no memory with id {memory.id}")
@@ -749,6 +918,9 @@ class Store:
             ValueError: `verified_head` is set but is not a full commit
               hash.
         """
+        # Provisioning is a precondition of writing, not of existing:
+        # `__post_init__` is pure, so every mutator states it here.
+        self.ensure()
         if verified_head is not None:
             verified_head = verified_head.strip().lower()
             if not is_full_commit_sha(verified_head):
@@ -952,6 +1124,9 @@ class Store:
               telemetry should catch and log rather than fail the
               surrounding operation.
         """
+        # Provisioning is a precondition of writing, not of existing:
+        # `__post_init__` is pure, so every mutator states it here.
+        self.ensure()
         existing_path = self._find_path_for_id(memory_id)
         if existing_path is None:
             for tpath in self._iter_tombstone_paths():
@@ -1069,6 +1244,9 @@ class Store:
               what `_yaml_admission_cap` closed.
               `memory_remove` translates it with a shrink-first remediation hint.
         """
+        # Provisioning is a precondition of writing, not of existing:
+        # `__post_init__` is pure, so every mutator states it here.
+        self.ensure()
         path = self._find_path_for_id(memory_id)
         if path is None:
             # Maybe it's already tombstoned — bubble up a clearer error.
@@ -1432,6 +1610,9 @@ class Store:
               cannot be rebuilt. `memory_restore` re-raises this verbatim so
               the caller learns which field is malformed.
         """
+        # Provisioning is a precondition of writing, not of existing:
+        # `__post_init__` is pure, so every mutator states it here.
+        self.ensure()
         if not is_valid_ulid(memory_id):
             raise MemoryNotFoundError(f"invalid id: {memory_id!r}")
 
@@ -1713,6 +1894,9 @@ class Store:
         clean run. The key is omitted on a clean run so the common two-key
         contract is preserved; callers normalise with `.get("failed", [])`.
         """
+        # Provisioning is a precondition of writing, not of existing:
+        # `__post_init__` is pure, so every mutator states it here.
+        self.ensure()
         if old == new:
             return {"active": [], "tombstoned": []}
 
@@ -1936,6 +2120,9 @@ class Store:
         per-memory; if you want to keep a specific tombstone forever,
         either bump the retention window or restore it before pruning.
         """
+        # Provisioning is a precondition of writing, not of existing:
+        # `__post_init__` is pure, so every mutator states it here.
+        self.ensure()
         cutoff = (now or utcnow()) - older_than
         pruned: list[tuple[datetime, str]] = []
         # Sidecar `.lock` files to sweep AFTER their `_locked(path)` block
@@ -2440,10 +2627,30 @@ def iter_active_memory_paths(root: Path) -> Iterator[Path]:
     Quarantined names (`quarantine.quarantined_names`: the pulled files
     the admission chain refused) are skipped for the same reason the
     symlink is: the file is on disk, git tracks it, and it is not a
-    memory this host serves. Propagates OSError from an unlistable
-    directory; callers pick their own degraded answer."""
+    memory this host serves.
+
+    A root that DOES NOT EXIST yields nothing: a store that was never
+    provisioned is an empty store, and that is a measurement, not a
+    failure. Every OTHER `OSError` — `PermissionError` above all —
+    PROPAGATES, and callers pick their own degraded answer. The split
+    is the could-not-ask rule this project has now drained three times
+    (7.13.0 verdicts, 7.14.0 censuses, 7.15.0 selection): "absent" is
+    knowable and means zero, "cannot read" is the third value and must
+    never be folded into it. Before provisioning became explicit this
+    branch was unreachable, because constructing a `Store` created the
+    directory as a side effect."""
+    # Materialised rather than lazy because `Path.iterdir` is a
+    # generator function: it raises on first advance, not at the call, so
+    # a guard around the call alone would not catch the missing root. No
+    # consumer depends on the laziness — all three (`load_all`,
+    # `active_memory_filenames`, `scan_active_memory_ids`) build a full
+    # collection anyway, and each is far larger than this list of paths.
+    try:
+        entries = list(root.iterdir())
+    except FileNotFoundError:
+        return
     excluded = quarantined_names(root)
-    for entry in root.iterdir():
+    for entry in entries:
         # ORDER IS LOAD-BEARING, and so is `os.path.isfile`.
         #
         # `is_symlink()` reads the entry's own lstat, which succeeds

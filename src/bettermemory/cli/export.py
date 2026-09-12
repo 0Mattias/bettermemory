@@ -216,7 +216,7 @@ def _cli_export(
 
     config = _load_config()
     directory = config.resolved_directory()
-    store = Store(directory)
+    store = Store.open(directory)
 
     if scopes:
         # `validate_scope` raises ValueError on a malformed --scope

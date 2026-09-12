@@ -34,7 +34,7 @@ def run_serve() -> None:
     )
     config = load_config()
     directory = config.resolved_directory()
-    store = Store(directory)
+    store = Store.open(directory)
 
     log.info("memory directory: %s", directory)
     log.info(

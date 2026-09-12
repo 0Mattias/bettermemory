@@ -57,7 +57,7 @@ def test_fast_path_serves_lookup_without_walking(
     """On a healthy index, neither `load_one` nor `_find_path_for_id`
     touches the O(corpus) walk. We prove it by making the walk explode:
     a passing test means the index fast path served the lookup."""
-    store = Store(tmp_path)
+    store = Store.open(tmp_path)
     m = store.write(content="durable claim about the deploy pipeline", scopes=["t"])
 
     def _boom(self: Store) -> object:
@@ -73,7 +73,7 @@ def test_fast_path_serves_lookup_without_walking(
 def test_fast_path_returns_the_correct_memory_in_a_larger_store(tmp_path: Path) -> None:
     """Sanity that the O(1) resolve returns the RIGHT file, not just a
     file, across a store big enough that a mixup would show."""
-    store = Store(tmp_path)
+    store = Store.open(tmp_path)
     ids = [
         store.write(content=f"claim number {i} about config and ports", scopes=["t"]).id
         for i in range(30)
@@ -85,7 +85,7 @@ def test_fast_path_returns_the_correct_memory_in_a_larger_store(tmp_path: Path) 
 def test_absent_index_falls_back_to_walk(tmp_path: Path) -> None:
     """Delete the derived cache: the answer is unchanged, served by the
     authoritative walk. Files are canonical."""
-    store = Store(tmp_path)
+    store = Store.open(tmp_path)
     m = store.write(content="claim survives index deletion", scopes=["t"])
     _index.index_path(store.root).unlink()
     assert not _index.index_path(store.root).exists()
@@ -102,7 +102,7 @@ def test_stale_index_hint_is_rejected_and_the_walk_wins(
     it. `_id_still_at_path` must reject the hint so the walk finds the
     truth. This is the core safety property: a stale row can't produce
     a wrong answer."""
-    store = Store(tmp_path)
+    store = Store.open(tmp_path)
     m = store.write(content="claim the index will lie about", scopes=["t"])
 
     monkeypatch.setattr(
@@ -124,7 +124,7 @@ def test_index_pointing_at_a_different_memory_is_rejected(
     """A subtler stale case: the index names a real file, but one that
     belongs to a DIFFERENT memory (slug reuse / drift). The id-recheck
     must catch the mismatch, not hand back the wrong memory."""
-    store = Store(tmp_path)
+    store = Store.open(tmp_path)
     target = store.write(content="the memory we actually want", scopes=["t"])
     other = store.write(content="a completely different memory", scopes=["t"])
     other_path = store._find_path_for_id(other.id)
@@ -144,7 +144,7 @@ def test_unindexed_active_file_found_via_walk(tmp_path: Path) -> None:
     """An active file with no index row (recent write not yet indexed,
     or an external editor drop) is still found — index miss routes to
     the walk."""
-    store = Store(tmp_path)
+    store = Store.open(tmp_path)
     m = store.write(content="active but absent from the index", scopes=["t"])
     _index.remove(store.root, m.id)  # drop the row, keep the file
     assert _index.filenames_for_ids(store.root, [m.id]) == {}
@@ -157,7 +157,7 @@ def test_tombstoned_id_still_raises_tombstoned_error(tmp_path: Path) -> None:
     """Tombstoning removes the index row, so the fast path misses and
     the fallback walks active (miss) then tombstones (hit) — the
     TombstonedError semantic is preserved."""
-    store = Store(tmp_path)
+    store = Store.open(tmp_path)
     m = store.write(content="will be tombstoned", scopes=["t"])
     store.tombstone(m.id, reason="gone")
 
@@ -169,7 +169,7 @@ def test_tombstoned_id_still_raises_tombstoned_error(tmp_path: Path) -> None:
 def test_missing_id_still_raises_not_found(tmp_path: Path) -> None:
     """A never-written valid ulid resolves to nothing through both the
     index and the walk."""
-    store = Store(tmp_path)
+    store = Store.open(tmp_path)
     store.write(content="something unrelated", scopes=["t"])
     ghost = "01JZZZZZZZZZZZZZZZZZZZZZZZZ"  # valid ulid shape, never written
 
@@ -235,7 +235,7 @@ def test_inflight_write_does_not_report_the_index_as_out_of_sync(
     snapshot artifact of a healthy store, and the id it names resolves
     the moment the writer's upsert lands."""
     root = tmp_path / "inflight"
-    store = Store(root)
+    store = Store.open(root)
     store.write(content="already indexed claim about ports", scopes=["t"])
     resolved = root.expanduser().resolve()
 
@@ -273,7 +273,7 @@ def test_inflight_write_does_not_report_the_index_as_out_of_sync(
         threading.Timer(0.02, release_upsert.set).start()
         caplog.clear()
         with caplog.at_level("WARNING", logger="bettermemory.store"):
-            Store(root)
+            Store.open(root)
     finally:
         release_upsert.set()
         writer.join(10)
@@ -294,7 +294,7 @@ def test_inflight_write_does_not_burn_the_one_shot_warning_budget(
     unreported by that process. After the transient gap settles, a real
     desync on the same root must still warn."""
     root = tmp_path / "budget"
-    store = Store(root)
+    store = Store.open(root)
     store.write(content="already indexed claim about ports", scopes=["t"])
     resolved = root.expanduser().resolve()
 
@@ -323,7 +323,7 @@ def test_inflight_write_does_not_burn_the_one_shot_warning_budget(
         assert file_on_disk.wait(10)
         _store._DIVERGENCE_WARNED_ROOTS.discard(resolved)
         threading.Timer(0.02, release_upsert.set).start()
-        Store(root)  # transient gap — must not mark the root as warned
+        Store.open(root)  # transient gap — must not mark the root as warned
     finally:
         release_upsert.set()
         writer.join(10)
@@ -339,7 +339,7 @@ def test_inflight_write_does_not_burn_the_one_shot_warning_budget(
     )
     caplog.clear()
     with caplog.at_level("WARNING", logger="bettermemory.store"):
-        Store(root)
+        Store.open(root)
     warnings = _divergence_warnings(caplog)
     assert len(warnings) == 1, (
         f"a genuine out-of-band file must still warn after a transient "
@@ -356,7 +356,7 @@ def test_inflight_tombstone_does_not_report_the_index_as_out_of_sync(
     index=2, disk=1 — the same artifact pointing the other way. It must
     stay silent too; the dangling row retires itself."""
     root = tmp_path / "inflight_tombstone"
-    store = Store(root)
+    store = Store.open(root)
     store.write(content="survivor claim about ports", scopes=["t"])
     doomed = store.write(content="doomed claim about ports", scopes=["t"])
     resolved = root.expanduser().resolve()
@@ -382,7 +382,7 @@ def test_inflight_tombstone_does_not_report_the_index_as_out_of_sync(
         threading.Timer(0.02, release_remove.set).start()
         caplog.clear()
         with caplog.at_level("WARNING", logger="bettermemory.store"):
-            Store(root)
+            Store.open(root)
     finally:
         release_remove.set()
         remover.join(10)
@@ -405,13 +405,13 @@ def test_inflight_write_stays_silent_however_long_the_writer_holds_it(
     must STILL stay silent, because it blocks on the writer's own
     `_locked(path)` rather than sleeping a fixed amount and guessing.
 
-    The elapsed-time assertion is the other half: `Store(root)` must not
+    The elapsed-time assertion is the other half: `Store.open(root)` must not
     return before the held commit lands. A check that merely happened to
     stay quiet (say, by skipping the recheck) would return promptly and
     fail that assertion, so "silent" here really does mean "waited for
     the writer"."""
     root = tmp_path / "held"
-    store = Store(root)
+    store = Store.open(root)
     store.write(content="already indexed claim about ports", scopes=["t"])
     resolved = root.expanduser().resolve()
 
@@ -450,7 +450,7 @@ def test_inflight_write_stays_silent_however_long_the_writer_holds_it(
         timer.start()
         caplog.clear()
         with caplog.at_level("WARNING", logger="bettermemory.store"):
-            Store(root)
+            Store.open(root)
         elapsed = time.monotonic() - started
         timer.cancel()
     finally:
@@ -483,7 +483,7 @@ def test_unreadable_index_warns_even_with_an_empty_disk(
     nothing on disk) plus an index too broken to read produced no
     warning at all."""
     root = tmp_path / "unreadable"
-    store = Store(root)
+    store = Store.open(root)
     store.write(content="one claim about ports", scopes=["t"])
     store.write(content="two claim about ports", scopes=["t"])
     resolved = root.expanduser().resolve()
@@ -499,7 +499,7 @@ def test_unreadable_index_warns_even_with_an_empty_disk(
     _store._DIVERGENCE_WARNED_ROOTS.discard(resolved)
     caplog.clear()
     with caplog.at_level("WARNING", logger="bettermemory.store"):
-        Store(root)
+        Store.open(root)
 
     warnings = _divergence_warnings(caplog)
     assert len(warnings) == 1, (
@@ -518,7 +518,7 @@ def test_out_of_band_file_still_warns_despite_the_lock_aware_recheck(
     its lock, so the recheck acquires immediately, finds no row, and
     still produces the actionable warning with the real counts."""
     root = tmp_path / "genuine"
-    store = Store(root)
+    store = Store.open(root)
     store.write(content="indexed via store", scopes=["t"])
     (root / "2026-01-01-external.md").write_text(
         _OUT_OF_BAND_TEMPLATE.format(mid="01HXYZBBBBBBBBBBBBBBBBBBBB"),
@@ -528,7 +528,7 @@ def test_out_of_band_file_still_warns_despite_the_lock_aware_recheck(
 
     caplog.clear()
     with caplog.at_level("WARNING", logger="bettermemory.store"):
-        Store(root)
+        Store.open(root)
     warnings = _divergence_warnings(caplog)
     assert len(warnings) == 1, f"expected one warning, got {warnings!r}"
     assert "index=1" in warnings[0] and "disk=2" in warnings[0]
@@ -543,7 +543,7 @@ def test_out_of_band_deletion_leaves_a_dangling_row_that_still_warns(
     recheck acquires it immediately and confirms the row is dangling
     rather than mid-tombstone."""
     root = tmp_path / "dangling"
-    store = Store(root)
+    store = Store.open(root)
     store.write(content="kept claim about ports", scopes=["t"])
     doomed = store.write(content="deleted claim about ports", scopes=["t"])
     doomed_path = store._find_path_for_id(doomed.id)
@@ -555,7 +555,7 @@ def test_out_of_band_deletion_leaves_a_dangling_row_that_still_warns(
 
     caplog.clear()
     with caplog.at_level("WARNING", logger="bettermemory.store"):
-        Store(root)
+        Store.open(root)
     warnings = _divergence_warnings(caplog)
     assert len(warnings) == 1, f"expected one warning, got {warnings!r}"
     assert "index=2" in warnings[0] and "disk=1" in warnings[0]
@@ -569,7 +569,7 @@ def test_row_whose_filename_escapes_the_root_is_confirmed_not_locked(
     the store root is already a broken row, so it is confirmed on sight
     instead of causing a `.lock` file to be created outside the store."""
     root = tmp_path / "escaping"
-    store = Store(root)
+    store = Store.open(root)
     store.write(content="kept claim about ports", scopes=["t"])
     doomed = store.write(content="deleted claim about ports", scopes=["t"])
     doomed_path = store._find_path_for_id(doomed.id)
@@ -585,7 +585,7 @@ def test_row_whose_filename_escapes_the_root_is_confirmed_not_locked(
     _store._DIVERGENCE_WARNED_ROOTS.discard(resolved)
     caplog.clear()
     with caplog.at_level("WARNING", logger="bettermemory.store"):
-        Store(root)
+        Store.open(root)
 
     assert len(_divergence_warnings(caplog)) == 1
     assert not (tmp_path / "outside.md.lock").exists()
@@ -602,7 +602,7 @@ def test_indexed_ids_mirrors_the_rows_the_store_actually_wrote(
     The optional `ids` filter is what the divergence check's per-id
     recheck uses under the memory's file lock, so it must answer the
     same membership question restricted to the subset."""
-    store = Store(tmp_path)
+    store = Store.open(tmp_path)
     kept = store.write(content="kept claim about ports", scopes=["t"])
     dropped = store.write(content="dropped claim about ports", scopes=["t"])
     assert _index.indexed_ids(store.root) == {kept.id, dropped.id}

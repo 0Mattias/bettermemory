@@ -53,7 +53,11 @@ def cli_context() -> CliContext:
     """
     config = load_config()
     directory = config.resolved_directory()
-    store = Store(directory)
+    # Entry point for every CLI command routed through here: provision
+    # and run the startup checks. `bettermemory doctor` builds its own
+    # Stores with the pure constructor instead, so inspecting a store
+    # cannot rebuild the index it was asked to inspect.
+    store = Store.open(directory)
     return CliContext(config=config, directory=directory, store=store)
 
 

@@ -119,7 +119,7 @@ def test_store_root_has_owner_only_permissions_under_default_umask(
     previous = os.umask(0o022)
     try:
         root = tmp_path / "fresh-store"
-        store = Store(root)
+        store = Store.open(root)
         mode = store.root.stat().st_mode & 0o777
     finally:
         os.umask(previous)
@@ -157,7 +157,7 @@ def test_store_root_mode_is_healed_on_open(
     root.mkdir()
     os.chmod(root, starting_mode)
 
-    Store(root)
+    Store.open(root)
 
     mode = root.stat().st_mode & 0o777
     assert mode == expected, (
@@ -191,7 +191,7 @@ def test_store_root_heal_is_best_effort_when_chmod_is_refused(
 
     monkeypatch.setattr(Path, "chmod", refuse)
 
-    store = Store(root)  # must not raise
+    store = Store.open(root)  # must not raise
 
     assert store.root == root.resolve()
     # The exposure is still there — that is the honest outcome, and it is
@@ -1268,7 +1268,7 @@ def test_frontmatter_broken_in_place_is_silent_at_construction_and_doctors_job(
     store_mod._DIVERGENCE_WARNED_ROOTS.discard(resolved)
     caplog.clear()
     with caplog.at_level("WARNING", logger="bettermemory.store"):
-        Store(root)
+        Store.open(root)
 
     logged = [
         r.getMessage()
@@ -1365,7 +1365,7 @@ def sqlite3_like_error(msg: str) -> Exception:
     return sqlite3.OperationalError(msg)
 
 
-def test_failing_auto_rebuild_attempted_once_not_per_construction(
+def test_failing_auto_rebuild_attempted_once_not_per_open(
     store: Store,
     monkeypatch: pytest.MonkeyPatch,
     fresh_backoff_state: None,
@@ -1381,7 +1381,7 @@ def test_failing_auto_rebuild_attempted_once_not_per_construction(
 
     with caplog.at_level("INFO", logger="bettermemory.store"):
         for _ in range(3):
-            Store(store.root)
+            Store.open(store.root)
 
     assert len(attempts) == 1
     skip_notices = [r for r in caplog.records if "skipping the retry" in r.getMessage()]
@@ -1403,7 +1403,7 @@ def test_failure_marker_suppresses_fresh_process(
     _flag_index_rebuild_pending(store.root)
     attempts = _count_rebuild_attempts(monkeypatch)
 
-    Store(store.root)
+    Store.open(store.root)
     assert len(attempts) == 1
     marker = _index.status(store.root).get("last_rebuild_failure")
     assert isinstance(marker, float)
@@ -1411,7 +1411,7 @@ def test_failure_marker_suppresses_fresh_process(
     # Fresh process: the module-level memo dies with the process.
     monkeypatch.setattr(store_mod, "_REBUILD_FAILURE_MEMO", {})
     monkeypatch.setattr(store_mod, "_REBUILD_SKIP_WARNED", set())
-    Store(store.root)
+    Store.open(store.root)
     assert len(attempts) == 1  # marker suppressed the second attempt
 
 
@@ -1429,7 +1429,7 @@ def test_expired_marker_allows_retry_and_success_clears_backoff(
     _flag_index_rebuild_pending(store.root)
     _set_failure_marker(store.root, str(time.time() - 7200))
 
-    Store(store.root)
+    Store.open(store.root)
 
     st = _index.status(store.root)
     assert st.get("needs_rebuild") is False
@@ -1453,7 +1453,7 @@ def test_garbage_failure_marker_is_no_marker_not_corruption(
     assert "corrupt" not in st
     assert st.get("last_rebuild_failure") is None
 
-    Store(store.root)  # retry not suppressed; real rebuild heals
+    Store.open(store.root)  # retry not suppressed; real rebuild heals
     st_after = _index.status(store.root)
     assert st_after.get("needs_rebuild") is False
 

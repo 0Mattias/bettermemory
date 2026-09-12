@@ -35,7 +35,7 @@ def memory_dir(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def store(memory_dir: Path) -> Store:
-    return Store(memory_dir)
+    return Store.open(memory_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -1052,7 +1052,7 @@ def test_genuine_v3_index_migrates_and_rebuild_restores_search(
     assert [r[0] for r in index.query(memory_dir, "kubernetes")] == [b.id]
 
 
-def test_store_construction_auto_rebuilds_migrated_index(
+def test_store_open_auto_rebuilds_migrated_index(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     """The auto-heal for the migration recall hole: a schema-version
@@ -1064,7 +1064,7 @@ def test_store_construction_auto_rebuilds_migrated_index(
     from bettermemory import store as _store
 
     root = tmp_path / "auto_heal"
-    setup = Store(root)
+    setup = Store.open(root)
     a = setup.write(content="legacy searchable body", scopes=["tools"])
     b = setup.write(content="second legacy entry", scopes=["tools"])
 
@@ -1081,7 +1081,7 @@ def test_store_construction_auto_rebuilds_migrated_index(
 
     caplog.clear()
     with caplog.at_level("INFO", logger="bettermemory.store"):
-        Store(root)
+        Store.open(root)
 
     s = index.status(root)
     assert s["needs_rebuild"] is False
@@ -1167,19 +1167,19 @@ def test_first_touch_via_status_on_empty_db_file_in_populated_store_flags(
     assert s["needs_rebuild"] is True
 
 
-def test_store_construction_auto_rebuilds_after_index_deletion(
+def test_store_open_auto_rebuilds_after_index_deletion(
     store: Store, memory_dir: Path
 ) -> None:
     """End of the deleted-index recovery arc: the first-touch flag
     routes search to `load_all` immediately, and the NEXT Store
     construction auto-rebuilds from canonical disk state and clears it
-    — the same heal `test_store_construction_auto_rebuilds_migrated_index`
+    — the same heal `test_store_open_auto_rebuilds_migrated_index`
     pins for the migration flag."""
     a = store.write(content="alpha legacy landmark", scopes=["tools"])
     index._unlink_index_files(index.index_path(memory_dir))
     b = store.write(content="alpha fresh note", scopes=["tools"])
 
-    Store(memory_dir)
+    Store.open(memory_dir)
 
     s = index.status(memory_dir)
     assert s["needs_rebuild"] is False
@@ -1610,7 +1610,7 @@ def test_aligned_store_construction_emits_no_warning(
 
     # Use a tmp_path that the module-level guard set hasn't seen.
     root = tmp_path / "aligned"
-    setup = Store(root)
+    setup = Store.open(root)
     setup.write(content="alpha", scopes=["tools"])
     setup.write(content="beta", scopes=["tools"])
 
@@ -1621,7 +1621,7 @@ def test_aligned_store_construction_emits_no_warning(
 
     caplog.clear()
     with caplog.at_level("WARNING", logger="bettermemory.store"):
-        Store(root)
+        Store.open(root)
     divergence_warnings = [
         r
         for r in caplog.records
@@ -1633,7 +1633,7 @@ def test_aligned_store_construction_emits_no_warning(
     )
 
 
-def test_diverged_store_construction_emits_warning(
+def test_diverged_store_open_emits_warning(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     """A `.md` file landed on disk via a path other than the Store API
@@ -1647,7 +1647,7 @@ def test_diverged_store_construction_emits_warning(
     # Seed an index that's in sync with one existing memory, then
     # add a second file out-of-band so the index says 1 and disk
     # says 2 — the canonical out-of-sync shape S4 catches.
-    setup = Store(root)
+    setup = Store.open(root)
     setup.write(content="indexed via store", scopes=["tools"])
 
     # Reset the warned-roots set so the next construction is fresh.
@@ -1670,7 +1670,7 @@ def test_diverged_store_construction_emits_warning(
 
     caplog.clear()
     with caplog.at_level("WARNING", logger="bettermemory.store"):
-        Store(root)
+        Store.open(root)
     divergence_warnings = [
         r
         for r in caplog.records
@@ -1701,15 +1701,15 @@ def test_unparseable_only_gap_warns_about_files_not_index(
     from bettermemory import store as _store
 
     root = tmp_path / "junked"
-    setup = Store(root)
+    setup = Store.open(root)
     setup.write(content="indexed via store", scopes=["tools"])
     (root / "junk.md").write_text("no frontmatter at all\n", encoding="utf-8")
     _store._DIVERGENCE_WARNED_ROOTS.discard(root.expanduser().resolve())
 
     caplog.clear()
     with caplog.at_level("WARNING", logger="bettermemory.store"):
-        Store(root)  # warns (about the files)
-        Store(root)  # silent — same one-shot guard
+        Store.open(root)  # warns (about the files)
+        Store.open(root)  # silent — same one-shot guard
     out_of_sync = [
         r
         for r in caplog.records
@@ -1741,13 +1741,13 @@ def test_divergence_warning_fires_only_once_per_root(
 ) -> None:
     """Construct two Stores on the same diverged root. The first
     construction must warn; the second must stay silent — the
-    one-shot guard keeps the log clean for the `Store(root).write(...)`
+    one-shot guard keeps the log clean for the `Store.open(root).write(...)`
     one-liner pattern and the many-Stores-per-root concurrency
     tests."""
     from bettermemory import store as _store
 
     root = tmp_path / "one_shot"
-    setup = Store(root)
+    setup = Store.open(root)
     setup.write(content="indexed via store", scopes=["tools"])
     _store._DIVERGENCE_WARNED_ROOTS.discard(root.expanduser().resolve())
 
@@ -1768,9 +1768,9 @@ def test_divergence_warning_fires_only_once_per_root(
 
     caplog.clear()
     with caplog.at_level("WARNING", logger="bettermemory.store"):
-        Store(root)  # warns
-        Store(root)  # silent
-        Store(root)  # silent
+        Store.open(root)  # warns
+        Store.open(root)  # silent
+        Store.open(root)  # silent
     divergence_warnings = [
         r
         for r in caplog.records
@@ -1795,7 +1795,7 @@ def test_divergence_warning_is_independent_per_root(
     root_a = tmp_path / "root_a"
     root_b = tmp_path / "root_b"
     for root in (root_a, root_b):
-        setup = Store(root)
+        setup = Store.open(root)
         setup.write(content="indexed", scopes=["tools"])
         _store._DIVERGENCE_WARNED_ROOTS.discard(root.expanduser().resolve())
         (root / "2026-01-01-extra.md").write_text(
@@ -1814,8 +1814,8 @@ def test_divergence_warning_is_independent_per_root(
 
     caplog.clear()
     with caplog.at_level("WARNING", logger="bettermemory.store"):
-        Store(root_a)
-        Store(root_b)
+        Store.open(root_a)
+        Store.open(root_b)
     divergence_warnings = [
         r
         for r in caplog.records
@@ -1836,7 +1836,7 @@ def test_corrupt_index_emits_divergence_warning(
     from bettermemory import index, store as _store
 
     root = tmp_path / "corrupt"
-    setup = Store(root)
+    setup = Store.open(root)
     setup.write(content="seed", scopes=["tools"])
 
     # Stomp the on-disk index with garbage so `status()` reports it
@@ -1848,7 +1848,7 @@ def test_corrupt_index_emits_divergence_warning(
 
     caplog.clear()
     with caplog.at_level("WARNING", logger="bettermemory.store"):
-        Store(root)
+        Store.open(root)
     warnings = [
         r
         for r in caplog.records
@@ -2087,7 +2087,7 @@ def test_stale_tokenizer_fingerprint_heals_like_older_schema_version(
     assert s["needs_rebuild"] is True
 
     # Construction auto-rebuild heals it end-to-end.
-    Store(memory_dir)
+    Store.open(memory_dir)
     s_after = index.status(memory_dir)
     assert s_after["needs_rebuild"] is False
     assert s_after["indexed_count"] == 1
@@ -2103,7 +2103,7 @@ def test_stale_tokenizer_fingerprint_heals_like_older_schema_version(
     assert stamped == tokenizer_fingerprint()
 
 
-def test_v4_index_with_stale_spelled_stream_heals_on_construction(
+def test_v4_index_with_stale_spelled_stream_heals_on_open(
     store: Store, memory_dir: Path
 ) -> None:
     """End-to-end v4→v5 heal against the GENUINE 3.12.0 on-disk state:
@@ -2137,7 +2137,7 @@ def test_v4_index_with_stale_spelled_stream_heals_on_construction(
     assert s["schema_version"] == index.SCHEMA_VERSION
     assert s["needs_rebuild"] is True
 
-    Store(memory_dir)  # first construction after the upgrade
+    Store.open(memory_dir)  # first construction after the upgrade
 
     s_after = index.status(memory_dir)
     assert s_after["needs_rebuild"] is False
@@ -2613,7 +2613,7 @@ def test_genuine_v10_index_migrates_and_repopulates_the_actor_columns(
     # purpose: the claim being tested is that the bump costs them
     # nothing, and a test that reindexes by hand would pass just as
     # well if it did.
-    Store(memory_dir)
+    Store.open(memory_dir)
 
     assert index.status(memory_dir)["schema_version"] == index.SCHEMA_VERSION
     assert not index.status(memory_dir)["needs_rebuild"]

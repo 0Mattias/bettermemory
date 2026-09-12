@@ -5995,7 +5995,12 @@ def test_memory_provenance_points_unclassified_rows_at_reindex(
     from bettermemory.store import Store
 
     root = tmp_path / "store"
-    store = Store(root)
+    # `.ensure()`: this test plants a `.md` file into the store root BY
+    # HAND (that is the unaccounted-provenance condition it needs), so
+    # the directory must exist before the copy. Since 7.17.0 construction
+    # is pure and only the mutators provision — and this test
+    # deliberately never writes through the API.
+    store = Store(root).ensure()
     scratch = tmp_path / "scratch"
     planted = Store(scratch).write(content="placed by hand", scopes=["tools"])
     source = next(p for p in scratch.glob("*.md"))

@@ -107,7 +107,12 @@ def memory_dir(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def store(memory_dir: Path) -> Store:
-    return Store(memory_dir)
+    # `Store.open`, not `Store(...)`: since 7.17.0 construction is pure and
+    # provisioning is `ensure()`, which the mutators call. A test that only
+    # WRITES would be fine either way, but one that stats `tombstone_dir` or
+    # reads modes before writing needs the directories to exist — and a
+    # shared fixture is the right place to say so once.
+    return Store.open(memory_dir)
 
 
 @pytest.fixture

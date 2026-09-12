@@ -50,7 +50,7 @@ def run(args: argparse.Namespace) -> None:
 
     with tempfile.TemporaryDirectory(prefix="bettermemory-try-") as tmp:
         root = Path(tmp)
-        store = Store(root / "store")
+        store = Store.open(root / "store")
 
         # A file the memory will cite. Multi-segment with an extension so the
         # path-drift extractor treats it as a real path (single-segment,

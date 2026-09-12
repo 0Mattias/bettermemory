@@ -84,6 +84,12 @@ log = logging.getLogger("bettermemory")
 def build_server(
     *,
     config: Config | None = None,
+    # NOT `MemoryStore` yet, deliberately. Typing this parameter to the
+    # protocol cascades into seven files and stops at a real seam
+    # violation: `_handlers.py` reaches `store._load_path` on the hot
+    # search path, which no protocol can expose. Promoting that to a
+    # public `load_many` is the next step's work, not this one's, and a
+    # `cast` here would hide exactly the incompatibility worth seeing.
     store: Store | None = None,
     state: SessionState | SessionSource | None = None,
     recorder: Recorder | None = None,
@@ -115,7 +121,10 @@ def build_server(
     state's session_id, so this is identical to the old behavior.
     """
     config = config or load_config()
-    store = store or Store(config.resolved_directory())
+    # `Store.open`: this is a process entry point, so it provisions and
+    # runs the startup checks (flagged-index auto-heal, S4 divergence).
+    # A diagnostic constructing a Store must NOT — see `Store.open`.
+    store = store or Store.open(config.resolved_directory())
     sessions: SessionSource = state if state is not None else get_default_registry()
     if recorder is None:
         # The recorder needs a stable session_id at construction time;
