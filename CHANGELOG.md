@@ -21,7 +21,8 @@ spells out exactly what's stable.
   shipped entry point** — `build_server` and `cli_context` both open
   through `Store.open()` and `memory_health`'s use is read-only — so no
   user could hit it; the hole was in the library contract.
-- **Provisioning no longer leaves a directory world-readable.**
+- `d3ffe50` **owner-only provisioning, including the ancestors we
+  create** — provisioning no longer leaves a directory world-readable.
   `Path.mkdir(parents=True, mode=...)` applies the mode to the LEAF only;
   every intermediate directory it creates is made at the caller's umask.
   Two ways in, from opposite directions: `Store.ensure` has always passed
@@ -34,6 +35,13 @@ spells out exactly what's stable.
   first ~43 chars of its summary. Both paths now go through one shared
   definition, `_fsutil.ensure_owner_only_dir`, which tightens every
   ancestor it creates and deliberately leaves alone any it did not.
+- `d90e994` fix(tests): pin utf-8 when a test reads source files. A bare
+  `Path.read_text()` uses the locale codec — cp1252 on the Windows
+  runner, which has no mapping for bytes in six files under `src/` — so
+  the ratchets added above turned the windows-latest leg red. Reproducible
+  locally by reading the same files with `encoding="cp1252"`; `mypy
+  --platform win32` cannot see it, because encoding is runtime behaviour
+  rather than platform-conditional stubs.
 - Ten further sites across `index.py`, `migrate.py`, `doctor.py`,
   `cli/session_start_cmd.py` and `store.py` still described
   `Store.__post_init__` as mkdir'ing, chmod'ing or auto-rebuilding. Each
