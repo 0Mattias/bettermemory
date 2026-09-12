@@ -7,6 +7,37 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 7.17.2 - 2026-09-12
+
+### Fixed
+
+- `760c217` **the search prefilter honours the quarantine sidecar
+  too.** `quarantine.py` opens by stating the contract: a pulled file
+  the admission chain refused "never reaches the index, a search hit,
+  a listing, `memory_show`, `memory_health` or the recall hook." Three
+  paths turn ids into records and only two honoured it — the walk
+  behind `load_all`, and `_indexed_path_for_id` behind `load_one`,
+  which carries a comment naming this exact hazard ("a quarantined
+  file can still have a row until the next rebuild"). The third,
+  `_handlers.load_search_candidates`, resolves its candidates in one
+  `filenames_for_ids` batch and reads each with `store._load_path`,
+  reaching neither guard: a quarantined memory was absent from
+  `load_all`, raised `MemoryNotFoundError` from `load_one`, and was
+  served **with its body** through `memory_search`. A credential
+  refusal is the commonest reason the gate fires, so that is the
+  payload it leaked. Latent below the prefilter's 500-memory
+  threshold, which is to say latent on every store too small to want
+  an index. The batch lookup now drops quarantined names using the
+  same predicate as the other two sites, so the rule still fails open
+  on an unreadable sidecar rather than taking every read down with it.
+  Saturation is still pinned from the unfiltered index rows, so the
+  skip cannot mask a saturated cap. `tests/test_quarantine.py` had
+  promised "every disk walk the store performs" and covered two of the
+  three; the new guard pins the third and asserts the fast path was
+  actually taken, because every fallback in `load_search_candidates`
+  routes to `load_all` — which does honour the sidecar — so a test
+  that lets the fast path slip away passes while proving nothing.
+
 ## 7.17.1 - 2026-09-12
 
 ### Fixed
