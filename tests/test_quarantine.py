@@ -6,7 +6,17 @@ It stays on disk and under git; the sidecar is what keeps it out of the
 active set. These tests drive the sidecar directly and check that every
 disk walk the store performs honours it: the Store-bound iteration, the
 Store-free counters doctor and the startup warning read, the id lookups,
-and the index rebuild that feeds on `iter_active`.
+the search prefilter's BATCH id lookup, and the index rebuild that feeds
+on `iter_active`.
+
+The prefilter is the third id -> record path and it is the one this
+docstring used to promise without covering: `load_all` and `load_one`
+each consult the sidecar, and `_handlers.load_search_candidates` --
+which resolves ids to filenames in one batch and reads them with
+`store._load_path` -- did not, so a refused file reached a search hit
+carrying its body. `test_the_search_prefilter_is_the_third_lookup_path_
+and_refuses_too` is the guard; it pins the fast path as TAKEN so the
+`load_all` safety net cannot pass it vacuously.
 """
 
 from __future__ import annotations
@@ -28,6 +38,7 @@ from bettermemory.quarantine import (
     save_quarantine,
     sidecar_unreadable,
 )
+from bettermemory._handlers import load_search_candidates
 from bettermemory.store import MemoryNotFoundError, Store
 
 
@@ -193,6 +204,48 @@ def test_load_one_refuses_a_quarantined_id_through_both_lookup_paths(
         store.load_one(held.id)
     with pytest.raises(MemoryNotFoundError):
         store.mark_verified(held.id)
+
+
+def test_the_search_prefilter_is_the_third_lookup_path_and_refuses_too(
+    memory_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`load_search_candidates` resolves its candidate ids to filenames
+    in ONE `filenames_for_ids` call and reads each with `_load_path`, so
+    it reaches neither of the two guards the other paths use. The row
+    outlives the refusal until the next rebuild, so the batch lookup
+    hands back the name and the body is served -- through the tool a
+    caller is most likely to ask with.
+
+    The `prefiltered` assertion is the point: every fallback in
+    `load_search_candidates` routes to `load_all`, which DOES honour the
+    sidecar, so a test that lets the fast path slip away still passes
+    while proving nothing."""
+    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "2")
+    store = Store.open(memory_dir)
+    kept = [
+        store.write(content=f"deploy token rotation note {i}", scopes=["tools"])
+        for i in range(4)
+    ]
+    held = store.write(content="deploy token rotation note SECRET", scopes=["tools"])
+    held_name = _filename_of(store, held.id)
+    # The index still resolves the id to the file -- same premise as the
+    # `load_one` test above, reached through the BATCH lookup this path
+    # uses instead.
+    assert index.filenames_for_ids(memory_dir, [held.id]) == {held.id: held_name}
+
+    save_quarantine(memory_dir, {held_name: _entry(held_name)})
+
+    pool, _saturated, prefiltered = load_search_candidates(
+        store, "deploy token rotation"
+    )
+    # Not vacuous: the fast path really ran, and it really matched.
+    assert prefiltered is True
+    assert {m.id for m in pool} == {m.id for m in kept}
+    assert held.id not in {m.id for m in pool}
+    assert not any("SECRET" in m.body for m in pool)
+    # The file itself is untouched on disk.
+    assert (memory_dir / held_name).exists()
 
 
 def test_rebuild_drops_a_quarantined_row_and_release_restores_it(

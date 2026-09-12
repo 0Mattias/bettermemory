@@ -50,6 +50,7 @@ from .handlers._shared import (
     _validate_write_payload,
 )
 from .origin import capture as capture_origin
+from .quarantine import quarantined_names
 from .session import SessionSource
 from .store import PARSE_SKIP_EXCEPTIONS, Store
 
@@ -280,6 +281,22 @@ def load_search_candidates(
         candidate_ids = {cid for cid, _ in candidate_pairs}
         ids = list(candidate_ids)
         filenames = _index.filenames_for_ids(store.root, ids)
+        # A quarantined file keeps its index row until the next
+        # rebuild (`sync pull --no-reindex`), so the lookup above
+        # hands back names the active walk refuses to yield. Both
+        # other id -> record paths already drop them — the walk
+        # behind `load_all`, `_indexed_path_for_id` behind
+        # `load_one` — and this third one did not, so a file the
+        # admission chain REFUSED reached a search hit with its
+        # body, which is precisely what `quarantine`'s contract
+        # forbids. Same predicate as the other two, so the rule
+        # keeps failing open on an unreadable sidecar rather than
+        # taking every read down with it.
+        excluded = quarantined_names(store.root)
+        if excluded:
+            filenames = {
+                cid: name for cid, name in filenames.items() if name not in excluded
+            }
     except (
         OSError,
         ValueError,
