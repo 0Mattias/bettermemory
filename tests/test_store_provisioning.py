@@ -166,8 +166,16 @@ def test_absent_root_reads_empty_but_unreadable_root_still_raises(
     assert absent.load_all() == [], "an absent store is an empty store"
     assert list(absent.iter_active()) == []
 
-    if os.name == "nt" or os.geteuid() == 0:
-        pytest.skip("mode bits do not deny the owner here")
+    # `sys.platform`, not `os.name`: mypy narrows on the former, so the
+    # `os.geteuid` call below is unreachable on Windows as far as the type
+    # checker is concerned. `os.name == "nt"` short-circuits at RUNTIME but
+    # mypy still checks the whole expression, and `os.geteuid` does not exist
+    # in the Windows stubs — which is why this only ever failed on the
+    # windows-latest leg, where the type check runs against those stubs.
+    if sys.platform == "win32":
+        pytest.skip("POSIX mode bits do not deny the owner on Windows")
+    if os.geteuid() == 0:
+        pytest.skip("root is not denied by mode bits")
 
     unreadable = Store(tmp_path / "unreadable")
     unreadable.ensure()
