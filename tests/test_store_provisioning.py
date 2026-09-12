@@ -380,7 +380,8 @@ def test_no_source_prose_claims_the_constructor_still_provisions() -> None:
     src = Path(__file__).resolve().parents[1] / "src" / "bettermemory"
     offenders: list[str] = []
     for path in sorted(src.rglob("*.py")):
-        for lineno, line in enumerate(path.read_text().splitlines(), 1):
+        text = path.read_text(encoding="utf-8")
+        for lineno, line in enumerate(text.splitlines(), 1):
             if "Store.__post_init__" not in line:
                 continue
             if any(known in line for known in _HISTORICAL_POST_INIT_MENTIONS):
@@ -404,7 +405,7 @@ def test_the_allowlist_has_no_dead_entries() -> None:
     the other direction — it suggests a mention survives when it does not,
     and it quietly widens the ratchet for whatever lands on that text next."""
     src = Path(__file__).resolve().parents[1] / "src" / "bettermemory"
-    blob = "\n".join(p.read_text() for p in sorted(src.rglob("*.py")))
+    blob = "\n".join(p.read_text(encoding="utf-8") for p in sorted(src.rglob("*.py")))
     dead = [known for known in _HISTORICAL_POST_INIT_MENTIONS if known not in blob]
     assert not dead, f"allowlist entries match nothing in src/: {dead}"
 

@@ -154,7 +154,7 @@ async def test_the_destination_actually_carries_it(tmp_path: Path) -> None:
         store=Store(tmp_path),
         state=SessionState(),
     )
-    doc = _API_MD.read_text()
+    doc = _API_MD.read_text(encoding="utf-8")
 
     overview = await _mcp_call(server, "memory_scope_overview", {})
     written = await _mcp_call(
