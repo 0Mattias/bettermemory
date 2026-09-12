@@ -33,11 +33,12 @@ DESC_MEMORY_SCOPE_OVERVIEW = (
     "ids / summaries. Call once at the start of a conversation; "
     "if `total` is 0, skip memory_search for the rest of the "
     "session unless explicitly asked.\n\n"
-    "Returns `{current_repo, current_cwd, auto_scope, scopes: "
-    "{scope: count}, total, disabled_scopes, curation_pending, "
-    "curation_pending_new_since_last_session, curation_unmeasured, "
-    "recently_removed_in_worktree, proposals_pending, "
-    "pending_writes}`. "
+    # The return-shape enumeration that used to open this paragraph is
+    # gone: the response hands every key back at the moment the caller
+    # needs it, and `docs/api.md` carries the full list for the reader
+    # planning a call without one. What stays is the prose that decides
+    # something — which counts are actionable, and how to read a zero.
+    # See tests/test_desc_residency_rule.py.
     "`proposals_pending` is the count of write-reflex proposals the "
     "Stop hook has captured awaiting review via `memory_proposals` "
     "(0 unless the opt-in [proposals] auto_propose is on). "
@@ -45,10 +46,7 @@ DESC_MEMORY_SCOPE_OVERVIEW = (
     "memory_write_confirm/cancel — a dangling confirmation "
     "(silent 1h expiry). "
     "`curation_pending` is an integer-count rollup the model "
-    "should branch on:\n"
-    "  {stale, never_verified, drifted, cold, dead, "
-    "silent_misses, unique_silent_miss_memories, "
-    "cold_endorsement_memories, conflicts, unaccounted}\n"
+    "should branch on; the response names its legs. "
     # Deliberately unqualified: the count is now exactly "pairs
     # memory_conflicts can still rule on" (see the handler's
     # `split_judgeable` call), so this one line stayed true when the
@@ -70,18 +68,11 @@ DESC_MEMORY_SCOPE_OVERVIEW = (
     "Non-zero `dead` or `drifted` is a cue to suggest a curation "
     "pass when there is time; non-zero `silent_misses` / "
     "`cold_endorsement_memories` is actionable audit backlog. "
-    "`silent_misses` counts events; `unique_silent_miss_memories` "
-    "the distinct top-hit memories behind them. "
-    "`cold_endorsement_memories` counts distinct memories (NOT "
-    "turns) retrieved >= N times with zero explicit applies — "
+    "A memory retrieved many times with zero explicit applies is "
     "over-surfaced or stale.\n\n"
-    "`recently_removed_in_worktree` is the integer count of "
-    "tombstones removed in the trailing 7 days; under "
-    "`auto_scope=True` it's filtered to this worktree (tombstones "
-    "with no recorded worktree are excluded), under `auto_scope=False` "
-    "it covers every tombstone in the window. Non-zero is a 'where "
-    "did X go?' signal — material was deliberately trimmed here "
-    "recently; don't blindly re-suggest it.\n\n"
+    "Non-zero `recently_removed_in_worktree` is a 'where did X go?' "
+    "signal — material was deliberately trimmed here recently; "
+    "don't blindly re-suggest it.\n\n"
     "`curation_pending_new_since_last_session` is the same shape, "
     "filtered to events emitted and memories *created* since the "
     "previous session ended (not memories that aged into a bucket; "

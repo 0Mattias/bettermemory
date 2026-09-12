@@ -423,7 +423,9 @@ def test_handler_descs_enumerate_episode_tier_fields() -> None:
     than silently regressing episode-tier discoverability:
 
     - `max_takeaway_bytes` (t16 cap) on DESC_EPISODE_WRITE
-    - `pruned_sessions` return field on DESC_EPISODE_WRITE
+    - the 30-day TTL prune on DESC_EPISODE_WRITE, and `pruned_sessions`
+      on docs/api.md (moved there by 7.16.0's residency rule — see the
+      comment at that assertion)
     - "most-recent" (t21 cap direction) on DESC_EPISODE_SEARCH
     - `worktree` (t22 strict equality) on DESC_EPISODE_HANDOFF
     - `disabled_scopes` (t11 cascade) on DESC_EPISODE_HANDOFF
@@ -440,10 +442,28 @@ def test_handler_descs_enumerate_episode_tier_fields() -> None:
         "silently corrupt the YAML frontmatter — the model needs the "
         "limit advertised so it can size its summary."
     )
-    assert "pruned_sessions" in DESC_EPISODE_WRITE, (
-        "DESC_EPISODE_WRITE no longer names `pruned_sessions`; the "
-        "handler returns it on every write but the model can't "
-        "discover the field from the registered description."
+    # `pruned_sessions` was pinned HERE until 7.16.0, on the reasoning
+    # that the model could not otherwise discover a field the handler
+    # returns on every write. The residency rule retired that reasoning
+    # for this field specifically: the handler returns it on every write,
+    # so the one caller who needs it is holding it, and an envelope
+    # restated in a resident description is billed on every turn
+    # including the ~90% that never touch the tier. The pin is not
+    # dropped, it MOVED to the surface that now carries the enumeration —
+    # deleting a pin because its subject moved is how the 7.15.1 dangling
+    # citations happened. What stays resident on the DESC is what decides
+    # a call: the TTL that makes pruning happen at all.
+    assert "30-day TTL" in DESC_EPISODE_WRITE, (
+        "DESC_EPISODE_WRITE no longer tells the model that writing "
+        "prunes past-TTL session directories. That is the decision-"
+        "bearing half of `pruned_sessions`: a read-only loop that never "
+        "writes never collects."
+    )
+    api_md = (Path(__file__).resolve().parents[1] / "docs" / "api.md").read_text()
+    assert "`pruned_sessions`" in api_md or "pruned_sessions" in api_md, (
+        "docs/api.md no longer names `pruned_sessions`, and "
+        "DESC_EPISODE_WRITE stopped enumerating the return shape in "
+        "7.16.0 — the field is now discoverable nowhere but the response."
     )
     assert "most-recent" in DESC_EPISODE_SEARCH, (
         "DESC_EPISODE_SEARCH no longer documents the most-recent-N "

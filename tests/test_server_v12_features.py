@@ -1700,29 +1700,39 @@ async def test_scope_overview_dead_count_rides_the_telemetry_gate(
 # clients.
 
 
-def test_desc_memory_scope_overview_enumerates_curation_pending_keys() -> None:
-    """`DESC_MEMORY_SCOPE_OVERVIEW` prose lists the seven
-    `curation_pending` keys in a brace-delimited block. Extract them via
-    regex and assert set equality against the runtime wire shape (which
-    is pinned at `test_scope_overview_curation_pending_zero_on_empty`)."""
+def test_published_curation_pending_enumeration_matches_the_wire_shape() -> None:
+    """The published `curation_pending` leg list agrees with the runtime
+    wire shape (pinned at `test_scope_overview_curation_pending_zero_on_empty`).
+
+    This guard used to read the enumeration out of
+    `DESC_MEMORY_SCOPE_OVERVIEW`. 7.16.0's residency rule removed it from
+    there — a resident description pays for what decides a CALL, and an
+    exhaustive leg list is the response envelope restated, billed on every
+    turn to say what the one call that reads it hands back anyway. The
+    decision-bearing legs are still named in that description by name; the
+    SET is not.
+
+    The invariant is untouched and worth keeping, so it moved to where the
+    content now lives rather than being deleted with the prose — the same
+    call 7.15.1 made about citations. `docs/api.md` and the plugin skill
+    body are now the only published enumerations, both free of the
+    per-turn budget, and both were WRONG when this was rewritten: api.md
+    omitted `curation_unmeasured` and SKILL.md omitted `unaccounted`. They
+    had been the silent half of a guard that only ever checked the
+    description."""
     import re
 
-    from bettermemory.handlers.scope_overview import DESC_MEMORY_SCOPE_OVERVIEW
-
-    # The prose lays out the rollup as:
-    #     "{stale, never_verified, drifted, cold, dead, "
-    #     "silent_misses, unique_silent_miss_memories, "
-    #     "cold_endorsement_memories}"
-    # The literal C-style string concatenation in the source becomes one
-    # contiguous "{...}" at runtime — the regex matches that block.
-    match = re.search(r"\{([a-z_,\s]+)\}", DESC_MEMORY_SCOPE_OVERVIEW)
-    assert match is not None, (
-        "DESC_MEMORY_SCOPE_OVERVIEW no longer contains a brace-delimited "
-        "list of curation_pending bucket names. The prose lost its "
-        "self-documenting structure; restore the `{name, name, ...}` "
-        "block or update this extraction."
-    )
-    extracted = {name.strip() for name in match.group(1).split(",")}
+    repo_root = Path(__file__).resolve().parents[1]
+    published = {
+        "docs/api.md": (
+            repo_root / "docs" / "api.md",
+            r"`\{current_repo.*?\}`",
+        ),
+        "plugin/skills/bettermemory/SKILL.md": (
+            repo_root / "plugin" / "skills" / "bettermemory" / "SKILL.md",
+            r"`curation_pending` rollup \(`\{([a-z_,\s]+)\}`",
+        ),
+    }
 
     expected = {
         "stale",
@@ -1736,13 +1746,31 @@ def test_desc_memory_scope_overview_enumerates_curation_pending_keys() -> None:
         "conflicts",
         "unaccounted",
     }
+
+    # api.md states the rollup across prose rather than as one brace block,
+    # so it is checked by membership: every leg must be named there.
+    api_text = published["docs/api.md"][0].read_text()
+    api_missing = sorted(leg for leg in expected if f"`{leg}`" not in api_text)
+    assert not api_missing, (
+        "docs/api.md no longer names every curation_pending leg: "
+        f"{api_missing}. The description stopped enumerating them in "
+        "7.16.0, so this file is one of only two surfaces that still can."
+    )
+
+    skill_path, skill_pattern = published["plugin/skills/bettermemory/SKILL.md"]
+    match = re.search(skill_pattern, skill_path.read_text())
+    assert match is not None, (
+        "the plugin skill body no longer carries a brace-delimited "
+        "curation_pending rollup. Restore the `{name, name, ...}` block or "
+        "update this extraction — it is the session-start surface a plugin "
+        "install actually reads."
+    )
+    extracted = {name.strip() for name in match.group(1).split(",")}
     assert extracted == expected, (
-        "DESC_MEMORY_SCOPE_OVERVIEW's curation_pending key list drifted "
-        f"from the runtime wire shape. Only in prose: "
-        f"{sorted(extracted - expected)}; only in runtime: "
-        f"{sorted(expected - extracted)}. Sync the docstring with the "
-        "dict returned by `curation_counts` (and the test_server_v12 pin "
-        "above)."
+        "the plugin skill's curation_pending list drifted from the runtime "
+        f"wire shape. Only in the skill: {sorted(extracted - expected)}; "
+        f"only in runtime: {sorted(expected - extracted)}. Sync it with the "
+        "dict returned by `curation_counts`."
     )
 
 

@@ -37,7 +37,7 @@ Skip it for generic factual questions, self-contained technical questions, and f
 
 ### Session-start hint
 
-One call to `memory_scope_overview` returns per-scope counts plus a `curation_pending` rollup (`{stale, never_verified, drifted, cold, dead, silent_misses, unique_silent_miss_memories, cold_endorsement_memories, conflicts}`: integer counts only). If `total=0`, skip `memory_search` for the rest of the session unless asked. Non-zero `dead`, `drifted`, or `conflicts` is the cue to suggest a curation pass when the conversation has time (`conflicts` = memory-vs-memory contradiction pairs awaiting a `memory_conflicts` verdict — a full-surface tool, so on a lean install the pass runs through `bettermemory health` and the CLI instead). Use this once per conversation; it's a yes/no signal, not something to poll.
+One call to `memory_scope_overview` returns per-scope counts plus a `curation_pending` rollup (`{stale, never_verified, drifted, cold, dead, silent_misses, unique_silent_miss_memories, cold_endorsement_memories, conflicts, unaccounted}`: integer counts only). If `total=0`, skip `memory_search` for the rest of the session unless asked. Non-zero `dead`, `drifted`, or `conflicts` is the cue to suggest a curation pass when the conversation has time (`conflicts` = memory-vs-memory contradiction pairs awaiting a `memory_conflicts` verdict — a full-surface tool, so on a lean install the pass runs through `bettermemory health` and the CLI instead). Use this once per conversation; it's a yes/no signal, not something to poll.
 
 ### Auto-scoping
 

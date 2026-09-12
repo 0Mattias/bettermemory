@@ -6348,19 +6348,24 @@ async def _lean_descriptions(tmp_path: Path) -> dict[str, str]:
 # The budget, as named constants: the failure text, the pressure warning and
 # the recorded measurement all read the same numbers, so none can drift from
 # what the assert enforces.
-_DESC_BUDGET_CEILING = 26_500
+_DESC_BUDGET_CEILING = 25_300
 # Soft line. Crossing it warns instead of failing, so the pressure is visible
 # to whoever caused it rather than only to whoever trips the ratchet later.
 _DESC_BUDGET_PRESSURE = _DESC_BUDGET_CEILING - 100
 # Per-tool `_lean_descriptions` lengths, re-measured live in the commit that
-# last moved one. DIAGNOSTIC ONLY: nothing asserts these, so an entry that goes
-# stale degrades the failure message and never the verdict, and a tool absent
-# from here is reported as new rather than raising. The recorded total is a
+# last moved one. ASSERTED, as of the 7.16.0 reclamation: this table's sum
+# must equal the live total, so a description edit that does not move its row
+# fails `test_desc_baseline_cannot_rot` by name. It was diagnostic-only for
+# four releases and the rule "re-measure in the same commit" rotted twice in
+# that window — four rows once, three rows again by 7.15.1 (+187 across
+# memory_search / memory_list / memory_scope_overview) — because nothing
+# asked. A row that is merely recorded is a row that drifts; the assertion is
+# what turns this table into the map from "the total moved" to "the thing you
+# just typed" that `_desc_budget_breakdown` exists to draw. A tool absent from
+# here is still reported as new rather than raising, so ADDING a tool fails
+# loudly with a name rather than a diff of integers. The recorded total is a
 # `sum()` over this table rather than a second literal, so the two cannot
-# disagree. Re-measure in the same commit as any description edit — deferring
-# it to the next ceiling recalibration is what let all four moved rows rot,
-# and a stale row is exactly the map from "the total is over" to "the thing
-# you just typed" that `_desc_budget_breakdown` exists to draw.
+# disagree.
 #
 # Re-measured 2026-07-30 (table total 26,238 -> 26,334; the live total moved
 # 26,336 -> 26,334 here). All FOUR rows below were stale, and only 2 chars of
@@ -6474,7 +6479,7 @@ _DESC_BASELINE = {
     # those two are resident; the rationale sits in docs/api.md and the
     # skill body, which cost nothing per turn. Deliberately NOT mirrored
     # into episode_write's DESC, so the policy is paid for once.
-    "episode_promote": 1700,
+    "episode_promote": 1539,
     # Re-measured 2026-07-30: 3071 -> 2064 after the proportionality trim
     # (18 recorded calls across 544 sessions against ~3.2 KB billed every
     # turn). Rationale moved to docs/api.md; every pinned cue kept.
@@ -6489,8 +6494,8 @@ _DESC_BASELINE = {
     # fixture that asserts it is in tests/test_episode_search_scan_and_fetch.py).
     # NOT the plan's pre-measurement "~28 KB -> ~1 KB" estimate, which
     # this comment carried until the fixture existed to contradict it.
-    "episode_search": 2323,
-    "episode_write": 2350,
+    "episode_search": 2015,
+    "episode_write": 1915,
     # Re-measured 2026-07-31: 822 -> 798 (-24), the clause " through the MCP
     # channel" removed as false. The shipped Stop hook dispatches the CLI
     # (`plugin/hooks/hooks.json` runs `uvx bettermemory audit-turn --quiet`),
@@ -6498,7 +6503,7 @@ _DESC_BASELINE = {
     # tool's registration is unchanged and deliberately so: no MCP dispatch
     # in one maintainer's event log is n=1, not evidence about other clients.
     "memory_audit_turn": 829,
-    "memory_list": 454,
+    "memory_list": 515,
     "memory_record_use": 1556,
     "memory_remove": 463,
     "memory_scope_disable": 231,
@@ -6508,8 +6513,8 @@ _DESC_BASELINE = {
     # without this table following — the total stayed under the ceiling,
     # so nothing asked for a re-measure — and their drift is what spent
     # the slack the write-time supersession bullet then had to earn back.
-    "memory_scope_overview": 2819,
-    "memory_search": 3444,
+    "memory_scope_overview": 2106,
+    "memory_search": 3526,
     "memory_show": 851,
     # Re-measured 2026-08-04: 2033 -> 1562 (-471). See the reclamation note
     # above — DESC_MEMORY_LINKS_TAIL collapsed to a type index (-658), the
@@ -6661,10 +6666,22 @@ async def test_default_on_descriptions_fit_budget(tmp_path: Path) -> None:
     #             override, added to DESC_MEMORY_WRITE symmetrically with the
     #             existing transient pair) -> 27,500 -> 26,000 (the
     #             footprint phase ratcheted the cuts in, rule 3) ->
-    #             `_DESC_BUDGET_CEILING` (2026-09-05, rule 2: the total
+    #             26,500 (2026-09-05, rule 2: the total
     #             did not move in the commit, the baseline was re-measured
     #             in it, and 26,500 is the next round number; the 26,000
-    #             ceiling had 15 characters of slack at 25,985).
+    #             ceiling had 15 characters of slack at 25,985) ->
+    #             `_DESC_BUDGET_CEILING` (7.16.0, rule 3: the measured
+    #             total DID move — 26,485 -> 24,824, a 1,661-char
+    #             reclamation of return-shape prose the response hands
+    #             back and docs/api.md already carries; the baseline is
+    #             re-measured in the same commit, and the cut spans are
+    #             named where they went by
+    #             `test_the_destination_actually_carries_it`, which reads
+    #             the LIVE response rather than a constant. Slack 476,
+    #             deliberately the same width as the 452 and 465 the last
+    #             two recalibrations held: the ratchet tightens the budget
+    #             without also tightening the posture toward the next
+    #             legitimate field-pin.)
     # Slack held deliberately constant across the last two recalibrations —
     # 452 chars at 27,500, 465 here (the same pre-follow-up snapshot as the
     # 25,535 above; 227 against the 25,773 that actually landed, and 110
@@ -6691,6 +6708,32 @@ async def test_default_on_descriptions_fit_budget(tmp_path: Path) -> None:
             f"baseline:\n" + _desc_budget_breakdown(descs),
             stacklevel=2,
         )
+
+
+async def test_desc_baseline_cannot_rot(tmp_path: Path) -> None:
+    """`_DESC_BASELINE` must equal the live surface, row for row.
+
+    The table has always carried the rule "re-measure in the same commit as
+    any description edit", and for four releases nothing checked it. It
+    rotted twice in that window. Both times the drift was found later, by
+    someone doing unrelated work, and attributing it took a bisect — the
+    2026-07-30 note above records one such attribution across two commits.
+
+    The cost of this assertion is deliberate and is the rule as already
+    written: an edit to any DESC_* string now fails here until its row moves
+    with it. That is a better failure than the alternative, which is a
+    budget breakdown quietly reporting a delta against a number nobody has
+    checked since the release before last."""
+    descs = await _lean_descriptions(tmp_path)
+    live = sum(len(d) for d in descs.values())
+    recorded = sum(_DESC_BASELINE.values())
+    assert recorded == live, (
+        f"`_DESC_BASELINE` sums to {recorded}, the live lean surface to "
+        f"{live} ({live - recorded:+d}). Re-measure the rows that moved in "
+        f"THIS commit — the breakdown below names them, and a row reported "
+        f"as '(not in the baseline)' is a tool this table has never seen:\n"
+        + _desc_budget_breakdown(descs)
+    )
 
 
 async def test_policy_lives_once_not_triplicated_in_descriptions(

@@ -240,10 +240,24 @@ class Footprint(NamedTuple):
 # drift (5,543 recorded against 5,602 live before this commit). Both
 # repaired here, in the commit that made them visible, per the rule at
 # the top of this file.
+# Re-measured 7.16.0 for the residency reclamation: descriptions
+# 25,976 -> 24,824 (-1,152) and input_schemas 5,654 -> 6,031 (+377).
+# The two numbers have different provenance and are deliberately not
+# reported as one movement. The -1,152 is this commit: return-shape
+# enumerations and per-field readback collapsed out of four descriptions
+# on the rule that a resident description pays for what decides a CALL,
+# never for what the RESPONSE hands back (tests/test_desc_residency_rule.py).
+# It is SMALLER than the 1,661 that same commit removed from the live
+# lean surface, because this row was itself 509 chars stale — the rows
+# behind that are named in `_DESC_BASELINE`, which stops being a
+# diagnostic in the same commit precisely so this cannot recur. The +377
+# is NOT this commit at all: no schema was touched here, and the input
+# schemas had drifted that far unrecorded since 7.0.0. Repaired in the
+# commit that made it visible, per the rule at the top of this file.
 _FOOTPRINT_BASELINE = Footprint(
     instructions=1_608,
-    descriptions=25_976,
-    input_schemas=5_654,
+    descriptions=24_824,
+    input_schemas=6_031,
     output_schemas=1_077,
     skill_frontmatter=759,
     tool_count=18,

@@ -7,6 +7,60 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 7.16.0 - 2026-09-12
+
+### Changed
+
+- feat(descriptions): a resident description pays for what decides a
+  call. The lean default-on tool surface is billed in context on every
+  turn, and it had reached 26,485 characters against a 26,500 ceiling —
+  fifteen characters of slack, for the second time in six days. A
+  maximal-substring sweep against `docs/api.md` found 1,825 characters
+  carried verbatim, most of it one shape: a `Returns {...}` key list
+  restating the envelope the caller is handed anyway, at the exact
+  moment it is handed over. Four descriptions
+  (`memory_scope_overview`, `episode_write`, `episode_search`,
+  `episode_promote`) lose their return-shape enumerations and their
+  per-field readback; the prose that decides something — what to pass,
+  which end of an over-cap window survives, how to read a zero — stays.
+  The surface drops to 24,824 and the ceiling ratchets 26,500 -> 25,300,
+  holding 476 characters of slack, deliberately the same width the last
+  two recalibrations held so the ratchet tightens the budget without
+  also tightening the posture toward the next legitimate field-pin.
+
+### Added
+
+- `tests/test_desc_residency_rule.py` — the half of the ratchet that was
+  missing. The budget test's own docstring names the gap: the ceiling
+  "only ever measures size, never whether the surface still teaches what
+  it must", so its rule 3 asks a ratchet-down to prove the cut prose is
+  still taught somewhere a caller reaches, and every previous ratchet
+  answered that in a commit message. Three guards now answer it in the
+  suite: no lean description may restate a return envelope; the
+  `Returns {...}` enumeration in `docs/api.md` must name every key the
+  tool actually returns, read from a LIVE response rather than a
+  recorded constant; and the decision cues that survived the cut are
+  pinned by content, so prose that leaves without its teaching fails
+  even when the budget is greener and the baseline is consistent.
+
+### Fixed
+
+- `docs/api.md`'s `memory_scope_overview` return enumeration was missing
+  `curation_unmeasured`, and `plugin/skills/bettermemory/SKILL.md`'s
+  `curation_pending` rollup was missing `unaccounted`. Both were the
+  destination this release's cuts point at, so both are repaired ahead
+  of the cut that cites them. Found by writing the guard, not by
+  reading the docs.
+- `_DESC_BASELINE` (`tests/test_server.py`) stops being diagnostic. It
+  has carried the rule "re-measure in the same commit as any
+  description edit" for four releases with nothing checking it, and it
+  rotted twice in that window — four rows once, three rows again by
+  7.15.1. Its sum is now asserted against the live surface, so an edit
+  that does not move its row fails by name. `_FOOTPRINT_BASELINE` is
+  re-measured in the same commit, including a +377 drift in
+  `input_schemas` that predates this release and that no schema change
+  here caused.
+
 ## 7.15.1 - 2026-09-11
 
 ### Fixed
