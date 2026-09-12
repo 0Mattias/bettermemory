@@ -7,6 +7,54 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 7.17.0 - 2026-09-12
+
+### Changed
+
+- `f4fc399` feat(store): construction is pure; writing provisions.
+  `Store.__post_init__` created two directories, chmod'd both, rebuilt a
+  flagged index, and printed a divergence warning to stderr — a
+  filesystem write, a possible `git` subprocess, and user-facing output,
+  all from a constructor. There are three things now where there was
+  one: `Store(root)` is pure and touches nothing, `store.ensure()` is
+  idempotent provisioning that every mutator states, and
+  `Store.open(root)` construct-provisions and runs the startup checks
+  (the schema-upgrade auto-heal and the S4 divergence warning).
+  Provisioning rides the eight mutators rather than the constructor
+  because it is a precondition of WRITING, not of existing — which is
+  why no existing write caller had to change. The five process entry
+  points take `Store.open()`; the eleven derived and diagnostic sites do
+  not. **`bettermemory doctor` no longer rebuilds the index it was asked
+  to inspect, nor emits the constructor's divergence warning while it is
+  still deciding what to report.** One construction against a live
+  437-memory store: 0.60 ms → 0.0105 ms.
+- A store root that **does not exist** now reads as an **empty store**
+  rather than being created as a side effect of looking at it. Every
+  other `OSError` — `PermissionError` above all — still propagates. That
+  split is the could-not-ask rule this project has drained three times
+  (7.13.0 verdicts, 7.14.0 censuses, 7.15.0 selection): "absent" is
+  knowable and means zero, "cannot read" is the third value and must
+  never be folded into it. The branch was unreachable before, because
+  constructing a Store created the directory.
+
+### Added
+
+- `MemoryStore` — a protocol naming the store surface the rest of
+  bettermemory depends on, defined in `store.py` beside the
+  implementation rather than in a new module, because `migrate.py` and
+  `doctor.py` import ten module-level privates from there and a split
+  would fail at collection rather than at assertion. The concrete class
+  keeps the name `Store`; the protocol takes the new one, so that the
+  ten `monkeypatch.setattr(Store, ...)` failure-injection sites keep
+  patching a class. Nothing is typed to it yet: doing so reaches a real
+  seam violation on the hot search path, which is the next step's work.
+- `tests/test_store_provisioning.py` — construction is pure and silent;
+  each of the eight mutators provisions; absent reads empty while
+  unreadable raises; the startup checks fire from `Store.open()` and not
+  from `Store()`; `bettermemory doctor` does not mutate what it inspects
+  (driven through the CLI, not the library); and `Store` does not grow a
+  public member the protocol forgets.
+
 ## 7.16.0 - 2026-09-12
 
 ### Changed
