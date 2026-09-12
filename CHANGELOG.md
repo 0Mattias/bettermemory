@@ -7,6 +7,29 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 7.17.1 - 2026-09-12
+
+### Fixed
+
+- `cc40497` fix(episodes): don't inherit a provisioning promise from a
+  sibling class. `EpisodeStore.__post_init__` carried "Don't create the
+  directory eagerly. `Store.__post_init__` already made `root` exist" —
+  true until 7.17.0 made construction pure, and silently false after.
+  That sentence was the stated reason `episodes_dir.mkdir` had no
+  `parents=True`, so writing an episode to a store nobody had
+  provisioned raised `FileNotFoundError`. **Not reachable from any
+  shipped entry point** — `build_server` and `cli_context` both open
+  through `Store.open()` and `memory_health`'s use is read-only — so no
+  user could hit it; the hole was in the library contract.
+- Ten further sites across `index.py`, `migrate.py`, `doctor.py`,
+  `cli/session_start_cmd.py` and `store.py` still described
+  `Store.__post_init__` as mkdir'ing, chmod'ing or auto-rebuilding. Each
+  now names whichever half actually does it — `Store.ensure()` for
+  provisioning, `Store.open()` for the startup checks — or says plainly
+  that the behaviour is historical. A content-keyed ratchet fails on any
+  new one, with a companion test that fails on an allowlist entry
+  matching nothing.
+
 ## 7.17.0 - 2026-09-12
 
 ### Changed
