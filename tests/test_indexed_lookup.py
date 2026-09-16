@@ -619,3 +619,54 @@ def test_indexed_ids_mirrors_the_rows_the_store_actually_wrote(
     _index.index_path(store.root).unlink()
     assert _index.indexed_ids(store.root) == set()
     assert _index.indexed_ids(store.root, [kept.id]) == set()
+
+
+def test_a_swallowed_upsert_marks_the_index_stale_and_keeps_its_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A best-effort index write that fails must not fail SILENTLY.
+
+    The on-disk `.md` is canonical and still correct, but the index now
+    disagrees with it and nothing re-drives the write. That is how this
+    store's index ended up one row short of disk on 2026-09-11: the
+    record stayed retrievable only because the corpus sat under the FTS
+    prefilter threshold, and `session-start` refused to publish a count
+    it could not trust for ~133 sessions afterwards.
+
+    Two properties, both previously absent:
+      - the failure flags `needs_rebuild`, so search routes to the
+        authoritative scan and the next `Store.open()` self-heals;
+      - the warning still names the memory. Every call site passes
+        `content_sha256`, which the old `id_getter` could not accept, so
+        it raised, the decorator contained it, and every warning
+        degraded to the id-less shape the parameter exists to prevent.
+
+    Negative controls: drop `on_failure` and `needs_rebuild` stays
+    False; restore the keyword-less `id_getter` lambda and the id
+    vanishes from the log line.
+    """
+    store = Store.open(tmp_path)
+    store.write(content="a first claim about ports", scopes=["t"])
+    assert _index.status(store.root).get("needs_rebuild") in (False, None, 0)
+
+    def _boom(root: Path, memory: object, **kwargs: object) -> None:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(_index, "upsert", _boom)
+    caplog.set_level("WARNING", logger="bettermemory.index")
+    written = store.write(content="a second claim about sockets", scopes=["t"])
+
+    # The on-disk record is canonical and unaffected.
+    monkeypatch.undo()
+    assert store.load_one(written.id).id == written.id
+
+    assert _index.status(store.root).get("needs_rebuild"), (
+        "a swallowed index upsert left no signal that the index is stale"
+    )
+    warnings = [
+        r.getMessage() for r in caplog.records if "index upsert" in r.getMessage()
+    ]
+    assert warnings, f"no index-upsert warning was logged: {caplog.records}"
+    assert written.id in warnings[0], (
+        f"the warning lost the memory id it is supposed to name: {warnings[0]}"
+    )

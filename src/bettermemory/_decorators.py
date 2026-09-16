@@ -34,6 +34,7 @@ def best_effort(
     logger: logging.Logger | None = None,
     repair_hint: str | None = None,
     id_getter: Callable[..., Any] | None = None,
+    on_failure: Callable[..., Any] | None = None,
 ) -> Callable[[Callable[..., T]], Callable[..., T | None]]:
     """Wrap a function so it never raises — log a warning instead.
 
@@ -61,6 +62,20 @@ def best_effort(
     is contained: an exception from the getter is caught, logged at
     debug, and the message degrades to the id-less shape rather than
     masking the original exception or raising back to the caller.
+
+    ``on_failure`` is an optional callable with the same signature as the
+    wrapped function, invoked in the except branch AFTER the warning. It
+    exists because "log a warning and continue" is only honest when
+    something downstream will eventually notice: a warning on a stdio
+    server goes nowhere a human reads, so a side effect that silently
+    failed stays failed until someone happens to run a repair command.
+    A hook that marks the derived state stale — `index.flag_needs_rebuild`
+    is the in-tree use — converts that into self-healing, because the
+    degraded path is correct and the next `Store.open()` clears it.
+    Contained exactly like ``id_getter``: its own exception is caught and
+    logged at debug, never masking the original or reaching the caller.
+    Keep the hook cheap and non-raising; it runs on an already-failing
+    path.
 
     Catches the broad ``Exception`` rather than a specific type because
     every adopter site has the same "we don't know what the underlying
@@ -97,6 +112,14 @@ def best_effort(
                     exc,
                     tail,
                 )
+                if on_failure is not None:
+                    try:
+                        on_failure(*args, **kwargs)
+                    except Exception:  # noqa: BLE001 — hook must not mask exc.
+                        log.debug(
+                            "best_effort on_failure raised; degraded state not marked",
+                            exc_info=True,
+                        )
                 return None
 
         return wrapper

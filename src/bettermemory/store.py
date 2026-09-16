@@ -3102,11 +3102,38 @@ def _warn_index_out_of_sync(
     )
 
 
+def _flag_index_stale(root: Path, *_args: object, **_kwargs: object) -> None:
+    """Mark the index stale after an upsert this module could not land.
+
+    Without this, a swallowed upsert is permanent: the on-disk `.md` is
+    the canonical record and still correct, but the index silently
+    disagrees with it and nothing re-drives the write. That is not
+    hypothetical — a single missed upsert on 2026-09-11 left the store's
+    index one row short of disk, which kept the record retrievable only
+    because the corpus sat under the FTS prefilter threshold, and
+    disabled the SessionStart hint for ~133 sessions on the way.
+
+    `flag_needs_rebuild` is the conservative lever: search falls back to
+    the full scan (slower, correct) and the next `Store.open()` rebuilds
+    and clears the flag with no user action. It is itself best-effort and
+    never raises.
+    """
+    from . import index as _index
+
+    _index.flag_needs_rebuild(root)
+
+
 @best_effort(
     "index upsert",
     logger=_INDEX_LOG,
     repair_hint=_INDEX_REPAIR_HINT,
-    id_getter=lambda root, memory, *, filename, provenance=None: memory.id,
+    # `**_` is load-bearing: every call site passes `content_sha256`, and
+    # two also pass `verified_locally_at`. A getter that cannot accept
+    # them raises, the decorator contains that and degrades to an id-less
+    # warning — which is the exact regression `id_getter` was added to
+    # prevent, reintroduced by the keyword arguments that came later.
+    id_getter=lambda root, memory, **_: memory.id,
+    on_failure=_flag_index_stale,
 )
 def _index_upsert_quietly(
     root: Path,
@@ -3165,6 +3192,10 @@ def _index_upsert_quietly(
     logger=_INDEX_LOG,
     repair_hint=_INDEX_REPAIR_HINT,
     id_getter=lambda root, memory_id, sha: memory_id,
+    # A missed stamp is the shape behind doctor's `memory_content_evidence`
+    # accusing a healthy file: the recorded hash stays at the pre-write
+    # bytes and is CARRIED across rebuilds, so `reindex` cannot clear it.
+    on_failure=_flag_index_stale,
 )
 def _index_stamp_sha_quietly(root: Path, memory_id: str, sha: str) -> None:
     """Record the bytes a writer that bypasses the upsert put on disk
@@ -3180,6 +3211,10 @@ def _index_stamp_sha_quietly(root: Path, memory_id: str, sha: str) -> None:
     logger=_INDEX_LOG,
     repair_hint=_INDEX_REPAIR_HINT,
     id_getter=lambda root, memory_id: memory_id,
+    # A missed remove leaves a tombstoned memory indexed, which the read
+    # filters then have to catch one at a time. Marking the index stale
+    # routes to the authoritative walk until a rebuild.
+    on_failure=_flag_index_stale,
 )
 def _index_remove_quietly(root: Path, memory_id: str) -> None:
     """Drop one memory from the FTS5 index. Same best-effort contract
