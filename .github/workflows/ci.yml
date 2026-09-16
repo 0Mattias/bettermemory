@@ -88,7 +88,7 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Sync dependencies
-        run: uv sync --extra dev
+        run: uv sync --locked --extra dev
 
       - name: Lint
         run: uv run ruff check .
@@ -105,8 +105,14 @@ jobs:
   install-from-constraints:
     name: install from declared constraints
     runs-on: ubuntu-latest
-    # Every other job in this file installs through `uv sync`, which
-    # obeys the committed `uv.lock`. That is the right thing for
+    # Every other job in this file installs through `uv sync --locked`,
+    # which fails rather than re-resolving when the committed `uv.lock`
+    # has drifted from `pyproject.toml`. (`--locked` since 7.17.3; the
+    # bare form this comment used to describe silently REGENERATED the
+    # lock in the runner, which also left `tests/test_version.py`'s
+    # lockfile guard comparing the regenerated file to itself — release
+    # d555025 shipped pyproject 6.2.0 against a 6.1.0 lock self-entry
+    # with every leg green.) That is the right thing for
     # reproducible test runs and the wrong thing for answering the only
     # question a user actually asks: "does `pip install bettermemory`
     # work today?" The lock pins a resolution that was valid when it was
@@ -194,7 +200,7 @@ jobs:
       - name: Sync dependencies
         # The `[tool.pyright]` config pins `venv = ".venv"`, which
         # `uv sync` populates here.
-        run: uv sync --extra dev
+        run: uv sync --locked --extra dev
 
       - name: Pyright
         run: uv run pyright

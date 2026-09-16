@@ -52,7 +52,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           enable-cache: true
 
@@ -81,7 +81,7 @@ jobs:
       - name: Sync dependencies
         # Mirrors the main CI matrix — the release build should exercise
         # the same surface CI does.
-        run: uv sync --extra dev
+        run: uv sync --locked --extra dev
 
       - name: Lint
         run: uv run ruff check .
@@ -112,6 +112,13 @@ jobs:
     # is the manual-promotion escape hatch.
     if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.target == 'pypi')
     runs-on: ubuntu-latest
+    # NOTE: this names a GitHub environment for the OIDC trust binding and
+    # the deployment URL — it is NOT an approval gate. As of 7.17.3 the
+    # `pypi` environment has `protection_rules: []` and
+    # `deployment_branch_policy: null`, so nothing here pauses for a human
+    # or restricts which ref may publish. Add required reviewers or a
+    # branch policy in Settings → Environments if you want that; until
+    # then the SHA pin on the publish step below is the real control.
     environment:
       name: pypi
       url: https://pypi.org/p/bettermemory
@@ -126,7 +133,7 @@ jobs:
           path: dist/
 
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
 
   publish-testpypi:
     name: Publish to TestPyPI
@@ -146,7 +153,7 @@ jobs:
           path: dist/
 
       - name: Publish to TestPyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
         with:
           repository-url: https://test.pypi.org/legacy/
 
@@ -171,7 +178,7 @@ jobs:
           path: dist/
 
       - name: Create release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           generate_release_notes: true
           files: dist/*

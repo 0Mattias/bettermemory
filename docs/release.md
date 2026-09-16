@@ -68,9 +68,15 @@ $EDITOR server.json                          # `.version` AND
 $EDITOR CHANGELOG.md
 
 # 4. Refresh uv.lock so its editable self-entry tracks the new version.
-#    `uv lock` rewrites only what changed. test_version.py guards this,
-#    so a forgotten bump fails the suite here rather than landing as a
-#    separate "sync uv.lock" follow-up commit later.
+#    `uv lock` rewrites only what changed. test_version.py guards this
+#    LOCALLY, so a forgotten bump fails the suite here rather than
+#    landing as a separate "sync uv.lock" follow-up commit later.
+#    In CI the guard is `uv sync --locked` (7.17.3), which refuses to
+#    re-resolve a drifted lock. Before that the CI half of this promise
+#    did not hold: bare `uv sync` regenerated uv.lock in the runner
+#    before pytest opened it, so the test compared pyproject to itself
+#    and d555025 shipped a 6.2.0 pyproject against a 6.1.0 lock entry
+#    with all legs green.
 uv lock
 
 # 5. Run the suite locally. The version-sync tests are the cheapest
