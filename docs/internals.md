@@ -218,9 +218,21 @@ unchanged, so the worktree stays clean and no deletion propagates to
 other hosts, and the host-local, gitignored sidecar `.quarantine.json`
 names it with the reason, a detail that never quotes the body, the
 remote, the pull time and the sha256 of the refused bytes. Every
-active-file walk skips the names in the sidecar (`iter_active_memory_paths`
-in `store.py` is the one definition), so a quarantined file is never
-indexed, searched, listed, shown, counted or pointed at. Every later
+active-file walk skips the names in the sidecar, so a quarantined file is
+never indexed, searched, listed, shown, counted or pointed at. That skip
+is NOT one definition, and believing it was is what let a leak ship:
+`quarantine.quarantined_names` has three call sites — the walk behind
+`load_all` (`iter_active_memory_paths` in `store.py`), the by-id resolver
+(`_indexed_path_for_id`, same file), and the search candidate loader
+(`load_search_candidates` in `_handlers.py`). The third resolves its
+candidates through a `filenames_for_ids` batch and reached neither of the
+other two guards, so from 6.6.0 to 7.17.1 a quarantined memory was absent
+from `load_all`, raised `MemoryNotFoundError` from `load_one`, and was
+served WITH ITS BODY through `memory_search` — and a credential refusal
+is the commonest reason the gate fires, so that is what leaked. Fixed in
+`760c217`. Treat "one definition" claims in this document as a hypothesis
+to check against `grep`, not a guarantee: any new read path that turns
+ids into records owes the sidecar its own skip. Every later
 pull judges the quarantined files again and releases one that passes
 (fixed upstream) or drops one that vanished; `bettermemory sync
 quarantine` lists them and `--release NAME` runs the chain by hand,
@@ -243,7 +255,7 @@ rebuilt from scratch, so the rule survives an index reset.
 
 ## Module map
 
-Ninety-five modules under `src/bettermemory/`. A tool call crosses
+Ninety-seven modules under `src/bettermemory/`. A tool call crosses
 them in one order, and the map is that order.
 
 **Entry.** `cli/` is the `bettermemory` command; `cli/serve.py` is the
@@ -305,7 +317,8 @@ event log rather than the server's session state.
 `llm.py` for model-driven proposals and `proposals.py` for the review
 queue; `sync.py` with `quarantine.py` for git-based cross-host sync and
 its admission gates; `migrate.py` for on-disk format migrations;
-`ingest.py` for importing Claude Code's auto-memory; `init.py` and
+`ingest.py` for importing Claude Code's auto-memory; `rollback.py` for
+removing one actor's writes and leaving everyone else's; `init.py` and
 `_install_hints.py` for client onboarding.
 
 **Episodes.** `episodes.py` is the journal store beside `store.py`;
