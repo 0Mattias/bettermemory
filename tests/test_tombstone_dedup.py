@@ -15,7 +15,11 @@ from typing import Any
 import pytest
 
 from bettermemory.config import Config, StorageConfig
-from bettermemory.search import find_similar_tombstones
+from bettermemory.search import (
+    HIGH_SIMILARITY,
+    MEDIUM_SIMILARITY,
+    find_similar_tombstones,
+)
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
 from bettermemory.store import Store
@@ -67,12 +71,22 @@ def test_find_similar_tombstones_flags_medium_overlap(store: Store) -> None:
     )
     store.tombstone(memory.id, reason="bad fact")
 
-    # Some shared tokens ("python", "codecs", "deprecated") but a different
-    # claim — should land medium, not high.
-    new_body = "python's codecs module emits deprecated warnings on python 3.14"
+    # Shares the claim's subject but not its specifics. Measured Jaccard
+    # 0.556, inside [MEDIUM_SIMILARITY, HIGH_SIMILARITY) = [0.40, 0.75).
+    # The previous fixture scored 0.20 — below the medium threshold — so
+    # `hits` was empty, the `if hits:` guard was false, and this test
+    # executed ZERO assertions while passing. Unconditional now, and
+    # pinned to the exact relevance rather than a set that also admits
+    # `high-removed`.
+    new_body = (
+        "vendored python-frontmatter to drop the deprecated codecs module warning"
+    )
     hits = find_similar_tombstones(new_body, store.load_tombstones())
-    if hits:
-        assert hits[0].relevance in {"high-removed", "medium-removed"}
+    assert len(hits) == 1, f"expected one medium hit, got {hits}"
+    assert MEDIUM_SIMILARITY <= hits[0].similarity < HIGH_SIMILARITY
+    assert hits[0].relevance == "medium-removed"
+    assert hits[0].id == memory.id
+    assert hits[0].removed_reason == "bad fact"
 
 
 def test_find_similar_tombstones_skips_unrelated(store: Store) -> None:
@@ -134,11 +148,19 @@ async def test_write_succeeds_when_only_medium_tombstone_match(
     )
     await _call(server, "memory_remove", id=written["id"], reason="bad fact")
 
-    new_body = "python's codecs module emits deprecated warnings"
+    new_body = (
+        "vendored python-frontmatter to drop the deprecated codecs module warning"
+    )
     new_write = await _call(server, "memory_write", content=new_body, scopes=["tools"])
-    # Either committed (medium-removed → advisory) or duplicate (active high).
-    # We never expect previously_removed for medium matches.
+    # The old fixture scored 0.20 and matched nothing, so `!=
+    # previously_removed` was trivially true against an empty match set —
+    # it would have held with the whole tombstone gate deleted. This body
+    # scores 0.556, so the medium path is genuinely exercised: the write
+    # commits AND carries the advisory.
+    assert new_write["status"] == "committed"
     assert new_write["status"] != "previously_removed"
+    assert new_write["removed_related"][0]["id"] == written["id"]
+    assert new_write["removed_related"][0]["relevance"] == "medium-removed"
 
 
 async def test_committed_response_surfaces_removed_related(server: Any) -> None:
@@ -148,13 +170,19 @@ async def test_committed_response_surfaces_removed_related(server: Any) -> None:
     a = await _call(server, "memory_write", content=a_body, scopes=["tools"])
     await _call(server, "memory_remove", id=a["id"], reason="archived")
 
-    # Different but partially-overlapping body.
-    b_body = "alpha beta gamma kappa lambda mu nu xi omicron"
+    # Overlaps on five of nine tokens — measured Jaccard 0.575, inside
+    # the medium band. The previous fixture scored 0.214, so
+    # `removed_related` was never present, the two-clause guard was
+    # false, and this test asserted nothing at all. Mutation-checked:
+    # forcing `removed_related = []` in the write gate now fails here.
+    b_body = "alpha beta gamma delta epsilon kappa lambda mu"
     b = await _call(server, "memory_write", content=b_body, scopes=["tools"])
-    if b["status"] == "committed" and "removed_related" in b:
-        match = b["removed_related"][0]
-        assert match["relevance"] == "medium-removed"
-        assert match["removed_reason"] == "archived"
+    assert b["status"] == "committed", b
+    assert "removed_related" in b, f"the advisory never reached the response: {b}"
+    match = b["removed_related"][0]
+    assert match["id"] == a["id"]
+    assert match["relevance"] == "medium-removed"
+    assert match["removed_reason"] == "archived"
 
 
 async def test_force_bypasses_tombstone_dedup(server: Any) -> None:
