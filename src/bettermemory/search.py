@@ -1277,9 +1277,10 @@ def _merge_corpus_stats(
 # ---------------------------------------------------------------------------
 #
 # Two deterministic repairs for conversation-shaped stores, behind
-# `search(conversational=...)`, default OFF, hybrid-mode only — the same
-# opt-in shape as `rescue_expansion` and byte-stable for every caller
-# that does not pass the flag:
+# `search(conversational=...)`, hybrid-mode only. Shipped DEFAULT ON at
+# 6.1.0 on the L1 gate read (`[behavior] conversational` opts out) —
+# unlike `rescue_expansion`, whose held-out check kept it opt-in — and
+# byte-stable for every query with no temporal reading:
 #
 # - L1-S: when the query has a temporal reading, its temporal-SCAFFOLD
 #   tokens (day/week/ago/last/many and kin — the question's syntax, not
@@ -1352,6 +1353,26 @@ _CONV_SCAFFOLD_SURFACE = (
     "twelve",
 )
 _CONV_SCAFFOLD_STEMS = frozenset(_stem_token(w) for w in _CONV_SCAFFOLD_SURFACE)
+
+# The time-unit subset of the scaffold surface: the only words that can
+# license a bare numeral as temporal scaffold. "3 months ago" reads 3 as
+# a duration because `months` follows it; "schema 8" and "port 80" have
+# no unit to modify, so their numerals stay content terms. Kept as a
+# subset of the surface above rather than its own vocabulary — a unit
+# that is not already scaffold would reprice a term the class never
+# declared.
+_CONV_TIME_UNIT_SURFACE = (
+    "day",
+    "days",
+    "week",
+    "weeks",
+    "weekend",
+    "month",
+    "months",
+    "year",
+    "years",
+)
+_CONV_TIME_UNIT_STEMS = frozenset(_stem_token(w) for w in _CONV_TIME_UNIT_SURFACE)
 
 # df floor for scaffold terms, as a fraction of the ranked collection.
 # A floored term still matches and still scores. Tuning read 3 raised
@@ -1751,12 +1772,34 @@ def _temporal_reading(query: str, now: datetime) -> _TemporalReading:
 
 def _conv_scaffold_terms(tokens: list[str]) -> list[str]:
     """The query tokens the scaffold floor reprices: the closed class
-    plus bare small numerals (one- and two-digit tokens — '3' in "3
-    months ago"; four-digit years are a window constraint, never
-    scaffold, and dotted version literals never match `isdigit`)."""
-    return [
-        t for t in tokens if t in _CONV_SCAFFOLD_STEMS or (t.isdigit() and len(t) <= 2)
-    ]
+    plus bare small numerals that actually read as a duration.
+
+    A one- or two-digit token counts as scaffold only when a time unit
+    IMMEDIATELY FOLLOWS it — the `NUM + UNIT` shape of "3 months ago" or
+    "the last 2 weeks". Bare numerals carry the discriminating signal in
+    this store's everyday vocabulary ("schema 8", "port 80", "issue 12"),
+    and flooring their df to the whole collection collapses their IDF to
+    roughly zero, which drops the one memory that names the number off
+    the result page. Adjacency alone is too weak a test: in "what about
+    84 last week" the numeral neighbours a scaffold stem without
+    modifying it, so the following token must be the unit itself.
+
+    Four-digit years are a window constraint, never scaffold, and dotted
+    version literals never match `isdigit`.
+
+    `tokens` is read IN ORDER, so callers must pass the query's token
+    sequence rather than a deduplicated set — dedup silently moves the
+    neighbour that licenses a numeral.
+    """
+    out: list[str] = []
+    for i, t in enumerate(tokens):
+        if t in _CONV_SCAFFOLD_STEMS:
+            out.append(t)
+        elif t.isdigit() and len(t) <= 2:
+            following = tokens[i + 1] if i + 1 < len(tokens) else None
+            if following in _CONV_TIME_UNIT_STEMS:
+                out.append(t)
+    return out
 
 
 def _conv_scaffold_shaped(query_tokens: list[str]) -> bool:
@@ -1771,7 +1814,10 @@ def _conv_scaffold_shaped(query_tokens: list[str]) -> bool:
     if _CONV_SCAFFOLD_MIN_STEMS is None:
         return False
     distinct = list(dict.fromkeys(query_tokens))
-    scaffold = _conv_scaffold_terms(distinct)
+    # Read the ordered stream, then dedup: `_conv_scaffold_terms` licenses
+    # a bare numeral off the token that follows it, and deduplicating
+    # first can move that neighbour.
+    scaffold = list(dict.fromkeys(_conv_scaffold_terms(query_tokens)))
     return len(scaffold) >= _CONV_SCAFFOLD_MIN_STEMS and len(scaffold) < len(distinct)
 
 
@@ -3854,7 +3900,8 @@ def search(
         conv_scaffold: frozenset[str] | None = None
         if conv_pricing and _CONV_KEYWORD_SCAFFOLD_WEIGHT is not None:
             distinct_q = list(dict.fromkeys(query_tokens))
-            scaffold_q = _conv_scaffold_terms(distinct_q)
+            # Ordered stream in, dedup after — see `_conv_scaffold_shaped`.
+            scaffold_q = list(dict.fromkeys(_conv_scaffold_terms(query_tokens)))
             if scaffold_q and len(scaffold_q) < len(distinct_q):
                 conv_scaffold = frozenset(scaffold_q)
         rankings: list[list[tuple[Memory, float, list[str]]]] = [

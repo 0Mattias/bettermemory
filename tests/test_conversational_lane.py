@@ -197,8 +197,51 @@ def test_scaffold_class_is_bounded_and_stemmed() -> None:
 
 
 def test_scaffold_terms_take_small_numerals_not_years() -> None:
-    terms = _conv_scaffold_terms(["day", "ago", "3", "2023", "smoker", "16.3"])
-    assert terms == ["day", "ago", "3"]
+    # An ordered query stream, not a bag: the numeral is licensed by the
+    # unit that FOLLOWS it. Four-digit years stay a window constraint and
+    # dotted version literals never match `isdigit`.
+    terms = _conv_scaffold_terms(["3", "day", "ago", "2023", "smoker", "16.3"])
+    assert terms == ["3", "day", "ago"]
+
+
+def test_small_numeral_without_a_time_unit_stays_a_content_term() -> None:
+    """The negative the class was missing until 7.17.3.
+
+    From 6.1.0 the lane priced EVERY one- or two-digit token as temporal
+    scaffold, so "schema 8" floored 8's df to the whole collection, drove
+    its IDF to roughly zero, and dropped the one memory naming the number
+    off the default five-result page. These are this store's everyday
+    identifiers, so the class has to let them through.
+
+    Negative control: delete the `following in _CONV_TIME_UNIT_STEMS`
+    guard in `_conv_scaffold_terms` and every assertion below fails.
+    """
+    # No unit anywhere — the numeral is the discriminating term.
+    assert _conv_scaffold_terms(["ship", "schema", "8"]) == []
+    assert _conv_scaffold_terms(["port", "80"]) == []
+    assert _conv_scaffold_terms(["issu", "12", "status"]) == []
+    assert _conv_scaffold_terms(["round", "9", "result"]) == []
+
+    # Adjacency alone is too weak: 84 sits next to a scaffold stem
+    # without modifying it, so only the genuine scaffold prices.
+    assert _conv_scaffold_terms(["84", "last", "week"]) == ["last", "week"]
+
+    # ...while a real duration still prices as scaffold, in either shape.
+    assert _conv_scaffold_terms(["last", "2", "week"]) == ["last", "2", "week"]
+    assert _conv_scaffold_terms(["6", "day", "ago"]) == ["6", "day", "ago"]
+
+
+def test_scaffold_numeral_licensing_reads_the_ordered_stream() -> None:
+    """Dedup must not be applied before the class is computed.
+
+    `_conv_scaffold_shaped` and the keyword leg both deduplicate the query
+    tokens; doing that FIRST can move the unit that licenses a numeral and
+    silently change which terms get floored.
+    """
+    tokens = ["week", "over", "week", "3", "week", "growth"]
+    assert _conv_scaffold_terms(tokens) == ["week", "week", "3", "week"]
+    # The same tokens deduplicated lose the unit that follows "3".
+    assert _conv_scaffold_terms(list(dict.fromkeys(tokens))) == ["week"]
 
 
 def test_scaffold_floor_reprices_only_scaffold_terms() -> None:
