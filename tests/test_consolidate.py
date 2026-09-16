@@ -12,7 +12,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+import sys
 import pytest
+
+from .conftest import shielded_child_env
 
 from bettermemory.config import Config
 from bettermemory.conflicts import ConflictQueue
@@ -1827,41 +1830,21 @@ def test_consolidate_reports_the_jaccard_dedup_method_label(
 # CLI smoke
 # ---------------------------------------------------------------------------
 
-# These tests invoke the `bettermemory` CLI script directly, which only
-# works after `pip install -e .` (or a published install). CI runs
-# `uv sync --extra dev` before pytest so the binary is present and the
-# package is importable; a fresh local clone where the shim exists on
-# $PATH but the editable install is broken (stale `.pth`, iCloud-sync
-# UF_HIDDEN flag, etc.) would otherwise see these fail with
-# `ModuleNotFoundError: bettermemory`. Probe with `--help` so the gate
-# catches both "shim missing" and "shim broken" — the failure modes
-# look identical from a developer's perspective. Mirrors the
-# `shutil.which("git")` gate that protects test_sync.py.
-import shutil as _shutil  # noqa: E402
-import subprocess as _subprocess  # noqa: E402
-
-
-def _cli_is_functional() -> bool:
-    if _shutil.which("bettermemory") is None:
-        return False
-    try:
-        result = _subprocess.run(
-            ["bettermemory", "--help"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-    except (OSError, _subprocess.TimeoutExpired):
-        return False
-    return result.returncode == 0
-
-
-_BETTERMEMORY_CLI_WORKS = _cli_is_functional()
-
-_skip_without_cli = pytest.mark.skipif(
-    not _BETTERMEMORY_CLI_WORKS,
-    reason="`bettermemory` CLI not functional; run `pip install -e .` locally",
-)
+# The three `*_via_subprocess` tests below invoke the CLI as
+# `sys.executable -m bettermemory` under `shielded_child_env()`, the way
+# every other subprocess site in this suite does (tests/conftest.py
+# explains the shield). They used to spawn the BARE NAME `bettermemory`,
+# which `shutil.which` resolves against $PATH — on the maintainer's host
+# that is `~/.local/bin/bettermemory`, a symlink into a NON-EDITABLE
+# `uv tool` snapshot. So the tests exercised whatever release was last
+# installed as a tool rather than the working tree, and passed in under
+# two seconds doing it. That was invisible only while the two happened to
+# agree; cutting 7.18.0 desynchronised them (tool 7.17.2, tree 7.18.0)
+# and the argparse surface these tests exist to guard —
+# `--acknowledge-misses-before` — was being checked against the previous
+# release. Running the module out of `sys.executable` cannot drift from
+# the code under test, so there is also nothing left to probe for and no
+# skip to apply.
 
 
 # ---------------------------------------------------------------------------
@@ -2344,15 +2327,14 @@ def test_acknowledge_misses_event_clears_prior_miss_telemetry(
 # contention and passed in isolation and on a clean rerun). The first
 # `bettermemory consolidate` in a fresh venv byte-compiles the whole
 # package on import — ~30s cold on an idle machine, minutes on one
-# oversubscribed tenfold — and the `_cli_is_functional` probe cannot
-# absorb that cost: it runs `--help`, argparse-only, so it passes its own
-# budget and leaves these tests unskipped with the cache still cold. The
-# guard still catches a real hang; it no longer prices host load as a
-# failure.
+# oversubscribed tenfold. The since-removed functional probe could not
+# absorb that cost either: it ran `--help`, argparse-only, so it passed
+# its own budget and left these tests unskipped with the cache still
+# cold. The guard still catches a real hang; it no longer prices host
+# load as a failure.
 _SUBPROCESS_HANG_GUARD_SECONDS = 600
 
 
-@_skip_without_cli
 async def test_cli_consolidate_via_subprocess(
     memory_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2362,10 +2344,10 @@ async def test_cli_consolidate_via_subprocess(
     import subprocess
 
     result = subprocess.run(
-        ["bettermemory", "consolidate"],
+        [sys.executable, "-m", "bettermemory", "consolidate"],
         capture_output=True,
         text=True,
-        env={**__import__("os").environ, "BETTERMEMORY_DIR": str(memory_dir)},
+        env={**shielded_child_env(), "BETTERMEMORY_DIR": str(memory_dir)},
         # Hang guard, not a performance assertion — sized for an
         # oversubscribed host; see `_SUBPROCESS_HANG_GUARD_SECONDS`.
         timeout=_SUBPROCESS_HANG_GUARD_SECONDS,
@@ -2375,7 +2357,6 @@ async def test_cli_consolidate_via_subprocess(
     assert "dry-run" in result.stdout
 
 
-@_skip_without_cli
 async def test_cli_consolidate_json_via_subprocess(
     memory_dir: Path,
 ) -> None:
@@ -2384,10 +2365,10 @@ async def test_cli_consolidate_json_via_subprocess(
     import subprocess
 
     result = subprocess.run(
-        ["bettermemory", "consolidate", "--json"],
+        [sys.executable, "-m", "bettermemory", "consolidate", "--json"],
         capture_output=True,
         text=True,
-        env={**__import__("os").environ, "BETTERMEMORY_DIR": str(memory_dir)},
+        env={**shielded_child_env(), "BETTERMEMORY_DIR": str(memory_dir)},
         # Hang guard, not a performance assertion — sized for an
         # oversubscribed host; see `_SUBPROCESS_HANG_GUARD_SECONDS`.
         timeout=_SUBPROCESS_HANG_GUARD_SECONDS,
@@ -2406,7 +2387,6 @@ async def test_cli_consolidate_json_via_subprocess(
         assert key in parsed
 
 
-@_skip_without_cli
 async def test_cli_consolidate_acknowledge_misses_via_subprocess(
     memory_dir: Path,
 ) -> None:
@@ -2423,6 +2403,8 @@ async def test_cli_consolidate_acknowledge_misses_via_subprocess(
     cutoff = "2026-05-25T05:25:35Z"
     result = subprocess.run(
         [
+            sys.executable,
+            "-m",
             "bettermemory",
             "consolidate",
             "--acknowledge-misses-before",
@@ -2430,7 +2412,7 @@ async def test_cli_consolidate_acknowledge_misses_via_subprocess(
         ],
         capture_output=True,
         text=True,
-        env={**__import__("os").environ, "BETTERMEMORY_DIR": str(memory_dir)},
+        env={**shielded_child_env(), "BETTERMEMORY_DIR": str(memory_dir)},
         # Hang guard, not a performance assertion — sized for an
         # oversubscribed host; see `_SUBPROCESS_HANG_GUARD_SECONDS`.
         timeout=_SUBPROCESS_HANG_GUARD_SECONDS,
