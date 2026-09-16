@@ -321,6 +321,21 @@ full_tool_surface = false
 # neither exemption can be borrowed to plant an unallowed scope.
 allowed = []
 
+# Singleton scopes the `fix_typo_scopes` health check must stop flagging.
+# That check looks for a one-memory scope that resembles a more common one
+# ("projct:foo" against "projects:foo") and recommends folding it with
+# memory_rename_scope. When two projects legitimately share a name stem it
+# is a FALSE POSITIVE, and it had no off switch: the recommendation
+# re-fired on every curation pass, so every pass had to re-adjudicate the
+# same question, and the cost of getting it wrong is asymmetric. On
+# 2026-09-15 a client folded a scope this way that the memory it was
+# folding forbids in bold on the owner's confirmation, after several
+# earlier passes had each declined it. Its siblings (`dead_weight`,
+# `cold_endorsement`) already carry suppression flags; this is that.
+# Name the scope exactly as it appears; entries that are not currently
+# flagged are simply inert.
+typo_exceptions = []
+
 [telemetry]
 # Append-only JSONL event log at <storage>/.events.jsonl. One line per tool
 # call: search queries, returned IDs, write/update/remove events. Used by the
@@ -608,6 +623,9 @@ class BehaviorConfig:
 @dataclass
 class ScopesConfig:
     allowed: list[str] = field(default_factory=list)
+    # Singleton scopes that `memory_health`'s `fix_typo_scopes` check must
+    # stop flagging. See DEFAULT_CONFIG for why this exists.
+    typo_exceptions: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -1321,6 +1339,11 @@ def load_config(path: Path | None = None) -> Config:
             allowed=_coerce_str_list(
                 scopes_raw.get("allowed"),
                 label="[scopes] allowed",
+                config_path=config_path,
+            ),
+            typo_exceptions=_coerce_str_list(
+                scopes_raw.get("typo_exceptions"),
+                label="[scopes] typo_exceptions",
                 config_path=config_path,
             ),
         ),

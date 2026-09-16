@@ -2073,6 +2073,48 @@ def test_rare_scopes_surfaces_singleton_with_near_neighbor() -> None:
     assert report.rare_scopes == ["projct:foo"]
 
 
+def test_rare_scopes_honours_a_confirmed_false_positive() -> None:
+    """The check has no way to tell a typo from two projects that share
+    a name stem, so a confirmed false positive needs an off switch.
+
+    Without one the recommendation re-fires on every curation pass and
+    the cost is asymmetric: acting on it wrongly fuses two scopes,
+    acting on it rightly saves a tag. On 2026-09-15 a client acted on
+    exactly this recommendation and folded a scope the memory it was
+    folding forbids in bold, after several earlier passes had each
+    declined it. `dead_weight` and `cold_endorsement` already gate this
+    way; this is the same lever for `fix_typo_scopes`.
+
+    Negative control: drop `scope not in exempt_scopes` from the
+    `rare_scopes` comprehension and the exempted scope is flagged
+    again.
+    """
+    a = _memory(scopes=["projects:noxious"])
+    b = _memory(scopes=["projects:noxious"])
+    sibling = _memory(scopes=["projects:noxiousai"])
+    mems = [a, b, sibling]
+
+    flagged = compute_health(mems, [], now=_utc(2026, 5, 1))
+    assert flagged.rare_scopes == ["projects:noxiousai"]
+    assert any(r.kind == "fix_typo_scopes" for r in flagged.recommendations)
+
+    exempt = compute_health(
+        mems,
+        [],
+        now=_utc(2026, 5, 1),
+        typo_scope_exceptions=["projects:noxiousai"],
+    )
+    assert exempt.rare_scopes == []
+    # The recommendation has to go with it — the bucket is what feeds it.
+    assert not any(r.kind == "fix_typo_scopes" for r in exempt.recommendations)
+
+    # An exemption naming a scope that was never flagged is inert.
+    inert = compute_health(
+        mems, [], now=_utc(2026, 5, 1), typo_scope_exceptions=["projects:unrelated"]
+    )
+    assert inert.rare_scopes == ["projects:noxiousai"]
+
+
 def test_rare_scopes_excludes_repeated() -> None:
     a = _memory(scopes=["tools"])
     b = _memory(scopes=["tools"])

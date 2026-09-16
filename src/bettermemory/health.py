@@ -2130,6 +2130,7 @@ def compute_health(
     now: datetime | None = None,
     tombstoned_ids: set[str] | None = None,
     hook_telemetry_events: int | None = None,
+    typo_scope_exceptions: Iterable[str] | None = None,
 ) -> HealthReport:
     """Build a `HealthReport` from active memories + the event stream.
 
@@ -2449,11 +2450,21 @@ def compute_health(
     # namespace-stripped tails with a length-scaled threshold and
     # exempts deliberate sibling/successor scopes (aoc2023/aoc2024,
     # blog-v2/blog-v3, foo/foo2) — see its docstring for the rules.
+    # `typo_scope_exceptions` is the off switch a confirmed false
+    # positive needs. The neighbour heuristic cannot distinguish "typo of
+    # a sibling scope" from "two projects that legitimately share a name
+    # stem", and without suppression the recommendation re-fires forever:
+    # every curation pass re-adjudicates it, and the failure is
+    # asymmetric, because acting on it wrongly fuses two scopes and
+    # acting on it rightly saves a tag. Its siblings already gate this
+    # way (`dead_weight_suppressed`, `cold_endorsement_suppressed`).
     all_scopes = list(scope_distribution.keys())
+    exempt_scopes = set(typo_scope_exceptions or ())
     rare_scopes = sorted(
         scope
         for scope, count in scope_distribution.items()
         if count == 1
+        and scope not in exempt_scopes
         and any(
             other != scope and _scope_typo_neighbor(scope, other)
             for other in all_scopes
@@ -4374,9 +4385,16 @@ def report_for_directory(
     cold_endorsement_ratio_threshold: float = 0.0,
     caller_origin: Origin | None = None,
     now: datetime | None = None,
+    typo_scope_exceptions: Iterable[str] | None = None,
 ) -> HealthReport:
     """Convenience: load memories from `root`, walk the event log, return
     the report. Used by both the MCP tool and the CLI subcommand.
+
+    `typo_scope_exceptions` suppresses `fix_typo_scopes` for scopes the
+    owner has confirmed are not typos. Left None it reads
+    `[scopes] typo_exceptions` from the loaded config, so both production
+    surfaces honour the setting without either having to remember to pass
+    it; a caller that wants the unfiltered view passes `[]` explicitly.
 
     `caller_origin`, if provided, drives the cwd-aware `commit_drift_debt`
     rollup. Production callers should pass `origin.capture()`'s result;
@@ -4390,6 +4408,17 @@ def report_for_directory(
     caller looking at a REAL store goes through this function, and every
     caller passing a synthetic event list does not."""
     from .store import Store
+
+    if typo_scope_exceptions is None:
+        # Lazy, and tolerant: a store is still inspectable when the
+        # config file is unreadable, so a load failure degrades to "no
+        # exemptions" rather than taking the health report down.
+        try:
+            from .config import load_config
+
+            typo_scope_exceptions = load_config().scopes.typo_exceptions
+        except Exception:  # noqa: BLE001 — a bad config must not block health.
+            typo_scope_exceptions = []
 
     store = Store(root)
     tombstoned_ids = {t.id for t in store.load_tombstones()}
@@ -4412,6 +4441,7 @@ def report_for_directory(
         # Zero arms the gate and delegates the measurement to the walk
         # `compute_health` is about to do anyway — see its docstring.
         hook_telemetry_events=0,
+        typo_scope_exceptions=typo_scope_exceptions,
     )
     # Post-assigned for the reason the episode gauge below is: the
     # label lives in the index, and `compute_health` never sees a root.
