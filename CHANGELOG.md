@@ -7,6 +7,123 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 7.18.0 - 2026-09-16
+
+Six repairs from a whole-estate review. The review's own headline is
+worth keeping: the repository was essentially untouched by the
+third-party models and harnesses that had been sharing this store, and
+the sharpest defects it found were ours.
+
+### Added
+
+- `55daee9` **a confirmed typo-scope false positive can be suppressed.**
+  `fix_typo_scopes` flags a one-memory scope resembling a more common one
+  and recommends folding it with `memory_rename_scope`. The heuristic
+  cannot tell "typo of a sibling" from "two projects that legitimately
+  share a name stem", and it had no off switch, so a confirmed false
+  positive re-fired on every curation pass — each pass re-adjudicating
+  the same question, against an asymmetric cost: acting on it wrongly
+  fuses two unrelated scopes, acting on it rightly saves a tag. That
+  asymmetry landed on 2026-09-15, when a client folded a scope the
+  target memory forbids in bold on the owner's confirmation, after
+  several earlier passes had each declined it. `[scopes]
+  typo_exceptions` names scopes the check must skip. `compute_health`
+  takes the list and stays pure; `report_for_directory` reads config when
+  the caller passes nothing, so both production surfaces honour it
+  without either having to remember. An unloadable config degrades to
+  "no exemptions" rather than taking the health report down, and an
+  entry naming an unflagged scope is inert. The same lever
+  `dead_weight_suppressed` and `cold_endorsement_suppressed` already give
+  their buckets.
+
+### Fixed
+
+- `fc01250` **a bare numeral is temporal scaffold only when a unit
+  follows it.** The conversational lane priced EVERY one- or two-digit
+  query token as scaffold and floored its document frequency to the whole
+  collection, collapsing its IDF to roughly 0.001. Correct for "3 months
+  ago", where the numeral is the question's syntax; wrong for "schema 8",
+  "port 80", "issue 12" — this store's everyday identifiers, where the
+  numeral is the one discriminating term, and flooring it drops the
+  single memory naming the number off a five-result page. Default ON
+  since 6.1.0, so every hybrid search since has paid it. The L1 gate that
+  licensed default-on ran on LongMemEval narration, where a bare integer
+  genuinely is a count, so the failure class was not representable in the
+  corpus that certified the lane. A numeral now joins the class only when
+  a time unit IMMEDIATELY follows it; adjacency alone is too weak a test,
+  since in "what about 84 last week" the numeral neighbours a scaffold
+  stem without modifying it. Two call sites also deduplicated the query
+  tokens before computing the class, which silently moves the neighbour
+  that licenses a numeral; both now compute first and deduplicate after.
+  Measured on a 486-memory store, identifier queries return a top five
+  byte-identical to lane-off while genuine temporal queries still
+  reprice.
+
+- `999e340` **episode patterns rank by co-occurrence, and are scored
+  before they are capped.** `episode_patterns` surfaced nothing but
+  English function words — `both`, `before`, `first`, `new` — and
+  promoting the top candidate would have deleted 44% of the journal,
+  with no tombstone tier to recover it. Two independent causes. Ranking
+  used raw distinct-session spread, which function words maximise by
+  construction while sitting under the ubiquity ceiling that exists to
+  catch project vocabulary. Specificity weighting alone is not the fix:
+  `k*log(N/k)` is unimodal, so it rewards mid-sized clusters rather than
+  specific ones. What separates a theme from a common word is
+  CO-OCCURRENCE, which the member-set Jaccard merge already computed and
+  nothing consumed. Separately, `patterns[: max_patterns * 2]` truncated
+  in SEED order before any score existed, discarding every genuine
+  multi-term theme — the prefilter-narrower-than-its-check shape in
+  another costume. Also: both the tool description and `docs/api.md`
+  promised "one snippet per member episode", while the cap is 8, so on a
+  61-member cluster a reader judged 13% of what promote deletes.
+  Candidates now carry `episode_count` beside `snippets_shown`.
+
+- `365d3d8` **a swallowed index write marks the index stale.**
+  `@best_effort` logs and continues, which is right — the `.md` on disk
+  is canonical and a corrupt FTS5 database must not block it. But "log
+  and continue" is only honest when something downstream notices, and on
+  a stdio server the warning goes nowhere a human reads. Nothing
+  re-drove the write, and `flag_needs_rebuild` had one caller in all of
+  `src/`. One swallowed upsert on 2026-09-11 left this store's index a
+  row short of disk for five days; the record stayed retrievable only
+  because the corpus sat under the 500-memory FTS prefilter threshold,
+  and `session-start` correctly refused to publish a count it could not
+  trust for ~133 sessions. `best_effort` grows a contained `on_failure`
+  hook and the three index MUTATORS now flag for rebuild, which
+  self-heals: search routes to the full scan, and the next `Store.open()`
+  rebuilds. `_indexed_path_for_id` deliberately does not flag — it is a
+  read with an authoritative fallback. The upsert's `id_getter` had also
+  been dead since the keyword arguments grew past it, so every warning
+  degraded to the id-less shape the parameter exists to prevent.
+
+- `5fb22cc` **CI enforces the committed lock and pins the publish path.**
+  Bare `uv sync` re-resolves and rewrites `uv.lock` in the runner, which
+  also disarmed the only guard that would have caught it: `test_version`
+  compares the lock's self-entry to pyproject, and `uv sync` regenerated
+  the lock before pytest opened it, so the assertion compared pyproject
+  to itself. Release `d555025` shipped a 6.2.0 pyproject against a 6.1.0
+  lock entry with every leg green. `--locked` adds the check and restores
+  that test in one move. Every `uses:` on the publish path also ran from
+  a mutable ref, including `pypa/gh-action-pypi-publish@release/v1` — a
+  branch — in the two jobs holding the PyPI OIDC token; those, the
+  release-creating action and the `uv build` setup are now SHA-pinned.
+  Recorded at its declaration that `environment: pypi` reads like an
+  approval gate and is not one: it carries no protection rules and no
+  branch policy.
+
+- `63597bd` **the medium-overlap tombstone path had no live assertion.**
+  Three tests covering `medium-removed` -> `removed_related` -> the
+  response key executed zero assertions and passed, each guarding on a
+  match that never happened: the fixtures scored Jaccard 0.176 and 0.200
+  against a `MEDIUM_SIMILARITY` of 0.40. The third's `assert status !=
+  "previously_removed"` was trivially true against an empty match set and
+  would have held with the whole tombstone gate deleted. Reconstructing
+  the scorer as it stood when they were written gives the same figures,
+  so they were vacuous from the day they landed. Re-fixtured inside
+  [0.40, 0.75), conditionals dropped, relevance pinned exactly. Forcing
+  `gc.removed_related = []` previously left the full suite green; it now
+  fails two of the three.
+
 ## 7.17.2 - 2026-09-12
 
 ### Fixed
