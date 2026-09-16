@@ -4395,7 +4395,18 @@ def _estate_commit_touching(
     )
 
 
-def _with_origin(m: Memory, *, cwd: str, repo: str, worktree: str) -> Memory:
+def _with_origin(
+    m: Memory,
+    *,
+    cwd: str,
+    repo: str | None = None,
+    worktree: str | None = None,
+) -> Memory:
+    # `str | None` matches `Origin`, whose `repo` and `worktree_root` are
+    # both optional — a write from outside any checkout records neither.
+    # The helper used to demand `str`, which made the origin-less case
+    # unrepresentable in a test even though it is a real and common
+    # shape on a live store.
     from bettermemory.origin import Origin
 
     return m.model_copy(
