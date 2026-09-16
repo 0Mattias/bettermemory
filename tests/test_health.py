@@ -4485,6 +4485,92 @@ def test_cross_repo_drift_clean_group_is_emitted(tmp_path: Path) -> None:
     assert xr.groups[0].rows == []
 
 
+def test_cross_repo_drift_counts_what_it_could_not_anchor(tmp_path: Path) -> None:
+    """A verified record whose origin names no repo or worktree cannot be
+    grouped — and must therefore be COUNTED, not dropped.
+
+    This is the silence the `skipped` list exists to prevent, one level
+    earlier: the repo-less filter ran as a bare `continue` ABOVE that
+    list, so records it discarded appeared nowhere in the output and a
+    partial estate read as a complete one. On the maintainer's own store
+    that covered 107 verified records, 22% of it, while the rollup
+    reported six checked checkouts as though they were the estate.
+
+    Origin-less records are a legitimate class (a write from outside any
+    checkout), so `unanchorable` is a coverage figure, not a defect
+    count.
+
+    Negative controls, both verified: restore the bare `continue` and the
+    first assertion drops to 0; make the empty-groups branch return None
+    and the second half raises on `None`.
+    """
+    from bettermemory.origin import Origin
+
+    foreign = tmp_path / "foreign"
+    foreign.mkdir()
+    _init_estate_repo(foreign, "https://github.com/example/foreign.git")
+    _estate_commit_touching(foreign, "c1", when=_utc(2026, 1, 1), filename="src/app.py")
+    anchored = _with_origin(
+        _memory(
+            body="the handler lives in `src/app.py`",
+            created=_utc(2026, 1, 2),
+            last_verified_at=_utc(2026, 2, 1),
+        ),
+        cwd=str(foreign),
+        repo="https://github.com/example/foreign.git",
+        worktree=str(foreign),
+    )
+    # Verified, but written from outside any checkout: nothing to resolve.
+    homeless = _with_origin(
+        _memory(
+            body="a fact citing `src/app.py` with no recorded checkout",
+            created=_utc(2026, 1, 2),
+            last_verified_at=_utc(2026, 2, 1),
+        ),
+        cwd=str(tmp_path),
+        repo=None,
+        worktree=None,
+    )
+    # Unverified records are out of scope for every drift leg, so they
+    # must NOT inflate the coverage figure.
+    unverified = _with_origin(
+        _memory(body="never verified", created=_utc(2026, 1, 2)),
+        cwd=str(tmp_path),
+        repo=None,
+        worktree=None,
+    )
+    caller = Origin(
+        cwd=str(tmp_path),
+        repo="https://github.com/example/caller.git",
+        worktree_root=str(tmp_path),
+    )
+    report = compute_health(
+        [anchored, homeless, unverified], [], caller_origin=caller, now=_utc(2026, 4, 1)
+    )
+    xr = report.cross_repo_drift
+    assert xr is not None
+    assert xr.unanchorable == 1, "the origin-less verified record was dropped"
+    assert len(xr.groups) == 1, "the anchored record still groups normally"
+    assert xr.to_dict()["unanchorable"] == 1
+
+    # With NOTHING groupable, the count still earns a payload — returning
+    # None here would report "no foreign records" when the truth is
+    # "records existed and none could be checked".
+    only_homeless = compute_health(
+        [homeless], [], caller_origin=caller, now=_utc(2026, 4, 1)
+    )
+    xr2 = only_homeless.cross_repo_drift
+    assert xr2 is not None, "an all-unanchorable estate reported as silence"
+    assert xr2.groups == []
+    assert xr2.unanchorable == 1
+
+    # And a store with nothing to say on either axis is still None.
+    nothing = compute_health(
+        [unverified], [], caller_origin=caller, now=_utc(2026, 4, 1)
+    )
+    assert nothing.cross_repo_drift is None
+
+
 def test_cross_repo_drift_skips_missing_and_moved_worktrees(tmp_path: Path) -> None:
     """A recorded worktree that is gone, or whose directory now holds a
     different repo, is skipped with its reason — never misread as the

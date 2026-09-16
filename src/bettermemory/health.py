@@ -958,12 +958,24 @@ class CrossRepoDrift:
     groups: list[CrossRepoDriftGroup] = field(default_factory=list)
     skipped: list[dict[str, str]] = field(default_factory=list)
     total_drifted: int = 0
+    # Verified memories this check could not judge because their origin
+    # records no repo or no worktree_root, so there is nothing to resolve
+    # on disk and no anchor to count commits against. They used to be
+    # dropped by a bare `continue` BEFORE `skipped` was built, which made
+    # a partial estate read as a complete one — the failure this class's
+    # own docstring rules out ("checked N, clean" and "didn't check" must
+    # not read the same). Not a per-group row: the whole point is that
+    # they group into nothing. Origin-less records are a documented and
+    # legitimate class (a write from outside any checkout), so this is a
+    # coverage figure to state, not a defect to fix.
+    unanchorable: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "total_drifted": self.total_drifted,
             "groups": [g.to_dict() for g in self.groups],
             "skipped": list(self.skipped),
+            "unanchorable": self.unanchorable,
         }
 
 
@@ -2917,17 +2929,35 @@ def _compute_cross_repo_drift(
 
     Bounds and silences: `_CROSS_REPO_MAX_ROOTS` caps the roots git is
     walked in per run (cheap skips don't consume it; over-cap groups
-    are listed as skipped, never dropped). `None` when no foreign
-    claim-anchored verified candidate exists at all — the same
-    philosophy as `commit_drift_debt`'s None. A walked clean group IS
-    emitted, with zero rows: "checked N, clean" and "didn't check"
-    must not read the same.
+    are listed as skipped, never dropped). A verified record whose
+    origin names no repo or no worktree_root cannot be grouped at all —
+    there is nothing to resolve and no anchor to count against — so it
+    is COUNTED as `unanchorable` rather than dropped. It used to fall
+    out of a bare `continue` above the `skipped` list, which is how a
+    partial estate came to read as a complete one: on the maintainer's
+    own store that silence covered 107 verified records, 22% of it.
+    `None` only when there is nothing to report on either axis — no
+    foreign claim-anchored verified candidate AND nothing unanchorable —
+    the same philosophy as `commit_drift_debt`'s None. A walked clean
+    group IS emitted, with zero rows: "checked N, clean" and "didn't
+    check" must not read the same, and neither must "checked nothing".
     """
     groups: dict[tuple[str, str], list[MemoryStats]] = {}
+    unanchorable = 0
     for stats in by_id.values():
         origin_repo = origin_repo_by_id.get(stats.id)
         worktree = origin_worktree_by_id.get(stats.id)
         if not origin_repo or not worktree:
+            # COUNTED, not dropped. With no recorded repo or worktree
+            # there is nothing to resolve on disk and no anchor to count
+            # commits against, so this check genuinely cannot judge the
+            # record — which is exactly why its absence has to be
+            # reported rather than absorbed. Gated on `last_verified_at`
+            # so the figure counts records that could otherwise have been
+            # judged, matching the candidate rule the groups below use;
+            # an unverified record is out of scope for every drift leg.
+            if stats.last_verified_at is not None:
+                unanchorable += 1
             continue
         if (
             caller_origin is not None
@@ -2944,6 +2974,12 @@ def _compute_cross_repo_drift(
             continue
         groups.setdefault((origin_repo, worktree), []).append(stats)
     if not groups:
+        # `unanchorable` alone still earns a payload. Returning None here
+        # would say "no foreign records to check", when what happened is
+        # "N foreign-or-unknown records could not be checked" — the same
+        # silence this function was built to remove, one level up.
+        if unanchorable:
+            return CrossRepoDrift(unanchorable=unanchorable)
         return None
 
     ordered = sorted(groups.items(), key=lambda kv: len(kv[1]), reverse=True)
@@ -3088,6 +3124,7 @@ def _compute_cross_repo_drift(
         groups=out_groups,
         skipped=skipped,
         total_drifted=sum(g.total_drifted for g in out_groups),
+        unanchorable=unanchorable,
     )
 
 
@@ -3471,6 +3508,8 @@ def render_text(report: HealthReport) -> str:
         )
         if xr.skipped:
             header += f", {len(xr.skipped)} skipped"
+        if xr.unanchorable:
+            header += f", {xr.unanchorable} unanchorable"
         lines.append(header + ":")
         for group in xr.groups:
             state = f"{group.total_drifted} drifted" if group.total_drifted else "clean"
