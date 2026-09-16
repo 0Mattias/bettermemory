@@ -7,6 +7,95 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 7.19.0 - 2026-09-16
+
+The second half of the estate review's backlog. Three of these were
+found by the project's own guards firing on the fix for another one,
+which is the system working as designed.
+
+### Added
+
+- `4a9d71c` **`audit-turn --dry-run`, so inspecting a store cannot
+  mutate it.** `bettermemory audit-turn` SETTLES the turn's pending
+  retrievals. Correct for the Stop hook; a trap for anyone running the
+  command by hand to look at a store, and nothing in the name, the help
+  or the description said so. The manual path is worse than "it writes":
+  a caller-supplied `--session-id` also defeats the settlement dedup,
+  because `_emit_hook_attributions` builds `used_session_ids` from the
+  retrieval session and the supplied id while prior hook attributions
+  were recorded under the REAL transcript id — so a fabricated id hides
+  them and already-settled retrievals settle a second time, against the
+  exactly-one-applied-event-per-retrieval invariant in docs/api.md.
+  Found by doing it: a review agent was told to "run the read-only CLI
+  commands, and the hook commands", a brief that contradicts itself,
+  and re-settled 17 of 23 ids on the live store. Those events stay in
+  the log — it is append-only by design. `--dry-run` runs the whole
+  audit, returns the same summary with `dry_run: true`, and writes
+  nothing; it is a per-invocation telemetry override rather than a flag
+  on the Recorder call, so every emit site short-circuits at one switch
+  AND `enabled=cfg.telemetry.enabled` stays the literal attribute chain
+  `test_events` AST-walks every Recorder construction to require. The
+  dedup is deliberately NOT widened across sessions: two sessions can
+  legitimately retrieve the same memory, and suppressing one would
+  under-attribute real work.
+
+### Fixed
+
+- `351e1a1` **cross-repo drift counts the records it cannot anchor.**
+  `_compute_cross_repo_drift` dropped every memory whose origin records
+  no repo or `worktree_root` through a bare `continue`, placed ABOVE the
+  `skipped` list, so discarded records appeared nowhere in the output.
+  Fourteen lines up, the same function's docstring states the rule it
+  was breaking: "checked N, clean" and "didn't check" must not read the
+  same. On the maintainer's store that silence covered 111 verified
+  records, 23% of it, while the rollup reported six checked foreign
+  checkouts as though they were the estate. They are counted as
+  `unanchorable` now, and an estate where NOTHING is groupable returns a
+  payload carrying the count instead of None. Framed as coverage, never
+  debt: an origin-less record is a legitimate class — a write from
+  outside any checkout — so this is a figure to state, not one to drive
+  to zero.
+
+- `c038d76` **four resident descriptions say what the surface reports.**
+  `telemetry_coverage` was enumerated as four keys against a live five,
+  and its prose named only the dead-weight half of a gate that empties
+  two buckets. `memory_scope_overview` published `dead` and
+  `cold_endorsement_memories` as measured zeros with
+  `curation_unmeasured: []` on a hookless store, where both legs are
+  gated on exactly the telemetry that store lacks — and the test
+  asserted that empty list in exactly that state, pinning the gap rather
+  than catching it. `DESC_MEMORY_LIST` never said a row's
+  `staleness_verdict` is calendar-only, though 70 rows on the
+  maintainer's store read `fresh` in a listing while `memory_show`
+  reports missing attested paths. And both surfaces called a
+  many-retrievals-zero-applies memory "over-surfaced or stale", a
+  verdict the count does not support and this store refutes: its most
+  heavily used records run endorsement ratios of 0.01 to 0.18, because
+  auto settlement covers the ordinary case.
+
+- `1647eaf` **the docs claim that produced the quarantine leak.**
+  `internals.md` said the sidecar skip had one definition. It has three,
+  and the third — `load_search_candidates` — is the one that served
+  quarantined bodies through `memory_search` from 6.6.0 to 7.17.1. The
+  document asserted a uniqueness the code did not have and a later read
+  path was written against the document, so the paragraph now names all
+  three call sites and says to treat such claims as a hypothesis to
+  check against grep. `SECURITY.md` dates its own guarantee for the same
+  19 releases. The module map said "Ninety-five modules" against 97 and
+  omitted `rollback.py`.
+
+- `66f168e` **the consolidate CLI tests run from the tree, not a frozen
+  wheel.** Three `*_via_subprocess` tests spawned the bare name
+  `bettermemory`, which resolves against $PATH — on the maintainer's
+  host a symlink into a non-editable `uv tool` snapshot. Invisible only
+  while the two agreed; cutting 7.18.0 desynchronised them, so the
+  argparse surface those tests guard was being checked against the
+  previous release. Now `sys.executable -m` under
+  `shielded_child_env()`, like every other subprocess site. The
+  `_cli_is_functional` probe and its skip marker are removed rather than
+  repointed: a module run out of the interpreter running the tests
+  cannot drift from the code under test.
+
 ## 7.18.0 - 2026-09-16
 
 Six repairs from a whole-estate review. The review's own headline is
