@@ -650,6 +650,77 @@ def test_main_respects_telemetry_disabled(
     )
 
 
+def test_dry_run_reports_without_writing_any_event(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`audit-turn --dry-run` must compute the audit and write nothing.
+
+    A normal run SETTLES the turn's pending retrievals, which is correct
+    for the Stop hook and a trap for a human running the command to look
+    at a store: inspection silently mutates usage telemetry. The manual
+    path is worse still, because a caller-supplied `--session-id`
+    defeats the settlement dedup — `_emit_hook_attributions` builds
+    `used_session_ids` from the retrieval session and the supplied id,
+    while prior hook attributions were recorded under the REAL
+    transcript id — so a fabricated id hides them and already-settled
+    retrievals settle again. That is not hypothetical: on 2026-09-16 a
+    read-only review agent ran `--session-id doctor-probe-ro-audit`
+    against this very store and re-settled 17 of 23 ids.
+
+    Paired assertions, because "wrote nothing" is only meaningful beside
+    "would have written something": the same transcript and store, run
+    twice.
+
+    Negative control: neuter the `if dry_run:` telemetry override in
+    `run_audit` and the second half fails.
+    """
+    from bettermemory.events import iter_events
+    from bettermemory.hook import main as hook_main
+    from bettermemory.store import Store
+
+    def _fixture(dirname: str) -> Path:
+        mem_dir = tmp_path / dirname
+        mem_dir.mkdir()
+        Store(mem_dir).write(
+            content="My postgres database is on port 5433, not the default 5432.",
+            scopes=["infrastructure"],
+        )
+        return mem_dir
+
+    transcript = tmp_path / "t.jsonl"
+    _write_transcript(
+        transcript,
+        {"type": "user", "message": {"content": "what port is my postgres on?"}},
+        {
+            "type": "assistant",
+            "message": {
+                "content": [{"type": "text", "text": "Postgres is usually on 5432."}]
+            },
+        },
+    )
+
+    # Baseline: a normal run writes.
+    wet = _fixture("wet")
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(wet))
+    assert hook_main(["--transcript-path", str(transcript), "--session-id", "s1"]) == 0
+    wet_events = list(iter_events(wet))
+    assert wet_events, (
+        "baseline run wrote nothing — fixture no longer exercises the path"
+    )
+
+    # The same inputs, dry: identical work, zero writes.
+    dry = _fixture("dry")
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(dry))
+    code = hook_main(
+        ["--transcript-path", str(transcript), "--session-id", "s1", "--dry-run"]
+    )
+    assert code == 0
+    assert list(iter_events(dry)) == [], (
+        "--dry-run wrote events; inspection must not mutate the store"
+    )
+    assert not (dry / ".events.jsonl").exists()
+
+
 def test_main_rejects_non_file_transcript_path(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

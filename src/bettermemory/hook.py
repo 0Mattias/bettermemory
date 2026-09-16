@@ -103,6 +103,7 @@ narrowing.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import sys
 from pathlib import Path
@@ -483,6 +484,7 @@ def run_audit(
     session_id: str,
     client_model: str | None = None,
     config: Config | None = None,
+    dry_run: bool = False,
 ) -> dict[str, Any]:
     """Pure-function entry point: given a user message and session
     id, run the probe and emit events. Returns a small dict suitable
@@ -493,8 +495,41 @@ def run_audit(
     `_extract_last_exchange`); stamped as `client_model` on the
     `turn_audited` / `search_miss` / `use` events this hook emits so
     eval can slice telemetry per-model. None (unknown) omits the
-    field."""
+    field.
+
+    `dry_run` computes the audit and returns the same dict while writing
+    NOTHING to the event log. It exists because the manual invocation
+    path is a debugging affordance whose side effects are not obvious
+    from its name: `audit-turn` SETTLES this turn's pending retrievals,
+    so running it by hand to inspect a store mutates that store's usage
+    telemetry. Worse, a caller-supplied `--session-id` also defeats the
+    settlement dedup — `_emit_hook_attributions` builds
+    `used_session_ids` from the retrieval session and the supplied id,
+    while prior hook attributions were recorded under the REAL
+    transcript id, so a fabricated id hides them and already-settled
+    retrievals settle a second time. That happened: on 2026-09-16 a
+    read-only review agent ran `--session-id doctor-probe-ro-audit` and
+    re-settled 17 of 23 ids, against a documented invariant of exactly
+    one applied event per retrieval. The dedup is deliberately NOT
+    widened across sessions to paper over this — two sessions can
+    legitimately retrieve the same memory, and suppressing one would
+    under-attribute real work. Inspection gets a dry run instead."""
     cfg = config or load_config(None)
+    if dry_run:
+        # Expressed as a telemetry override rather than a flag on the
+        # Recorder call, for two reasons. It IS the same thing a user
+        # who set `[telemetry] enabled = false` gets, scoped to one
+        # invocation — so every `record` short-circuits at one switch
+        # instead of a conditional at each emit site, where a missed
+        # branch would hide. And it keeps `enabled=cfg.telemetry.enabled`
+        # a literal attribute chain, which `test_events` AST-walks every
+        # Recorder construction to require: that guard exists so
+        # `[telemetry] enabled = false` cannot be bypassed anywhere, and
+        # a computed expression here would have had to be allowlisted,
+        # weakening it for the module's other Recorder too.
+        cfg = dataclasses.replace(
+            cfg, telemetry=dataclasses.replace(cfg.telemetry, enabled=False)
+        )
     root = cfg.resolved_directory()
     store = Store(root)
     # Window-aware read: rotation archives the ENTIRE active log at a
@@ -1341,7 +1376,17 @@ def main(argv: list[str] | None = None) -> int:
         "--quiet",
         action="store_true",
         help="Suppress the JSON summary on stdout. The audit still "
-        "writes its events to the on-disk log.",
+        "writes its events to the on-disk log — see --dry-run.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Run the audit and print the summary WITHOUT writing any "
+        "event. Use this for inspection: a normal run settles this "
+        "turn's pending retrievals, so invoking it by hand mutates the "
+        "store's usage telemetry, and a manual --session-id also "
+        "defeats the settlement dedup and can re-settle retrievals a "
+        "prior run already closed.",
     )
     args = parser.parse_args(argv)
 
@@ -1389,7 +1434,10 @@ def main(argv: list[str] | None = None) -> int:
             assistant_response=assistant,
             session_id=str(session_id),
             client_model=model,
+            dry_run=args.dry_run,
         )
+        if args.dry_run:
+            result = {**result, "dry_run": True}
         if not args.quiet:
             print(json.dumps(result), file=sys.stdout)
     except Exception as exc:  # noqa: BLE001 — hook must never block turn end

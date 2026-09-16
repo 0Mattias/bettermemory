@@ -22,7 +22,8 @@ def add_subparser(
         "so it matches production's mechanism, not necessarily "
         "production's rows. "
         "Use --transcript-path + --session-id to invoke manually "
-        "for debugging. Always exits 0 so a hook misfire never "
+        "for debugging, with --dry-run unless you actually intend "
+        "the settlement writes. Always exits 0 so a hook misfire never "
         "breaks the turn-end pipeline."
     )
     parser = sub.add_parser("audit-turn", help=help_text, description=help_text)
@@ -43,6 +44,18 @@ def add_subparser(
         action="store_true",
         help="Skip the JSON summary on stdout. Events still land in the log.",
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help=(
+            "Run the audit and report WITHOUT writing any event. Use this "
+            "whenever you are invoking the hook by hand to look at it: a "
+            "normal run settles the turn's pending retrievals, so manual "
+            "runs mutate usage telemetry, and a manual --session-id also "
+            "defeats the settlement dedup and can re-settle retrievals a "
+            "prior run already closed."
+        ),
+    )
     return parser
 
 
@@ -60,6 +73,7 @@ def run(args: argparse.Namespace) -> None:
                 ),
                 *(["--session-id", args.session_id] if args.session_id else []),
                 *(["--quiet"] if args.quiet else []),
+                *(["--dry-run"] if args.dry_run else []),
             ]
         )
     )
