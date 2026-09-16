@@ -30,7 +30,11 @@ DESC_MEMORY_LIST = (
     "`with_bodies` casually — it pulls every memory in scope into "
     "your context, which is the failure mode this project exists "
     "to avoid. Filter by `scopes` if you only care about a subset, "
-    "or by `client` / `model` — each row's DECLARED actor, exact."
+    "or by `client` / `model` — each row's DECLARED actor, exact. "
+    "A row's `staleness_verdict` is CALENDAR-ONLY — no path, claim or "
+    "commit drift — so a row can read `fresh` while `memory_show` on it "
+    "returns `spot_check_required`. Read a non-`fresh` row as a signal "
+    "to look, never a `fresh` one as a clearance."
 )
 
 

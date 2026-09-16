@@ -62,8 +62,10 @@ DESC_MEMORY_HEALTH = (
     "tombstoned memories are dropped from both — no longer "
     "actionable. `cold_endorsement_memories` counts distinct "
     "memories (NOT turns) with `retrieval_count >= N` AND zero "
-    "explicit applies — usually a sign the memory is over-surfaced "
-    "by the ranker or stale.\n"
+    "explicit applies — the ranker keeps surfacing it and no reply "
+    "ever recorded a deliberate use. A prompt to look, not a "
+    "verdict: explicit applies are rare by design, since auto "
+    "settlement covers the ordinary case.\n"
     "- `scope_distribution` + `scope_health` per-scope rollup; "
     "`rare_scopes` flags Levenshtein-near-others singletons "
     "(likely typos — fix with memory_rename_scope).\n"
@@ -97,13 +99,16 @@ DESC_MEMORY_HEALTH = (
     # both break that parity and invite the model to read it as another
     # pile of rows to act on.
     "`telemetry_coverage` is non-null whenever the coverage gate ran: "
-    "`{hook_telemetry_events, covered, dead_weight_suppressed, reason}`. "
-    "When `dead_weight_suppressed` is true, `dead_weight` is empty BY "
-    "CONSTRUCTION — the event log carries no Stop-hook settlement "
-    "telemetry, so 'never applied' says nothing about the memory — NOT "
-    "because the store is clean. `memory_scope_overview`'s "
-    "`curation_pending.dead` reads zero under the same gate. Report the "
-    "`reason` verbatim rather than 'no dead weight found'.\n\n"
+    "`{hook_telemetry_events, covered, dead_weight_suppressed, "
+    "cold_endorsement_suppressed, reason}`. The gate empties TWO buckets, "
+    "not one: when the flags are true, `dead_weight` and "
+    "`cold_endorsement_memories` are empty BY CONSTRUCTION — the event log "
+    "carries no Stop-hook settlement telemetry, so 'never applied' and "
+    "'retrieved but never endorsed' both say nothing about the memory — "
+    "NOT because the store is clean. `memory_scope_overview`'s "
+    "`curation_pending.dead` and `.cold_endorsement_memories` read zero "
+    "under the same gate. Report the `reason` verbatim rather than 'no "
+    "dead weight found'.\n\n"
     # Also documented AFTER `CLI equivalent:`, and for the same reason as
     # `telemetry_coverage`: the sliced region above is set-compared
     # against `HealthReport.to_dict()` by

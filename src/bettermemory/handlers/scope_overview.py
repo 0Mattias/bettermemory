@@ -69,7 +69,7 @@ DESC_MEMORY_SCOPE_OVERVIEW = (
     "pass when there is time; non-zero `silent_misses` / "
     "`cold_endorsement_memories` is actionable audit backlog. "
     "A memory retrieved many times with zero explicit applies is "
-    "over-surfaced or stale.\n\n"
+    "weakly endorsed — worth a look, not a verdict.\n\n"
     "Non-zero `recently_removed_in_worktree` is a 'where did X go?' "
     "signal — material was deliberately trimmed here recently; "
     "don't blindly re-suggest it.\n\n"

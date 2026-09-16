@@ -6503,7 +6503,16 @@ _DESC_BASELINE = {
     # tool's registration is unchanged and deliberately so: no MCP dispatch
     # in one maintainer's event log is n=1, not evidence about other clients.
     "memory_audit_turn": 829,
-    "memory_list": 515,
+    # Re-measured 2026-09-16: 515 -> 758 (+243) for the calendar-only
+    # caveat on a list row's `staleness_verdict`. `_response.py` documents
+    # the trap and docs/api.md states the rule, but the resident
+    # description did not, while `prompts.py` — always loaded — asserts
+    # "Every retrieval carries `staleness_verdict`" and glosses `fresh` as
+    # "body claims presumed current", which is untrue of a list row. It is
+    # not hypothetical: on the maintainer's own 486-memory store, 70 rows
+    # read `fresh` in a listing while `memory_show` on the same records
+    # reports missing attested paths.
+    "memory_list": 758,
     "memory_record_use": 1556,
     "memory_remove": 463,
     "memory_scope_disable": 231,
@@ -6513,7 +6522,16 @@ _DESC_BASELINE = {
     # without this table following — the total stayed under the ceiling,
     # so nothing asked for a re-measure — and their drift is what spent
     # the slack the write-time supersession bullet then had to earn back.
-    "memory_scope_overview": 2106,
+    # Re-measured 2026-09-16: 2106 -> 2129 (+23). "A memory retrieved many
+    # times with zero explicit applies is over-surfaced or stale" asserted a
+    # verdict the count does not support, and this store refutes it directly:
+    # its most heavily used memories run endorsement ratios of 0.01-0.18, so
+    # a low explicit-apply rate is the DESIGN (auto settlement covers the
+    # ordinary case), not evidence of rot. Now "weakly endorsed — worth a
+    # look, not a verdict", matching docs/api.md and the neutral
+    # `cleanup_cold_endorsements` wording. The pinned "actionable audit
+    # backlog" span is untouched.
+    "memory_scope_overview": 2129,
     "memory_search": 3526,
     "memory_show": 851,
     # Re-measured 2026-08-04: 2033 -> 1562 (-471). See the reclamation note
@@ -7791,23 +7809,42 @@ async def test_the_trust_rule_leaves_unstamped_and_local_records_alone(
 async def test_scope_overview_names_the_legs_it_could_not_measure(
     memory_dir: Path,
 ) -> None:
-    """`curation_pending` is pinned to integer counts, and two of its legs
-    used to publish a 0 nobody measured — `unaccounted` off an index
-    that could not be read. The unmeasured legs ride a sibling list so
-    the integer contract stands and the 0 stops reading as clean."""
+    """`curation_pending` is pinned to integer counts, and its legs must
+    never publish a 0 nobody measured. The unmeasured legs ride a sibling
+    list so the integer contract stands and the 0 stops reading as clean.
+
+    Three legs can go unmeasured, not one. `unaccounted` when the index
+    cannot be read; `drifted` when git cannot answer; and — since
+    7.18.0 — `dead` and `cold_endorsement_memories`, BOTH of which are
+    gated on Stop-hook settlement telemetry and stay at their 0
+    initialisers without it. This fixture has no hook wired, which is
+    the stock client's shape, so those two are unmeasured here by
+    construction. This test previously asserted the empty list in
+    exactly that state, pinning the gap rather than catching it.
+
+    Negative control: drop the `if not telemetry_covered` block in
+    `health.py` and the first assertion below fails.
+    """
     from bettermemory import index
 
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
     server = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
     await _call(server, "memory_write", content="x", scopes=["tools"])
     overview = await _call(server, "memory_scope_overview", auto_scope=False)
-    assert overview["curation_unmeasured"] == []
+    # No Stop-hook telemetry in this fixture, so both hook-gated legs
+    # must name themselves rather than report a measured zero.
+    assert sorted(overview["curation_unmeasured"]) == [
+        "cold_endorsement_memories",
+        "dead",
+    ]
+    assert overview["curation_pending"]["dead"] == 0
+    assert overview["curation_pending"]["cold_endorsement_memories"] == 0
     assert overview["curation_pending"]["unaccounted"] == 0
 
     index_file = index.index_path(memory_dir)
     index_file.write_bytes(index_file.read_bytes()[:100])
     overview = await _call(server, "memory_scope_overview", auto_scope=False)
-    assert overview["curation_unmeasured"] == ["unaccounted"]
+    assert "unaccounted" in overview["curation_unmeasured"]
     assert overview["curation_pending"]["unaccounted"] == 0
     assert set(overview["curation_pending"]) == set(
         overview["curation_pending_new_since_last_session"]

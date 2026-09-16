@@ -4173,6 +4173,18 @@ def curation_counts_with_coverage(
                     cold_endorsement_memories += 1
 
     unmeasured: list[str] = []
+    if not telemetry_covered:
+        # `dead` and `cold_endorsement_memories` are both gated on
+        # Stop-hook settlement telemetry above, so without it they stay
+        # at their 0 initialisers. Publishing those zeros as measured is
+        # exactly what this list exists to prevent: a client with no hook
+        # wired cannot otherwise tell "the store is clean" from "the leg
+        # was never asked", and `memory_health` already says so on its
+        # own surface through `telemetry_coverage`. This cannot fire on
+        # an install whose Stop hook runs; it is the stock hookless
+        # client that was being told two suppressed legs read zero.
+        unmeasured.append("dead")
+        unmeasured.append("cold_endorsement_memories")
     drifted = 0
     if caller_origin is not None and caller_origin.git_indeterminate:
         # `capture()` could not run git at all, so the null repo below
