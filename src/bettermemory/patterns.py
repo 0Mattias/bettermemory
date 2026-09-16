@@ -25,8 +25,13 @@ Detection is deliberately conservative:
 - a term present in more than `_UBIQUITY_CEILING` of all episodes is
   ambient vocabulary ("bettermemory" in a bettermemory repo), not a
   pattern;
-- candidates are capped and ranked by session spread, so the surface
-  stays reviewable.
+- candidates are capped and ranked by session spread WEIGHTED BY
+  INVERSE DOCUMENT FREQUENCY, so a term earns its rank by being both
+  widespread across sessions and specific to the episodes it marks.
+  Raw session spread alone is maximised by English function words —
+  "both", "before", "first", "new" — which sit comfortably under the
+  ubiquity ceiling while spanning half the journal, and which no
+  stopword list of a practical size excludes.
 
 Dismissals persist in ``<root>/.episode_patterns.jsonl`` keyed by a
 content-stable pattern id (hash of the member episode ids). A
@@ -48,6 +53,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -69,6 +75,65 @@ _MEMBER_JACCARD_MERGE = 0.6
 _MIN_TERM_LEN = 3
 _MIN_EPISODES = 3
 _MAX_SNIPPETS_PER_PATTERN = 8
+# Each distinctive term beyond the first that the Jaccard merge folded
+# into a cluster multiplies its score by this much. Co-occurrence is
+# what tells a theme apart from a common word; see `_cluster_score`.
+_COOCCURRENCE_BONUS = 0.5
+
+
+def _term_specificity(member_count: int, total_episodes: int) -> float:
+    """Inverse document frequency of a term over the clusterable pool.
+
+    The ranking signal used to be raw session spread, which is maximised
+    by exactly the terms that carry no theme. Measured on a real 144
+    episode journal, the top twenty candidates were all single English
+    function words — `both` (82 episodes), `before` (67), `first` (72),
+    `new` (70) — every one of them under the 60% ubiquity ceiling, and
+    the one genuinely coherent cluster sat at rank 16, unreachable at
+    the default `max_patterns=5`.
+
+    The ceiling cannot fix this on its own: lowering it far enough to
+    catch a term in 46% of episodes would also discard real themes, and
+    the terms are not ubiquitous, merely unspecific. Weighting spread by
+    `log(total / member_count)` prices that difference directly — a term
+    in half the journal is worth about a third of one in a twentieth of
+    it, per session it spans — and it generalises, where extending
+    `_STOPWORDS` only ever chases the last corpus.
+    """
+    if member_count <= 0 or total_episodes <= 0:
+        return 0.0
+    return math.log(total_episodes / member_count)
+
+
+def _cluster_score(
+    *,
+    session_count: int,
+    member_count: int,
+    term_count: int,
+    total_episodes: int,
+) -> float:
+    """Rank a merged cluster. CO-OCCURRENCE is the theme signal.
+
+    Specificity-weighted session spread alone is not enough, and it is
+    worth being precise about why: `k * log(N/k)` is unimodal with a
+    peak at `k = N/e`, so it rewards mid-sized clusters rather than
+    specific ones, and a mid-sized filler term still beats a smaller
+    real theme. What actually separates "caddy/proxy/websocket" from
+    "both" is not how often the term appears — it is that several
+    DISTINCTIVE terms appear in the SAME episodes. Function words turn
+    up alone; themes arrive with company.
+
+    That signal is already computed: the member-set Jaccard merge above
+    fuses co-occurring terms into one cluster, so `term_count > 1` means
+    the merge found genuine co-occurrence. On the 144-episode journal
+    this was measured against, exactly three clusters were multi-term
+    and all three were the real themes, while every junk candidate was
+    a lone term. Each additional term therefore buys a bounded
+    multiplier rather than the old flat +0.1, which was far too small
+    to move anything.
+    """
+    spread = session_count * _term_specificity(member_count, total_episodes)
+    return spread * (1.0 + _COOCCURRENCE_BONUS * max(0, term_count - 1))
 
 
 def _pattern_id(member_ids: list[str]) -> str:
@@ -84,7 +149,12 @@ class PatternCandidate:
     evidence pointers, not a synthesis (the model authors the actual
     memory body at promote time). `snippets` carry one line per member
     episode (takeaway when present, else the body's first line) so the
-    surface is judgeable without N `episode_search` round-trips."""
+    surface is judgeable without N `episode_search` round-trips —
+    but only up to `_MAX_SNIPPETS_PER_PATTERN` of them. Promote DELETES
+    every member, so on a large cluster the reviewable surface is a
+    fraction of the delete set; `episode_count` and `snippets_shown`
+    are emitted side by side so that gap is visible rather than
+    inferred from the length of a truncated list."""
 
     id: str
     terms: list[str]
@@ -98,8 +168,10 @@ class PatternCandidate:
             "id": self.id,
             "terms": self.terms,
             "episode_ids": self.episode_ids,
+            "episode_count": len(self.episode_ids),
             "distinct_sessions": len(self.session_ids),
             "snippets": self.snippets,
+            "snippets_shown": len(self.snippets),
             "score": round(self.score, 3),
         }
 
@@ -196,11 +268,20 @@ def find_episode_patterns(
         # without the ceiling rather than reporting silence.
         candidate_terms = _collect(apply_ubiquity_ceiling=False)
 
-    # Deterministic order: widest session spread first, then most
-    # member episodes, then lexical. The first unclaimed term seeds a
-    # pattern; later terms whose member sets substantially overlap merge
-    # into it rather than spawning near-duplicate patterns.
-    candidate_terms.sort(key=lambda t: (-t[2], -len(t[1]), t[0]))
+    # Deterministic order: widest SPECIFICITY-WEIGHTED session spread
+    # first, then most member episodes, then lexical. The first
+    # unclaimed term seeds a pattern; later terms whose member sets
+    # substantially overlap merge into it rather than spawning
+    # near-duplicate patterns. Weighting is what keeps a function word
+    # spanning half the journal from seeding — and therefore naming —
+    # a cluster it has no relationship to; see `_term_specificity`.
+    candidate_terms.sort(
+        key=lambda t: (
+            -(t[2] * _term_specificity(len(t[1]), len(live))),
+            -len(t[1]),
+            t[0],
+        )
+    )
     patterns: list[tuple[list[str], set[str], int]] = []
     for term, member_ids, session_count in candidate_terms:
         merged = False
@@ -215,8 +296,17 @@ def find_episode_patterns(
         if not merged:
             patterns.append(([term], set(member_ids), session_count))
 
+    # Score EVERY merged cluster, then rank, then cap. This used to
+    # truncate to `max_patterns * 2` first — in SEED order, before a
+    # single score existed — so a cluster the ranking would have put
+    # first was discarded for having been seeded late. Measured on a
+    # real 144-episode journal, all three genuine multi-term themes
+    # (`release`+`tag`, `pypi`+`registry`, `eval`+`usage-replay`) were
+    # cut by that pre-cap and could not appear at any `max_patterns`.
+    # Scoring is O(members) per cluster with a snippet cap, so there is
+    # nothing to buy by truncating ahead of the sort.
     out: list[PatternCandidate] = []
-    for terms, member_ids, session_count in patterns[: max_patterns * 2]:
+    for terms, member_ids, session_count in patterns:
         members = sorted(member_ids)
         sessions = sorted({by_id[eid].session_id for eid in members})
         eps = sorted((by_id[eid] for eid in members), key=lambda e: e.created)
@@ -236,7 +326,12 @@ def find_episode_patterns(
                 episode_ids=members,
                 session_ids=sessions,
                 snippets=snippets,
-                score=session_count + 0.1 * len(terms),
+                score=_cluster_score(
+                    session_count=session_count,
+                    member_count=len(member_ids),
+                    term_count=len(terms),
+                    total_episodes=len(live),
+                ),
             )
         )
     out.sort(key=lambda p: (-p.score, p.id))

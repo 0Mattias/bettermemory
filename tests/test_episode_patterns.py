@@ -108,6 +108,157 @@ def test_ubiquitous_vocabulary_is_not_a_pattern() -> None:
     assert sizes == [3, 3]
 
 
+def test_unspecific_filler_under_the_ceiling_does_not_outrank_a_real_theme() -> None:
+    """The gap `test_ubiquitous_vocabulary_is_not_a_pattern` left open.
+
+    That test puts its filler term in 100% of episodes, where the
+    ubiquity ceiling catches it. The ranking's actual failure mode is a
+    term that sits comfortably UNDER the ceiling while still spanning
+    more sessions than any real theme — ordinary English connective
+    vocabulary, which no stopword list of a practical size excludes.
+    Ranking on raw session spread hands those the top of the surface;
+    measured on a real 144-episode journal, all twenty leading
+    candidates were single function words and the top one would have
+    deleted 44% of the journal on promote.
+
+    Both clusters here are SINGLE-term, which isolates the specificity
+    factor from the co-occurrence multiplier that
+    `test_a_co_occurring_theme_outranks_wider_lone_terms_and_survives_the_cap`
+    covers. "before" spans 14 of 24 episodes — right at the ceiling, so
+    the ceiling does not catch it — and "websocket" spans 6. Raw session
+    spread puts the filler first, 14 to 6; weighted, the specific term
+    wins, 8.32 to 7.55.
+
+    Negative control: make `_term_specificity` return a constant and
+    "before" takes rank 1.
+    """
+    eps: list[Episode] = []
+    n = 0
+    # The connective, spanning unrelated work. Every other token in
+    # these bodies is unique, so "before" is the only one that clusters.
+    for body in (
+        "renamed staging bucket before lunch",
+        "rotated postgres credentials before deploying",
+        "archived quarterly invoices before auditing",
+        "patched firmware regression before shipment",
+        "throttled webhook retries before midnight",
+        "reconciled ledger entries before closing",
+        "benchmarked cache warmup before rollout",
+        "documented keyboard shortcuts before release",
+        "migrated avatar thumbnails before cutover",
+        "profiled memory allocations before demo",
+        "pruned orphaned containers before backup",
+        "refactored pagination helpers before freeze",
+        "resized boot volume before maintenance",
+        "escalated pager policy before handover",
+    ):
+        eps.append(_episode(body, session=f"s-filler-{n}", offset_minutes=n))
+        n += 1
+    # The specific term, in far fewer episodes and sessions.
+    for i in range(6):
+        eps.append(
+            _episode(
+                f"websocket investigated phase{n} note{n}",
+                session=f"s-theme-{i}",
+                offset_minutes=n,
+            )
+        )
+        n += 1
+    # Padding that never clusters, to set the corpus size the ceiling
+    # and the specificity weight are both measured against.
+    for i in range(4):
+        eps.append(
+            _episode(
+                f"assorted{n} singleton{n} remark{n}",
+                session=f"s-pad-{i}",
+                offset_minutes=n,
+            )
+        )
+        n += 1
+    assert len(eps) == 24
+
+    patterns = find_episode_patterns(eps, max_patterns=5)
+    assert patterns, "expected candidates"
+    ranked_terms = [p.terms for p in patterns]
+    themed = [i for i, t in enumerate(ranked_terms) if "websocket" in t]
+    filler = [i for i, t in enumerate(ranked_terms) if "before" in t]
+    assert themed, f"the specific term did not survive: {ranked_terms}"
+    assert filler, f"fixture drift — the filler was expected to qualify: {ranked_terms}"
+    assert min(themed) < min(filler), (
+        f"a wider, less specific term outranked the specific one: {ranked_terms}"
+    )
+
+
+def test_a_co_occurring_theme_outranks_wider_lone_terms_and_survives_the_cap() -> None:
+    """Two properties at once, because one corpus exhibits both.
+
+    Eleven lone terms each span EIGHT sessions; one real theme
+    (`caddy`+`proxy`+`websocket`, co-occurring in every member) spans
+    only six. Specificity-weighted spread alone ranks every lone term
+    above the theme — `k*log(N/k)` rewards the wider cluster — so the
+    co-occurrence multiplier is the only thing that lifts it.
+
+    And because seeding runs in weighted-spread order, the theme seeds
+    TWELFTH. The old `patterns[: max_patterns * 2]` pre-cap truncated to
+    ten in that order before any score existed, so the theme was
+    discarded before it could be ranked at all.
+
+    Negative controls, both verified: set `_COOCCURRENCE_BONUS = 0.0`
+    and the theme loses rank 1; restore the `[: max_patterns * 2]`
+    slice and the theme disappears from the results entirely.
+    """
+    eps: list[Episode] = []
+    n = 0
+    for j in range(11):
+        for i in range(8):
+            eps.append(
+                _episode(
+                    f"solo{j} recurring note padding{n} unique{n}",
+                    session=f"s-solo{j}-{i}",
+                    offset_minutes=n,
+                )
+            )
+            n += 1
+    for i in range(6):
+        eps.append(
+            _episode(
+                f"caddy proxy websocket again padding{n}",
+                session=f"s-theme-{i}",
+                offset_minutes=n,
+            )
+        )
+        n += 1
+
+    patterns = find_episode_patterns(eps, max_patterns=5)
+    ranked = [p.terms for p in patterns]
+    theme_at = [
+        i for i, t in enumerate(ranked) if {"caddy", "proxy", "websocket"} <= set(t)
+    ]
+    assert theme_at, f"the co-occurring theme was dropped entirely: {ranked}"
+    assert theme_at[0] == 0, f"the theme did not take rank 1: {ranked}"
+
+
+def test_candidate_payload_exposes_the_unreviewed_delete_set() -> None:
+    """Promote deletes every member; the snippet list is capped at 8.
+
+    `episode_count` and `snippets_shown` have to travel together, or a
+    reader counts the snippets and believes that is the delete set.
+    """
+    eps = [
+        _episode("caddy proxy websocket drops again", session=f"s{i}", offset_minutes=i)
+        for i in range(12)
+    ]
+    patterns = find_episode_patterns(eps, max_patterns=5)
+    assert patterns
+    payload = patterns[0].to_dict()
+    assert payload["episode_count"] == len(payload["episode_ids"])
+    assert payload["snippets_shown"] == len(payload["snippets"])
+    # The cap is real: 12 members, at most 8 snippets.
+    assert payload["episode_count"] == 12
+    assert payload["snippets_shown"] == 8
+    assert payload["snippets_shown"] < payload["episode_count"]
+
+
 def test_pattern_id_is_member_stable() -> None:
     eps = [
         _episode(
