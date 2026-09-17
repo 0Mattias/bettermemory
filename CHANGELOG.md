@@ -7,6 +7,31 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 7.19.1 - 2026-09-16
+
+### Fixed
+
+- `d578922` **A store this process can read but not write is read,
+  not declared unusable.** A hook running under an agent harness's
+  file sandbox (DSH runs a mode's hooks with writes outside the
+  session workspace denied), or any process on a read-only mount, had
+  every read path answer "index unusable": SQLite opened the file
+  read-only by itself, then the WAL pragma or the `-wal`/`-shm`
+  siblings it needs failed with `unable to open database file`, and
+  `status()` reported the intact index corrupt — so `session-start`
+  skipped every hint and pointed at a `reindex` that could not help.
+  `_connect` now falls back to a read-only connection when the error
+  says the file or its siblings could not be written: `mode=ro` first,
+  then `immutable=1` for a checkpointed index in a directory it cannot
+  write to (no shared-memory index, no locking, which a reader that
+  records nothing can afford). `_ensure_schema` verifies and never
+  stamps or migrates on the fallback; a newer schema still raises
+  `IndexVersionError`, so `status()` classifies the skew exactly as
+  before, and a write on the fallback raises SQLite's own error rather
+  than anything new. The ordinary writable path is untouched: the
+  fallback only triggers on a write refusal, never on a torn or
+  missing file.
+
 ## 7.19.0 - 2026-09-16
 
 The second half of the estate review's backlog. Three of these were
