@@ -362,7 +362,7 @@ def test_status_handles_corrupt_file_gracefully(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(
-    os.name == "nt" or os.geteuid() == 0,
+    os.name == "nt" or getattr(os, "geteuid", lambda: 1)() == 0,
     reason="file permissions do not bind on Windows or for root",
 )
 def test_status_reads_an_index_this_process_cannot_write(
