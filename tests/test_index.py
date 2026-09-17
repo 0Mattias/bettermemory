@@ -9,6 +9,7 @@ contract when the file doesn't exist.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -358,6 +359,41 @@ def test_status_handles_corrupt_file_gracefully(tmp_path: Path) -> None:
     s = index.status(root)
     assert s["exists"] is True
     assert s.get("corrupt") is True
+
+
+@pytest.mark.skipif(
+    os.name == "nt" or os.geteuid() == 0,
+    reason="file permissions do not bind on Windows or for root",
+)
+def test_status_reads_an_index_this_process_cannot_write(
+    memory_dir: Path, store: Store
+) -> None:
+    """A process that may read the store but not write it — a hook run
+    under an agent harness's file sandbox, a read-only mount — still
+    reads the index: `_connect` falls back to a read-only connection
+    instead of `status()` reporting the healthy index corrupt. The
+    session-start hint depends on this; under DSH's workspace-write
+    sandbox it otherwise skipped every hint as "index unusable"."""
+    index.rebuild(memory_dir, store.iter_active())
+    db_path = index.index_path(memory_dir)
+    db_path.chmod(0o400)
+    memory_dir.chmod(0o500)
+    try:
+        conn = index._connect(db_path)
+        try:
+            assert index.is_readonly(conn)
+            with pytest.raises(sqlite3.OperationalError):
+                conn.execute("INSERT INTO meta(key, value) VALUES ('probe', '1')")
+        finally:
+            conn.close()
+        s = index.status(memory_dir)
+        assert s["exists"] is True
+        assert "corrupt" not in s
+        assert not index.index_unreadable(s)
+        assert s["indexed_count"] == 0
+    finally:
+        memory_dir.chmod(0o700)
+        db_path.chmod(0o600)
 
 
 def test_status_returns_path_for_missing(tmp_path: Path) -> None:

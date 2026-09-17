@@ -412,10 +412,112 @@ def _connect(path: Path) -> sqlite3.Connection:
             if sibling.exists():
                 with contextlib.suppress(OSError):
                     os.chmod(sibling, 0o600)
+    except sqlite3.OperationalError as exc:
+        conn.close()
+        # A store this process may read but not write: a hook running
+        # under an agent harness's file sandbox, a read-only mount, a
+        # file another user owns. SQLite opens such a file read-only by
+        # itself and refuses the WAL pragma; the index is intact, so
+        # the read paths (`status()`, the session-start hint, a search)
+        # get a read-only connection instead of "index unusable".
+        if _write_refused(exc) and path.exists():
+            return _connect_readonly(path)
+        raise
     except Exception:
         conn.close()
         raise
     return conn
+
+
+class _ReadOnlyConnection(sqlite3.Connection):
+    """A connection `_connect` fell back to because this process may
+    read the store but not write it. `_ensure_schema` verifies and
+    never stamps or migrates on one; a write raises SQLite's own
+    `attempt to write a readonly database`."""
+
+    readonly = True
+
+
+def is_readonly(conn: sqlite3.Connection) -> bool:
+    """True when `conn` is a read-only fallback (see `_connect`)."""
+    return getattr(conn, "readonly", False) is True
+
+
+# "unable to open database file" is what a WAL database says when the
+# `-wal` / `-shm` siblings cannot be created beside it — the shape a
+# write-denied directory takes, since the main file itself opened fine
+# (the `path.exists()` guard keeps a missing file on the ordinary path).
+_WRITE_REFUSED_MARKERS = ("readonly", "read-only", "unable to open database file")
+
+
+def _write_refused(exc: BaseException) -> bool:
+    """Whether a SQLite error says the file, or the WAL siblings it
+    needs, could not be written (as opposed to the file being torn,
+    locked or missing)."""
+    text = str(exc).lower()
+    return any(marker in text for marker in _WRITE_REFUSED_MARKERS)
+
+
+def _connect_readonly(path: Path) -> sqlite3.Connection:
+    """Open `path` read-only. `mode=ro` first: SQLite reads a WAL
+    database read-only when its `-shm` sibling exists or the directory
+    is writable. Neither holds for a checkpointed index in a directory
+    this process cannot write to, so `immutable=1` is the last resort:
+    it reads without the shared-memory index and without locking,
+    which a reader that records nothing can afford."""
+    uri = path.resolve().as_uri()
+    last: sqlite3.OperationalError | None = None
+    for query in ("?mode=ro", "?mode=ro&immutable=1"):
+        conn = sqlite3.connect(
+            uri + query, uri=True, timeout=5.0, factory=_ReadOnlyConnection
+        )
+        try:
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute("SELECT name FROM sqlite_master LIMIT 1").fetchone()
+        except sqlite3.OperationalError as exc:
+            conn.close()
+            last = exc
+            continue
+        conn.row_factory = sqlite3.Row
+        return conn
+    assert last is not None
+    raise last
+
+
+def _check_schema_readonly(conn: sqlite3.Connection) -> None:
+    """The read-only half of `_ensure_schema`: verify, never stamp or
+    migrate. A schema this process cannot read as it stands (none yet,
+    older than this code, or spelled by another tokenizer) raises
+    `sqlite3.OperationalError`, which `status()` reports as unusable;
+    the writable process that owns the store is the one to migrate it.
+    A NEWER schema raises `IndexVersionError` exactly as the writable
+    path does, so `status()` classifies the skew the same way."""
+    try:
+        row = conn.execute(
+            "SELECT value FROM meta WHERE key = 'schema_version'"
+        ).fetchone()
+    except sqlite3.OperationalError as exc:
+        raise sqlite3.OperationalError(
+            "the index has no schema yet and this process opened it read-only"
+        ) from exc
+    if row is None:
+        raise sqlite3.OperationalError(
+            "the index has no schema yet and this process opened it read-only"
+        )
+    on_disk = int(row[0])
+    if on_disk > SCHEMA_VERSION:
+        raise _newer_version_error(on_disk)
+    fp_row = conn.execute(
+        "SELECT value FROM meta WHERE key = 'tokenizer_fingerprint'"
+    ).fetchone()
+    if (
+        on_disk < SCHEMA_VERSION
+        or fp_row is None
+        or fp_row[0] != tokenizer_fingerprint()
+    ):
+        raise sqlite3.OperationalError(
+            "the index needs a migration this read-only process cannot apply"
+        )
 
 
 def _root_has_memory_files(root: Path, *, exclude: str | None = None) -> bool:
@@ -491,6 +593,9 @@ def _ensure_schema(
       repopulate touched memories, so `indexed_count` alone can cross
       the prefilter threshold with most of the corpus still missing.
     """
+    if is_readonly(conn):
+        _check_schema_readonly(conn)
+        return
     # First-touch path: meta table may not exist yet. CREATE IF NOT
     # EXISTS is safe to run before the version check.
     conn.executescript(_SCHEMA)
