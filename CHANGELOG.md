@@ -25,7 +25,7 @@ path.
   `ToolHandlers`, so typing the store anywhere up the call chain still
   leaves `self` process-wide; the delegation lines are the last point
   where a request's `ctx` and the bundle are both in hand. Resolving
-  THERE is what lets all 108 request-path `deps.store` reads, the 18
+  THERE is what lets all 71 request-path `deps.store` reads, the 18
   `deps.episode_store` reads, and the `deps.store.root` fan-outs follow
   the rebound bundle with **zero edits at the read sites** — including
   the 19 reads inside the twelve ctx-less helpers (`conflicts.
@@ -90,8 +90,11 @@ path.
   and none read `deps.store` before it, which is why the bundle shape
   works — but that was true by convention. `tests/test_store_source.py`
   AST-walks the class and fails if a method delegates without resolving
-  first, or if the class stops carrying 27 of them, so a tool added
-  later cannot silently inherit the process store. The facade
+  first, delegates with `self` rather than the bundle it just resolved,
+  or if the class stops carrying 27 of them, so a tool added later
+  cannot silently inherit the process store. Resolving and then
+  dropping the result is the same one-line slip as never resolving, and
+  the ordering check alone cannot see it. The facade
   SIGNATURES are unchanged and proven so: the SDK reads
   `inspect.signature` for the JSON schema on every tool, so a stray
   parameter would move the wire contract silently — the AST comparison
@@ -100,6 +103,18 @@ path.
 - **`/tmp` literals in the new fixtures**, caught by
   `test_platform_fixture_lint` before a windows-latest round-trip paid
   for them.
+
+- **The twelve quoted annotations the D2 widening added are unquoted**
+  (`ce4df17`). Both files carry `from __future__ import annotations`
+  and every one of those names already resolves on the import path it
+  sits on, so the quotes bought nothing. Nothing was broken by them:
+  `UP037` is preview-gated, and the locked ruff 0.15.12 does not fire
+  it under `linter.preview = false`, so no matrix ever saw them. Stated
+  as the partial pass it is rather than a hazard retired — 121 `UP037`
+  violations remain repo-wide under `--preview` (60 under `handlers/`,
+  31 in the package root, 26 under `cli/`, 4 across tests and bench),
+  so a lock bump that turns preview rules on is a project-wide cleanup,
+  not a green matrix.
 
 ## 7.19.1 - 2026-09-16
 
