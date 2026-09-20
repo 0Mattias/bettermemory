@@ -403,7 +403,7 @@ class ToolHandlers:
     # to those sites instead was priced and rejected: ~89 rewrites and
     # ~12 signature changes against 27 delegation lines.
 
-    def for_request(self, ctx: Context | None = None) -> "ToolHandlers":
+    def for_request(self, ctx: Context | None = None) -> ToolHandlers:
         """The bundle this request should run against.
 
         Returns `self` when the resolved store IS this bundle's store —

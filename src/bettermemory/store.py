@@ -2970,7 +2970,7 @@ class StoreSource(Protocol):
     store for every request, which is what `DefaultStoreSource` does.
     """
 
-    def for_request(self, ctx: "Any | None") -> "MemoryStore": ...
+    def for_request(self, ctx: Any | None) -> MemoryStore: ...
 
 
 @dataclass
@@ -3002,16 +3002,16 @@ class StoreRegistry:
     # same, and one number is easier to hold in the head than two.
     DEFAULT_MAX_ROOTS = 256
 
-    opener: "Callable[[Path], MemoryStore]" = Store.open
+    opener: Callable[[Path], MemoryStore] = Store.open
     max_roots: int = DEFAULT_MAX_ROOTS
-    _stores: "OrderedDict[Path, MemoryStore]" = field(
+    _stores: OrderedDict[Path, MemoryStore] = field(
         default_factory=OrderedDict, init=False, repr=False
     )
-    _lock: "threading.Lock" = field(
+    _lock: threading.Lock = field(
         default_factory=threading.Lock, init=False, repr=False
     )
 
-    def get(self, root: Path) -> "MemoryStore":
+    def get(self, root: Path) -> MemoryStore:
         """The store for `root`, opening it on first use."""
         key = Path(root)
         with self._lock:
@@ -3063,14 +3063,14 @@ class DefaultStoreSource:
 
     def __init__(
         self,
-        store: "MemoryStore",
+        store: MemoryStore,
         *,
         registry: StoreRegistry | None = None,
     ) -> None:
         self._store = store
         self._registry = registry if registry is not None else StoreRegistry()
 
-    def for_request(self, ctx: "Any | None") -> "MemoryStore":
+    def for_request(self, ctx: Any | None) -> MemoryStore:
         root = self._root_for_request(ctx)
         if root == self._store.root:
             # The common case, and the only case today: hand back the
@@ -3080,7 +3080,7 @@ class DefaultStoreSource:
             return self._store
         return self._registry.get(root)
 
-    def _root_for_request(self, ctx: "Any | None") -> Path:
+    def _root_for_request(self, ctx: Any | None) -> Path:
         """The root a request should be served from.
 
         Returns the process store's root for every request. A subclass or
@@ -3093,7 +3093,7 @@ class DefaultStoreSource:
         """
         return self._store.root
 
-    def principal_of(self, ctx: "Any | None") -> str | None:
+    def principal_of(self, ctx: Any | None) -> str | None:
         """The attested principal for a request, or None.
 
         Not on `StoreSource` itself: only the policy that consumes it
