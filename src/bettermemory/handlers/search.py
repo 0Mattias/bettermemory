@@ -68,7 +68,7 @@ from ..search import (
     search as run_search,
     top_hit_leads_runner_up,
 )
-from ..store import MemoryNotFoundError, Store, TombstonedError
+from ..store import MemoryNotFoundError, MemoryStore, TombstonedError
 from ..verify import (
     compute_commit_drift,
     compute_staleness_verdict,
@@ -525,7 +525,7 @@ def default_search_width(behavior: "BehaviorConfig") -> int:
 
 
 def resolve_search_pool(
-    store: Store,
+    store: MemoryStore,
     query: str,
     *,
     scopes: list[str] | None = None,

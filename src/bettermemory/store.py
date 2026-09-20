@@ -8,7 +8,8 @@ objects and get them back.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Iterable
+from collections import OrderedDict
+from collections.abc import Callable, Iterable
 
 import contextlib
 import errno
@@ -16,6 +17,7 @@ import logging as _logging
 import os
 import stat
 import sys
+import threading
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -162,6 +164,13 @@ PARSE_SKIP_EXCEPTIONS: tuple[type[Exception], ...] = (Exception,)
 
 TOMBSTONE_DIR = ".tombstones"
 
+# Batch ceiling for the ONE `index.filenames_for_ids` call behind
+# `Store.load_many`. That helper binds one SQL host parameter per id in a
+# single `IN (…)` and does not chunk, and SQLite's default parameter
+# ceiling is 999 on older builds. Matches `index._PROVENANCE_BATCH`, which
+# exists for the same reason on the same ceiling.
+_FILENAMES_FOR_IDS_CHUNK = 500
+
 
 def _tighten_dir_mode(path: Path) -> None:
     """Drop group/other bits from `path` when it carries any, leaving an
@@ -235,6 +244,7 @@ class MemoryStore(Protocol):
         self, scopes: list[str] | None = None
     ) -> list[MemorySummary]: ...
     def load_one(self, memory_id: str) -> Memory: ...
+    def load_many(self, memory_ids: list[str]) -> list[Memory]: ...
     def show(self, memory_id: str) -> Memory: ...
     def write(
         self,
@@ -562,6 +572,88 @@ class Store:
                 )
 
         raise MemoryNotFoundError(f"no memory with id {memory_id}")
+
+    def load_many(self, memory_ids: list[str]) -> list[Memory]:
+        """Load several memories by ID through ONE index lookup.
+
+        This is the plural of ``load_one`` for callers that already hold
+        a candidate set, and it exists because the search prefilter used
+        to spell it out by hand: resolve every id through
+        ``_index.filenames_for_ids``, then ``Store._load_path`` each one.
+        That loop is the fast shape — one index connection for the whole
+        batch — and it belongs on the store rather than in a handler, so
+        a consumer that only knows the protocol can reach it.
+
+        **Not the plural of ``load_one``, deliberately.** A
+        ``[self.load_one(i) for i in ids]`` implementation resolves each
+        id through its own ``_indexed_path_for_id`` call, which opens
+        and closes the index once per id: benchmarked at 50 candidates on
+        a 200-memory store, 46.39 ms across 50 connections against
+        12.52 ms across 1 here — i.e. already indistinguishable from the
+        full-corpus ``load_all`` this path exists to avoid. The
+        connection count is the metric that matters; the milliseconds
+        are noise. Do not reintroduce the plural shape.
+
+        **Failures PROPAGATE.** No ``@best_effort`` here, unlike
+        ``_indexed_path_for_id``, because the search prefilter wraps this
+        call in a guard that warns and degrades to ``load_all``. A
+        swallowing version would instead return whichever candidates
+        happened to resolve, which the caller cannot distinguish from a
+        complete pool — it would still set ``prefiltered=True`` and so
+        silently narrow the BM25 corpus-IDF denominator while looking
+        like a full result set. Degrade is the caller's decision to make
+        loudly, not this method's to make quietly.
+
+        **Index-only resolution, with the same asymmetry as the search
+        prefilter it replaces.** An id with no index row is omitted
+        rather than resolved through the O(corpus) directory walk, so a
+        miss costs nothing and a batch that resolves nothing appears as
+        an empty list — the caller's existing "every candidate missed"
+        fallback covers it. ``load_one`` owns the authoritative walk
+        instead; this method is the batched hint, not the fallback.
+        ``_indexed_path_for_id``'s never-raise contract stays as it is.
+
+        Two candidate-level skips, both inherited from the loop this
+        replaces: a name the quarantine sidecar refuses (a pulled file
+        the admission chain rejected keeps its index row until the next
+        rebuild, and must not reach a search hit with its body), and a
+        row whose file no longer carries that id (``sync pull`` rewrites
+        files in place, so the filename column can briefly point at a
+        body belonging to a different memory). Skipped parse failures
+        use the shared ``PARSE_SKIP_EXCEPTIONS`` width, so a file
+        ``load_all`` would skip cannot crash this path either.
+        """
+        if not memory_ids:
+            return []
+        # `filenames_for_ids` binds one host parameter per id in a single
+        # `IN (…)` and does not chunk; 50 candidates is far under the
+        # ceiling, but this is a public method and a bigger batch is a
+        # caller's choice. Chunked here rather than documented as a
+        # ceiling so no caller has to know the number — one connection
+        # per chunk, not per id.
+        from . import index as _index
+
+        filenames: dict[str, str] = {}
+        for start in range(0, len(memory_ids), _FILENAMES_FOR_IDS_CHUNK):
+            chunk = memory_ids[start : start + _FILENAMES_FOR_IDS_CHUNK]
+            filenames.update(_index.filenames_for_ids(self.root, chunk))
+
+        excluded = quarantined_names(self.root)
+        out: list[Memory] = []
+        for memory_id in memory_ids:
+            filename = filenames.get(memory_id)
+            if not filename:
+                continue
+            if excluded and filename in excluded:
+                continue
+            try:
+                memory = self._load_path(self.root / filename)
+            except PARSE_SKIP_EXCEPTIONS:
+                continue
+            if memory.id != memory_id:
+                continue
+            out.append(memory)
+        return out
 
     def show(self, memory_id: str) -> Memory:
         """Public alias matching the MCP `memory_show` tool name."""
@@ -2850,6 +2942,174 @@ def _has_confirmed_index_gap(root: Path, disk_paths: dict[str, Path]) -> bool:
                 continue
             return True
     return False
+
+
+# ---------------------------------------------------------------------------
+# The per-request store seam
+# ---------------------------------------------------------------------------
+#
+# Teams Phase 1 / D2. The tree already resolves IDENTITY per request
+# (`session.SessionSource.for_request`). It resolves the STORE once, from
+# process geometry, before any request exists — which is the difference
+# between a single-user process and a hosted one. These names are the
+# store half of that seam, and they are deliberately the whole of it: no
+# mount policy, no tenant key on disk, no migration.
+#
+# `ToolHandlers.for_request` (`_handlers.py`) is what calls into them.
+# Read `DefaultStoreSource`'s docstring for the exact limits of what this
+# buys.
+
+
+class StoreSource(Protocol):
+    """Resolves the store a request should be served from.
+
+    The store analogue of `session.SessionSource`, and for the same
+    reason: a consumer should be able to ask "which store is this
+    request for?" without knowing how the answer is produced. A
+    single-store caller satisfies it trivially by returning the same
+    store for every request, which is what `DefaultStoreSource` does.
+    """
+
+    def for_request(self, ctx: "Any | None") -> "MemoryStore": ...
+
+
+@dataclass
+class StoreRegistry:
+    """The stores one process has open, keyed by ROOT and capped.
+
+    Opens each root at most once and hands the same instance back for
+    every later request that resolves to it. `Store.open` is the
+    factory, not `Store`: it provisions and runs the startup pair
+    (flagged-index auto-heal, the S4 divergence check), which is right
+    for a root entering service and wrong per call — it can reach a
+    `git` subprocess.
+
+    `OrderedDict` + `threading.Lock` + LRU eviction, copying
+    `session.SessionRegistry`'s discipline rather than inventing a
+    second one: the touch-then-maybe-evict pass is non-atomic, and
+    HTTP/SSE transports can dispatch concurrent requests. The cap is
+    what keeps a map keyed by anything a request can vary from growing
+    for the process lifetime.
+
+    Keyed by root, not by principal: several principals can legitimately
+    share one root (that is the single-store case, and the default), so
+    the root is what identifies a store. Nothing here decides WHICH root
+    a principal gets — that is the `StoreSource` policy's job, and this
+    class serves whatever it is handed.
+    """
+
+    # Matches `SessionRegistry.DEFAULT_MAX_CLIENTS`; the reasoning is the
+    # same, and one number is easier to hold in the head than two.
+    DEFAULT_MAX_ROOTS = 256
+
+    opener: "Callable[[Path], MemoryStore]" = Store.open
+    max_roots: int = DEFAULT_MAX_ROOTS
+    _stores: "OrderedDict[Path, MemoryStore]" = field(
+        default_factory=OrderedDict, init=False, repr=False
+    )
+    _lock: "threading.Lock" = field(
+        default_factory=threading.Lock, init=False, repr=False
+    )
+
+    def get(self, root: Path) -> "MemoryStore":
+        """The store for `root`, opening it on first use."""
+        key = Path(root)
+        with self._lock:
+            found = self._stores.get(key)
+            if found is not None:
+                self._stores.move_to_end(key)
+                return found
+        # Opened OUTSIDE the lock: `Store.open` shells out to git on the
+        # divergence check and rebuilds the index on a stale one, and
+        # holding a process-wide lock across that would serialize every
+        # other request behind one tenant's cold start. Two concurrent
+        # first requests for the same root may therefore both open, and
+        # the first insert wins — the same benign race
+        # `SessionRegistry` avoids only because its factory is cheap.
+        opened = self.opener(key)
+        with self._lock:
+            existing = self._stores.setdefault(key, opened)
+            self._stores.move_to_end(key)
+            while len(self._stores) > self.max_roots:
+                self._stores.popitem(last=False)
+            return existing
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._stores)
+
+
+class DefaultStoreSource:
+    """Every request resolves to the process store.
+
+    **This is the whole of D2's behaviour, and it changes nothing.** The
+    rule being installed is the mechanism: a request can be asked for a
+    store, the answer flows through `ToolHandlers.for_request`, and
+    every read site downstream follows the bundle rather than reaching
+    for a process-wide attribute. The POLICY — which principal gets
+    which root, and whether two stores can be ranked into one result set
+    (they cannot today: the BM25 IDF denominator is per-root) — is not
+    decided here and is not decided by this unit. Until it is, a hosted
+    multi-tenant deployment is still not supported, and nothing in this
+    class pretends otherwise.
+
+    Keying, when the policy does land: on `actor.principal` ALONE, never
+    `identity.registry_key`. That key appends the transport session and
+    any header-declared client/model, which as a STORE key would shard
+    one person's memories across per-connection stores. A principal-less
+    request (stdio, the CLI, the hook) shares one bucket, which is what
+    makes the default path inert rather than special-cased.
+    """
+
+    def __init__(
+        self,
+        store: "MemoryStore",
+        *,
+        registry: StoreRegistry | None = None,
+    ) -> None:
+        self._store = store
+        self._registry = registry if registry is not None else StoreRegistry()
+
+    def for_request(self, ctx: "Any | None") -> "MemoryStore":
+        root = self._root_for_request(ctx)
+        if root == self._store.root:
+            # The common case, and the only case today: hand back the
+            # constructed store rather than a registry copy, so the
+            # stdio path keeps object identity (and so
+            # `ToolHandlers.for_request` can return `self`).
+            return self._store
+        return self._registry.get(root)
+
+    def _root_for_request(self, ctx: "Any | None") -> Path:
+        """The root a request should be served from.
+
+        Returns the process store's root for every request. A subclass or
+        a later unit replaces THIS method and nothing else. The
+        principal is available through `principal_of`, which goes
+        through `identity.bind` — the same binder the session registry
+        uses — rather than a competing one, because `bind` also
+        PUBLISHES the caller for the rest of the request, and two bind
+        sites would make each other order-dependent for no gain.
+        """
+        return self._store.root
+
+    def principal_of(self, ctx: "Any | None") -> str | None:
+        """The attested principal for a request, or None.
+
+        Not on `StoreSource` itself: only the policy that consumes it
+        needs it, and putting it on the protocol would force a backend
+        that resolves stores some other way to implement a lookup it
+        never calls.
+
+        Resolved through `identity.bind`, the same call
+        `SessionRegistry._key_for_ctx` makes, rather than a second
+        binder: `bind` never raises (a context constructed outside a
+        request contributes nothing) and publishing the caller is what
+        makes the rest of the request see the same actor.
+        """
+        from . import identity
+
+        return identity.bind(ctx).actor.principal
 
 
 def _warn_on_index_divergence(root: Path) -> None:

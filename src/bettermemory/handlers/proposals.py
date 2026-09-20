@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from .._handlers import ToolHandlers
     from ..config import Config
     from ..events import Recorder
-    from ..store import Store
+    from ..store import MemoryStore
 
 
 DESC_MEMORY_PROPOSALS = (
@@ -114,7 +114,7 @@ def _gate_refusal(decision: Reject, proposal_id: str) -> dict[str, Any]:
 
 def accept_proposal(
     *,
-    store: "Store",
+    store: "MemoryStore",
     config: "Config",
     recorder: "Recorder",
     proposal_id: str,

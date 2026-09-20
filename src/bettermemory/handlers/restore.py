@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 from ..claims import check_claim, claim_reason_is_indeterminate, load_claims
 from ..models import Memory, TombstonedMemory
 from ..origin import commit_reachable
-from ..store import MemoryNotFoundError, NotTombstonedError, Store
+from ..store import MemoryNotFoundError, MemoryStore, NotTombstonedError
 from ..verify import _worktree_root_is_live, unverifiable_attestations
 from ._shared import Context, _advance_turn
 
@@ -140,7 +140,9 @@ def trust_strip_for(tombstone: TombstonedMemory) -> TrustStrip:
     )
 
 
-def restore_with_trust_check(store: Store, memory_id: str) -> tuple[Memory, TrustStrip]:
+def restore_with_trust_check(
+    store: MemoryStore, memory_id: str
+) -> tuple[Memory, TrustStrip]:
     """The restore every surface runs: judge the tombstone's trust
     fields, then restore with the failures dropped and the stamp cleared
     when anything was. Raises what `Store.restore` raises; a tombstone

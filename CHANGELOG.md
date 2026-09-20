@@ -7,6 +7,100 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 7.19.2 - 2026-09-20
+
+Teams Phase 1 / D2: the per-request store seam. **The mechanism only —
+this release is not team support, and nothing here serves two tenants at
+once.** The shipped store source answers the same store for every
+request; what ships is the rule that a request can be ASKED which store
+it is for, so a policy can land later without a second sweep of the read
+path.
+
+### Added
+
+- `ToolHandlers.for_request(ctx)` resolves the dependency bundle before
+  each tool delegates, and `StoreSource` / `StoreRegistry` /
+  `DefaultStoreSource` are the store half of the seam `SessionSource`
+  already occupies for identity. The MCP SDK holds bound methods of ONE
+  `ToolHandlers`, so typing the store anywhere up the call chain still
+  leaves `self` process-wide; the delegation lines are the last point
+  where a request's `ctx` and the bundle are both in hand. Resolving
+  THERE is what lets all 108 request-path `deps.store` reads, the 18
+  `deps.episode_store` reads, and the `deps.store.root` fan-outs follow
+  the rebound bundle with **zero edits at the read sites** — including
+  the 19 reads inside the twelve ctx-less helpers (`conflicts.
+  _resolve_verdict`, `show._links_payload`, `write._persist` and
+  siblings), which hold no `ctx` and so could never resolve a store
+  themselves. `store` and `episode_store` are rebound TOGETHER:
+  episodes are a sibling subtree of the memory root, and it is not
+  confined to the `episode_*` tools, since `memory_write_confirm`
+  reaches `deps.episode_store` privately to delete a promoted source
+  episode. The recorder is deliberately NOT rebound — its root comes
+  from config, never from the store, and a recorder that followed a
+  per-request store would be a per-tenant event log, which is a policy
+  this release does not make. That split is pinned by a test rather
+  than left to be discovered. `StoreRegistry` copies
+  `SessionRegistry`'s discipline — `OrderedDict`, a lock, touch-on-
+  access, LRU eviction at 256 roots — and opens each root once through
+  `Store.open`, never per request, since that call provisions and can
+  reach a `git` subprocess. A single-store caller is unaffected: the
+  default source returns the process store, so `for_request` returns
+  `self`, allocates nothing, and no handler observes a different object.
+
+- `Store.load_many(ids)`, and the `MemoryStore` member beside it. The
+  search prefilter resolved candidate ids to filenames in one index call
+  and then read each file inline; that loop is the fast shape and it now
+  belongs to the store, so a consumer that only knows the protocol can
+  reach it. It is NOT `[load_one(i) for i in ids]`: that plural shape
+  opens and closes the index once per id, and at 50 candidates it is
+  already indistinguishable from the full-corpus scan this path exists
+  to avoid. The gate COUNTS index connections rather than timing
+  anything, because the connection count is the metric and the
+  milliseconds are noise. Batches are chunked at 500 because
+  `index.filenames_for_ids` binds one SQL host parameter per id and does
+  not chunk itself. Index failures PROPAGATE rather than degrading to
+  "whichever candidates resolved", which the caller could not tell apart
+  from a complete pool — it would still set `prefiltered=True` and
+  silently narrow the BM25 corpus-IDF denominator. The quarantine
+  predicate and the index-drift guard moved with the loop.
+
+- `build_server(store=…)` is annotated with the `MemoryStore` protocol,
+  which makes it the first real assignment mypy checks the protocol
+  against. Through 7.17.x `MemoryStore` was used by no annotation in
+  `src/` and verified by no type checker: the conformance test compares
+  name sets in one direction only, and its docstring claimed a
+  mypy-clean assignment that did not exist in the tree. What used to
+  block the annotation was `_handlers.py` reaching `store._load_path` on
+  the hot search path, which no protocol can expose; that reach is
+  `load_many` now.
+
+### Changed
+
+- Six consumer signatures widened from `Store` to `MemoryStore`
+  (`resolve_search_pool`, `restore_with_trust_check`, `consolidate`,
+  `accept_proposal`, `GateBundle`, `load_search_candidates`), and
+  `GateDeps.store` / `ToolHandlers.store` with them. A protocol
+  attribute is invariant, so the three had to move together or not at
+  all; `mypy` names the mismatch rather than a cast hiding it.
+
+### Fixed
+
+- **A delegation line that forgot to resolve the bundle is now a test
+  failure.** All 27 facade methods called `sessions.for_request(ctx)`
+  and none read `deps.store` before it, which is why the bundle shape
+  works — but that was true by convention. `tests/test_store_source.py`
+  AST-walks the class and fails if a method delegates without resolving
+  first, or if the class stops carrying 27 of them, so a tool added
+  later cannot silently inherit the process store. The facade
+  SIGNATURES are unchanged and proven so: the SDK reads
+  `inspect.signature` for the JSON schema on every tool, so a stray
+  parameter would move the wire contract silently — the AST comparison
+  over the class's arguments is byte-identical before and after.
+
+- **`/tmp` literals in the new fixtures**, caught by
+  `test_platform_fixture_lint` before a windows-latest round-trip paid
+  for them.
+
 ## 7.19.1 - 2026-09-16
 
 ### Fixed

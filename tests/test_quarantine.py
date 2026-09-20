@@ -210,12 +210,17 @@ def test_the_search_prefilter_is_the_third_lookup_path_and_refuses_too(
     memory_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`load_search_candidates` resolves its candidate ids to filenames
-    in ONE `filenames_for_ids` call and reads each with `_load_path`, so
-    it reaches neither of the two guards the other paths use. The row
-    outlives the refusal until the next rebuild, so the batch lookup
-    hands back the name and the body is served -- through the tool a
-    caller is most likely to ask with.
+    """The prefilter resolves candidate ids through the index and reads
+    the files, so for four releases it reached neither guard the other two
+    id -> record paths use: the row outlives the refusal until the next
+    rebuild, so the batch lookup handed back the name and the body was
+    served -- through the tool a caller is most likely to ask with.
+
+    7.17.2 fixed it where the lookup then lived (`load_search_candidates`);
+    7.19.2 moved the loop to `Store.load_many`, which carried the
+    predicate with it. This test is therefore now a test of the STORE's
+    batched path as reached through the prefilter, and it stays here
+    because the prefilter is the caller whose contract it protects.
 
     The `prefiltered` assertion is the point: every fallback in
     `load_search_candidates` routes to `load_all`, which DOES honour the

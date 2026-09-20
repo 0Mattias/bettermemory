@@ -31,6 +31,7 @@ patch propagates — see ``handlers/_shared.py`` for the contract.
 
 from __future__ import annotations
 
+import copy
 import logging
 from typing import Any
 
@@ -50,9 +51,8 @@ from .handlers._shared import (
     _validate_write_payload,
 )
 from .origin import capture as capture_origin
-from .quarantine import quarantined_names
 from .session import SessionSource
-from .store import PARSE_SKIP_EXCEPTIONS, Store
+from .store import DefaultStoreSource, MemoryStore, StoreSource
 
 log = logging.getLogger("bettermemory._handlers")
 
@@ -142,7 +142,7 @@ def resolve_index_threshold() -> int:
 
 
 def load_search_candidates(
-    store: Store,
+    store: MemoryStore,
     query: str,
     scopes: list[str] | None = None,
     *,
@@ -212,7 +212,7 @@ def load_search_candidates(
     themselves raise: `status()` above inspects only the
     meta/sqlite_master pages, so page-level corruption in the
     data/FTS b-trees passes the gate and first surfaces out of
-    `query()` / `filenames_for_ids()`. Same routing as
+    `query()` / `load_many()`. Same routing as
     `needs_rebuild` — full scan, correct results, never a crashed
     search.
 
@@ -266,9 +266,9 @@ def load_search_candidates(
     # and these reads). The index is a regenerable cache and the
     # canonical .md files are intact, so warn once and take the
     # same `load_all` routing as `needs_rebuild` — degrade, never
-    # crash the tool call. (`filenames_for_ids` resolves inside the
-    # guard because it walks the same data pages; its empty-ids
-    # call is a free short-circuit.)
+    # crash the tool call. (`Store.load_many` resolves its filenames
+    # inside the guard because it walks the same data pages; its
+    # empty-ids call is a free short-circuit.)
     try:
         candidate_pairs = _index.query(
             store.root,
@@ -280,23 +280,15 @@ def load_search_candidates(
         )
         candidate_ids = {cid for cid, _ in candidate_pairs}
         ids = list(candidate_ids)
-        filenames = _index.filenames_for_ids(store.root, ids)
-        # A quarantined file keeps its index row until the next
-        # rebuild (`sync pull --no-reindex`), so the lookup above
-        # hands back names the active walk refuses to yield. Both
-        # other id -> record paths already drop them — the walk
-        # behind `load_all`, `_indexed_path_for_id` behind
-        # `load_one` — and this third one did not, so a file the
-        # admission chain REFUSED reached a search hit with its
-        # body, which is precisely what `quarantine`'s contract
-        # forbids. Same predicate as the other two, so the rule
-        # keeps failing open on an unreadable sidecar rather than
-        # taking every read down with it.
-        excluded = quarantined_names(store.root)
-        if excluded:
-            filenames = {
-                cid: name for cid, name in filenames.items() if name not in excluded
-            }
+        # The id -> record half is `Store.load_many`'s job now. It sits
+        # INSIDE this guard on purpose: it resolves through the index
+        # (`filenames_for_ids`) and then reads the files, so a
+        # page-level index failure surfaces HERE, where the warning and
+        # the `load_all` routing below can answer it. `load_many` does
+        # not swallow index errors itself — a version that did would
+        # return whichever candidates happened to resolve, which this
+        # caller cannot tell apart from a complete pool.
+        loaded: list[Any] = store.load_many(ids)
     except (
         OSError,
         ValueError,
@@ -317,45 +309,18 @@ def load_search_candidates(
         # writes that aren't in the index yet.
         return store.load_all(), False, False
     # Pin the saturation signal HERE, before the per-candidate
-    # loading loop can drop rows — see the docstring.
+    # loading step can drop rows — see the docstring.
     prefilter_saturated = len(candidate_pairs) == _PREFILTER_CAP
 
-    # Load just the candidates via the id → filename lookup
-    # resolved above — true O(k) on file IO. Candidates that
-    # aren't in the lookup (a row written by a pre-v2 schema, an
-    # entry that's been removed since the FTS pre-filter ran, etc.)
-    # are skipped per-candidate. If every candidate misses we
-    # fall back to `load_all` below — search must never silently
-    # return empty when the FTS pre-filter actually matched.
-    loaded: list[Any] = []
-    for cid in ids:
-        filename = filenames.get(cid)
-        if not filename:
-            continue
-        file_path = store.root / filename
-        try:
-            memory = store._load_path(file_path)
-        except PARSE_SKIP_EXCEPTIONS:
-            # Stale filename (memory was moved / tombstoned
-            # between the index lookup and the read) or a
-            # malformed frontmatter row — the store's shared
-            # any-parse-failure width, so a file `load_all` would
-            # skip (e.g. hand-edited into a shape that raises
-            # TypeError after it was indexed) can't crash the
-            # prefilter path either. Skip — the fallback below
-            # covers the "every candidate failed" case.
-            continue
-        # Index-drift defense: `sync pull` rewrites files in
-        # place, so the filename column can briefly point at a
-        # path whose body now belongs to a different memory id.
-        # Without this guard, the handler would score the
-        # candidate's FTS hit against a body it isn't paired
-        # with anymore. The post-pull `bettermemory reindex`
-        # is the right long-term fix, but we don't trust the
-        # index unconditionally between pull and reindex.
-        if memory.id != cid:
-            continue
-        loaded.append(memory)
+    # The id -> record half is `Store.load_many`'s job now, so the
+    # quarantine predicate, the parse-failure width and the
+    # index-drift guard live with the store rather than here. What
+    # stays here is the FALLBACK decision, which is this function's:
+    # candidates the lookup could not resolve (a pre-v2 schema row,
+    # an entry removed since the FTS pre-filter ran) are skipped, and
+    # if every candidate misses we fall back to `load_all` below —
+    # search must never silently return empty when the FTS
+    # pre-filter actually matched.
     if not loaded:
         # FTS matched, but every candidate's filename lookup
         # missed (pre-v2 schema rows, every match tombstoned
@@ -388,10 +353,15 @@ class ToolHandlers:
         self,
         *,
         config: Config,
-        store: Store,
+        # The protocol, not the concrete `Store`: this is the seam the
+        # per-request resolution below is built on. `Store` satisfies it
+        # structurally, and `builder.build_server` is the assignment that
+        # makes mypy check that claim instead of leaving it prose.
+        store: MemoryStore,
         sessions: SessionSource,
         recorder: Recorder,
         responses: ResponseBuilder,
+        store_source: StoreSource | None = None,
     ) -> None:
         from .episodes import EpisodeStore
 
@@ -405,6 +375,71 @@ class ToolHandlers:
         self.sessions = sessions
         self.recorder = recorder
         self.responses = responses
+        # The per-request store seam. Defaulting to a source that
+        # returns `store` for every request is what keeps the whole
+        # existing suite and every single-store caller on exactly the
+        # path they were on: `for_request` then returns `self`, so
+        # nothing is copied and no handler observes a different object.
+        self.store_source: StoreSource = (
+            store_source if store_source is not None else DefaultStoreSource(store)
+        )
+
+    # ---- per-request store resolution ------------------------------------
+    #
+    # Teams Phase 1 / D2. The MCP SDK holds bound methods of ONE
+    # `ToolHandlers` (constructed once in `builder.py`, its 27 bound
+    # methods handed to `mcp.tool`), so typing the store anywhere up the
+    # call chain still leaves `self` process-wide. This is the last point
+    # where a request's `ctx` and the dependency bundle are both in hand,
+    # so it is where a request can be asked what store it is for.
+    #
+    # What follows from resolving HERE rather than at the read sites:
+    # all 108 request-path `deps.store` reads, the 18 `deps.episode_store`
+    # reads and the `deps.store.root` fan-outs follow the rebound bundle
+    # with no edit at any of them — including the reads inside the 12
+    # ctx-less helpers (e.g. `conflicts._resolve_verdict`,
+    # `show._links_payload`, `write._persist`), which hold no `ctx` and
+    # so could not resolve a store themselves. Threading a resolved store
+    # to those sites instead was priced and rejected: ~89 rewrites and
+    # ~12 signature changes against 27 delegation lines.
+
+    def for_request(self, ctx: Context | None = None) -> "ToolHandlers":
+        """The bundle this request should run against.
+
+        Returns `self` when the resolved store IS this bundle's store —
+        which is every request today, and every stdio request by
+        construction, since a principal-less request shares one bucket.
+        The copy branch exists so a store source that resolves a
+        different store per principal needs no change here.
+
+        Rebinds `store` and `episode_store` TOGETHER. Episodes are a
+        sibling subtree of the memory root, so rebinding one and not the
+        other would serve tenant A's memories beside tenant B's journal
+        with nothing erroring — and it is not confined to the
+        `episode_*` tools: `memory_write_confirm` reaches
+        `deps.episode_store` privately to delete a promoted source
+        episode, so a core memory tool would silently read the wrong
+        tenant.
+
+        Deliberately does NOT rebind `recorder`, and that is a stated
+        limit rather than an oversight: the recorder's root comes from
+        config (`builder.py`), never from the store, and it carries the
+        event log the provenance tier is computed from. A recorder that
+        followed a per-request store would be a per-tenant event log,
+        which is a policy decision this unit does not make. Until the
+        mount policy lands, the recorder stays process-wide — pinned by
+        `test_for_request_leaves_the_recorder_on_the_process_root`, so
+        the split is asserted rather than assumed.
+        """
+        resolved = self.store_source.for_request(ctx)
+        if resolved is self.store:
+            return self
+        from .episodes import EpisodeStore
+
+        clone = copy.copy(self)
+        clone.store = resolved
+        clone.episode_store = EpisodeStore(resolved.root)
+        return clone
 
     # ---- FTS candidate prefilter ----------------------------------------
     #
@@ -441,8 +476,9 @@ class ToolHandlers:
         model: str | None = None,
         ctx: Context | None = None,
     ) -> list[dict[str, Any]]:
+        deps = self.for_request(ctx)
         return await _handlers_pkg.memory_search(
-            self,
+            deps,
             query,
             scopes=scopes,
             max_results=max_results,
@@ -456,7 +492,8 @@ class ToolHandlers:
         )
 
     async def memory_show(self, id: str, ctx: Context | None = None) -> dict[str, Any]:
-        return await _handlers_pkg.memory_show(self, id, ctx=ctx)
+        deps = self.for_request(ctx)
+        return await _handlers_pkg.memory_show(deps, id, ctx=ctx)
 
     async def memory_write(
         self,
@@ -477,8 +514,9 @@ class ToolHandlers:
         supersedes: list[str] | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
+        deps = self.for_request(ctx)
         return await _handlers_pkg.memory_write(
-            self,
+            deps,
             content,
             scopes,
             confidence=confidence,
@@ -500,12 +538,14 @@ class ToolHandlers:
     async def memory_write_confirm(
         self, pending_id: str, ctx: Context | None = None
     ) -> dict[str, Any]:
-        return await _handlers_pkg.memory_write_confirm(self, pending_id, ctx=ctx)
+        deps = self.for_request(ctx)
+        return await _handlers_pkg.memory_write_confirm(deps, pending_id, ctx=ctx)
 
     async def memory_write_cancel(
         self, pending_id: str, ctx: Context | None = None
     ) -> dict[str, Any]:
-        return await _handlers_pkg.memory_write_cancel(self, pending_id, ctx=ctx)
+        deps = self.for_request(ctx)
+        return await _handlers_pkg.memory_write_cancel(deps, pending_id, ctx=ctx)
 
     async def episode_write(
         self,
@@ -515,8 +555,9 @@ class ToolHandlers:
         swarm_id: str | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
+        deps = self.for_request(ctx)
         return await _handlers_pkg.episode_write(
-            self,
+            deps,
             body,
             takeaway=takeaway,
             scopes=scopes,
@@ -531,8 +572,9 @@ class ToolHandlers:
         include_bodies: bool = False,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
+        deps = self.for_request(ctx)
         return await _handlers_pkg.episode_handoff(
-            self,
+            deps,
             prior_session_id=prior_session_id,
             max_episodes=max_episodes,
             include_bodies=include_bodies,
@@ -551,8 +593,9 @@ class ToolHandlers:
         ids: list[str] | None = None,
         ctx: Context | None = None,
     ) -> list[dict[str, Any]]:
+        deps = self.for_request(ctx)
         return await _handlers_pkg.episode_search(
-            self,
+            deps,
             scopes=scopes,
             parent_session_id=parent_session_id,
             swarm_id=swarm_id,
@@ -574,8 +617,9 @@ class ToolHandlers:
         use_body: bool = False,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
+        deps = self.for_request(ctx)
         return await _handlers_pkg.episode_promote(
-            self,
+            deps,
             episode_id,
             scopes=scopes,
             category=category,
@@ -599,8 +643,9 @@ class ToolHandlers:
         auto_scope: bool = True,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
+        deps = self.for_request(ctx)
         return await _handlers_pkg.episode_patterns(
-            self,
+            deps,
             promote=promote,
             dismiss=dismiss,
             body=body,
@@ -623,8 +668,9 @@ class ToolHandlers:
         max_results: int = 10,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
+        deps = self.for_request(ctx)
         return await _handlers_pkg.memory_conflicts(
-            self,
+            deps,
             scan=scan,
             resolve=resolve,
             verdict=verdict,
@@ -645,8 +691,9 @@ class ToolHandlers:
         acknowledge_scope_mismatch: bool = False,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
+        deps = self.for_request(ctx)
         return await _handlers_pkg.memory_proposals(
-            self,
+            deps,
             action=action,
             proposal_id=proposal_id,
             scopes=scopes,
@@ -672,8 +719,9 @@ class ToolHandlers:
         acknowledge_truncation: bool = False,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
+        deps = self.for_request(ctx)
         return await _handlers_pkg.memory_update(
-            self,
+            deps,
             id,
             content=content,
             scopes=scopes,
@@ -695,8 +743,9 @@ class ToolHandlers:
         model: str | None = None,
         ctx: Context | None = None,
     ) -> list[dict[str, Any]]:
+        deps = self.for_request(ctx)
         return await _handlers_pkg.memory_list(
-            self,
+            deps,
             scopes=scopes,
             with_bodies=with_bodies,
             client=client,
@@ -707,19 +756,22 @@ class ToolHandlers:
     async def memory_remove(
         self, id: str, reason: str, ctx: Context | None = None
     ) -> dict[str, Any]:
-        return await _handlers_pkg.memory_remove(self, id, reason, ctx=ctx)
+        deps = self.for_request(ctx)
+        return await _handlers_pkg.memory_remove(deps, id, reason, ctx=ctx)
 
     async def memory_list_tombstones(
         self,
         scopes: list[str] | None = None,
         ctx: Context | None = None,
     ) -> list[dict[str, Any]]:
-        return await _handlers_pkg.memory_list_tombstones(self, scopes=scopes, ctx=ctx)
+        deps = self.for_request(ctx)
+        return await _handlers_pkg.memory_list_tombstones(deps, scopes=scopes, ctx=ctx)
 
     async def memory_restore(
         self, id: str, ctx: Context | None = None
     ) -> dict[str, Any]:
-        return await _handlers_pkg.memory_restore(self, id, ctx=ctx)
+        deps = self.for_request(ctx)
+        return await _handlers_pkg.memory_restore(deps, id, ctx=ctx)
 
     async def memory_health(
         self,
@@ -728,8 +780,9 @@ class ToolHandlers:
         min_applied: int | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
+        deps = self.for_request(ctx)
         return await _handlers_pkg.memory_health(
-            self,
+            deps,
             window_days=window_days,
             heavily_used_top_k=heavily_used_top_k,
             min_applied=min_applied,
@@ -742,8 +795,9 @@ class ToolHandlers:
         window_days: int = 30,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
+        deps = self.for_request(ctx)
         return await _handlers_pkg.memory_curate(
-            self, dry_run=dry_run, window_days=window_days, ctx=ctx
+            deps, dry_run=dry_run, window_days=window_days, ctx=ctx
         )
 
     async def memory_record_use(
@@ -754,8 +808,9 @@ class ToolHandlers:
         claim_excerpts: list[str | None] | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
+        deps = self.for_request(ctx)
         return await _handlers_pkg.memory_record_use(
-            self,
+            deps,
             memory_ids,
             outcome,
             note=note,
@@ -774,8 +829,9 @@ class ToolHandlers:
         claims: list[str] | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
+        deps = self.for_request(ctx)
         return await _handlers_pkg.memory_verify(
-            self,
+            deps,
             id,
             note=note,
             verified_paths=verified_paths,
@@ -791,19 +847,22 @@ class ToolHandlers:
         auto_scope: bool = True,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
+        deps = self.for_request(ctx)
         return await _handlers_pkg.memory_scope_overview(
-            self, auto_scope=auto_scope, ctx=ctx
+            deps, auto_scope=auto_scope, ctx=ctx
         )
 
     async def memory_scope_disable(
         self, scope: str, ctx: Context | None = None
     ) -> dict[str, Any]:
-        return await _handlers_pkg.memory_scope_disable(self, scope, ctx=ctx)
+        deps = self.for_request(ctx)
+        return await _handlers_pkg.memory_scope_disable(deps, scope, ctx=ctx)
 
     async def memory_scope_enable(
         self, scope: str, ctx: Context | None = None
     ) -> dict[str, Any]:
-        return await _handlers_pkg.memory_scope_enable(self, scope, ctx=ctx)
+        deps = self.for_request(ctx)
+        return await _handlers_pkg.memory_scope_enable(deps, scope, ctx=ctx)
 
     async def memory_rename_scope(
         self,
@@ -812,8 +871,9 @@ class ToolHandlers:
         include_tombstones: bool = True,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
+        deps = self.for_request(ctx)
         return await _handlers_pkg.memory_rename_scope(
-            self,
+            deps,
             old_scope,
             new_scope,
             include_tombstones=include_tombstones,
@@ -827,8 +887,9 @@ class ToolHandlers:
         lookback_seconds: int | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
+        deps = self.for_request(ctx)
         return await _handlers_pkg.memory_audit_turn(
-            self,
+            deps,
             user_message,
             assistant_response=assistant_response,
             lookback_seconds=lookback_seconds,
@@ -841,8 +902,9 @@ class ToolHandlers:
         reason: str,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
+        deps = self.for_request(ctx)
         return await _handlers_pkg.memory_acknowledge_miss(
-            self,
+            deps,
             event_id,
             reason,
             ctx=ctx,

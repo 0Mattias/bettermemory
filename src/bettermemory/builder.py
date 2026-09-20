@@ -75,7 +75,7 @@ from .session import (
     SessionState,
     get_default_registry,
 )
-from .store import Store
+from .store import MemoryStore, Store, StoreSource
 
 
 log = logging.getLogger("bettermemory")
@@ -84,15 +84,24 @@ log = logging.getLogger("bettermemory")
 def build_server(
     *,
     config: Config | None = None,
-    # NOT `MemoryStore` yet, deliberately. Typing this parameter to the
-    # protocol cascades into seven files and stops at a real seam
-    # violation: `_handlers.py` reaches `store._load_path` on the hot
-    # search path, which no protocol can expose. Promoting that to a
-    # public `load_many` is the next step's work, not this one's, and a
-    # `cast` here would hide exactly the incompatibility worth seeing.
-    store: Store | None = None,
+    # `MemoryStore`, the protocol, because the seam it names is now
+    # exercised rather than merely declared. What used to block this was
+    # `_handlers.py` reaching `store._load_path` on the hot search path —
+    # a private no protocol can expose. That reach is `Store.load_many`
+    # now, so the annotation is a real conformance check: this parameter
+    # is the assignment mypy checks the protocol against, and a member
+    # added to `MemoryStore` that `Store` lacks fails here rather than
+    # only in the one-directional name-set test.
+    #
+    # The narrower thing a type cannot see: `MemoryStore` still carries
+    # `root`, so a hosted backend must still present a local directory.
+    # That is stated on the protocol itself and is unchanged by D2.
+    store: MemoryStore | None = None,
     state: SessionState | SessionSource | None = None,
     recorder: Recorder | None = None,
+    # The per-request store seam. `None` means "every request is served
+    # from `store`", which is the behaviour every caller has today.
+    store_source: StoreSource | None = None,
 ) -> MCPServer:
     """Return a configured `MCPServer` instance.
 
@@ -119,6 +128,13 @@ def build_server(
     (per-client event correlation is a separate concern); for the
     common stdio case the recorder session_id matches the resolved
     state's session_id, so this is identical to the old behavior.
+
+    `store_source` is the store's counterpart to `state`, and it is
+    deliberately NOT symmetric with it yet: `state` resolves a
+    different object per client, while the shipped
+    `DefaultStoreSource` returns one store for every request. The
+    parameter exists so the seam is reachable and testable; the
+    tenancy policy that would use it is a later unit.
     """
     config = config or load_config()
     # `Store.open`: this is a process entry point, so it provisions and
@@ -230,7 +246,12 @@ def build_server(
     mcp.middleware.append(identity.middleware)
 
     _register_tools(
-        mcp, config=config, store=store, sessions=sessions, recorder=recorder
+        mcp,
+        config=config,
+        store=store,
+        sessions=sessions,
+        recorder=recorder,
+        store_source=store_source,
     )
     return mcp
 
@@ -239,9 +260,10 @@ def _register_tools(
     mcp: MCPServer,
     *,
     config: Config,
-    store: Store,
+    store: MemoryStore,
     sessions: SessionSource,
     recorder: Recorder,
+    store_source: StoreSource | None = None,
 ) -> None:
     """Bind each `ToolHandlers` method against the `MCPServer` instance.
 
@@ -262,6 +284,7 @@ def _register_tools(
         sessions=sessions,
         recorder=recorder,
         responses=responses,
+        store_source=store_source,
     )
 
     # Order matches `server.py`'s module docstring's tool list so a reader

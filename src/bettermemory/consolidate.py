@@ -105,7 +105,7 @@ from .health import (
 from .models import Category, Memory, Source, snippet_for
 from .origin import Origin
 from .search import _pairwise_content_jaccard, _raw_content_token_set
-from .store import Store
+from .store import MemoryStore, Store
 from .time_utils import isoformat_utc, parse_event_ts
 
 log = logging.getLogger("bettermemory.consolidate")
@@ -1221,7 +1221,7 @@ def _emit(recorder: Recorder | None, kind: str, **fields: Any) -> None:
 
 
 def consolidate(
-    store: Store,
+    store: MemoryStore,
     *,
     dedup_threshold: float | None = None,
     window_days: int = _DEFAULT_WINDOW_DAYS,

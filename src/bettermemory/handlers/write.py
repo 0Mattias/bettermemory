@@ -76,7 +76,7 @@ if TYPE_CHECKING:
     from .._handlers import ToolHandlers
     from .._response import ResponseBuilder
     from ..config import Config
-    from ..store import Store
+    from ..store import MemoryStore
 
 log = logging.getLogger("bettermemory.handlers.write")
 
@@ -826,25 +826,32 @@ class GateDeps(Protocol):
 
     """
 
-    store: Store
+    store: MemoryStore
     config: Config
     responses: ResponseBuilder
 
 
 class GateBundle:
-    """`GateDeps` for callers that hold a `Store` but no `ToolHandlers`.
+    """`GateDeps` for callers that hold a `MemoryStore` but no
+    `ToolHandlers`.
 
     `responses` is a real `ResponseBuilder` rather than a stub: the gates
     build their rejection payloads eagerly, and a caller that discards the
     payload (ingest keeps only `reason`) still benefits from the shaping
     being identical to what the MCP surface would have returned. One
     rejection shape, one place to change it.
+
+    Takes the PROTOCOL, matching `GateDeps.store`, because `GateDeps` is
+    satisfied structurally: a protocol attribute is invariant, so a
+    bundle declaring the concrete `Store` would not satisfy a `GateDeps`
+    whose `store` is a `MemoryStore` — and the two arrive together, since
+    `ToolHandlers.store` is the third member of that set.
     """
 
     def __init__(
         self,
         *,
-        store: Store,
+        store: MemoryStore,
         config: Config,
         responses: ResponseBuilder,
     ) -> None:
@@ -853,7 +860,7 @@ class GateBundle:
         self.responses = responses
 
     @classmethod
-    def for_store(cls, store: Store, config: Config) -> GateBundle:
+    def for_store(cls, store: MemoryStore, config: Config) -> GateBundle:
         """Build a bundle from the two things every caller already has."""
         from .._response import ResponseBuilder
 
