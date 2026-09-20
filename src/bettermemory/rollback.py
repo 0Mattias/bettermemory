@@ -250,7 +250,7 @@ def plan_rollback(
 
 
 def apply_rollback(
-    store: "Store",
+    store: Store,
     report: RollbackReport,
     *,
     session_id: str | None = None,

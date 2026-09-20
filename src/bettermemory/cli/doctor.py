@@ -6,7 +6,7 @@ import argparse
 
 
 def add_subparser(
-    sub: "argparse._SubParsersAction[argparse.ArgumentParser]",
+    sub: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> argparse.ArgumentParser:
     """Register the ``doctor`` subparser on the parent parser."""
     # Category summary, deliberately NOT a check-by-check list: the

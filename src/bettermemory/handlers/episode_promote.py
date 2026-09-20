@@ -180,7 +180,7 @@ if TYPE_CHECKING:
 
 
 def _delete_source_episode(
-    deps: "ToolHandlers", episode_session_id: str, episode_id: str
+    deps: ToolHandlers, episode_session_id: str, episode_id: str
 ) -> None:
     """Remove an episode file from disk.
 
@@ -287,7 +287,7 @@ DESC_EPISODE_PROMOTE = (
 
 
 async def episode_promote(
-    deps: "ToolHandlers",
+    deps: ToolHandlers,
     episode_id: str,
     scopes: list[str],
     category: str = "fact",

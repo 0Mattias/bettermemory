@@ -13,7 +13,7 @@ import argparse
 
 
 def add_subparser(
-    sub: "argparse._SubParsersAction[argparse.ArgumentParser]",
+    sub: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> argparse.ArgumentParser:
     """Register the ``prompt-recall`` subparser on the parent parser."""
     help_text = (

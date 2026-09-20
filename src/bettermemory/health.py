@@ -2055,7 +2055,7 @@ class _StatsAccumulator:
     # design while keeping its own floor basis (`search_delivery_count`)
     # search-only — the two surfaces split the same way, on purpose;
     # `show` is likewise keyed into `show_count`, never here.
-    _HANDLERS: dict[str, Callable[["_StatsAccumulator", dict[str, Any]], None]] = {
+    _HANDLERS: dict[str, Callable[[_StatsAccumulator, dict[str, Any]], None]] = {
         "search": _handle_search,
         "show": _handle_show,
         "use": _handle_use,
@@ -2073,8 +2073,8 @@ def _build_actor_slices(
     *,
     memories: Counter[str | None],
     memories_in_window: Counter[str | None],
-    models: "defaultdict[str | None, Counter[str]]",
-    principals: "defaultdict[str | None, Counter[str]]",
+    models: defaultdict[str | None, Counter[str]],
+    principals: defaultdict[str | None, Counter[str]],
     events: Counter[str | None],
     searches: Counter[str | None],
     applies: Counter[str | None],
@@ -2641,7 +2641,7 @@ def compute_health(
     return report
 
 
-def _compute_recommendations(report: "HealthReport") -> list["Recommendation"]:
+def _compute_recommendations(report: HealthReport) -> list[Recommendation]:
     """Distill the bucket rollups into proactive curation suggestions.
 
     Order is fixed (matches `RECOMMENDATION_KINDS`) so the first

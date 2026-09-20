@@ -159,7 +159,7 @@ _STANDING_BUDGET_BYTES = 1024
 
 
 def add_subparser(
-    sub: "argparse._SubParsersAction[argparse.ArgumentParser]",
+    sub: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> argparse.ArgumentParser:
     """Register the ``session-start`` subparser on the parent parser."""
     help_text = (
@@ -458,7 +458,7 @@ def _build_context_block() -> str | None:
     # `SessionState`, and no session exists yet when this runs.
     current = capture_origin()
 
-    def _admit(scopes: list[str], memory_origin: "Origin | None") -> bool:
+    def _admit(scopes: list[str], memory_origin: Origin | None) -> bool:
         return candidate_admitted(
             scopes,
             memory_origin,
@@ -525,10 +525,10 @@ class _Standing(NamedTuple):
 
 def _standing_section(
     directory: Path,
-    config: "Config",
-    current: "Origin",
-    admit: "Callable[[list[str], Origin | None], bool]",
-) -> "_Standing | None":
+    config: Config,
+    current: Origin,
+    admit: Callable[[list[str], Origin | None], bool],
+) -> _Standing | None:
     """The standing tier's lines, or None when there is nothing to say.
 
     Candidates come from `index.category_rows` — the index names which
@@ -656,10 +656,10 @@ def _standing_section(
 
 
 def _render_standing(
-    fresh: "list[Memory]",
+    fresh: list[Memory],
     stale_count: int,
-    pointers: "list[tuple[Memory, str]]",
-) -> "_Standing":
+    pointers: list[tuple[Memory, str]],
+) -> _Standing:
     """Render the standing lines: bodies under budget, pointers under
     what remains of it, then pressure.
 

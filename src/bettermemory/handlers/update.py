@@ -99,7 +99,7 @@ DESC_MEMORY_UPDATE = (
 
 
 async def memory_update(
-    deps: "ToolHandlers",
+    deps: ToolHandlers,
     id: str,
     content: str | None = None,
     scopes: list[str] | None = None,

@@ -3399,7 +3399,7 @@ def _compute_usage_toggles(
     legs: list[list[tuple[Memory, float, list[str]]]],
     rrf_k: int,
     stopword_fallback: bool,
-    conv_reading: "_TemporalReading | None",
+    conv_reading: _TemporalReading | None,
     query_tokens: list[str],
     query_unique: int,
     applied_by_id: dict[str, int] | None,

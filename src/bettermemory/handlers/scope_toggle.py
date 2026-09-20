@@ -30,7 +30,7 @@ DESC_MEMORY_SCOPE_ENABLE = "Re-enable a previously disabled scope for this sessi
 
 
 async def memory_scope_disable(
-    deps: "ToolHandlers", scope: str, ctx: Context | None = None
+    deps: ToolHandlers, scope: str, ctx: Context | None = None
 ) -> dict[str, Any]:
     state = deps.sessions.for_request(ctx)
     _advance_turn(state, deps.recorder)
@@ -41,7 +41,7 @@ async def memory_scope_disable(
 
 
 async def memory_scope_enable(
-    deps: "ToolHandlers", scope: str, ctx: Context | None = None
+    deps: ToolHandlers, scope: str, ctx: Context | None = None
 ) -> dict[str, Any]:
     state = deps.sessions.for_request(ctx)
     _advance_turn(state, deps.recorder)

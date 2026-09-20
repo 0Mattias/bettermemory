@@ -1040,7 +1040,7 @@ def test_oserror_during_exists_treated_as_missing(tmp_path: Path) -> None:
     body = f"See `{target}` for the thing."
 
     class _Boom:
-        def expanduser(self) -> "_Boom":
+        def expanduser(self) -> _Boom:
             return self
 
         def exists(self) -> bool:

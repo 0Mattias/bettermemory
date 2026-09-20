@@ -335,7 +335,7 @@ def _first_file_root(roots: Any) -> str | None:
 # session object so a closed connection takes its entry with it. `None`
 # means the client was asked (or could not be asked) and offered no
 # `file://` root; absence means nobody has asked yet.
-_ROOTS: "weakref.WeakKeyDictionary[Any, str | None]" = weakref.WeakKeyDictionary()
+_ROOTS: weakref.WeakKeyDictionary[Any, str | None] = weakref.WeakKeyDictionary()
 
 
 def _roots_of(request_context: Any) -> str | None:

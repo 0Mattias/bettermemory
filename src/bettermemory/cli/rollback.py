@@ -9,7 +9,7 @@ from ._common import cli_context, parse_iso_cutoff
 
 
 def add_subparser(
-    sub: "argparse._SubParsersAction[argparse.ArgumentParser]",
+    sub: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> argparse.ArgumentParser:
     """Register the ``rollback`` subparser on the parent parser."""
     help_text = (

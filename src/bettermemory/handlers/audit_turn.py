@@ -83,7 +83,7 @@ DESC_MEMORY_AUDIT_TURN = (
 
 
 async def memory_audit_turn(
-    deps: "ToolHandlers",
+    deps: ToolHandlers,
     user_message: str,
     assistant_response: str | None = None,
     lookback_seconds: int | None = None,

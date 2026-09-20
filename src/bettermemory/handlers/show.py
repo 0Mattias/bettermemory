@@ -53,7 +53,7 @@ DESC_MEMORY_SHOW = (
 
 
 async def memory_show(
-    deps: "ToolHandlers", id: str, ctx: Context | None = None
+    deps: ToolHandlers, id: str, ctx: Context | None = None
 ) -> dict[str, Any]:
     """Body of the ``memory_show`` MCP tool."""
     from .. import _handlers as _h
@@ -227,7 +227,7 @@ async def memory_show(
     return response
 
 
-def _links_payload(deps: "ToolHandlers", memory: Any) -> dict[str, Any]:
+def _links_payload(deps: ToolHandlers, memory: Any) -> dict[str, Any]:
     """Build the `links` + `reverse_links` payload for memory_show.
 
     Forward `links` come from the memory's own frontmatter. Reverse

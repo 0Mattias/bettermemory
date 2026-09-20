@@ -70,7 +70,7 @@ DESC_EPISODE_WRITE = (
 
 
 async def episode_write(
-    deps: "ToolHandlers",
+    deps: ToolHandlers,
     body: str,
     takeaway: str | None = None,
     scopes: list[str] | None = None,

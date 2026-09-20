@@ -106,7 +106,7 @@ DESC_MEMORY_CONFLICTS = (
 
 
 async def memory_conflicts(
-    deps: "ToolHandlers",
+    deps: ToolHandlers,
     scan: bool = False,
     resolve: str | None = None,
     verdict: str | None = None,
@@ -232,7 +232,7 @@ def _pending_hint(
 
 
 def _render_pending(
-    deps: "ToolHandlers",
+    deps: ToolHandlers,
     pending: list[ConflictCandidate],
     *,
     max_results: int,
@@ -319,7 +319,7 @@ def _render_pending(
     return rows, len(judgeable), omitted
 
 
-def _load_active_member(deps: "ToolHandlers", memory_id: str) -> Memory:
+def _load_active_member(deps: ToolHandlers, memory_id: str) -> Memory:
     """Load one conflict member, refusing when it is no longer active.
 
     The refusal names the remedy (a re-scan GCs rows whose members died)
@@ -336,9 +336,7 @@ def _load_active_member(deps: "ToolHandlers", memory_id: str) -> Memory:
         ) from exc
 
 
-def _member_bodies(
-    deps: "ToolHandlers", candidate: ConflictCandidate
-) -> dict[str, str]:
+def _member_bodies(deps: ToolHandlers, candidate: ConflictCandidate) -> dict[str, str]:
     """`{memory_id: body}` for the pair, for the verdict's fingerprint.
 
     A member that no longer loads is simply ABSENT from the mapping
@@ -363,7 +361,7 @@ def _member_bodies(
 
 
 def _clear_contradicts_links(
-    deps: "ToolHandlers", a_id: str, b_id: str
+    deps: ToolHandlers, a_id: str, b_id: str
 ) -> list[dict[str, str]]:
     """Drop `contradicts` edges between the pair, in BOTH directions.
 
@@ -408,7 +406,7 @@ def _clear_contradicts_links(
 
 
 def _resolve_verdict(
-    deps: "ToolHandlers",
+    deps: ToolHandlers,
     queue: ConflictQueue,
     *,
     candidate_id: str,

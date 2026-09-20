@@ -92,7 +92,7 @@ DESC_MEMORY_SCOPE_OVERVIEW = (
 
 
 async def memory_scope_overview(
-    deps: "ToolHandlers",
+    deps: ToolHandlers,
     auto_scope: bool = True,
     ctx: Context | None = None,
 ) -> dict[str, Any]:

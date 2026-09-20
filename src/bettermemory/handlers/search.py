@@ -323,7 +323,7 @@ class RankingInputs(NamedTuple):
     events: list[dict[str, Any]] | None
 
 
-def ranking_events_window_seconds(behavior: "BehaviorConfig") -> int | None:
+def ranking_events_window_seconds(behavior: BehaviorConfig) -> int | None:
     """How wide an event read `resolve_ranking_inputs` needs under
     `behavior` — or None when neither usage tally is enabled and no read
     is needed at all.
@@ -359,7 +359,7 @@ def ranking_events_window_seconds(behavior: "BehaviorConfig") -> int | None:
 def resolve_ranking_inputs(
     root: Path,
     memories: Sequence[Any],
-    behavior: "BehaviorConfig",
+    behavior: BehaviorConfig,
     *,
     now: datetime | None = None,
     events: list[dict[str, Any]] | None = None,
@@ -499,7 +499,7 @@ def clamp_search_width(value: int) -> int:
     return max(1, min(int(value), MAX_SEARCH_RESULTS))
 
 
-def default_search_width(behavior: "BehaviorConfig") -> int:
+def default_search_width(behavior: BehaviorConfig) -> int:
     """The width of a DEFAULT `memory_search` under `behavior` — what both
     silent-miss producers size their starvation guard for.
 
@@ -693,7 +693,7 @@ def resolve_search_pool(
 
 
 async def memory_search(
-    deps: "ToolHandlers",
+    deps: ToolHandlers,
     query: str,
     scopes: list[str] | None = None,
     max_results: int | None = None,

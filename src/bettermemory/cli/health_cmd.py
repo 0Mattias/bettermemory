@@ -11,7 +11,7 @@ from ._common import cli_context
 
 
 def add_subparser(
-    sub: "argparse._SubParsersAction[argparse.ArgumentParser]",
+    sub: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> argparse.ArgumentParser:
     """Register the ``health`` subparser on the parent parser."""
     help_text = "Print the aggregate memory health report."

@@ -235,7 +235,7 @@ class MemoryStore(Protocol):
 
     root: Path
 
-    def ensure(self) -> "MemoryStore": ...
+    def ensure(self) -> MemoryStore: ...
     @property
     def tombstone_dir(self) -> Path: ...
     def load_all(self) -> list[Memory]: ...
@@ -351,7 +351,7 @@ class Store:
         rather than creating it (see `iter_active_memory_paths`)."""
         self.root = Path(self.root).expanduser().resolve()
 
-    def ensure(self) -> "Store":
+    def ensure(self) -> Store:
         """Provision this store's directories. Idempotent; returns self.
 
         The precondition of WRITING, not of existing, so every mutator
@@ -389,7 +389,7 @@ class Store:
         return self
 
     @classmethod
-    def open(cls, root: Path | str) -> "Store":
+    def open(cls, root: Path | str) -> Store:
         """Construct, provision, and run the once-per-process STARTUP
         checks. What a process ENTRY POINT wants; not what a diagnostic
         wants.

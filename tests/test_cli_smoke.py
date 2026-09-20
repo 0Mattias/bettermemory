@@ -1407,7 +1407,7 @@ def _event_log_snapshot(root: Path) -> dict[str, bytes]:
 
 def _run_session_start(
     monkeypatch: pytest.MonkeyPatch, storage: Path
-) -> "pytest.ExceptionInfo[SystemExit]":
+) -> pytest.ExceptionInfo[SystemExit]:
     """Invoke the subcommand and assert the always-exit-0 contract."""
     with pytest.raises(SystemExit) as exc:
         _run_main(["session-start"], monkeypatch=monkeypatch, storage=storage)

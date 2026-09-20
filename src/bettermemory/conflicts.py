@@ -196,7 +196,7 @@ class ConflictCandidate:
         return out
 
     @classmethod
-    def from_dict(cls, raw: dict[str, Any]) -> "ConflictCandidate":
+    def from_dict(cls, raw: dict[str, Any]) -> ConflictCandidate:
         status = str(raw.get("status", "pending"))
         if status not in _VALID_STATUSES:
             status = "pending"

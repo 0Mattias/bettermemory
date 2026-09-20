@@ -724,7 +724,7 @@ class SessionState:
     # tell "expired" apart from "never existed". Garbage-collected on
     # the same eviction pass once each id has been expired for one full
     # TTL — at that point the model has no live reference to it.
-    _expired_pending: dict[str, "PendingWrite"] = field(default_factory=dict)
+    _expired_pending: dict[str, PendingWrite] = field(default_factory=dict)
     _expired_pending_at: dict[str, float] = field(default_factory=dict)
     # Use-tokens the wall-clock safety net evicted before anything
     # settled them. Same stash-then-drain shape as `_expired_pending`
@@ -739,7 +739,7 @@ class SessionState:
     # use-token has no equivalent return path — the model never hands a
     # token back (`memory_record_use` takes `memory_ids`). The drain is
     # the whole lifetime.
-    _expired_use_tokens: dict[str, "PendingUseToken"] = field(default_factory=dict)
+    _expired_use_tokens: dict[str, PendingUseToken] = field(default_factory=dict)
     # Tracks pending writes that originated from `episode_promote`. The
     # value is `(episode_session_id, episode_id)` — what the promote
     # handler needs to delete the source episode once the user
@@ -769,7 +769,7 @@ class SessionState:
     # belongs to (`bind_pending_log`). None means in-process only — the
     # behaviour every caller had before the sidecar existed, and still the
     # behaviour of any state nobody bound.
-    _pending_log: "PendingWriteLog | None" = field(
+    _pending_log: PendingWriteLog | None = field(
         default=None, repr=False, compare=False
     )
 
@@ -1037,7 +1037,7 @@ class SessionState:
         if gone:
             log_.gc(self.client_key, before=cutoff)
 
-    def pop_recently_expired(self) -> list["PendingWrite"]:
+    def pop_recently_expired(self) -> list[PendingWrite]:
         """Drain and return pending writes evicted since the last drain.
 
         Returned in insertion order. The handler emits one
@@ -1188,7 +1188,7 @@ class SessionState:
         for mid in stale:
             self._expired_use_tokens[mid] = self.pending_use_tokens.pop(mid)
 
-    def pop_expired_use_tokens(self) -> list["PendingUseToken"]:
+    def pop_expired_use_tokens(self) -> list[PendingUseToken]:
         """Drain and return use-tokens evicted since the last drain.
 
         Returned in insertion order — oldest eviction first — so the
@@ -1234,7 +1234,7 @@ class SessionState:
 
     # ---- SessionSource protocol -----------------------------------------
 
-    def for_request(self, ctx: "_Ctx | None") -> "SessionState":
+    def for_request(self, ctx: _Ctx | None) -> SessionState:
         """Return this state regardless of `ctx`.
 
         Lets a bare `SessionState` satisfy the `SessionSource` protocol,
@@ -1261,7 +1261,7 @@ class SessionSource(Protocol):
     receive the right `SessionState` for this request.
     """
 
-    def for_request(self, ctx: "_Ctx | None") -> SessionState: ...
+    def for_request(self, ctx: _Ctx | None) -> SessionState: ...
 
 
 class SessionRegistry:
@@ -1303,12 +1303,12 @@ class SessionRegistry:
     DEFAULT_MAX_CLIENTS = 256
 
     def __init__(self, max_clients: int = DEFAULT_MAX_CLIENTS) -> None:
-        self._states: "OrderedDict[str, SessionState]" = OrderedDict()
+        self._states: OrderedDict[str, SessionState] = OrderedDict()
         self._lock = threading.Lock()
         self.max_clients = max_clients
         self._evicted_count = 0
 
-    def for_request(self, ctx: "_Ctx | None") -> SessionState:
+    def for_request(self, ctx: _Ctx | None) -> SessionState:
         key = self._key_for_ctx(ctx)
         # The touch-on-access + insert-with-eviction pass mutates two
         # pieces of state and must be atomic against concurrent callers
@@ -1338,7 +1338,7 @@ class SessionRegistry:
             return state
 
     @staticmethod
-    def _key_for_ctx(ctx: "_Ctx | None") -> str:
+    def _key_for_ctx(ctx: _Ctx | None) -> str:
         # Resolve the caller from the handler context and publish it for
         # the rest of this call (`identity.bind` never raises: a context
         # constructed outside a request, or a forged stand-in with no

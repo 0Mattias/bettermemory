@@ -238,7 +238,7 @@ class Proposal:
         }
 
     @classmethod
-    def from_dict(cls, raw: dict[str, object]) -> "Proposal":
+    def from_dict(cls, raw: dict[str, object]) -> Proposal:
         return cls(
             id=str(raw["id"]),
             body=str(raw["body"]),

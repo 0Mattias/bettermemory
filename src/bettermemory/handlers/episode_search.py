@@ -79,7 +79,7 @@ DESC_EPISODE_SEARCH = (
 
 
 async def episode_search(
-    deps: "ToolHandlers",
+    deps: ToolHandlers,
     scopes: list[str] | None = None,
     parent_session_id: str | None = None,
     swarm_id: str | None = None,

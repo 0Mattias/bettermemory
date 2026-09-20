@@ -99,7 +99,7 @@ DESC_EPISODE_PATTERNS = (
 )
 
 
-def _all_episodes(deps: "ToolHandlers") -> list[Episode]:
+def _all_episodes(deps: ToolHandlers) -> list[Episode]:
     """Every episode on disk, unfiltered.
 
     Deliberately UNfiltered: this pool is the liveness authority for the
@@ -162,7 +162,7 @@ def _visible_episodes(
 
 
 async def episode_patterns(
-    deps: "ToolHandlers",
+    deps: ToolHandlers,
     promote: str | None = None,
     dismiss: str | None = None,
     body: str | None = None,

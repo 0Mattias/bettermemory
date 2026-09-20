@@ -104,7 +104,7 @@ DESC_MEMORY_ACKNOWLEDGE_MISS = (
 
 
 async def memory_acknowledge_miss(
-    deps: "ToolHandlers", event_id: str, reason: str, ctx: Context | None = None
+    deps: ToolHandlers, event_id: str, reason: str, ctx: Context | None = None
 ) -> dict[str, Any]:
     """Acknowledge one `search_miss` event as a false positive.
 

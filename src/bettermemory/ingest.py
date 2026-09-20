@@ -483,7 +483,7 @@ def compute_ingest_plan(
     extra_scopes: list[str] | None = None,
     now: datetime | None = None,
     high_threshold: float = HIGH_SIMILARITY,
-    config: "Config | None" = None,
+    config: Config | None = None,
     force: bool = False,
 ) -> IngestPlan:
     """Walk the source root for `.md` files and classify each one.
@@ -611,7 +611,7 @@ def compute_ingest_plan(
 # ---------------------------------------------------------------------------
 
 
-def _gate_deps(store: Store, config: "Config | None") -> Any:
+def _gate_deps(store: Store, config: Config | None) -> Any:
     """Build the `GateDeps` the content gates run against.
 
     `config=None` means "the caller didn't thread one" — the CLI always
@@ -842,7 +842,7 @@ def apply_ingest_plan(
     *,
     recorder: Any | None = None,
     cwd: Path | None = None,
-    config: "Config | None" = None,
+    config: Config | None = None,
     force: bool = False,
 ) -> IngestPlan:
     """Execute every ``action="write"`` row in the plan.

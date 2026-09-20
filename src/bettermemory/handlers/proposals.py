@@ -114,9 +114,9 @@ def _gate_refusal(decision: Reject, proposal_id: str) -> dict[str, Any]:
 
 def accept_proposal(
     *,
-    store: "MemoryStore",
-    config: "Config",
-    recorder: "Recorder",
+    store: MemoryStore,
+    config: Config,
+    recorder: Recorder,
     proposal_id: str,
     scopes: list[str],
     category: str | None = None,
@@ -369,7 +369,7 @@ def accept_proposal(
 
 
 async def memory_proposals(
-    deps: "ToolHandlers",
+    deps: ToolHandlers,
     action: str = "list",
     proposal_id: str | None = None,
     scopes: list[str] | None = None,

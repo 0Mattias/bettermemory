@@ -39,7 +39,7 @@ DESC_MEMORY_LIST = (
 
 
 async def memory_list(
-    deps: "ToolHandlers",
+    deps: ToolHandlers,
     scopes: list[str] | None = None,
     with_bodies: bool = False,
     client: str | None = None,

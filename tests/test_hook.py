@@ -1660,7 +1660,7 @@ def test_disabled_scopes_empty_when_no_in_process_session() -> None:
     assert _disabled_scopes_from_events(events) == set()
 
 
-def _miss_config(mem_dir: Path) -> "object":
+def _miss_config(mem_dir: Path) -> object:
     from bettermemory.config import Config, StorageConfig, TelemetryConfig
 
     return Config(

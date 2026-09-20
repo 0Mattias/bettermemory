@@ -23,7 +23,7 @@ from ._common import cli_context
 
 
 def add_subparser(
-    sub: "argparse._SubParsersAction[argparse.ArgumentParser]",
+    sub: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> argparse.ArgumentParser:
     """Register the ``episodes`` subparser (with list/prune sub-subparsers)."""
     help_text = (

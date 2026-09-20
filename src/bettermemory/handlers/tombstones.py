@@ -24,7 +24,7 @@ DESC_MEMORY_LIST_TOMBSTONES = (
 
 
 async def memory_list_tombstones(
-    deps: "ToolHandlers",
+    deps: ToolHandlers,
     scopes: list[str] | None = None,
     ctx: Context | None = None,
 ) -> list[dict[str, Any]]:

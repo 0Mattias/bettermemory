@@ -261,7 +261,7 @@ GateResult = Continue | Reject | Pending
 class WriteGate:
     """Common base; subclasses override ``evaluate``."""
 
-    def evaluate(self, deps: "GateDeps", gc: GateContext) -> GateResult:
+    def evaluate(self, deps: GateDeps, gc: GateContext) -> GateResult:
         raise NotImplementedError
 
 
@@ -277,7 +277,7 @@ class CredentialGate(WriteGate):
     detector `kind` and a redacted snippet, never the value.
     """
 
-    def evaluate(self, deps: "GateDeps", gc: GateContext) -> GateResult:
+    def evaluate(self, deps: GateDeps, gc: GateContext) -> GateResult:
         gc.credential_hits = find_credential_markers(gc.payload["content"])
         if not gc.credential_hits or gc.acknowledge_credential:
             return Continue()
@@ -319,7 +319,7 @@ class TransientGate(WriteGate):
     on the most actionable axis.
     """
 
-    def evaluate(self, deps: "GateDeps", gc: GateContext) -> GateResult:
+    def evaluate(self, deps: GateDeps, gc: GateContext) -> GateResult:
         gc.transient_hits = find_transient_markers(gc.payload["content"])
         if not gc.transient_hits or gc.acknowledge_transient:
             return Continue()
@@ -516,7 +516,7 @@ class UserClaimGate(WriteGate):
     why an acknowledged write records the phrase it overrode.
     """
 
-    def evaluate(self, deps: "GateDeps", gc: GateContext) -> GateResult:
+    def evaluate(self, deps: GateDeps, gc: GateContext) -> GateResult:
         category_enum: Category = gc.payload["category"]
         if category_enum == Category.USER_INFERENCE:
             return Continue()
@@ -556,7 +556,7 @@ class ScopeMismatchGate(WriteGate):
     """Reject bodies whose path / project-name citations don't match
     the declared scope list (unless `acknowledge_scope_mismatch`)."""
 
-    def evaluate(self, deps: "GateDeps", gc: GateContext) -> GateResult:
+    def evaluate(self, deps: GateDeps, gc: GateContext) -> GateResult:
         if gc.acknowledge_scope_mismatch:
             return Continue()
         existing_memories = deps.store.load_all()
@@ -603,7 +603,7 @@ class GroundednessGate(WriteGate):
     auto-extract memories from conversation.
     """
 
-    def evaluate(self, deps: "GateDeps", gc: GateContext) -> GateResult:
+    def evaluate(self, deps: GateDeps, gc: GateContext) -> GateResult:
         if not gc.groundedness_check:
             return Continue()
         if gc.source_transcript is None or gc.acknowledge_ungrounded:
@@ -646,7 +646,7 @@ class DedupActiveGate(WriteGate):
     Skipped when `force=True`.
     """
 
-    def evaluate(self, deps: "GateDeps", gc: GateContext) -> GateResult:
+    def evaluate(self, deps: GateDeps, gc: GateContext) -> GateResult:
         if gc.force:
             return Continue()
         existing = deps.store.load_all()
@@ -685,7 +685,7 @@ class DedupTombstoneGate(WriteGate):
     Skipped when `force=True`.
     """
 
-    def evaluate(self, deps: "GateDeps", gc: GateContext) -> GateResult:
+    def evaluate(self, deps: GateDeps, gc: GateContext) -> GateResult:
         if gc.force:
             return Continue()
         tombstone_similar = find_similar_tombstones(
@@ -732,7 +732,7 @@ class PendingGate(WriteGate):
     `pending_reason` is what selects the confirm hint — the ask-the-user
     ceremony must survive the config flag also applying."""
 
-    def evaluate(self, deps: "GateDeps", gc: GateContext) -> GateResult:
+    def evaluate(self, deps: GateDeps, gc: GateContext) -> GateResult:
         category_enum: Category = gc.payload["category"]
         if category_enum == Category.USER_INFERENCE:
             return Pending(pending_reason="user-inference")
@@ -1000,7 +1000,7 @@ def apply_write_gates(
 
 
 def _corroborate_duplicate(
-    deps: "ToolHandlers", state: SessionState, result: "Reject"
+    deps: ToolHandlers, state: SessionState, result: Reject
 ) -> None:
     """Record a recurrence on the memory a duplicate write matched.
 
@@ -1040,7 +1040,7 @@ def _corroborate_duplicate(
 
 
 async def memory_write(
-    deps: "ToolHandlers",
+    deps: ToolHandlers,
     content: str,
     scopes: list[str],
     confidence: str = "medium",
@@ -1200,7 +1200,7 @@ async def memory_write(
 
 
 def _stage_pending(
-    deps: "ToolHandlers",
+    deps: ToolHandlers,
     state: SessionState,
     *,
     payload: dict[str, Any],
@@ -1340,9 +1340,7 @@ def _match_row(match: SupersessionMatch) -> dict[str, Any]:
     return row
 
 
-def _validate_declared_supersedes(
-    deps: "ToolHandlers", ids: Any
-) -> list[dict[str, Any]]:
+def _validate_declared_supersedes(deps: ToolHandlers, ids: Any) -> list[dict[str, Any]]:
     """The writer's `supersedes=` list as link dicts for the payload.
 
     Each id must be a ULID naming an ACTIVE memory: a declared edge to a
@@ -1382,7 +1380,7 @@ def _validate_declared_supersedes(
 
 
 def _persist(
-    deps: "ToolHandlers",
+    deps: ToolHandlers,
     payload: dict[str, Any],
     *,
     active_snapshot: list[Memory] | None = None,
@@ -1422,7 +1420,7 @@ def _persist(
 
 
 def _file_conflicts(
-    deps: "ToolHandlers", memory: Memory, matches: list[SupersessionMatch]
+    deps: ToolHandlers, memory: Memory, matches: list[SupersessionMatch]
 ) -> list[tuple[str, SupersessionMatch]]:
     """Queue each cue-less disagreement for `memory_conflicts`.
     Best-effort by contract: the memory is already on disk, and a
@@ -1460,7 +1458,7 @@ def _file_conflicts(
 
 
 def _commit_write(
-    deps: "ToolHandlers",
+    deps: ToolHandlers,
     *,
     payload: dict[str, Any],
     related: list[SimilarHit],
@@ -1554,7 +1552,7 @@ def _confirm_gate_context(pending: PendingWrite) -> GateContext:
 
 
 def _confirm_refusal(
-    deps: "ToolHandlers", state: SessionState, pending_id: str, decision: Reject
+    deps: ToolHandlers, state: SessionState, pending_id: str, decision: Reject
 ) -> dict[str, Any]:
     """Shape a confirm-time gate refusal: the gate's own response, plus
     the still-valid pending id.
@@ -1595,7 +1593,7 @@ def _confirm_refusal(
 
 
 async def memory_write_confirm(
-    deps: "ToolHandlers", pending_id: str, ctx: Context | None = None
+    deps: ToolHandlers, pending_id: str, ctx: Context | None = None
 ) -> dict[str, Any]:
     state = deps.sessions.for_request(ctx)
     # Before `_advance_turn`: adoption has to happen while the TTL sweep it
@@ -1689,7 +1687,7 @@ async def memory_write_confirm(
 
 
 async def memory_write_cancel(
-    deps: "ToolHandlers", pending_id: str, ctx: Context | None = None
+    deps: ToolHandlers, pending_id: str, ctx: Context | None = None
 ) -> dict[str, Any]:
     state = deps.sessions.for_request(ctx)
     # See `memory_write_confirm` for why the bind precedes `_advance_turn`.

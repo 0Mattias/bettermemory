@@ -8,7 +8,7 @@ from ._common import cli_context, cli_recorder
 
 
 def add_subparser(
-    sub: "argparse._SubParsersAction[argparse.ArgumentParser]",
+    sub: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> argparse.ArgumentParser:
     """Register the ``migrate`` subparser (with ``origin`` sub-subparser)."""
     help_text = (

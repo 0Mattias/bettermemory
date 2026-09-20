@@ -15,7 +15,7 @@ from ..store import Store, count_active_memory_files
 
 
 def add_subparser(
-    sub: "argparse._SubParsersAction[argparse.ArgumentParser]",
+    sub: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> argparse.ArgumentParser:
     """Register the ``export`` subparser on the parent parser."""
     help_text = (

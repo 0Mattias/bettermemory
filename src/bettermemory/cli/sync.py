@@ -9,7 +9,7 @@ from ._common import cli_context, cli_recorder
 
 
 def add_subparser(
-    sub: "argparse._SubParsersAction[argparse.ArgumentParser]",
+    sub: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> argparse.ArgumentParser:
     """Register the ``sync`` subparser (init/status/push/pull/auto/quarantine)."""
     help_text = (

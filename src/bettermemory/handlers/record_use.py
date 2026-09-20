@@ -64,7 +64,7 @@ DESC_MEMORY_RECORD_USE = (
 
 
 async def memory_record_use(
-    deps: "ToolHandlers",
+    deps: ToolHandlers,
     memory_ids: list[str],
     outcome: str,
     note: str | None = None,

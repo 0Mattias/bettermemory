@@ -576,7 +576,7 @@ class W2Encoder:
         self.bpe = bpe
 
     @classmethod
-    def load(cls, run_dir: Path) -> "W2Encoder":
+    def load(cls, run_dir: Path) -> W2Encoder:
         meta = json.loads((run_dir / "meta.json").read_text())
         cfg = argparse.Namespace(**meta["config"])
         bpe = load_tokenizer(run_dir)

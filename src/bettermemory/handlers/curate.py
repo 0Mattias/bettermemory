@@ -58,7 +58,7 @@ DESC_MEMORY_CURATE = (
 
 
 async def memory_curate(
-    deps: "ToolHandlers",
+    deps: ToolHandlers,
     dry_run: bool = True,
     window_days: int = 30,
     ctx: Context | None = None,

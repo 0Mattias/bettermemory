@@ -24,7 +24,7 @@ DESC_MEMORY_REMOVE = (
 
 
 async def memory_remove(
-    deps: "ToolHandlers", id: str, reason: str, ctx: Context | None = None
+    deps: ToolHandlers, id: str, reason: str, ctx: Context | None = None
 ) -> dict[str, Any]:
     state = deps.sessions.for_request(ctx)
     _advance_turn(state, deps.recorder)

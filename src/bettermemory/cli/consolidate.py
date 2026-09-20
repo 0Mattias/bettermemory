@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 
 def add_subparser(
-    sub: "argparse._SubParsersAction[argparse.ArgumentParser]",
+    sub: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> argparse.ArgumentParser:
     """Register the ``consolidate`` subparser on the parent parser."""
     help_text = (

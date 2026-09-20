@@ -282,7 +282,7 @@ DESC_MEMORY_VERIFY = (
 
 
 async def memory_verify(
-    deps: "ToolHandlers",
+    deps: ToolHandlers,
     id: str,
     note: str | None = None,
     verified_paths: list[str] | None = None,

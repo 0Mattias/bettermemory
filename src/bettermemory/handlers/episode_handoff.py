@@ -181,7 +181,7 @@ DESC_EPISODE_HANDOFF = (
 
 
 async def episode_handoff(
-    deps: "ToolHandlers",
+    deps: ToolHandlers,
     prior_session_id: str | None = None,
     max_episodes: int | None = None,
     include_bodies: bool = False,
@@ -848,7 +848,7 @@ async def episode_handoff(
 
 
 def _maybe_write_session_floor(
-    deps: "ToolHandlers",
+    deps: ToolHandlers,
     handoff_origin: Any,
 ) -> None:
     """Write a session-tag floor episode for the current session, if needed.
@@ -904,7 +904,7 @@ def _maybe_write_session_floor(
     )
 
 
-def _episode_promoted_out_of_session(root: "Path", session_id: str) -> _PromotionTrace:
+def _episode_promoted_out_of_session(root: Path, session_id: str) -> _PromotionTrace:
     """Classify what the event log can prove about an episode WRITTEN BY
     `session_id` that is no longer on disk. Returns one of:
 

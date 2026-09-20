@@ -12,7 +12,7 @@ from ._common import cli_context
 
 
 def add_subparser(
-    sub: "argparse._SubParsersAction[argparse.ArgumentParser]",
+    sub: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> argparse.ArgumentParser:
     """Register the ``proposals`` subparser (with list/accept/dismiss)."""
     help_text = (

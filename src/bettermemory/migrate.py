@@ -176,7 +176,7 @@ def plan_repair(
 
 
 def _routable_scopes(
-    post: "frontmatter.Post", path: Path, report: MigrationReport
+    post: frontmatter.Post, path: Path, report: MigrationReport
 ) -> list[str] | None:
     """Resolve a record's `scopes` to the scope STRINGS the migrator may
     route by. Returns None — after recording `path` in `report.malformed`
@@ -604,7 +604,7 @@ def migrate_origin_in_directory(
 
 
 def _write_repaired(
-    path: Path, post: "frontmatter.Post", report: MigrationReport
+    path: Path, post: frontmatter.Post, report: MigrationReport
 ) -> bool:
     """Persist a repaired record. True on success; on failure records
     `path` in `report.malformed` and returns False so the caller skips it
@@ -643,7 +643,7 @@ def _write_repaired(
     return True
 
 
-def _stamp_rewrite(path: Path, post: "frontmatter.Post", content_sha: str) -> None:
+def _stamp_rewrite(path: Path, post: frontmatter.Post, content_sha: str) -> None:
     """Record the rewritten bytes in the index beside the row, so the
     content-evidence check reads a migration as the store's own write and
     not as a change no store path made. The row may not exist yet (the
@@ -654,7 +654,7 @@ def _stamp_rewrite(path: Path, post: "frontmatter.Post", content_sha: str) -> No
         _index_stamp_sha_quietly(path.parent, memory_id, content_sha)
 
 
-def _note_updated_id(report: MigrationReport, post: "frontmatter.Post") -> None:
+def _note_updated_id(report: MigrationReport, post: frontmatter.Post) -> None:
     """Append the rewritten record's id to `report.updated_ids`.
 
     The loops above admitted the record's frontmatter before writing it,

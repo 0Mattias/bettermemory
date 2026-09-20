@@ -131,7 +131,7 @@ DESC_MEMORY_HEALTH = (
 
 
 async def memory_health(
-    deps: "ToolHandlers",
+    deps: ToolHandlers,
     window_days: int = 30,
     heavily_used_top_k: int = 10,
     min_applied: int | None = None,

@@ -32,7 +32,7 @@ DESC_MEMORY_RENAME_SCOPE = (
 
 
 async def memory_rename_scope(
-    deps: "ToolHandlers",
+    deps: ToolHandlers,
     old_scope: str,
     new_scope: str,
     include_tombstones: bool = True,
