@@ -498,6 +498,14 @@ def test_every_facade_method_resolves_the_bundle_before_delegating() -> None:
     bundle covers every read site with zero edits at those sites. That was
     true by convention; it is a rule now, so a tool added later cannot
     silently inherit the process store by forgetting one line.
+
+    Three properties, because the third is the one the first two miss:
+    the method resolves a bundle, it delegates once, and it delegates
+    with THAT bundle. `deps = self.for_request(ctx)` followed by
+    `_handlers_pkg.tool(self, …)` satisfies both the count and the
+    ordering while the resolved bundle is built and dropped — the same
+    one-line slip as never resolving at all, and invisible to a check
+    that only reads line numbers.
     """
     import ast
     import inspect
@@ -524,14 +532,15 @@ def test_every_facade_method_resolves_the_bundle_before_delegating() -> None:
             and isinstance(node.func, ast.Attribute)
             and node.func.attr == "for_request"
         ]
-        delegate_lines = [
-            node.lineno
+        delegate_calls = [
+            node
             for node in ast.walk(method)
             if isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
             and isinstance(node.func.value, ast.Name)
             and node.func.value.id == "_handlers_pkg"
         ]
+        delegate_lines = [node.lineno for node in delegate_calls]
         assert len(resolve_lines) == 1, (
             f"{method.name} calls for_request {len(resolve_lines)}x"
         )
@@ -540,6 +549,19 @@ def test_every_facade_method_resolves_the_bundle_before_delegating() -> None:
         )
         assert resolve_lines[0] < delegate_lines[0], (
             f"{method.name} delegates before resolving the store"
+        )
+        # The bundle has to be the one that was just resolved. Read off
+        # the first POSITIONAL argument, which is where every handler
+        # takes its `deps`; a keyword or a starred call would read as
+        # `None` here and fail, which is the right answer for a shape
+        # this rule was not written against.
+        bundles = [
+            getattr(call.args[0], "id", None) if call.args else None
+            for call in delegate_calls
+        ]
+        assert bundles == ["deps"], (
+            f"{method.name} delegates with {bundles[0]!r}, not the bundle "
+            f"it resolved on line {resolve_lines[0]}"
         )
         checked += 1
     # The count is the point: a refactor that drops a method from this
