@@ -373,3 +373,114 @@ def test_llm_cache_key_depends_on_every_sampling_parameter() -> None:
         dict(reversed(list(base.items())))
     ) == llm.Client.cache_key(base)
     assert json.dumps(base)  # payloads are plain JSON
+
+
+# ---------------------------------------------------------------- budgets
+
+
+def test_a_character_budget_serves_ranked_rounds_while_they_fit(tmp_path: Path) -> None:
+    svc = service.MemoryService(tmp_path, budget=300)
+    svc.add(
+        "r",
+        "u",
+        _msgs(
+            ("tomato " + "a" * 150, ""),
+            ("tomato short one", ""),
+            ("tomato " + "b" * 150, ""),
+            ("tomato short two", ""),
+        ),
+        "s",
+    )
+    served = [h["content"] for h in svc.search("u", "tomato", 100)]
+    assert sum(len(c) for c in served) <= 300
+    # one long round fits; the second does not, and the short rounds ranked
+    # after it are still taken rather than the budget stopping at the skip
+    assert sum("short" in c for c in served) == 2
+    assert sum("aaaa" in c or "bbbb" in c for c in served) == 1
+
+
+def test_the_first_round_is_served_even_past_the_budget(tmp_path: Path) -> None:
+    svc = service.MemoryService(tmp_path, budget=10)
+    svc.add("r", "u", _msgs(("tomato " + "x" * 100, "")), "s")
+    assert len(svc.search("u", "tomato", 100)) == 1
+
+
+def test_the_fts_baseline_honours_the_same_serve_cap(tmp_path: Path) -> None:
+    svc = fts.FtsService(tmp_path, serve=2)
+    svc.add("r", "u", _msgs(*[(f"tomato note {i}", "") for i in range(5)]), "s")
+    assert len(svc.search("u", "tomato", 100)) == 2
+
+
+# ---------------------------------------------------------------- datasets
+
+
+def test_dataset_dates_parse_to_utc_milliseconds() -> None:
+    assert runner._locomo_ms("1:56 pm on 8 May, 2023") == 1_683_554_160_000
+    assert runner._beam_ms("March-15-2024") == 1_710_460_800_000
+    assert runner._locomo_ms("not a date") is None
+    assert runner._beam_ms(None) is None
+
+
+def test_beam_prompts_match_their_published_sources_exactly() -> None:
+    pins = {
+        "BEAM_ANSWER_GENERATION_FOR_RAG": "ed89b98d1024432a46bd297345961cf89d2429746daec37befb50db46e0c914a",
+        "BEAM_UNIFIED_LLM_JUDGE_BASE_PROMPT": "d349c9a8559bed9c14bfe2e624212225b09218ff864258a739229c15f4c8e869",
+        "BEAM_BATCH_OUTPUT_FORMAT": "8e9e4389ab97005cf6411ec1641919b0b22437eb2cee4da5fc39d0a83357599e",
+    }
+    for name, digest in pins.items():
+        assert (
+            hashlib.sha256(getattr(prompts, name).encode("utf-8")).hexdigest() == digest
+        ), name
+    batch = prompts.beam_batch_judge_prompt("Q?", "resp", ["first", "second"])
+    assert "[0] first\n[1] second" in batch
+    assert batch.rstrip().endswith("without any explanation before or after that")
+
+
+def test_beam_score_parse_refuses_what_aml_refuses() -> None:
+    ok = '{"scores": [{"index": 0, "score": 1.0, "reason": "a"}, {"index": 1, "score": 0.5, "reason": "b"}]}'
+    assert prompts.parse_beam_scores(ok, 2) == [1.0, 0.5]
+    assert prompts.parse_beam_scores("```json\n" + ok + "\n```", 2) == [1.0, 0.5]
+    missing = '{"scores": [{"index": 0, "score": 1.0, "reason": "a"}]}'
+    assert prompts.parse_beam_scores(missing, 2) is None
+    off_scale = '{"scores": [{"index": 0, "score": 0.7, "reason": "a"}]}'
+    assert prompts.parse_beam_scores(off_scale, 1) is None
+    no_reason = '{"scores": [{"index": 0, "score": 1.0, "reason": ""}]}'
+    assert prompts.parse_beam_scores(no_reason, 1) is None
+    assert prompts.parse_beam_scores("not json", 1) is None
+
+
+def test_length_aware_trim_spares_short_turns_and_cuts_long_ones() -> None:
+    terms = service.query_terms("support group")
+    short = "[d]\nuser: Caroline: I went to a group.\nassistant: Melanie: Nice!\nI painted a lake."
+    assert service.trim_assistant(short, terms, min_chars=600) == short
+    long_reply = "assistant: Here is advice.\n" + "\n".join(
+        f"filler line {i}" for i in range(60)
+    )
+    trimmed = service.trim_assistant(
+        "[d]\nuser: help\n" + long_reply, terms, min_chars=600
+    )
+    assert trimmed.split("\n") == [
+        "[d]",
+        "user: help",
+        "assistant: Here is advice.",
+        "[...]",
+    ]
+
+
+def test_turns_split_long_assistant_replies_on_paragraphs() -> None:
+    reply = "\n\n".join(f"para {i} " + "x" * 600 for i in range(5))
+    units = service.turns_of(
+        [
+            {"role": "user", "content": "How?", "timestamp": T0},
+            {"role": "assistant", "content": reply, "timestamp": T0},
+        ],
+        1500,
+    )
+    assert units[0] == ("user: How?", T0)
+    parts = [u for u, _ in units[1:]]
+    assert [p.split(":")[0] for p in parts] == [
+        "assistant (part 1 of 3)",
+        "assistant (part 2 of 3)",
+        "assistant (part 3 of 3)",
+    ]
+    assert all(len(p) <= 1500 + 40 for p in parts)

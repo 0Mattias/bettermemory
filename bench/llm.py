@@ -116,7 +116,11 @@ class Client:
             "max_tokens": max_tokens,
             "temperature": temperature,
         }
-        if reasoning_effort is not None:
+        if reasoning_effort == "off":
+            # Thinking disabled outright, the way AML's pipelines call
+            # Qwen3-14B (`enable_thinking: False` on SiliconFlow).
+            payload["reasoning"] = {"enabled": False}
+        elif reasoning_effort is not None:
             payload["reasoning"] = {"effort": reasoning_effort, "exclude": True}
         if response_json:
             payload["response_format"] = {"type": "json_object"}
@@ -157,6 +161,19 @@ class Client:
             "completion_tokens": usage.get("completion_tokens", 0),
             "cost": cost,
         }
+        if not text.strip():
+            # An empty completion is never an answer: a reasoning model that
+            # spent its whole max_tokens thinking returns "" with
+            # finish_reason "length". Caching it would make every rerun
+            # replay the failure, so it is returned uncached.
+            return Completion(
+                text=text,
+                cost=cost,
+                prompt_tokens=int(record["prompt_tokens"] or 0),
+                completion_tokens=int(record["completion_tokens"] or 0),
+                cached=False,
+                model=model,
+            )
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")

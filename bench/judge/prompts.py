@@ -106,3 +106,80 @@ def parse_aml(text: str) -> bool | None:
     if label not in {"CORRECT", "WRONG"}:
         return None
     return label == "CORRECT"
+
+
+# ---------------------------------------------------------------- BEAM
+# Verbatim from AML data/beam/pipeline.py (commit 1b8142b), which in turn
+# quotes BEAM src/prompts.py at upstream commit
+# 3e12035532eb85768f1a7cd779832b650c4b2ef9. Copied by `ast` from the
+# pipeline source, not retyped.
+
+BEAM_ANSWER_GENERATION_FOR_RAG = "\nYou are an assistant that MUST answer questions using ONLY the information provided in the context below. \n\nSTRICT INSTRUCTIONS:\n1. Answer ONLY based on the provided context\n2. Do NOT use your internal knowledge\n\nCONTEXT:\n<context>\n\nQUESTION:\n<question>\n\nANSWER REQUIREMENTS:\n- Be direct and concise\n- Only output the answer to the question without any explanation \n\nRESPONSE:\n"
+
+BEAM_UNIFIED_LLM_JUDGE_BASE_PROMPT = '\nYou are an expert evaluator tasked with judging whether the LLM\'s response demonstrates compliance with the specified RUBRIC CRITERION.\n\n## EVALUATION INPUTS\n- QUESTION (what the user asked): <question>\n- RUBRIC CRITERION (what to check): <rubric_item>\n- RESPONSE TO EVALUATE: <llm_response>\n\n## EVALUATION RUBRIC:\nThe rubric defines a specific requirement, constraint, or expected behavior that the LLM response should demonstrate. \n\n**IMPORTANT**: Pay careful attention to whether the rubric specifies:\n- **Positive requirements** (things the response SHOULD include/do)\n- **Negative constraints** (things the response SHOULD NOT include/do, often indicated by "no", "not", "avoid", "absent")\n\n## RESPONSIVENESS REQUIREMENT (anchored to the QUESTION)\nA compliant response must be **on-topic with respect to the QUESTION** and attempt to answer it.\n- If the response does not address the QUESTION, score **0.0** and stop.\n- For negative constraints, both must hold: (a) the response is responsive to the QUESTION, and (b) the prohibited element is absent.\n\n## SEMANTIC TOLERANCE RULES:\nJudge by meaning, not exact wording.\n- Accept **paraphrases** and **synonyms** that preserve intent.\n- **Case/punctuation/whitespace** differences must be ignored.\n- **Numbers/currencies/dates** may appear in equivalent forms (e.g., “$68,000”, “68k”, “68,000 USD”, or “sixty-eight thousand dollars”). Treat them as equal when numerically equivalent.\n- If the rubric expects a number or duration, prefer **normalized comparison** (extract and compare values) over string matching.\n\n## STYLE NEUTRALITY (prevents style contamination):\nIgnore tone, politeness, length, and flourish unless the rubric explicitly requires a format/structure (e.g., “itemized list”, “no citations”, “one sentence”).\n- Do **not** penalize hedging, voice, or verbosity if content satisfies the rubric.\n- Only evaluate format when the rubric **explicitly** mandates it.\n\n## SCORING SCALE:\n- **1.0 (Complete Compliance)**: Fully complies with the rubric criterion.\n  - Positive: required element present, accurate, properly executed (allowing semantic equivalents).\n  - Negative: prohibited element **absent** AND response is **responsive**.\n  \n- **0.5 (Partial Compliance)**: Partially complies.\n  - Positive: element present but minor inaccuracies/incomplete execution.\n  - Negative: generally responsive and mostly avoids the prohibited element but with minor/edge violations.\n  \n- **0.0 (No Compliance)**: Fails to comply.\n  - Positive: required element missing or incorrect.\n  - Negative: prohibited element present **or** response is non-responsive/evasive even if the element is absent.\n\n## EVALUATION INSTRUCTIONS:\n1. **Understand the Requirement**: Determine if the rubric is asking for something to be present (positive) or absent (negative/constraint).\n\n2. **Parse Compound Statements**: If the rubric contains multiple elements connected by "and" or commas, evaluate whether:\n   - **All elements** must be present for full compliance (1.0)\n   - **Some elements** present indicates partial compliance (0.5)\n   - **No elements** present indicates no compliance (0.0)\n   \n3. **Check Compliance**: \n   - For positive requirements: Look for the presence and quality of the required element\n   - For negative constraints: Look for the absence of the prohibited element\n\n4. **Assign Score**: Based on compliance with the specific rubric criterion according to the scoring scale above.\n\n5. **Provide Reasoning**: Explain whether the rubric criterion was satisfied and justify the score.\n\n## OUTPUT FORMAT:\nReturn your evaluation in JSON format with two fields:\n\n{\n   "score": [your score: 1.0, 0.5, or 0.0],\n   "reason": "[detailed explanation of whether the rubric criterion was satisfied and why this justified the assigned score]"\n}\n\nNOTE: ONLY output the json object, without any explanation before or after that\n'
+
+BEAM_BATCH_OUTPUT_FORMAT = '## OUTPUT FORMAT:\nReturn one independent evaluation for every indexed rubric criterion in JSON:\n\n{\n  "scores": [\n    {"index": 0, "score": 1.0, "reason": "detailed justification"}\n  ]\n}\n\nInclude every index exactly once. Each score must be 1.0, 0.5, or 0.0.\nNOTE: ONLY output the json object, without any explanation before or after that\n'
+
+
+def beam_answer_prompt(context: str, question: str) -> str:
+    values = {"context": context, "question": question}
+    return re.sub(
+        r"<(context|question)>",
+        lambda m: values[m.group(1)],
+        BEAM_ANSWER_GENERATION_FOR_RAG,
+    )
+
+
+def beam_batch_judge_prompt(question: str, response: str, rubrics: list[str]) -> str:
+    """AML's render_batch_judge_prompt: every rubric item graded in one call."""
+    criteria = "\n".join(f"[{i}] {r}" for i, r in enumerate(rubrics))
+    prompt = (
+        BEAM_UNIFIED_LLM_JUDGE_BASE_PROMPT.replace("<question>", question)
+        .replace("<rubric_item>", criteria)
+        .replace("<llm_response>", response)
+    )
+    prompt = prompt[: prompt.index("## OUTPUT FORMAT:")] + BEAM_BATCH_OUTPUT_FORMAT
+    return (
+        "Evaluate every indexed RUBRIC CRITERION independently. Apply the complete protocol "
+        "below separately to each criterion; do not let one criterion affect another.\n\n"
+        + prompt
+    )
+
+
+def parse_beam_scores(response: str, count: int) -> list[float] | None:
+    """AML's parse_rubric_scores, returning None where AML would raise."""
+    candidate = response.strip()
+    if candidate.startswith("```"):
+        fenced = re.search(r"```(?:json)?\s*(\{.*\})\s*```", candidate, re.DOTALL)
+        if fenced:
+            candidate = fenced.group(1)
+    try:
+        payload = json.loads(candidate)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", candidate, re.DOTALL)
+        if not match:
+            return None
+        try:
+            payload = json.loads(match.group(0))
+        except json.JSONDecodeError:
+            return None
+    raw = payload.get("scores") if isinstance(payload, dict) else None
+    if not isinstance(raw, list):
+        return None
+    scores: dict[int, float] = {}
+    for item in raw:
+        if not isinstance(item, dict):
+            return None
+        try:
+            index, score = int(item["index"]), float(item["score"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        reason = item.get("reason")
+        if index in scores or not 0 <= index < count or score not in (0.0, 0.5, 1.0):
+            return None
+        if not isinstance(reason, str) or not reason.strip():
+            return None
+        scores[index] = score
+    if set(scores) != set(range(count)):
+        return None
+    return [scores[i] for i in range(count)]

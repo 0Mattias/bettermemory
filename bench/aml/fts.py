@@ -28,8 +28,9 @@ _WORD = re.compile(r"[A-Za-z0-9]+")
 
 
 class FtsService:
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, serve: int = 100) -> None:
         self.root = root
+        self.serve = serve
         self.root.mkdir(parents=True, exist_ok=True)
         self._locks: dict[str, threading.Lock] = {}
         self._guard = threading.Lock()
@@ -76,6 +77,7 @@ class FtsService:
 
     def search(self, user_id: str, query: str, top_k: int) -> list[dict[str, Any]]:
         conn, lock = self._db(user_id)
+        top_k = min(top_k, self.serve)
         words = sorted({w.lower() for w in _WORD.findall(query)})
         if not words:
             return []

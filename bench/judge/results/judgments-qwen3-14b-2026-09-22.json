@@ -1,0 +1,2731 @@
+{
+ "provenance": {
+  "commit": "9cf7114",
+  "tree_dirty": true,
+  "date": "2026-09-22"
+ },
+ "items_sha": "2f8366699816b281cd17e29fd7f4a2daa37a28c299c9627269d609226c38b44f",
+ "rows": [
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "f4f1d8a4_abs:pos_refusal_fixed",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "f4f1d8a4_abs:pos_refusal",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "f4f1d8a4_abs:neg_fabricated",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "f4f1d8a4_abs:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "19b5f2b3_abs:pos_refusal_fixed",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "19b5f2b3_abs:pos_refusal",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "19b5f2b3_abs:neg_fabricated",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "19b5f2b3_abs:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "3b6f954b:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "3b6f954b:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "3b6f954b:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "3b6f954b:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "3b6f954b:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "e01b8e2f:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "e01b8e2f:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "e01b8e2f:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "e01b8e2f:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "e01b8e2f:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "76d63226:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "76d63226:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "76d63226:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "76d63226:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "76d63226:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "001be529:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "001be529:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "001be529:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "001be529:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "001be529:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "f4f1d8a4:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "f4f1d8a4:pos_paraphrase",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "f4f1d8a4:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "f4f1d8a4:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "f4f1d8a4:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "19b5f2b3:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "19b5f2b3:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "19b5f2b3:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "19b5f2b3:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "19b5f2b3:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "86b68151:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "86b68151:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "86b68151:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "86b68151:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "86b68151:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "95bcc1c8:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "95bcc1c8:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "95bcc1c8:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "95bcc1c8:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "95bcc1c8:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "b320f3f8:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "b320f3f8:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "b320f3f8:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "b320f3f8:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "b320f3f8:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "853b0a1d:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "853b0a1d:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "853b0a1d:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "853b0a1d:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "853b0a1d:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "16c90bf4:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "16c90bf4:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "16c90bf4:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "16c90bf4:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "16c90bf4:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "1903aded:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "1903aded:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "1903aded:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "1903aded:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "1903aded:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "dc439ea3:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "dc439ea3:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "dc439ea3:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "dc439ea3:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "dc439ea3:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "cc539528:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "cc539528:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "cc539528:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "cc539528:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "cc539528:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "ac031881:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "ac031881:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "ac031881:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "ac031881:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "ac031881:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "7a8d0b71:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "7a8d0b71:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "7a8d0b71:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "7a8d0b71:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "7a8d0b71:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "c8f1aeed:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "c8f1aeed:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "c8f1aeed:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "c8f1aeed:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "c8f1aeed:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "7161e7e2:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "7161e7e2:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "7161e7e2:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "7161e7e2:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "7161e7e2:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "ceb54acb:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "ceb54acb:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "ceb54acb:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "ceb54acb:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "ceb54acb:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "18dcd5a5:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "18dcd5a5:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "18dcd5a5:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "18dcd5a5:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "18dcd5a5:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "8752c811:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "8752c811:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "8752c811:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "8752c811:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "8752c811:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "e982271f:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "e982271f:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "e982271f:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "e982271f:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "e982271f:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "195a1a1b:pos_personal",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "195a1a1b:neg_generic",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "195a1a1b:neg_contradict",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "195a1a1b:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "0a34ad58:pos_personal",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "0a34ad58:neg_generic",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "0a34ad58:neg_contradict",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "0a34ad58:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "d24813b1:pos_personal",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "d24813b1:neg_generic",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "d24813b1:neg_contradict",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "d24813b1:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "6b7dfb22:pos_personal",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "6b7dfb22:neg_generic",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "6b7dfb22:neg_contradict",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "6b7dfb22:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "57f827a0:pos_personal",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "57f827a0:neg_generic",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "57f827a0:neg_contradict",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "57f827a0:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "09d032c9:pos_personal",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "09d032c9:neg_generic",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "09d032c9:neg_contradict",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "09d032c9:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "caf03d32:pos_personal",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "caf03d32:neg_generic",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "caf03d32:neg_contradict",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "caf03d32:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "95228167:pos_personal",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "95228167:neg_generic",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "95228167:neg_contradict",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "95228167:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "fca70973:pos_personal",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "fca70973:neg_generic",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "fca70973:neg_contradict",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "fca70973:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "35a27287:pos_personal",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "35a27287:neg_generic",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "35a27287:neg_contradict",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "35a27287:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "0edc2aef:pos_personal",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "0edc2aef:neg_generic",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "0edc2aef:neg_contradict",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "0edc2aef:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "1d4e3b97:pos_personal",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "1d4e3b97:neg_generic",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "1d4e3b97:neg_contradict",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "1d4e3b97:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "80ec1f4f_abs:pos_refusal_fixed",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.00013214
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "80ec1f4f_abs:pos_refusal",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "80ec1f4f_abs:neg_fabricated",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "80ec1f4f_abs:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "gpt4_372c3eed_abs:pos_refusal_fixed",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "gpt4_372c3eed_abs:pos_refusal",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "gpt4_372c3eed_abs:neg_fabricated",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "gpt4_372c3eed_abs:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "1c549ce4:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "1c549ce4:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "1c549ce4:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "1c549ce4:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "1c549ce4:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "73d42213:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "73d42213:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "73d42213:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "73d42213:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "73d42213:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "c18a7dc8:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "c18a7dc8:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "c18a7dc8:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "c18a7dc8:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "c18a7dc8:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "6d550036:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "6d550036:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "6d550036:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "6d550036:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "6d550036:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "gpt4_d12ceb0e:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "gpt4_d12ceb0e:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "gpt4_d12ceb0e:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "gpt4_d12ceb0e:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "gpt4_d12ceb0e:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "gpt4_15e38248:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "gpt4_15e38248:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "gpt4_15e38248:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "gpt4_15e38248:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "gpt4_15e38248:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "1192316e:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "1192316e:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "1192316e:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "1192316e:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "1192316e:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "21d02d0d:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "21d02d0d:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "21d02d0d:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "21d02d0d:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "21d02d0d:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "2311e44b:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "2311e44b:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "2311e44b:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "2311e44b:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "2311e44b:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "77eafa52:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "77eafa52:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "77eafa52:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "77eafa52:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "77eafa52:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "gpt4_70e84552_abs:pos_refusal_fixed",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "gpt4_70e84552_abs:pos_refusal",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "gpt4_70e84552_abs:neg_fabricated",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "gpt4_70e84552_abs:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "gpt4_93159ced_abs:pos_refusal_fixed",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "gpt4_93159ced_abs:pos_refusal",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "gpt4_93159ced_abs:neg_fabricated",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "gpt4_93159ced_abs:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "af082822:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "af082822:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "af082822:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "af082822:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "af082822:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "bbf86515:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "bbf86515:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "bbf86515:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "bbf86515:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "bbf86515:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "2ebe6c92:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "2ebe6c92:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "2ebe6c92:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "2ebe6c92:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "2ebe6c92:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "gpt4_8c8961ae:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "gpt4_8c8961ae:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "gpt4_8c8961ae:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "gpt4_8c8961ae:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "gpt4_8c8961ae:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "eac54add:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "eac54add:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "eac54add:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "eac54add:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "eac54add:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "cc6d1ec1:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "cc6d1ec1:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "cc6d1ec1:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "cc6d1ec1:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "cc6d1ec1:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "gpt4_70e84552:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "gpt4_70e84552:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "gpt4_70e84552:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "gpt4_70e84552:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "gpt4_70e84552:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "gpt4_93159ced:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "gpt4_93159ced:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "gpt4_93159ced:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "gpt4_93159ced:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "gpt4_93159ced:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "0bc8ad92:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "0bc8ad92:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "0bc8ad92:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "0bc8ad92:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "0bc8ad92:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "9a707b82:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "9a707b82:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "9a707b82:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "9a707b82:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "9a707b82:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "0ddfec37_abs:pos_refusal_fixed",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "0ddfec37_abs:pos_refusal",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "0ddfec37_abs:neg_fabricated",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "0ddfec37_abs:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "6aeb4375_abs:pos_refusal_fixed",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "6aeb4375_abs:pos_refusal",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "6aeb4375_abs:neg_fabricated",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "6aeb4375_abs:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "eace081b:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "eace081b:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "eace081b:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "eace081b:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "eace081b:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "06db6396:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "06db6396:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "06db6396:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "06db6396:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "06db6396:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "4b24c848:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "4b24c848:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "4b24c848:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "4b24c848:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "4b24c848:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "26bdc477:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "26bdc477:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "26bdc477:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "26bdc477:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "26bdc477:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "0ddfec37:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "0ddfec37:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "0ddfec37:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "0ddfec37:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "0ddfec37:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "41698283:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "41698283:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "41698283:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "41698283:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "41698283:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "3ba21379:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "3ba21379:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "3ba21379:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "3ba21379:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "3ba21379:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "50635ada:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "50635ada:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "50635ada:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "50635ada:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "50635ada:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "59524333:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "59524333:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "59524333:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "59524333:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "59524333:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "cc5ded98:pos_verbatim",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "cc5ded98:pos_paraphrase",
+   "verdict": true,
+   "raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "cc5ded98:neg_near_miss",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "cc5ded98:neg_hedge",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  },
+  {
+   "model": "qwen/qwen3-14b",
+   "form": "aml",
+   "item": "cc5ded98:neg_swap",
+   "verdict": false,
+   "raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "cost": 0.0
+  }
+ ],
+ "errors": []
+}

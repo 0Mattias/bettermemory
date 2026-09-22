@@ -50,7 +50,13 @@ sys.path.insert(0, str(_BENCH))
 
 from aml.fts import FtsService  # noqa: E402
 from aml.service import MemoryService  # noqa: E402
-from judge.prompts import aml_prompt, parse_aml  # noqa: E402
+from judge.prompts import (  # noqa: E402
+    aml_prompt,
+    beam_answer_prompt,
+    beam_batch_judge_prompt,
+    parse_aml,
+    parse_beam_scores,
+)
 from llm import BudgetExceeded, Client  # noqa: E402
 
 CORPUS = _BENCH / "longmemeval" / "data" / "longmemeval_s_cleaned.json"
@@ -117,11 +123,141 @@ def split(corpus: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
     return sorted(dev_set), holdout
 
 
-def render_answer(question: str, contents: list[str]) -> str:
+LOCOMO = _HERE / "data" / "locomo_refined" / "data" / "public"
+LOCOMO_CATEGORIES = {
+    "1": "multi-hop",
+    "2": "temporal",
+    "3": "open-domain",
+    "4": "single-hop",
+}
+
+
+def _locomo_ms(date_time: str) -> int | None:
+    try:
+        dt = datetime.strptime(date_time.strip(), "%I:%M %p on %d %B, %Y")
+    except ValueError:
+        return None
+    return int(dt.replace(tzinfo=timezone.utc).timestamp() * 1000)
+
+
+def load_locomo() -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
+    """LoCoMo-Refined (github.com/mem-eval-suite/LoCoMo_refined, public
+    split): one user_id per conversation, one Add per session, every
+    question asked of its conversation's store. A shared image is carried
+    as its BLIP caption, which is the text the dataset ships for it."""
+    convs = [
+        json.loads(line)
+        for line in (LOCOMO / "conversations.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    sessions: dict[str, list[dict[str, Any]]] = {}
+    for c in convs:
+        uid = f"locomo:{c['sample_id']}"
+        chunks = []
+        for sess in c["sessions"]:
+            ts = _locomo_ms(sess.get("date_time", ""))
+            msgs = []
+            for m in sess["messages"]:
+                text = f"{m['speaker']}: {m['text']}"
+                if m.get("blip_caption"):
+                    text += f" [shared an image: {m['blip_caption']}]"
+                msgs.append(
+                    {
+                        "role": m.get("role", "user"),
+                        "content": text,
+                        **({"timestamp": ts} if ts else {}),
+                    }
+                )
+            chunks.append({"session_id": f"D{sess['session_index']}", "messages": msgs})
+        sessions[uid] = chunks
+    questions = []
+    for line in (LOCOMO / "questions.jsonl").read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        q = json.loads(line)
+        questions.append(
+            {
+                "question_id": q["qa_id"],
+                "question_type": LOCOMO_CATEGORIES.get(
+                    str(q["category"]), str(q["category"])
+                ),
+                "question": q["question"],
+                "answer": "; ".join(str(a) for a in q["answer"]),
+                "user_id": f"locomo:{q['sample_id']}",
+                "speaker_1_name": q["speaker_a"],
+                "speaker_2_name": q["speaker_b"],
+                "answer_session_ids": sorted(
+                    {f"D{e['session_index']}" for e in q.get("evidence_messages", [])}
+                ),
+            }
+        )
+    return questions, sessions
+
+
+BEAM = _HERE / "data" / "beam"
+
+
+def _beam_ms(anchor: str | None) -> int | None:
+    if not anchor:
+        return None
+    try:
+        dt = datetime.strptime(anchor.strip(), "%B-%d-%Y")
+    except ValueError:
+        return None
+    return int(dt.replace(tzinfo=timezone.utc).timestamp() * 1000)
+
+
+def load_beam(
+    split: str,
+) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
+    """BEAM (JSON written by beam_convert.py): one user_id per conversation,
+    one Add per chat batch dated by the batch's time anchor, every probing
+    question graded against its rubric list."""
+    convs = json.loads((BEAM / f"{split}.json").read_text(encoding="utf-8"))
+    sessions: dict[str, list[dict[str, Any]]] = {}
+    questions: list[dict[str, Any]] = []
+    for c in convs:
+        uid = f"beam-{split}:{c['conversation_id']}"
+        chunks = []
+        for i, batch in enumerate(c["batches"]):
+            ts = _beam_ms(batch[0].get("time_anchor") if batch else None)
+            msgs = [
+                {
+                    "role": m["role"],
+                    "content": m["content"],
+                    **({"timestamp": ts} if ts else {}),
+                }
+                for m in batch
+            ]
+            chunks.append({"session_id": f"B{i}", "messages": msgs})
+        sessions[uid] = chunks
+        for q in c["questions"]:
+            questions.append(
+                {
+                    "question_id": q["question_id"],
+                    "question_type": q["category"],
+                    "question": q["question"],
+                    "answer": q["gold"],
+                    "rubric": q["rubric"],
+                    "user_id": uid,
+                    "answer_session_ids": [],
+                }
+            )
+    return questions, sessions
+
+
+def render_answer(
+    question: str,
+    contents: list[str],
+    speaker_1: str = "speaker 1",
+    speaker_2: str = "speaker 2",
+) -> str:
     values = {
-        "speaker_1_name": "speaker 1",
+        "speaker_1_name": speaker_1,
         "speaker_1_memories": "\n".join(contents),
-        "speaker_2_name": "speaker 2",
+        "speaker_2_name": speaker_2,
         "speaker_2_memories": "",
         "question": question,
     }
@@ -132,7 +268,26 @@ def render_answer(question: str, contents: list[str]) -> str:
     )
 
 
-def ingest_and_search(service: Any, inst: dict[str, Any]) -> list[dict[str, Any]]:
+def ingest_and_search(
+    service: Any,
+    inst: dict[str, Any],
+    sessions: dict[str, list[dict[str, Any]]] | None = None,
+) -> list[dict[str, Any]]:
+    if sessions is not None:
+        user_id = inst["user_id"]
+        for chunk in sessions[user_id]:
+            service.add(
+                request_id=f"{user_id}:{chunk['session_id']}",
+                user_id=user_id,
+                messages=chunk["messages"],
+                session_id=chunk["session_id"],
+            )
+        hits = service.search(user_id, inst["question"], TOP_K)
+        for h, sess in zip(
+            hits, service.sessions_for(user_id, [h["id"] for h in hits])
+        ):
+            h["_session"] = sess
+        return hits
     user_id = f"lme-s:{inst['question_id']}"
     dates = inst.get("haystack_dates") or []
     for idx, (sid, session) in enumerate(
@@ -165,25 +320,37 @@ async def answer_and_judge(
     hits: list[dict[str, Any]],
     reader: str,
     judge: str,
+    thinking: str = "low",
 ) -> dict[str, Any]:
-    prompt = render_answer(inst["question"], [h["content"] for h in hits])
+    if inst.get("rubric") is not None:
+        return await _answer_and_judge_beam(client, inst, hits, reader, judge, thinking)
+    prompt = render_answer(
+        inst["question"],
+        [h["content"] for h in hits],
+        inst.get("speaker_1_name", "speaker 1"),
+        inst.get("speaker_2_name", "speaker 2"),
+    )
     ans = await client.complete(
         reader, [{"role": "user", "content": prompt}], max_tokens=512, temperature=0.0
     )
     generated = ans.text.strip()
+    jud_messages = [
+        {
+            "role": "user",
+            "content": aml_prompt(inst["question"], str(inst["answer"]), generated),
+        }
+    ]
     jud = await client.complete(
         judge,
-        [
-            {
-                "role": "user",
-                "content": aml_prompt(inst["question"], str(inst["answer"]), generated),
-            }
-        ],
+        jud_messages,
         max_tokens=800,
         temperature=0.0,
-        reasoning_effort="low",
+        reasoning_effort=thinking,
     )
     verdict = parse_aml(jud.text)
+    if verdict is None:
+        jud = await _judge_retry(client, judge, jud_messages, thinking, json_mode=False)
+        verdict = parse_aml(jud.text)
     evidence = set(inst.get("answer_session_ids") or [])
     served = {h.get("_session", "") for h in hits}
     return {
@@ -197,6 +364,83 @@ async def answer_and_judge(
         "judge_raw": jud.text[:400],
         "evidence_sessions": sorted(evidence),
         "evidence_served": len(evidence & served),
+        "cost": ans.cost + jud.cost,
+    }
+
+
+async def _judge_retry(
+    client: Client,
+    judge: str,
+    messages: list[dict[str, str]],
+    thinking: str,
+    *,
+    json_mode: bool,
+) -> Any:
+    """One retry with room to finish for a judgment that came back empty or
+    unparseable. OpenRouter serves Qwen3-14B from a provider that thinks
+    even when asked not to, so an 800-token allowance can be spent before
+    any answer is written; AML's own call (SiliconFlow, enable_thinking
+    False) does not hit this. The retry is harness robustness, never a
+    second opinion: it runs only when there is no verdict to keep."""
+    return await client.complete(
+        judge,
+        messages,
+        max_tokens=4000,
+        temperature=0.0,
+        reasoning_effort=thinking,
+        response_json=json_mode,
+    )
+
+
+async def _answer_and_judge_beam(
+    client: Client,
+    inst: dict[str, Any],
+    hits: list[dict[str, Any]],
+    reader: str,
+    judge: str,
+    thinking: str,
+) -> dict[str, Any]:
+    """BEAM's protocol as AML runs it: the RAG answer prompt over the served
+    context, then every rubric item graded 1 / 0.5 / 0 in one judge call;
+    the question scores the mean. An unparseable judgment scores 0."""
+    prompt = beam_answer_prompt("\n".join(h["content"] for h in hits), inst["question"])
+    ans = await client.complete(
+        reader, [{"role": "user", "content": prompt}], max_tokens=512, temperature=0.0
+    )
+    generated = ans.text.strip()
+    rubric = inst["rubric"]
+    jud_messages = [
+        {
+            "role": "user",
+            "content": beam_batch_judge_prompt(inst["question"], generated, rubric),
+        }
+    ]
+    jud = await client.complete(
+        judge,
+        jud_messages,
+        max_tokens=1024,
+        temperature=0.0,
+        reasoning_effort=thinking,
+        response_json=True,
+    )
+    scores = parse_beam_scores(jud.text, len(rubric)) if rubric else None
+    if rubric and scores is None:
+        jud = await _judge_retry(client, judge, jud_messages, thinking, json_mode=True)
+        scores = parse_beam_scores(jud.text, len(rubric))
+    score = sum(scores) / len(scores) if scores else 0.0
+    return {
+        "question_id": inst["question_id"],
+        "question_type": inst["question_type"],
+        "abstention": False,
+        "n_hits": len(hits),
+        "prompt_chars": len(prompt),
+        "generated": generated,
+        "verdict": None if scores is None else score >= 0.5,
+        "score": round(score, 4),
+        "rubric_scores": scores,
+        "judge_raw": jud.text[:400],
+        "evidence_sessions": [],
+        "evidence_served": 0,
         "cost": ans.cost + jud.cost,
     }
 
@@ -228,8 +472,22 @@ def _provenance() -> dict[str, Any]:
 
 async def main_async(args: argparse.Namespace) -> None:
     t0 = time.time()
-    corpus = json.loads(CORPUS.read_text(encoding="utf-8"))
-    dev, holdout = split(corpus)
+    sessions: dict[str, list[dict[str, Any]]] | None = None
+    if args.dataset.startswith("beam-"):
+        corpus, sessions = load_beam(args.dataset.split("-", 1)[1].upper())
+        dev, holdout = [q["question_id"] for q in corpus], []
+        if args.split != "all":
+            raise SystemExit("beam is a validation instrument; run --split all")
+    elif args.dataset == "locomo-refined":
+        corpus, sessions = load_locomo()
+        dev, holdout = [q["question_id"] for q in corpus], []
+        if args.split != "all":
+            raise SystemExit(
+                "locomo-refined is a validation instrument; run --split all"
+            )
+    else:
+        corpus = json.loads(CORPUS.read_text(encoding="utf-8"))
+        dev, holdout = split(corpus)
     if args.split == "holdout" and not args.i_declared:
         raise SystemExit(
             "the holdout is read once per declared experiment; pass --i-declared"
@@ -244,16 +502,20 @@ async def main_async(args: argparse.Namespace) -> None:
     todo = [q for q in corpus if q["question_id"] in wanted]
     if args.limit:
         todo = todo[: args.limit]
+    prefix = "" if args.dataset == "longmemeval-s" else f"{args.dataset}-"
     service = (
-        FtsService(STORES / "fts-v1")
+        FtsService(STORES / f"{prefix}fts-v1", serve=args.serve)
         if args.system == "fts"
         else MemoryService(
-            STORES / args.ingest,
+            STORES / f"{prefix}{args.ingest}",
             fill=args.fill,
             order=args.order,
             annotate=args.annotate,
             serve=args.serve,
             trim=args.trim,
+            trim_min_chars=args.trim_min_chars,
+            budget=args.budget_chars,
+            granularity="turns" if args.ingest.startswith("turns") else "rounds",
         )
     )
     print(
@@ -263,14 +525,18 @@ async def main_async(args: argparse.Namespace) -> None:
 
     t1 = time.time()
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
-        hits_all = list(pool.map(lambda q: ingest_and_search(service, q), todo))
+        hits_all = list(
+            pool.map(lambda q: ingest_and_search(service, q, sessions), todo)
+        )
     t_search = time.time() - t1
     print(f"ingest+search {t_search:.0f}s", file=sys.stderr)
 
     async with Client(budget_usd=args.budget, concurrency=args.concurrency) as client:
         results = await asyncio.gather(
             *(
-                answer_and_judge(client, q, h, args.reader, args.judge)
+                answer_and_judge(
+                    client, q, h, args.reader, args.judge, args.judge_thinking
+                )
                 for q, h in zip(todo, hits_all)
             ),
             return_exceptions=True,
@@ -285,12 +551,16 @@ async def main_async(args: argparse.Namespace) -> None:
     if any(isinstance(r, BudgetExceeded) for r in results):
         print("BUDGET EXCEEDED; partial result", file=sys.stderr)
 
-    by_type: dict[str, list[bool]] = defaultdict(list)
+    def credit(r: dict[str, Any]) -> float:
+        return float(r["score"]) if "score" in r else float(r["verdict"] is True)
+
+    by_type: dict[str, list[float]] = defaultdict(list)
     for r in rows:
-        by_type[r["question_type"]].append(r["verdict"] is True)
-    acc = sum(1 for r in rows if r["verdict"] is True) / len(rows) if rows else 0.0
+        by_type[r["question_type"]].append(credit(r))
+    acc = sum(credit(r) for r in rows) / len(rows) if rows else 0.0
     summary = {
         "arm": args.arm,
+        "dataset": args.dataset,
         "system": args.system,
         "split": args.split,
         "ingest": args.ingest,
@@ -299,8 +569,11 @@ async def main_async(args: argparse.Namespace) -> None:
         "annotate": args.annotate,
         "serve": args.serve,
         "trim": args.trim,
+        "trim_min_chars": args.trim_min_chars,
+        "budget_chars": args.budget_chars,
         "reader": args.reader,
         "judge": args.judge,
+        "judge_thinking": args.judge_thinking,
         "top_k": TOP_K,
         "n": len(rows),
         "errors": len(errors),
@@ -344,6 +617,17 @@ async def main_async(args: argparse.Namespace) -> None:
 
 def main() -> None:
     p = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
+    p.add_argument(
+        "--dataset",
+        choices=(
+            "longmemeval-s",
+            "locomo-refined",
+            "beam-100k",
+            "beam-500k",
+            "beam-1m",
+        ),
+        default="longmemeval-s",
+    )
     p.add_argument("--split", choices=("dev", "holdout", "all"), default="dev")
     p.add_argument("--i-declared", action="store_true")
     p.add_argument("--limit", type=int, default=0)
@@ -355,8 +639,16 @@ def main() -> None:
     p.add_argument("--annotate", default="none")
     p.add_argument("--serve", type=int, default=100)
     p.add_argument("--trim", default="none")
+    p.add_argument("--trim-min-chars", type=int, default=0)
+    p.add_argument("--budget-chars", type=int, default=0)
     p.add_argument("--reader", default="openai/gpt-4o-mini")
     p.add_argument("--judge", required=True)
+    p.add_argument(
+        "--judge-thinking",
+        choices=("low", "off"),
+        default="low",
+        help="off matches AML, which calls Qwen3-14B with thinking disabled",
+    )
     p.add_argument("--budget", type=float, default=3.0)
     p.add_argument("--concurrency", type=int, default=16)
     p.add_argument("--workers", type=int, default=8)

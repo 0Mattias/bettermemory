@@ -335,13 +335,26 @@ async def _judge_one(
     else:
         prompt = aml_prompt(item["question"], item["gold"], item["response"])
         max_tokens = 800
+    effort = None if model in NO_REASONING else "low"
     out = await client.complete(
         model,
         [{"role": "user", "content": prompt}],
         max_tokens=max_tokens,
         temperature=0.0,
-        reasoning_effort=None if model in NO_REASONING else "low",
+        reasoning_effort=effort,
     )
+    if not out.text.strip():
+        # A reasoning model can spend the whole allowance thinking and return
+        # nothing (finish_reason "length"). That is the harness starving the
+        # judge, not the judge failing, so it gets one retry with room to
+        # finish before its answer is scored.
+        out = await client.complete(
+            model,
+            [{"role": "user", "content": prompt}],
+            max_tokens=max_tokens * 4,
+            temperature=0.0,
+            reasoning_effort=effort,
+        )
     verdict: bool | None = parse_lme(out.text) if form == "lme" else parse_aml(out.text)
     return {
         "model": model,
@@ -377,7 +390,8 @@ async def judge(args: argparse.Namespace) -> None:
             out_rows.append(r)
     RESULTS.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    path = RESULTS / f"judgments-{stamp}.json"
+    tag = f"-{args.tag}" if args.tag else ""
+    path = RESULTS / f"judgments{tag}-{stamp}.json"
     path.write_text(
         json.dumps(
             {
@@ -430,7 +444,7 @@ def score(args: argparse.Namespace) -> None:
         for it in json.loads(ITEMS.read_text(encoding="utf-8"))["items"]
     }
     path = (
-        Path(args.judgments)
+        Path(args.judgments).resolve()
         if args.judgments
         else sorted(RESULTS.glob("judgments-*.json"))[-1]
     )
@@ -565,7 +579,8 @@ async def real(args: argparse.Namespace) -> None:
     }
     RESULTS.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    out = RESULTS / f"real-judgments-{stamp}.json"
+    tag = f"-{args.tag}" if args.tag else ""
+    out = RESULTS / f"real-judgments{tag}-{stamp}.json"
     out.write_text(
         json.dumps(
             {
@@ -604,13 +619,13 @@ def score_real(args: argparse.Namespace) -> None:
     table: dict[str, dict[str, dict[str, int]]] = {}
     for form in ("lme", "aml"):
         models = sorted(
-            {m for it in data["items"] for m in verdicts[it["item_id"]][form]}
+            {m for it in data["items"] for m in verdicts[it["item_id"]].get(form, {})}
         )
         for m in models:
             agree = fa = fr = 0
             for it in data["items"]:
                 truth = labels[it["item_id"]][form]
-                said = verdicts[it["item_id"]][form].get(m) is True
+                said = verdicts[it["item_id"]].get(form, {}).get(m) is True
                 agree += said == truth
                 fa += said and not truth
                 fr += truth and not said
@@ -620,6 +635,8 @@ def score_real(args: argparse.Namespace) -> None:
                 "false_accept": fa,
                 "false_reject": fr,
             }
+        if form not in table:
+            continue
         print(f"-- form {form}")
         for m, row in sorted(table[form].items(), key=lambda kv: -kv[1]["agree"]):
             print(
@@ -674,12 +691,14 @@ def main() -> None:
     j.add_argument("--concurrency", type=int, default=24)
     j.add_argument("--lme-judges", nargs="*", default=list(LME_JUDGES))
     j.add_argument("--aml-judges", nargs="*", default=list(AML_JUDGES))
+    j.add_argument("--tag", default="", help="suffix for the output file name")
     r = sub.add_parser("real")
     r.add_argument("answers", nargs="+")
     r.add_argument("--budget", type=float, default=2.0)
     r.add_argument("--concurrency", type=int, default=24)
     r.add_argument("--lme-judges", nargs="*", default=list(LME_JUDGES))
     r.add_argument("--aml-judges", nargs="*", default=list(AML_JUDGES))
+    r.add_argument("--tag", default="", help="suffix for the output file name")
     sr = sub.add_parser("score-real")
     sr.add_argument("judgments")
     sr.add_argument("labels")

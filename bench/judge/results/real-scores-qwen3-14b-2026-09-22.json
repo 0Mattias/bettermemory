@@ -1,0 +1,14 @@
+{
+ "judgments": "bench/judge/results/real-judgments-qwen3-14b-2026-09-22.json",
+ "labels": "bench/judge/results/real-labels-2026-09-22.json",
+ "table": {
+  "aml": {
+   "qwen/qwen3-14b": {
+    "agree": 146,
+    "n": 150,
+    "false_accept": 0,
+    "false_reject": 4
+   }
+  }
+ }
+}

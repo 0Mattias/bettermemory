@@ -1,6 +1,6 @@
 {
  "provenance": {
-  "commit": "1576e92",
+  "commit": "9cf7114",
   "tree_dirty": true,
   "date": "2026-09-22"
  },
@@ -9,7 +9,7 @@
  ],
  "summary": {
   "n_items": 150,
-  "n_disputed": 23,
+  "n_disputed": 21,
   "accepted": {
    "lme": {
     "openai/gpt-4o-2024-08-06": 94,
@@ -19,14 +19,14 @@
     "anthropic/claude-opus-5.5": 93,
     "anthropic/claude-sonnet-5": 91,
     "google/gemini-3.8-flash": 96,
-    "deepseek/deepseek-v4.1-flash": 92,
+    "deepseek/deepseek-v4.1-flash": 95,
     "z-ai/glm-5.3": 93,
     "x-ai/grok-4.7": 93
    },
    "aml": {
-    "deepseek/deepseek-v4.1-flash": 88,
-    "deepseek/deepseek-v4-pro-0813": 87,
-    "qwen/qwen3.8-flash": 85,
+    "deepseek/deepseek-v4.1-flash": 92,
+    "deepseek/deepseek-v4-pro-0813": 88,
+    "qwen/qwen3.8-flash": 91,
     "z-ai/glm-5.3": 89,
     "openai/gpt-4o-mini": 88
    }
@@ -1819,9 +1819,9 @@
     "x-ai/grok-4.7": true
    },
    "aml": {
-    "deepseek/deepseek-v4.1-flash": null,
+    "deepseek/deepseek-v4.1-flash": true,
     "deepseek/deepseek-v4-pro-0813": true,
-    "qwen/qwen3.8-flash": null,
+    "qwen/qwen3.8-flash": true,
     "z-ai/glm-5.3": true,
     "openai/gpt-4o-mini": true
    }
@@ -2129,7 +2129,7 @@
     "anthropic/claude-opus-5.5": true,
     "anthropic/claude-sonnet-5": true,
     "google/gemini-3.8-flash": true,
-    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4.1-flash": true,
     "z-ai/glm-5.3": true,
     "x-ai/grok-4.7": true
    },
@@ -2366,8 +2366,8 @@
    },
    "aml": {
     "deepseek/deepseek-v4.1-flash": true,
-    "deepseek/deepseek-v4-pro-0813": null,
-    "qwen/qwen3.8-flash": null,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": true,
     "z-ai/glm-5.3": false,
     "openai/gpt-4o-mini": false
    }
@@ -2407,9 +2407,9 @@
     "x-ai/grok-4.7": false
    },
    "aml": {
-    "deepseek/deepseek-v4.1-flash": null,
+    "deepseek/deepseek-v4.1-flash": false,
     "deepseek/deepseek-v4-pro-0813": false,
-    "qwen/qwen3.8-flash": null,
+    "qwen/qwen3.8-flash": false,
     "z-ai/glm-5.3": false,
     "openai/gpt-4o-mini": false
    }
@@ -2451,7 +2451,7 @@
    "aml": {
     "deepseek/deepseek-v4.1-flash": true,
     "deepseek/deepseek-v4-pro-0813": true,
-    "qwen/qwen3.8-flash": null,
+    "qwen/qwen3.8-flash": true,
     "z-ai/glm-5.3": true,
     "openai/gpt-4o-mini": false
    }
@@ -2465,14 +2465,14 @@
     "anthropic/claude-opus-5.5": false,
     "anthropic/claude-sonnet-5": false,
     "google/gemini-3.8-flash": false,
-    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4.1-flash": true,
     "z-ai/glm-5.3": false,
     "x-ai/grok-4.7": false
    },
    "aml": {
-    "deepseek/deepseek-v4.1-flash": null,
-    "deepseek/deepseek-v4-pro-0813": null,
-    "qwen/qwen3.8-flash": null,
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
     "z-ai/glm-5.3": false,
     "openai/gpt-4o-mini": false
    }
@@ -2556,7 +2556,7 @@
    "aml": {
     "deepseek/deepseek-v4.1-flash": true,
     "deepseek/deepseek-v4-pro-0813": true,
-    "qwen/qwen3.8-flash": null,
+    "qwen/qwen3.8-flash": true,
     "z-ai/glm-5.3": true,
     "openai/gpt-4o-mini": false
    }
@@ -3289,9 +3289,9 @@
     "x-ai/grok-4.7": false
    },
    "aml": {
-    "deepseek/deepseek-v4.1-flash": null,
+    "deepseek/deepseek-v4.1-flash": true,
     "deepseek/deepseek-v4-pro-0813": false,
-    "qwen/qwen3.8-flash": null,
+    "qwen/qwen3.8-flash": true,
     "z-ai/glm-5.3": true,
     "openai/gpt-4o-mini": true
    }
@@ -3956,14 +3956,14 @@
     "anthropic/claude-opus-5.5": true,
     "anthropic/claude-sonnet-5": true,
     "google/gemini-3.8-flash": true,
-    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4.1-flash": true,
     "z-ai/glm-5.3": true,
     "x-ai/grok-4.7": false
    },
    "aml": {
-    "deepseek/deepseek-v4.1-flash": null,
-    "deepseek/deepseek-v4-pro-0813": null,
-    "qwen/qwen3.8-flash": null,
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
     "z-ai/glm-5.3": true,
     "openai/gpt-4o-mini": true
    }

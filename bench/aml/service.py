@@ -81,6 +81,38 @@ def rounds_of(messages: list[dict[str, Any]]) -> list[tuple[str, int | None]]:
     return out
 
 
+def turns_of(
+    messages: list[dict[str, Any]], chunk_chars: int
+) -> list[tuple[str, int | None]]:
+    """One unit per message; an assistant message longer than `chunk_chars`
+    is split on paragraph boundaries into parts no longer than that (a
+    single paragraph over the limit stays whole). Returns (body, source
+    timestamp ms), the same shape `rounds_of` returns."""
+    out: list[tuple[str, int | None]] = []
+    for m in messages:
+        role = m.get("role", "?")
+        text = _text(m.get("content"))
+        ts = m.get("timestamp")
+        ts = int(ts) if isinstance(ts, (int, float)) else None
+        if role != "assistant" or len(text) <= chunk_chars:
+            out.append((f"{role}: {text}", ts))
+            continue
+        parts: list[str] = []
+        current = ""
+        for para in text.split("\n\n"):
+            candidate = f"{current}\n\n{para}" if current else para
+            if current and len(candidate) > chunk_chars:
+                parts.append(current)
+                current = para
+            else:
+                current = candidate
+        if current:
+            parts.append(current)
+        for i, part in enumerate(parts, 1):
+            out.append((f"{role} (part {i} of {len(parts)}): {part}", ts))
+    return out
+
+
 def _text(content: Any) -> str:
     if isinstance(content, str):
         return content
@@ -156,27 +188,49 @@ def _line_terms(line: str) -> set[str]:
     return out
 
 
-def trim_assistant(body: str, terms: set[str]) -> str:
+def trim_assistant(body: str, terms: set[str], min_chars: int = 0) -> str:
     """Keep the header and the user's words whole; from each assistant turn
-    keep its first line and every line sharing a content word with the
-    query, and mark each dropped run with an ellipsis line.
+    of at least `min_chars` characters keep its first line and every line
+    sharing a content word with the query, and mark each dropped run with
+    an ellipsis line. A shorter assistant turn is kept whole.
 
     Assistant replies are most of the served text, and most of it is
     general advice the question does not ask about. The user's own words
     carry the facts about the user, so they are never cut; an assistant
     line the question names survives, which is what single-session-
-    assistant questions ask for.
+    assistant questions ask for. `min_chars` spares conversational turns:
+    in a two-person dialogue (LoCoMo) the "assistant" is the second
+    speaker, whose short turns carry facts as surely as the first's.
     """
+    lines = body.split("\n")
+    # Length of the assistant turn each line belongs to (0 outside one).
+    turn_len = [0] * len(lines)
+    start = None
+    for i, line in enumerate(lines + ["user: "]):
+        if line.startswith(("assistant: ", "user: ")) or i == len(lines):
+            if start is not None:
+                n = sum(len(x) + 1 for x in lines[start:i])
+                for j in range(start, i):
+                    turn_len[j] = n
+                start = None
+            if i < len(lines) and line.startswith("assistant: "):
+                start = i
     out: list[str] = []
     in_assistant = False
     first = False
     dropped = False
-    for line in body.split("\n"):
+    for i, line in enumerate(lines):
         if line.startswith("assistant: "):
             in_assistant, first = True, True
         elif line.startswith("user: "):
             in_assistant = False
-        if not in_assistant or first or (terms & _line_terms(line)):
+        keep = (
+            not in_assistant
+            or first
+            or turn_len[i] < min_chars
+            or bool(terms & _line_terms(line))
+        )
+        if keep:
             if dropped:
                 out.append("[...]")
                 dropped = False
@@ -191,6 +245,11 @@ def trim_assistant(body: str, terms: set[str]) -> str:
 
 class MemoryService:
     """Add/Search over one bettermemory store per AML user_id.
+
+    `granularity` is the ingest unit: "rounds" (a user message with the
+    assistant reply after it, the default) or "turns" (each message on its
+    own, long assistant replies split by `turns_of`). It is fixed per store,
+    so a store root is built under one granularity only.
 
     `fill` and `order` are the presentation levers, measured as arms by
     bench/aml/run.py. The engine ranks; these decide what the fixed
@@ -218,6 +277,13 @@ class MemoryService:
                                question date for 77% of questions)
       serve    the most rounds returned, whatever top_k asks for; fewer
                rounds is less for a fixed reader to wade through
+      budget   the most characters returned across all rounds (0 = no
+               limit). Ranked rounds are taken in order while they fit;
+               the first is always served; a round too long for what is
+               left is skipped for a later one that fits. On BEAM-1M a
+               hundred whole rounds median 455k characters, past a 128k-
+               token answer model's window, so an unbudgeted answer
+               prompt fails outright
       trim     none       rounds served whole
                assistant  assistant lines that share no content word with
                           the question are elided (`trim_assistant`)
@@ -232,23 +298,33 @@ class MemoryService:
         root: Path,
         *,
         conversational: bool = True,
+        granularity: str = "rounds",
+        chunk_chars: int = 1500,
         fill: str = "none",
         order: str = "rank",
         annotate: str = "none",
         serve: int = 100,
+        budget: int = 0,
         trim: str = "none",
+        trim_min_chars: int = 0,
     ) -> None:
         if trim not in TRIMS:
             raise ValueError(f"trim {trim!r}")
         self.trim = trim
+        self.trim_min_chars = trim_min_chars
         if fill not in FILLS or order not in ORDERS or annotate not in ANNOTATIONS:
             raise ValueError(f"fill {fill!r} / order {order!r} / annotate {annotate!r}")
         self.root = root
         self.conversational = conversational
+        if granularity not in ("rounds", "turns"):
+            raise ValueError(f"granularity {granularity!r}")
+        self.granularity = granularity
+        self.chunk_chars = chunk_chars
         self.fill = fill
         self.order = order
         self.annotate = annotate
         self.serve = serve
+        self.budget = budget
         self._stores: dict[str, _UserStore] = {}
         self._guard = threading.Lock()
 
@@ -276,7 +352,12 @@ class MemoryService:
                 return 0
             store = Store(us.root)
             n = 0
-            for body, ts in rounds_of(messages):
+            units = (
+                turns_of(messages, self.chunk_chars)
+                if self.granularity == "turns"
+                else rounds_of(messages)
+            )
+            for body, ts in units:
                 stamp = _fmt_ts(ts)
                 content = f"[{stamp}]\n{body}" if stamp else body
                 memory = store.write(content=content, scopes=SCOPE)
@@ -325,13 +406,18 @@ class MemoryService:
         latest = max(event_ts.values()) if event_ts else None
         terms = query_terms(query) if self.trim != "none" else set()
         out: list[dict[str, Any]] = []
+        used = 0
         for rank, mid in enumerate(chosen):
             m = by_id[mid]
             ts = event_ts.get(mid)
+            content = self._present(m.body, ts, latest, terms, rank)
+            if self.budget and out and used + len(content) > self.budget:
+                continue
+            used += len(content)
             out.append(
                 {
                     "id": mid,
-                    "content": self._present(m.body, ts, latest, terms, rank),
+                    "content": content,
                     "score": scores.get(mid, 0.0),
                     **(
                         {
@@ -434,7 +520,7 @@ class MemoryService:
         if self.trim == "assistant" or (
             self.trim == "tail" and rank >= TRIM_KEEP_WHOLE
         ):
-            body = trim_assistant(body, terms)
+            body = trim_assistant(body, terms, self.trim_min_chars)
         if self.annotate == "none" or ts is None or latest is None:
             return body
         stamp = _fmt_ts(ts)

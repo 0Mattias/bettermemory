@@ -9,14 +9,14 @@
      "balanced_accuracy": 0.9924,
      "false_accept": 0.0,
      "false_reject": 0.0152,
-     "unparseable": 1
+     "unparseable": 0
     },
     "non_preference": {
      "n": 292,
      "balanced_accuracy": 0.9917,
      "false_accept": 0.0,
      "false_reject": 0.0167,
-     "unparseable": 1
+     "unparseable": 0
     },
     "by_type": {
      "single-session-user": {
@@ -52,7 +52,7 @@
       "balanced_accuracy": 0.9792,
       "false_accept": 0.0,
       "false_reject": 0.0417,
-      "unparseable": 1
+      "unparseable": 0
      },
      "knowledge-update": {
       "n": 58,
@@ -119,22 +119,22 @@
       "truth": true
      }
     },
-    "cost_usd": 0.2226
+    "cost_usd": 0.0019
    },
    "deepseek/deepseek-v4.1-flash": {
     "all": {
      "n": 340,
-     "balanced_accuracy": 0.9962,
-     "false_accept": 0.0,
-     "false_reject": 0.0076,
-     "unparseable": 2
+     "balanced_accuracy": 0.9976,
+     "false_accept": 0.0048,
+     "false_reject": 0.0,
+     "unparseable": 0
     },
     "non_preference": {
      "n": 292,
-     "balanced_accuracy": 0.9958,
+     "balanced_accuracy": 1.0,
      "false_accept": 0.0,
-     "false_reject": 0.0083,
-     "unparseable": 1
+     "false_reject": 0.0,
+     "unparseable": 0
     },
     "by_type": {
      "single-session-user": {
@@ -153,17 +153,17 @@
      },
      "single-session-preference": {
       "n": 48,
-      "balanced_accuracy": 1.0,
-      "false_accept": 0.0,
+      "balanced_accuracy": 0.9861,
+      "false_accept": 0.0278,
       "false_reject": 0.0,
-      "unparseable": 1
+      "unparseable": 0
      },
      "multi-session": {
       "n": 58,
-      "balanced_accuracy": 0.9792,
+      "balanced_accuracy": 1.0,
       "false_accept": 0.0,
-      "false_reject": 0.0417,
-      "unparseable": 1
+      "false_reject": 0.0,
+      "unparseable": 0
      },
      "temporal-reasoning": {
       "n": 58,
@@ -193,7 +193,7 @@
      },
      "neg_generic": {
       "n": 12,
-      "accepted": 0,
+      "accepted": 1,
       "truth": false
      },
      "neg_hedge": {
@@ -228,7 +228,7 @@
      },
      "pos_refusal_fixed": {
       "n": 8,
-      "accepted": 7,
+      "accepted": 8,
       "truth": true
      },
      "pos_verbatim": {
@@ -237,7 +237,7 @@
       "truth": true
      }
     },
-    "cost_usd": 0.0509
+    "cost_usd": 0.003
    },
    "openai/gpt-4o-mini": {
     "all": {
@@ -355,22 +355,22 @@
       "truth": true
      }
     },
-    "cost_usd": 0.0377
+    "cost_usd": 0.0
    },
    "qwen/qwen3.8-flash": {
     "all": {
      "n": 340,
-     "balanced_accuracy": 0.9811,
+     "balanced_accuracy": 0.9962,
      "false_accept": 0.0,
-     "false_reject": 0.0379,
-     "unparseable": 12
+     "false_reject": 0.0076,
+     "unparseable": 1
     },
     "non_preference": {
      "n": 292,
-     "balanced_accuracy": 0.9833,
+     "balanced_accuracy": 0.9958,
      "false_accept": 0.0,
-     "false_reject": 0.0333,
-     "unparseable": 5
+     "false_reject": 0.0083,
+     "unparseable": 0
     },
     "by_type": {
      "single-session-user": {
@@ -382,17 +382,17 @@
      },
      "single-session-assistant": {
       "n": 60,
-      "balanced_accuracy": 0.9792,
+      "balanced_accuracy": 1.0,
       "false_accept": 0.0,
-      "false_reject": 0.0417,
-      "unparseable": 2
+      "false_reject": 0.0,
+      "unparseable": 0
      },
      "single-session-preference": {
       "n": 48,
-      "balanced_accuracy": 0.9583,
+      "balanced_accuracy": 1.0,
       "false_accept": 0.0,
-      "false_reject": 0.0833,
-      "unparseable": 7
+      "false_reject": 0.0,
+      "unparseable": 1
      },
      "multi-session": {
       "n": 58,
@@ -403,17 +403,17 @@
      },
      "temporal-reasoning": {
       "n": 58,
-      "balanced_accuracy": 0.9583,
-      "false_accept": 0.0,
-      "false_reject": 0.0833,
-      "unparseable": 2
-     },
-     "knowledge-update": {
-      "n": 58,
       "balanced_accuracy": 0.9792,
       "false_accept": 0.0,
       "false_reject": 0.0417,
-      "unparseable": 1
+      "unparseable": 0
+     },
+     "knowledge-update": {
+      "n": 58,
+      "balanced_accuracy": 1.0,
+      "false_accept": 0.0,
+      "false_reject": 0.0,
+      "unparseable": 0
      }
     },
     "by_variant": {
@@ -449,12 +449,12 @@
      },
      "pos_paraphrase": {
       "n": 52,
-      "accepted": 50,
+      "accepted": 52,
       "truth": true
      },
      "pos_personal": {
       "n": 12,
-      "accepted": 11,
+      "accepted": 12,
       "truth": true
      },
      "pos_refusal": {
@@ -464,7 +464,7 @@
      },
      "pos_refusal_fixed": {
       "n": 8,
-      "accepted": 6,
+      "accepted": 7,
       "truth": true
      },
      "pos_verbatim": {
@@ -473,7 +473,7 @@
       "truth": true
      }
     },
-    "cost_usd": 0.0621
+    "cost_usd": 0.0029
    },
    "z-ai/glm-5.3": {
     "all": {
@@ -591,7 +591,7 @@
       "truth": true
      }
     },
-    "cost_usd": 0.1585
+    "cost_usd": 0.0
    }
   },
   "lme": {
@@ -711,7 +711,7 @@
       "truth": true
      }
     },
-    "cost_usd": 0.3768
+    "cost_usd": 0.0
    },
    "anthropic/claude-sonnet-5": {
     "all": {
@@ -829,14 +829,14 @@
       "truth": true
      }
     },
-    "cost_usd": 0.1835
+    "cost_usd": 0.0
    },
    "deepseek/deepseek-v4.1-flash": {
     "all": {
      "n": 340,
-     "balanced_accuracy": 0.9962,
+     "balanced_accuracy": 1.0,
      "false_accept": 0.0,
-     "false_reject": 0.0076,
+     "false_reject": 0.0,
      "unparseable": 0
     },
     "non_preference": {
@@ -863,9 +863,9 @@
      },
      "single-session-preference": {
       "n": 48,
-      "balanced_accuracy": 0.9583,
+      "balanced_accuracy": 1.0,
       "false_accept": 0.0,
-      "false_reject": 0.0833,
+      "false_reject": 0.0,
       "unparseable": 0
      },
      "multi-session": {
@@ -928,7 +928,7 @@
      },
      "pos_personal": {
       "n": 12,
-      "accepted": 11,
+      "accepted": 12,
       "truth": true
      },
      "pos_refusal": {
@@ -947,7 +947,7 @@
       "truth": true
      }
     },
-    "cost_usd": 0.0252
+    "cost_usd": 0.0003
    },
    "google/gemini-3.8-flash": {
     "all": {
@@ -1065,7 +1065,7 @@
       "truth": true
      }
     },
-    "cost_usd": 0.0918
+    "cost_usd": 0.0
    },
    "openai/gpt-4o-2024-08-06": {
     "all": {
@@ -1183,7 +1183,7 @@
       "truth": true
      }
     },
-    "cost_usd": 0.153
+    "cost_usd": 0.0
    },
    "openai/gpt-4o-mini": {
     "all": {
@@ -1301,7 +1301,7 @@
       "truth": true
      }
     },
-    "cost_usd": 0.0091
+    "cost_usd": 0.0
    },
    "openai/gpt-6-luna": {
     "all": {
@@ -1419,7 +1419,7 @@
       "truth": true
      }
     },
-    "cost_usd": 0.0078
+    "cost_usd": 0.0
    },
    "openai/gpt-6-sol": {
     "all": {
@@ -1537,7 +1537,7 @@
       "truth": true
      }
     },
-    "cost_usd": 0.1348
+    "cost_usd": 0.0
    },
    "x-ai/grok-4.7": {
     "all": {
@@ -1655,7 +1655,7 @@
       "truth": true
      }
     },
-    "cost_usd": 0.4815
+    "cost_usd": 0.0
    },
    "z-ai/glm-5.3": {
     "all": {
@@ -1773,7 +1773,7 @@
       "truth": true
      }
     },
-    "cost_usd": 0.0523
+    "cost_usd": 0.0
    }
   }
  }
