@@ -1,0 +1,756 @@
+{
+ "source": "bench/judge/results/real-judgments-2026-09-22.json",
+ "adjudicated": 23,
+ "labels": {
+  "58ef2f1c:168ebbf48ddd": {
+   "lme": false,
+   "aml": false,
+   "reason": "gold is a day, response gives only the month: a subset (lme) and a granularity mismatch (aml)"
+  },
+  "3b6f954b:d68eae84425d": {
+   "lme": true,
+   "aml": true,
+   "reason": "University of Melbourne is the answer; 'in Australia' is implied by it"
+  },
+  "29f2956b_abs:9bac6077aab0": {
+   "lme": true,
+   "aml": true,
+   "reason": "correctly says violin practice time was never mentioned"
+  },
+  "6cb6f249:aa8314e18fa7": {
+   "lme": true,
+   "aml": true,
+   "reason": "7 + 10 = 17 stated outright"
+  },
+  "2318644b:cde565a4ac49": {
+   "lme": false,
+   "aml": false,
+   "reason": "gives approximate endpoints ('over $300', 'around $30'), never the difference; not the $270"
+  },
+  "edced276:4c3604d125a4": {
+   "lme": false,
+   "aml": false,
+   "reason": "10 vs 15"
+  },
+  "10d9b85a:987a01a2e843": {
+   "lme": true,
+   "aml": true,
+   "reason": "the 3-day total is the answer; naming two of the three event kinds does not change it"
+  },
+  "75832dbd:09540429ccca": {
+   "lme": true,
+   "aml": true,
+   "reason": "MICCAI and Medical Image Analysis fit the rubric's medical-imaging interest"
+  },
+  "09d032c9:1bfc8ccb7283": {
+   "lme": false,
+   "aml": false,
+   "reason": "generic battery tips; never uses the power bank the rubric centres on"
+  },
+  "75f70248:2b58da771f90": {
+   "lme": false,
+   "aml": false,
+   "reason": "generic dust answer; ignores the cat and the deep clean"
+  },
+  "b6025781:a86a5d6481fd": {
+   "lme": true,
+   "aml": true,
+   "reason": "quinoa, roasted vegetables and varied protein all present"
+  },
+  "1c0ddc50:2f3f6160ae32": {
+   "lme": false,
+   "aml": false,
+   "reason": "generic commute list; no recall of the user's podcast history or the history-genre interest"
+  },
+  "60036106:0ceef93f0e85": {
+   "lme": true,
+   "aml": false,
+   "reason": "2,000 and 10,000 are the intermediate steps to 12,000 (lme counts steps); the total itself is never stated (aml has no steps clause)"
+  },
+  "71017276:af7b9f52c724": {
+   "lme": true,
+   "aml": false,
+   "reason": "3 weeks vs 4: off-by-one forgiven by the lme temporal rubric, not by aml's"
+  },
+  "0bc8ad92:0cb55c4a8d1c": {
+   "lme": true,
+   "aml": false,
+   "reason": "4 months vs 5: off-by-one (lme) / wrong (aml)"
+  },
+  "af082822:51201b578f32": {
+   "lme": true,
+   "aml": false,
+   "reason": "1 week vs 2: off-by-one (lme) / wrong (aml)"
+  },
+  "gpt4_b5700ca9:9cc8014f2527": {
+   "lme": false,
+   "aml": false,
+   "reason": "14 vs 4"
+  },
+  "0db4c65d:5203a96ceebf": {
+   "lme": true,
+   "aml": false,
+   "reason": "17 vs 18: off-by-one (lme) / wrong (aml)"
+  },
+  "bcbe585f:b338f352713f": {
+   "lme": false,
+   "aml": false,
+   "reason": "a month and a half is about 6 weeks vs 4: off by two"
+  },
+  "gpt4_21adecb5:c138d619e3c3": {
+   "lme": true,
+   "aml": false,
+   "reason": "5 months vs 6: off-by-one (lme) / wrong (aml)"
+  },
+  "eac54adc:a981c9d32b39": {
+   "lme": false,
+   "aml": false,
+   "reason": "21 vs 19; the gold already lists 20 as the inclusive-count allowance, 21 is two from the count"
+  },
+  "gpt4_e061b84g:b70aacf56046": {
+   "lme": true,
+   "aml": true,
+   "reason": "'a charity soccer tournament' identifies the event; 'company's annual' is descriptive"
+  },
+  "e493bb7c:897447f33ed5": {
+   "lme": true,
+   "aml": true,
+   "reason": "above the bed is in the bedroom"
+  },
+  "c5e8278d:3013b18f4387": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "6ade9755:c788d5e3e396": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "6f9b354f:a4a916bfc408": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "726462e0:fa8e98e6dd9a": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "c8c3f81d:cd5b7b9fb7b9": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "21436231:89ec1526eea3": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "95bcc1c8:90ff9870f302": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "0862e8bf:9d77a24d0f4c": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "853b0a1d:67a9c1f34b27": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "a06e4cfe:73602294fc3b": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "37d43f65:c3f6db7a9929": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "25e5aa4f:ea0ccc25daea": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "86b68151:1e2b841a8b1d": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "577d4d32:ea91fe5411ca": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "ec81a493:45e2e5091bc1": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "19b5f2b3:5ff468c2d912": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "8e9d538c:ad4e9aa3c65e": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "0862e8bf_abs:78f59c4071b7": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "gpt4_59c863d7:5b8720006e20": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "aae3761f:977a0c663626": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "gpt4_f2262a51:18ee010aad32": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "dd2973ad:4b6b58bb92d2": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "46a3abf7:2ea59e60a9b5": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "d682f1a2:677d965a2376": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "7024f17c:e25a8510eca2": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "gpt4_2ba83207:804c76ac8b30": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "2ce6a0f2:f4ea6e3f77fd": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "gpt4_31ff4165:cc9b9808dc62": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "a9f6b44c:c03fbcd0c68f": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "2b8f3739:8401a1842f61": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "1a8a66a6:626a0500889b": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "c2ac3c61:8de458c35479": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "gpt4_372c3eed:4f1693e90602": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "88432d0a_abs:a470e1533775": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "60bf93ed_abs:e7b198728942": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "edced276_abs:2937e79dd52d": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "195a1a1b:c18b7e3b0c72": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "caf03d32:4522d79b635e": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "95228167:494a435e2b3b": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "1da05512:3ae20780d2ef": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "1f2b8d4f:6773e20de6e7": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "e6041065:147a63c68e8c": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "d905b33f:62b4fc2e946b": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "5025383b:3626e8e77ff6": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "a1cc6108:fdd4cd727a79": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "27016adc:e899f5fc7996": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "92a0aa75:7647e29d8cb0": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "0ea62687:62aae53eebd3": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "67e0d0f2:9168da3b63a5": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "60159905:590f6848ac43": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "078150f1:9dd81c6bd3a0": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "8cf4d046:10e271d4dcea": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "a346bb18:387ec59fd9e3": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "37f165cf:28970f717dea": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "21d02d0d:2439e75a578a": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "2311e44b_abs:552f78e21cd1": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "a96c20ee_abs:513241526dd2": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "gpt4_f49edff3:daef37a24825": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "gpt4_1d4ab0c9:5e3ebb75b063": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "gpt4_e072b769:5eb479c88074": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "gpt4_6dc9b45b:7069c4d98909": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "gpt4_7a0daae1:cb9d64d04cf5": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "gpt4_468eb063:15a925e9697a": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "4dfccbf7:cb60a5299ad2": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "2ebe6c90:d0102e054a18": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "6e984301:5c5cc8d571cf": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "5e1b23de:7ef73ecd6efd": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "gpt4_e414231e:a21a43f73835": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "gpt4_7bc6cf22:cd451e97ace7": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "gpt4_e414231f:696db52ffa8d": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "gpt4_4929293b:497678c49054": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "eac54add:6004823003b9": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "6e984302:ee5591de3776": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "gpt4_8279ba03:02ec5eddfd0b": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "gpt4_2487a7cb:e290b3e993e4": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "gpt4_76048e76:49b6613744db": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "gpt4_2312f94c:dfa63e50acd3": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "2a1811e2:e2ef19de5a04": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "gpt4_70e84552:aaa26a57d93c": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "gpt4_2d58bcd6:5a17cc9a9613": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "b9cfe692:3e84f1b0fec7": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "gpt4_9a159967:e4183b95aaee": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "gpt4_d9af6064:75b4477c4191": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "gpt4_4cd9eba1:8b22b44a0749": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "6613b389:0e0140fa588c": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "gpt4_0a05b494:889a776c6dcf": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "8c18457d:19ccf96dcfc4": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "gpt4_70e84552_abs:5a2b72d742dd": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "830ce83f:b871ea7d05f0": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "d7c942c3:324ab4a60f76": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "ce6d2d27:59c58fc772c8": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "9ea5eabc:58fd5124f219": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "07741c44:439f9ed312c3": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "a1eacc2a:36060ae2ac18": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "184da446:d1450582b3f1": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "4d6b87c8:b4e3b6f2a145": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "08e075c7:4c4ff34afa82": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "2698e78f:bcd80a8ba78a": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "b6019101:c4483373a36b": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "6071bd76:6567ec7cdffc": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "72e3ee87:c51913252094": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "01493427:23ba3c1b20d3": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "b01defab:fcd0ddfe2be6": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "603deb26:22f98e9b5dd6": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "0ddfec37:e365c59db24b": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "cf22b7bf:eabfe896288a": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "a2f3aa27:5c276d386c54": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "c6853660:66b64dccc4a7": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "0977f2af:769f01cd70b7": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "0ddfec37_abs:e365c59db24b": {
+   "lme": false,
+   "aml": false,
+   "reason": "unanimous"
+  },
+  "c4f10528:261af9ab8617": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "89527b6b:880ded548f61": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "7e00a6cb:eb8b84219e45": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "ceb54acb:aa2e0092e94b": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "dc439ea3:c7e57b272c6c": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "18dcd5a5:b03138acaca3": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "58470ed2:f77719abd1ab": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "8cf51dda:79908cae39aa": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "1d4da289:44aadaabe6c8": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "1b9b7252:eed461a390e7": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "1568498a:99fac8fa3506": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "6222b6eb:52b9205acfa4": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "d596882b:34c744bd0bf5": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "3e321797:caf10bc92d53": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "8b9d4367:6f802377d5cf": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "41275add:ec08233e58cf": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  },
+  "4baee567:debd5cd403ed": {
+   "lme": true,
+   "aml": true,
+   "reason": "unanimous"
+  }
+ }
+}

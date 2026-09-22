@@ -1,0 +1,4540 @@
+{
+ "provenance": {
+  "commit": "1576e92",
+  "tree_dirty": true,
+  "date": "2026-09-22"
+ },
+ "answers": [
+  "bench/aml/results/dev-A0-provisional.json"
+ ],
+ "summary": {
+  "n_items": 150,
+  "n_disputed": 23,
+  "accepted": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": 94,
+    "openai/gpt-4o-mini": 88,
+    "openai/gpt-6-sol": 95,
+    "openai/gpt-6-luna": 94,
+    "anthropic/claude-opus-5.5": 93,
+    "anthropic/claude-sonnet-5": 91,
+    "google/gemini-3.8-flash": 96,
+    "deepseek/deepseek-v4.1-flash": 92,
+    "z-ai/glm-5.3": 93,
+    "x-ai/grok-4.7": 93
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": 88,
+    "deepseek/deepseek-v4-pro-0813": 87,
+    "qwen/qwen3.8-flash": 85,
+    "z-ai/glm-5.3": 89,
+    "openai/gpt-4o-mini": 88
+   }
+  }
+ },
+ "items": [
+  {
+   "item_id": "c5e8278d:3013b18f4387",
+   "question_id": "c5e8278d",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "question": "What was my last name before I changed it?",
+   "gold": "Johnson",
+   "response": "Johnson"
+  },
+  {
+   "item_id": "6ade9755:c788d5e3e396",
+   "question_id": "6ade9755",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "question": "Where do I take yoga classes?",
+   "gold": "Serenity Yoga",
+   "response": "Serenity Yoga."
+  },
+  {
+   "item_id": "6f9b354f:a4a916bfc408",
+   "question_id": "6f9b354f",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "question": "What color did I repaint my bedroom walls?",
+   "gold": "a lighter shade of gray",
+   "response": "A lighter shade of gray."
+  },
+  {
+   "item_id": "58ef2f1c:168ebbf48ddd",
+   "question_id": "58ef2f1c",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "question": "When did I volunteer at the local animal shelter's fundraising dinner?",
+   "gold": "February 14th",
+   "response": "You volunteered at the \"Love is in the Air\" fundraising dinner back in February."
+  },
+  {
+   "item_id": "3b6f954b:d68eae84425d",
+   "question_id": "3b6f954b",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "question": "Where did I attend for my study abroad program?",
+   "gold": "University of Melbourne in Australia",
+   "response": "University of Melbourne."
+  },
+  {
+   "item_id": "726462e0:fa8e98e6dd9a",
+   "question_id": "726462e0",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "question": "What was the discount I got on my first purchase from the new clothing brand?",
+   "gold": "10%",
+   "response": "10% discount."
+  },
+  {
+   "item_id": "c8c3f81d:cd5b7b9fb7b9",
+   "question_id": "c8c3f81d",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "question": "What brand are my favorite running shoes?",
+   "gold": "Nike",
+   "response": "Nike"
+  },
+  {
+   "item_id": "21436231:89ec1526eea3",
+   "question_id": "21436231",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "question": "How many largemouth bass did I catch on my fishing trip to Lake Michigan?",
+   "gold": "12",
+   "response": "You caught 12 largemouth bass on your last trip to Lake Michigan."
+  },
+  {
+   "item_id": "95bcc1c8:90ff9870f302",
+   "question_id": "95bcc1c8",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "question": "How many amateur comedians did I watch perform at the open mic night?",
+   "gold": "10",
+   "response": "You saw 10 amateur comedians perform."
+  },
+  {
+   "item_id": "0862e8bf:9d77a24d0f4c",
+   "question_id": "0862e8bf",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "question": "What is the name of my cat?",
+   "gold": "Luna",
+   "response": "Luna"
+  },
+  {
+   "item_id": "853b0a1d:67a9c1f34b27",
+   "question_id": "853b0a1d",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "question": "How old was I when my grandma gave me the silver necklace?",
+   "gold": "18",
+   "response": "18 years old."
+  },
+  {
+   "item_id": "a06e4cfe:73602294fc3b",
+   "question_id": "a06e4cfe",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "question": "What is my preferred gin-to-vermouth ratio for a classic gin martini?",
+   "gold": "3:1",
+   "response": "3:1 ratio."
+  },
+  {
+   "item_id": "37d43f65:c3f6db7a9929",
+   "question_id": "37d43f65",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "question": "How much RAM did I upgrade my laptop to?",
+   "gold": "16GB",
+   "response": "16GB"
+  },
+  {
+   "item_id": "25e5aa4f:ea0ccc25daea",
+   "question_id": "25e5aa4f",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "question": "Where did I complete my Bachelor's degree in Computer Science?",
+   "gold": "University of California, Los Angeles (UCLA)",
+   "response": "UCLA"
+  },
+  {
+   "item_id": "86b68151:1e2b841a8b1d",
+   "question_id": "86b68151",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "question": "Where did I buy my new bookshelf from?",
+   "gold": "IKEA",
+   "response": "IKEA."
+  },
+  {
+   "item_id": "577d4d32:ea91fe5411ca",
+   "question_id": "577d4d32",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "question": "What time do I stop checking work emails and messages?",
+   "gold": "7 pm",
+   "response": "By 7 pm."
+  },
+  {
+   "item_id": "ec81a493:45e2e5091bc1",
+   "question_id": "ec81a493",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "question": "How many copies of my favorite artist's debut album were released worldwide?",
+   "gold": "500",
+   "response": "Only 500 copies were released worldwide."
+  },
+  {
+   "item_id": "19b5f2b3:5ff468c2d912",
+   "question_id": "19b5f2b3",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "question": "How long was I in Japan for?",
+   "gold": "two weeks",
+   "response": "Two weeks."
+  },
+  {
+   "item_id": "8e9d538c:ad4e9aa3c65e",
+   "question_id": "8e9d538c",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "question": "How many skeins of worsted weight yarn did I find in my stash?",
+   "gold": "17",
+   "response": "17 skeins."
+  },
+  {
+   "item_id": "0862e8bf_abs:78f59c4071b7",
+   "question_id": "0862e8bf_abs",
+   "question_type": "single-session-user",
+   "abstention": true,
+   "question": "What is the name of my hamster?",
+   "gold": "You did not mention this information. You mentioned your cat Luna but not your hamster.",
+   "response": "The memories do not contain any information about your hamster's name."
+  },
+  {
+   "item_id": "29f2956b_abs:9bac6077aab0",
+   "question_id": "29f2956b_abs",
+   "question_type": "single-session-user",
+   "abstention": true,
+   "question": "How much time do I dedicate to practicing violin every day?",
+   "gold": "You did not mention this information. You mentioned practing guitar everyday, but not violin.",
+   "response": "You haven't mentioned the specific time you dedicate to practicing violin every day."
+  },
+  {
+   "item_id": "gpt4_59c863d7:5b8720006e20",
+   "question_id": "gpt4_59c863d7",
+   "question_type": "multi-session",
+   "abstention": false,
+   "question": "How many model kits have I worked on or bought?",
+   "gold": "I have worked on or bought five model kits. The scales of the models are: Revell F-15 Eagle (scale not mentioned), Tamiya 1/48 scale Spitfire Mk.V, 1/16 scale German Tiger I tank, 1/72 scale B-29 bomber, and 1/24 scale '69 Camaro.",
+   "response": "You have worked on or bought at least three model kits: a Tamiya 1/48 scale Spitfire Mk.V, a 1/72 scale B-29 bomber, and a 1/24 scale '69 Camaro."
+  },
+  {
+   "item_id": "aae3761f:977a0c663626",
+   "question_id": "aae3761f",
+   "question_type": "multi-session",
+   "abstention": false,
+   "question": "How many hours in total did I spend driving to my three road trip destinations combined?",
+   "gold": "15 hours for getting to the three destinations (or 30 hours for the round trip)",
+   "response": "You spent a total of 18-20 hours driving to your three road trip destinations combined."
+  },
+  {
+   "item_id": "gpt4_f2262a51:18ee010aad32",
+   "question_id": "gpt4_f2262a51",
+   "question_type": "multi-session",
+   "abstention": false,
+   "question": "How many different doctors did I visit?",
+   "gold": "I visited three different doctors: a primary care physician, an ENT specialist, and a dermatologist.",
+   "response": "You visited at least two different doctors: Dr. Lee for the biopsy and Dr. Smith for your primary care."
+  },
+  {
+   "item_id": "dd2973ad:4b6b58bb92d2",
+   "question_id": "dd2973ad",
+   "question_type": "multi-session",
+   "abstention": false,
+   "question": "What time did I go to bed on the day before I had a doctor's appointment?",
+   "gold": "2 AM",
+   "response": "You went to bed at 2 AM on Wednesday, the day before your doctor's appointment on Thursday."
+  },
+  {
+   "item_id": "6cb6f249:aa8314e18fa7",
+   "question_id": "6cb6f249",
+   "question_type": "multi-session",
+   "abstention": false,
+   "question": "How many days did I take social media breaks in total?",
+   "gold": "17 days",
+   "response": "You took a week-long break from social media in mid-January and a 10-day break in mid-February, totaling 17 days."
+  },
+  {
+   "item_id": "46a3abf7:2ea59e60a9b5",
+   "question_id": "46a3abf7",
+   "question_type": "multi-session",
+   "abstention": false,
+   "question": "How many tanks do I currently have, including the one I set up for my friend's kid?",
+   "gold": "3",
+   "response": "You currently have two tanks: your 20-gallon community tank and the 1-gallon tank for your friend's kid."
+  },
+  {
+   "item_id": "d682f1a2:677d965a2376",
+   "question_id": "d682f1a2",
+   "question_type": "multi-session",
+   "abstention": false,
+   "question": "How many different types of food delivery services have I used recently?",
+   "gold": "3",
+   "response": "You have used at least one food delivery service recently, called Fresh Fusion."
+  },
+  {
+   "item_id": "7024f17c:e25a8510eca2",
+   "question_id": "7024f17c",
+   "question_type": "multi-session",
+   "abstention": false,
+   "question": "How many hours of jogging and yoga did I do last week?",
+   "gold": "0.5 hours",
+   "response": "You practiced yoga for 6 hours and jogged for 4 hours last week."
+  },
+  {
+   "item_id": "gpt4_2ba83207:804c76ac8b30",
+   "question_id": "gpt4_2ba83207",
+   "question_type": "multi-session",
+   "abstention": false,
+   "question": "Which grocery store did I spend the most money at in the past month?",
+   "gold": "Thrive Market",
+   "response": "Walmart."
+  },
+  {
+   "item_id": "2318644b:cde565a4ac49",
+   "question_id": "2318644b",
+   "question_type": "multi-session",
+   "abstention": false,
+   "question": "How much more did I spend on accommodations per night in Hawaii compared to Tokyo?",
+   "gold": "$270",
+   "response": "You spent over $300 per night in Hawaii compared to around $30 per night in Tokyo."
+  },
+  {
+   "item_id": "2ce6a0f2:f4ea6e3f77fd",
+   "question_id": "2ce6a0f2",
+   "question_type": "multi-session",
+   "abstention": false,
+   "question": "How many different art-related events did I attend in the past month?",
+   "gold": "4",
+   "response": "You attended two art-related events in the past month."
+  },
+  {
+   "item_id": "gpt4_31ff4165:cc9b9808dc62",
+   "question_id": "gpt4_31ff4165",
+   "question_type": "multi-session",
+   "abstention": false,
+   "question": "How many health-related devices do I use in a day?",
+   "gold": "4",
+   "response": "You use two health-related devices in a day."
+  },
+  {
+   "item_id": "a9f6b44c:c03fbcd0c68f",
+   "question_id": "a9f6b44c",
+   "question_type": "multi-session",
+   "abstention": false,
+   "question": "How many bikes did I service or plan to service in March?",
+   "gold": "2",
+   "response": "You serviced one bike on March 10th."
+  },
+  {
+   "item_id": "edced276:4c3604d125a4",
+   "question_id": "edced276",
+   "question_type": "multi-session",
+   "abstention": false,
+   "question": "How many days did I spend in total traveling in Hawaii and in New York City?",
+   "gold": "15 days",
+   "response": "You spent a total of 10 days traveling: 5 days in New York City and 5 days in Hawaii."
+  },
+  {
+   "item_id": "10d9b85a:987a01a2e843",
+   "question_id": "10d9b85a",
+   "question_type": "multi-session",
+   "abstention": false,
+   "question": "How many days did I spend attending workshops, lectures, and conferences in April?",
+   "gold": "3 days",
+   "response": "You spent 3 days attending workshops and lectures in April."
+  },
+  {
+   "item_id": "2b8f3739:8401a1842f61",
+   "question_id": "2b8f3739",
+   "question_type": "multi-session",
+   "abstention": false,
+   "question": "What is the total amount of money I earned from selling my products at the markets?",
+   "gold": "$495",
+   "response": "$345."
+  },
+  {
+   "item_id": "1a8a66a6:626a0500889b",
+   "question_id": "1a8a66a6",
+   "question_type": "multi-session",
+   "abstention": false,
+   "question": "How many magazine subscriptions do I currently have?",
+   "gold": "2",
+   "response": "You currently have two magazine subscriptions: The New Yorker and Forbes."
+  },
+  {
+   "item_id": "c2ac3c61:8de458c35479",
+   "question_id": "c2ac3c61",
+   "question_type": "multi-session",
+   "abstention": false,
+   "question": "How many online courses have I completed in total?",
+   "gold": "5",
+   "response": "You have completed two courses on edX and three courses on Coursera, totaling five online courses."
+  },
+  {
+   "item_id": "gpt4_372c3eed:4f1693e90602",
+   "question_id": "gpt4_372c3eed",
+   "question_type": "multi-session",
+   "abstention": false,
+   "question": "How many years in total did I spend in formal education from high school to the completion of my Bachelor's degree?",
+   "gold": "10 years",
+   "response": "Eight years."
+  },
+  {
+   "item_id": "88432d0a_abs:a470e1533775",
+   "question_id": "88432d0a_abs",
+   "question_type": "multi-session",
+   "abstention": true,
+   "question": "How many times did I bake egg tarts in the past two weeks?",
+   "gold": "The information provided is not enough. You did not mention baking egg tarts.",
+   "response": "You did not mention baking egg tarts in the past two weeks."
+  },
+  {
+   "item_id": "60bf93ed_abs:e7b198728942",
+   "question_id": "60bf93ed_abs",
+   "question_type": "multi-session",
+   "abstention": true,
+   "question": "How many days did it take for my iPad case to arrive after I bought it?",
+   "gold": "The information provided is not enough. You did not mention buying an iPad case.",
+   "response": "The memories do not contain information about the purchase or arrival of an iPad case."
+  },
+  {
+   "item_id": "edced276_abs:2937e79dd52d",
+   "question_id": "edced276_abs",
+   "question_type": "multi-session",
+   "abstention": true,
+   "question": "How many days did I spend in total traveling in Hawaii and in Seattle?",
+   "gold": "The information provided is not enough. You mentioned traveling for 10 days in Hawaii but did not mention abything about the trip to Seattle.",
+   "response": "You spent 10 days in total traveling in Hawaii and in Seattle."
+  },
+  {
+   "item_id": "75832dbd:09540429ccca",
+   "question_id": "75832dbd",
+   "question_type": "single-session-preference",
+   "abstention": false,
+   "question": "Can you recommend some recent publications or conferences that I might find interesting?",
+   "gold": "The user would prefer suggestions related to recent research papers, articles, or conferences that focus on artificial intelligence in healthcare, particularly those that involve deep learning for medical image analysis. They would not be interested in general AI topics or those unrelated to healthcare.",
+   "response": "Check out the latest issues of \"Medical Image Analysis\" and the \"International Conference on Medical Image Computing and Computer-Assisted Intervention (MICCAI).\""
+  },
+  {
+   "item_id": "195a1a1b:c18b7e3b0c72",
+   "question_id": "195a1a1b",
+   "question_type": "single-session-preference",
+   "abstention": false,
+   "question": "Can you suggest some activities that I can do in the evening?",
+   "gold": "The user would prefer suggestions that involve relaxing activities that can be done in the evening, preferably before 9:30 pm. They would not prefer suggestions that involve using their phone or watching TV, as these activities have been affecting their sleep quality.",
+   "response": "Consider going for a walk, reading a book, watching a movie, or trying a new recipe."
+  },
+  {
+   "item_id": "caf03d32:4522d79b635e",
+   "question_id": "caf03d32",
+   "question_type": "single-session-preference",
+   "abstention": false,
+   "question": "I've been struggling with my slow cooker recipes. Any advice on getting better results?",
+   "gold": "The user would prefer responses that provide tips and advice specifically tailored to their slow cooker experiences, utilizing their recent success with beef stew and interest in making yogurt in the slow cooker. They might not prefer general slow cooker recipes or advice unrelated to their specific experiences and interests.",
+   "response": "Ensure proper temperature control, use fresh ingredients, and follow recipes closely for best results."
+  },
+  {
+   "item_id": "09d032c9:1bfc8ccb7283",
+   "question_id": "09d032c9",
+   "question_type": "single-session-preference",
+   "abstention": false,
+   "question": "I've been having trouble with the battery life on my phone lately. Any tips?",
+   "gold": "The user would prefer responses that build upon their previous mention of purchasing a portable power bank, such as suggestions on how to optimize its use, like ensuring it's fully charged before use. They might also appreciate tips on utilizing battery-saving features on their phone. The user may not prefer responses that suggest alternative solutions or unrelated advice.",
+   "response": "Reduce screen brightness, close unused apps, and disable background app refresh."
+  },
+  {
+   "item_id": "95228167:494a435e2b3b",
+   "question_id": "95228167",
+   "question_type": "single-session-preference",
+   "abstention": false,
+   "question": "I'm getting excited about my visit to the music store this weekend. Any tips on what to look for in a new guitar?",
+   "gold": "The user would prefer responses that highlight the differences between Fender Stratocaster and Gibson Les Paul electric guitars, such as the feel of the neck, weight, and sound profile. They might not prefer general tips on buying an electric guitar or suggestions that do not take into account their current guitar and desired upgrade.",
+   "response": "Look for comfort, sound quality, playability, and your budget."
+  },
+  {
+   "item_id": "75f70248:2b58da771f90",
+   "question_id": "75f70248",
+   "question_type": "single-session-preference",
+   "abstention": false,
+   "question": "I've been sneezing quite a bit lately. Do you think it might be my living room?",
+   "gold": "The user would prefer responses that consider the potential impact of their cat, Luna, and her shedding on their sneezing, as well as the recent deep clean of the living room and its possible effect on stirring up dust. They might not prefer responses that fail to take into account these specific details previously mentioned, such as generic suggestions or unrelated factors.",
+   "response": "It could be due to dust or allergens in your living room."
+  },
+  {
+   "item_id": "1da05512:3ae20780d2ef",
+   "question_id": "1da05512",
+   "question_type": "single-session-preference",
+   "abstention": false,
+   "question": "I'm trying to decide whether to buy a NAS device now or wait. What do you think?",
+   "gold": "The user would prefer responses that take into account their current home network storage capacity issues and recent reliance on external hard drives, highlighting the potential benefits of a NAS device in addressing these specific needs. They might not prefer responses that ignore their current storage challenges or fail to consider their recent tech upgrades and priorities. Preferred responses would utilize the user's previous mentions of storage capacity issues and tech investments to inform their decision.",
+   "response": "Consider your current storage needs and budget; if you need more space now, buy it. If not, waiting for better models or prices could be wise."
+  },
+  {
+   "item_id": "b6025781:a86a5d6481fd",
+   "question_id": "b6025781",
+   "question_type": "single-session-preference",
+   "abstention": false,
+   "question": "I'm planning my meal prep next week, any suggestions for new recipes?",
+   "gold": "The user would prefer responses that suggest healthy meal prep recipes, especially those that incorporate quinoa and roasted vegetables, and offer variations in protein sources. They might appreciate suggestions that build upon their existing preferences, such as new twists on chicken Caesar salads or turkey and avocado wraps. The user may not prefer responses that suggest unhealthy or high-calorie meal prep options, or those that deviate significantly from their established healthy eating habits.",
+   "response": "Try roasted sweet potatoes with rosemary, lentil bolognese, and grilled chicken with quinoa."
+  },
+  {
+   "item_id": "1c0ddc50:2f3f6160ae32",
+   "question_id": "1c0ddc50",
+   "question_type": "single-session-preference",
+   "abstention": false,
+   "question": "Can you suggest some activities I can do during my commute to work?",
+   "gold": "The user would prefer suggestions related to listening to new podcasts or audiobooks, especially the genre beyond true crime or self-improvement, such as history. They may not be interested in activities that require visual attention, such as reading or watching videos, as they are commuting. The user would not prefer general podcast topics such as true crime or self-improvement, as the user wants to explore other topics.",
+   "response": "Listen to podcasts, audiobooks, or music; practice mindfulness or deep breathing; or use a language learning app."
+  },
+  {
+   "item_id": "1f2b8d4f:6773e20de6e7",
+   "question_id": "1f2b8d4f",
+   "question_type": "multi-session",
+   "abstention": false,
+   "question": "What is the difference in price between my luxury boots and the similar pair found at the budget store?",
+   "gold": "$750",
+   "response": "$750 difference."
+  },
+  {
+   "item_id": "e6041065:147a63c68e8c",
+   "question_id": "e6041065",
+   "question_type": "multi-session",
+   "abstention": false,
+   "question": "What percentage of packed shoes did I wear on my last trip?",
+   "gold": "40%",
+   "response": "40% of packed shoes."
+  },
+  {
+   "item_id": "d905b33f:62b4fc2e946b",
+   "question_id": "d905b33f",
+   "question_type": "multi-session",
+   "abstention": false,
+   "question": "What percentage discount did I get on the book from my favorite author?",
+   "gold": "20%",
+   "response": "You got a 20% discount on the book."
+  },
+  {
+   "item_id": "60036106:0ceef93f0e85",
+   "question_id": "60036106",
+   "question_type": "multi-session",
+   "abstention": false,
+   "question": "What was the total number of people reached by my Facebook ad campaign and Instagram influencer collaboration?",
+   "gold": "12,000",
+   "response": "Your Facebook ad campaign reached around 2,000 people, and your Instagram influencer collaboration reached 10,000 followers."
+  },
+  {
+   "item_id": "5025383b:3626e8e77ff6",
+   "question_id": "5025383b",
+   "question_type": "multi-session",
+   "abstention": false,
+   "question": "What are the two hobbies that led me to join online communities?",
+   "gold": "photography and cooking",
+   "response": "Cooking and photography."
+  },
+  {
+   "item_id": "a1cc6108:fdd4cd727a79",
+   "question_id": "a1cc6108",
+   "question_type": "multi-session",
+   "abstention": false,
+   "question": "How old was I when Alex was born?",
+   "gold": "11",
+   "response": "You were 21 years old when Alex was born."
+  },
+  {
+   "item_id": "27016adc:e899f5fc7996",
+   "question_id": "27016adc",
+   "question_type": "multi-session",
+   "abstention": false,
+   "question": "What percentage of the countryside property's price is the cost of the renovations I plan to do on my current house?",
+   "gold": "10%",
+   "response": "The cost of renovations ($20,000) is 10% of the countryside property's price ($200,000)."
+  },
+  {
+   "item_id": "92a0aa75:7647e29d8cb0",
+   "question_id": "92a0aa75",
+   "question_type": "multi-session",
+   "abstention": false,
+   "question": "How long have I been working in my current role?",
+   "gold": "1 year and 5 months",
+   "response": "3 years and 9 months."
+  },
+  {
+   "item_id": "0ea62687:62aae53eebd3",
+   "question_id": "0ea62687",
+   "question_type": "multi-session",
+   "abstention": false,
+   "question": "How much more miles per gallon was my car getting a few months ago compared to now?",
+   "gold": "2",
+   "response": "Your car was getting 2 miles per gallon more a few months ago (30 MPG compared to 28 MPG now)."
+  },
+  {
+   "item_id": "67e0d0f2:9168da3b63a5",
+   "question_id": "67e0d0f2",
+   "question_type": "multi-session",
+   "abstention": false,
+   "question": "What is the total number of online courses I've completed?",
+   "gold": "20",
+   "response": "You have completed 12 online courses."
+  },
+  {
+   "item_id": "60159905:590f6848ac43",
+   "question_id": "60159905",
+   "question_type": "multi-session",
+   "abstention": false,
+   "question": "How many dinner parties have I attended in the past month?",
+   "gold": "three",
+   "response": "You attended one dinner party in the past month."
+  },
+  {
+   "item_id": "078150f1:9dd81c6bd3a0",
+   "question_id": "078150f1",
+   "question_type": "multi-session",
+   "abstention": false,
+   "question": "How much more money did I raise than my initial goal in the charity cycling event?",
+   "gold": "$50",
+   "response": "You raised $50 more than your initial goal of $200."
+  },
+  {
+   "item_id": "8cf4d046:10e271d4dcea",
+   "question_id": "8cf4d046",
+   "question_type": "multi-session",
+   "abstention": false,
+   "question": "What is the average GPA of my undergraduate and graduate studies?",
+   "gold": "3.83",
+   "response": "The average GPA of your undergraduate and graduate studies is 3.83."
+  },
+  {
+   "item_id": "a346bb18:387ec59fd9e3",
+   "question_id": "a346bb18",
+   "question_type": "multi-session",
+   "abstention": false,
+   "question": "How many minutes did I exceed my target time by in the marathon?",
+   "gold": "12",
+   "response": "You exceeded your target time by 12 minutes."
+  },
+  {
+   "item_id": "37f165cf:28970f717dea",
+   "question_id": "37f165cf",
+   "question_type": "multi-session",
+   "abstention": false,
+   "question": "What was the page count of the two novels I finished in January and March?",
+   "gold": "856",
+   "response": "The page count of \"The Power\" by Naomi Alderman is 341 pages, and \"The Nightingale\" by Kristin Hannah is 440 pages."
+  },
+  {
+   "item_id": "21d02d0d:2439e75a578a",
+   "question_id": "21d02d0d",
+   "question_type": "multi-session",
+   "abstention": false,
+   "question": "How many fun runs did I miss in March due to work commitments?",
+   "gold": "2",
+   "response": "You missed two fun runs in March due to work commitments."
+  },
+  {
+   "item_id": "2311e44b_abs:552f78e21cd1",
+   "question_id": "2311e44b_abs",
+   "question_type": "multi-session",
+   "abstention": true,
+   "question": "How many pages do I have left to read in 'Sapiens'?",
+   "gold": "The information provided is not enough. You did not mention how many paged do you have left to read in 'Sapiens'.",
+   "response": "You have 250 pages left to read in 'Sapiens'."
+  },
+  {
+   "item_id": "a96c20ee_abs:513241526dd2",
+   "question_id": "a96c20ee_abs",
+   "question_type": "multi-session",
+   "abstention": true,
+   "question": "At which university did I present a poster for my undergrad course research project?",
+   "gold": "The information provided is not enough. You did not mention presenting a poster for your undergrad course research project.",
+   "response": "Harvard University"
+  },
+  {
+   "item_id": "gpt4_f49edff3:daef37a24825",
+   "question_id": "gpt4_f49edff3",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "question": "Which three events happened in the order from first to last: the day I helped my friend prepare the nursery, the day I helped my cousin pick out stuff for her baby shower, and the day I ordered a customized phone case for my friend's birthday?",
+   "gold": "First, I helped my friend prepare the nursery, then I helped my cousin pick out stuff for her baby shower, and lastly, I ordered a customized phone case for my friend's birthday.",
+   "response": "The day I helped my cousin pick out stuff for her baby shower, the day I helped my friend prepare the nursery, and the day I ordered a customized phone case for my friend's birthday."
+  },
+  {
+   "item_id": "71017276:af7b9f52c724",
+   "question_id": "71017276",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "question": "How many weeks ago did I meet up with my aunt and receive the crystal chandelier?",
+   "gold": "4",
+   "response": "You received the crystal chandelier from your aunt three weeks ago."
+  },
+  {
+   "item_id": "0bc8ad92:0cb55c4a8d1c",
+   "question_id": "0bc8ad92",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "question": "How many months have passed since I last visited a museum with a friend?",
+   "gold": "5",
+   "response": "Four months have passed since you last visited a museum with a friend."
+  },
+  {
+   "item_id": "af082822:51201b578f32",
+   "question_id": "af082822",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "question": "How many weeks ago did I attend the friends and family sale at Nordstrom?",
+   "gold": "2",
+   "response": "You attended the friends and family sale at Nordstrom 1 week ago."
+  },
+  {
+   "item_id": "gpt4_b5700ca9:9cc8014f2527",
+   "question_id": "gpt4_b5700ca9",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "question": "How many days ago did I attend the Maundy Thursday service at the Episcopal Church?",
+   "gold": "4 days.",
+   "response": "You attended the Maundy Thursday service 14 days ago."
+  },
+  {
+   "item_id": "gpt4_1d4ab0c9:5e3ebb75b063",
+   "question_id": "gpt4_1d4ab0c9",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "question": "How many days passed between the day I started watering my herb garden and the day I harvested my first batch of fresh herbs?",
+   "gold": "24 days. 25 days (including the last day) is also acceptable.",
+   "response": "0 days."
+  },
+  {
+   "item_id": "gpt4_e072b769:5eb479c88074",
+   "question_id": "gpt4_e072b769",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "question": "How many weeks ago did I start using the cashback app 'Ibotta'?",
+   "gold": "3 weeks ago",
+   "response": "You started using the cashback app 'Ibotta' three weeks ago."
+  },
+  {
+   "item_id": "0db4c65d:5203a96ceebf",
+   "question_id": "0db4c65d",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "question": "How many days had passed since I finished reading 'The Seven Husbands of Evelyn Hugo' when I attended the book reading event at the local library, where the author of 'The Silent Patient' is discussing her latest thriller novel?",
+   "gold": "18 days. 19 days (including the last day) is also acceptable.",
+   "response": "17 days."
+  },
+  {
+   "item_id": "gpt4_6dc9b45b:7069c4d98909",
+   "question_id": "gpt4_6dc9b45b",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "question": "How many months ago did I attend the Seattle International Film Festival?",
+   "gold": "4 months ago",
+   "response": "You attended the Seattle International Film Festival one month ago."
+  },
+  {
+   "item_id": "gpt4_7a0daae1:cb9d64d04cf5",
+   "question_id": "gpt4_7a0daae1",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "question": "How many weeks passed between the day I bought my new tennis racket and the day I received it?",
+   "gold": "1 week",
+   "response": "One week."
+  },
+  {
+   "item_id": "gpt4_468eb063:15a925e9697a",
+   "question_id": "gpt4_468eb063",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "question": "How many days ago did I meet Emma?",
+   "gold": "9 days ago. 10 days (including the last day) is also acceptable.",
+   "response": "You met Emma 6 days ago."
+  },
+  {
+   "item_id": "4dfccbf7:cb60a5299ad2",
+   "question_id": "4dfccbf7",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "question": "How many days had passed since I started taking ukulele lessons when I decided to take my acoustic guitar to the guitar tech for servicing?",
+   "gold": "24 days. 25 days (including the last day) is also acceptable.",
+   "response": "24 days."
+  },
+  {
+   "item_id": "2ebe6c90:d0102e054a18",
+   "question_id": "2ebe6c90",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "question": "How many days did it take me to finish 'The Nightingale' by Kristin Hannah?",
+   "gold": "21 days. 22 days (including the last day) is also acceptable.",
+   "response": "You finished \"The Nightingale\" in 21 days."
+  },
+  {
+   "item_id": "6e984301:5c5cc8d571cf",
+   "question_id": "6e984301",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "question": "How many weeks have I been taking sculpting classes when I invested in my own set of sculpting tools?",
+   "gold": "3",
+   "response": "You have been taking sculpting classes for about 6 weeks."
+  },
+  {
+   "item_id": "bcbe585f:b338f352713f",
+   "question_id": "bcbe585f",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "question": "How many weeks ago did I attend a bird watching workshop at the local Audubon society?",
+   "gold": "4",
+   "response": "A month and a half ago."
+  },
+  {
+   "item_id": "gpt4_21adecb5:c138d619e3c3",
+   "question_id": "gpt4_21adecb5",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "question": "How many months passed between the completion of my undergraduate degree and the submission of my master's thesis?",
+   "gold": "6 months",
+   "response": "Five months."
+  },
+  {
+   "item_id": "5e1b23de:7ef73ecd6efd",
+   "question_id": "5e1b23de",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "question": "How many months ago did I attend the photography workshop?",
+   "gold": "3",
+   "response": "Five months ago."
+  },
+  {
+   "item_id": "eac54adc:a981c9d32b39",
+   "question_id": "eac54adc",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "question": "How many days ago did I launch my website when I signed a contract with my first client?",
+   "gold": "19 days ago. 20 days (including the last day) is also acceptable.",
+   "response": "You launched your website 21 days ago."
+  },
+  {
+   "item_id": "gpt4_e414231e:a21a43f73835",
+   "question_id": "gpt4_e414231e",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "question": "How many days passed between the day I fixed my mountain bike and the day I decided to upgrade my road bike's pedals?",
+   "gold": "4 days. 5 days (including the last day) is also acceptable.",
+   "response": "4 days."
+  },
+  {
+   "item_id": "gpt4_7bc6cf22:cd451e97ace7",
+   "question_id": "gpt4_7bc6cf22",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "question": "How many days ago did I read the March 15th issue of The New Yorker?",
+   "gold": "12 days ago. 13 days (including the last day) is also acceptable.",
+   "response": "Five days ago."
+  },
+  {
+   "item_id": "gpt4_e061b84g:b70aacf56046",
+   "question_id": "gpt4_e061b84g",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "question": "I mentioned participating in a sports event two weeks ago. What was the event?",
+   "gold": "The company's annual charity soccer tournament.",
+   "response": "You mentioned participating in a charity soccer tournament."
+  },
+  {
+   "item_id": "gpt4_e414231f:696db52ffa8d",
+   "question_id": "gpt4_e414231f",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "question": "Which bike did I fixed or serviced the past weekend?",
+   "gold": "road bike",
+   "response": "You fixed the flat tire on your mountain bike."
+  },
+  {
+   "item_id": "gpt4_4929293b:497678c49054",
+   "question_id": "gpt4_4929293b",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "question": "What was the the life event of one of my relatives that I participated in a week ago?",
+   "gold": "my cousin's wedding",
+   "response": "Your niece's kindergarten graduation ceremony."
+  },
+  {
+   "item_id": "eac54add:6004823003b9",
+   "question_id": "eac54add",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "question": "What was the significant buisiness milestone I mentioned four weeks ago?",
+   "gold": "I signed a contract with my first client.",
+   "response": "You launched your website."
+  },
+  {
+   "item_id": "6e984302:ee5591de3776",
+   "question_id": "6e984302",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "question": "I mentioned an investment for a competition four weeks ago? What did I buy?",
+   "gold": "I got my own set of sculpting tools.",
+   "response": "You bought a silver necklace with a small pendant for $40."
+  },
+  {
+   "item_id": "gpt4_8279ba03:02ec5eddfd0b",
+   "question_id": "gpt4_8279ba03",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "question": "What kitchen appliance did I buy 10 days ago?",
+   "gold": "a smoker",
+   "response": "You bought a portable power bank."
+  },
+  {
+   "item_id": "gpt4_2487a7cb:e290b3e993e4",
+   "question_id": "gpt4_2487a7cb",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "question": "Which event did I attend first, the 'Effective Time Management' workshop or the 'Data Analysis using Python' webinar?",
+   "gold": "'Data Analysis using Python' webinar",
+   "response": "The 'Data Analysis using Python' webinar."
+  },
+  {
+   "item_id": "gpt4_76048e76:49b6613744db",
+   "question_id": "gpt4_76048e76",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "question": "Which vehicle did I take care of first in February, the bike or the car?",
+   "gold": "bike",
+   "response": "The bike."
+  },
+  {
+   "item_id": "gpt4_2312f94c:dfa63e50acd3",
+   "question_id": "gpt4_2312f94c",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "question": "Which device did I got first, the Samsung Galaxy S22 or the Dell XPS 13?",
+   "gold": "Samsung Galaxy S22",
+   "response": "You got the Dell XPS 13 first."
+  },
+  {
+   "item_id": "2a1811e2:e2ef19de5a04",
+   "question_id": "2a1811e2",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "question": "How many days had passed between the Hindu festival of Holi and the Sunday mass at St. Mary's Church?",
+   "gold": "21 days. 22 days (including the last day) is also acceptable.",
+   "response": "28 days."
+  },
+  {
+   "item_id": "gpt4_70e84552:aaa26a57d93c",
+   "question_id": "gpt4_70e84552",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "question": "Which task did I complete first, fixing the fence or trimming the goats' hooves?",
+   "gold": "Fixing the fence",
+   "response": "You fixed the fence first."
+  },
+  {
+   "item_id": "gpt4_2d58bcd6:5a17cc9a9613",
+   "question_id": "gpt4_2d58bcd6",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "question": "Which book did I finish reading first, 'The Hate U Give' or 'The Nightingale'?",
+   "gold": "'The Hate U Give'",
+   "response": "You finished reading 'The Hate U Give' first."
+  },
+  {
+   "item_id": "b9cfe692:3e84f1b0fec7",
+   "question_id": "b9cfe692",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "question": "How long did I take to finish 'The Seven Husbands of Evelyn Hugo' and 'The Nightingale' combined?",
+   "gold": "5.5 weeks",
+   "response": "You took a total of five and a half weeks to finish both books combined."
+  },
+  {
+   "item_id": "gpt4_9a159967:e4183b95aaee",
+   "question_id": "gpt4_9a159967",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "question": "Which airline did I fly with the most in March and April?",
+   "gold": "United Airlines",
+   "response": "United Airlines."
+  },
+  {
+   "item_id": "gpt4_d9af6064:75b4477c4191",
+   "question_id": "gpt4_d9af6064",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "question": "Which device did I set up first, the smart thermostat or the new router?",
+   "gold": "new router",
+   "response": "The new router."
+  },
+  {
+   "item_id": "gpt4_4cd9eba1:8b22b44a0749",
+   "question_id": "gpt4_4cd9eba1",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "question": "How many weeks have I been accepted into the exchange program when I started attending the pre-departure orientation sessions?",
+   "gold": "one week",
+   "response": "Three weeks."
+  },
+  {
+   "item_id": "6613b389:0e0140fa588c",
+   "question_id": "6613b389",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "question": "How many months before my anniversary did Rachel get engaged?",
+   "gold": "2",
+   "response": "Rachel got engaged two months before your anniversary."
+  },
+  {
+   "item_id": "gpt4_0a05b494:889a776c6dcf",
+   "question_id": "gpt4_0a05b494",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "question": "Who did I meet first, the woman selling jam at the farmer's market or the tourist from Australia?",
+   "gold": "the woman selling jam at the farmer's market",
+   "response": "You met the tourist from Australia first."
+  },
+  {
+   "item_id": "8c18457d:19ccf96dcfc4",
+   "question_id": "8c18457d",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "question": "How many days had passed between the day I bought a gift for my brother's graduation ceremony and the day I bought a birthday gift for my best friend?",
+   "gold": "7 days. 8 days (including the last day) is also acceptable.",
+   "response": "7 days."
+  },
+  {
+   "item_id": "gpt4_70e84552_abs:5a2b72d742dd",
+   "question_id": "gpt4_70e84552_abs",
+   "question_type": "temporal-reasoning",
+   "abstention": true,
+   "question": "Which task did I complete first, fixing the fence or purchasing three cows from Peter?",
+   "gold": "The information provided is not enough. You mentioned fixing the fence but did not mention purchasing cows from Peter.",
+   "response": "Fixing the fence."
+  },
+  {
+   "item_id": "830ce83f:b871ea7d05f0",
+   "question_id": "830ce83f",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "question": "Where did Rachel move to after her recent relocation?",
+   "gold": "the suburbs",
+   "response": "Rachel moved back to the suburbs."
+  },
+  {
+   "item_id": "d7c942c3:324ab4a60f76",
+   "question_id": "d7c942c3",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "question": "Is my mom using the same grocery list method as me?",
+   "gold": "Yes.",
+   "response": "Yes, your mom is using the same grocery list app as you."
+  },
+  {
+   "item_id": "ce6d2d27:59c58fc772c8",
+   "question_id": "ce6d2d27",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "question": "What day of the week do I take a cocktail-making class?",
+   "gold": "Friday",
+   "response": "Fridays."
+  },
+  {
+   "item_id": "9ea5eabc:58fd5124f219",
+   "question_id": "9ea5eabc",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "question": "Where did I go on my most recent family trip?",
+   "gold": "Paris",
+   "response": "Hawaii."
+  },
+  {
+   "item_id": "07741c44:439f9ed312c3",
+   "question_id": "07741c44",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "question": "Where do I initially keep my old sneakers?",
+   "gold": "under my bed",
+   "response": "Under my bed."
+  },
+  {
+   "item_id": "a1eacc2a:36060ae2ac18",
+   "question_id": "a1eacc2a",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "question": "How many short stories have I written since I started writing regularly?",
+   "gold": "seven",
+   "response": "Four short stories."
+  },
+  {
+   "item_id": "184da446:d1450582b3f1",
+   "question_id": "184da446",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "question": "How many pages of 'A Short History of Nearly Everything' have I read so far?",
+   "gold": "220",
+   "response": "You are on page 220."
+  },
+  {
+   "item_id": "4d6b87c8:b4e3b6f2a145",
+   "question_id": "4d6b87c8",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "question": "How many titles are currently on my to-watch list?",
+   "gold": "25",
+   "response": "25 titles."
+  },
+  {
+   "item_id": "08e075c7:4c4ff34afa82",
+   "question_id": "08e075c7",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "question": "How long have I been using my Fitbit Charge 3?",
+   "gold": "9 months",
+   "response": "9 months."
+  },
+  {
+   "item_id": "2698e78f:bcd80a8ba78a",
+   "question_id": "2698e78f",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "question": "How often do I see my therapist, Dr. Smith?",
+   "gold": "every week",
+   "response": "Every week."
+  },
+  {
+   "item_id": "b6019101:c4483373a36b",
+   "question_id": "b6019101",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "question": "How many MCU films did I watch in the last 3 months?",
+   "gold": "5",
+   "response": "You watched 5 MCU films in the last 3 months."
+  },
+  {
+   "item_id": "6071bd76:6567ec7cdffc",
+   "question_id": "6071bd76",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "question": "For the coffee-to-water ratio in my French press, did I switch to more water per tablespoon of coffee, or less?",
+   "gold": "You switched to less water (5 ounces) per tablespoon of coffee.",
+   "response": "You switched to less water per tablespoon of coffee."
+  },
+  {
+   "item_id": "e493bb7c:897447f33ed5",
+   "question_id": "e493bb7c",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "question": "Where is the painting 'Ethereal Dreams' by Emma Taylor currently hanging?",
+   "gold": "in my bedroom",
+   "response": "Above the user's bed."
+  },
+  {
+   "item_id": "72e3ee87:c51913252094",
+   "question_id": "72e3ee87",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "question": "How many episodes of the Science series have I completed on Crash Course?",
+   "gold": "50",
+   "response": "You have completed 50 episodes of the Science series on Crash Course."
+  },
+  {
+   "item_id": "01493427:23ba3c1b20d3",
+   "question_id": "01493427",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "question": "How many new postcards have I added to my collection since I started collecting again?",
+   "gold": "25",
+   "response": "25 new postcards."
+  },
+  {
+   "item_id": "b01defab:fcd0ddfe2be6",
+   "question_id": "b01defab",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "question": "Did I finish reading 'The Nightingale' by Kristin Hannah?",
+   "gold": "Yes",
+   "response": "Yes, you finished reading \"The Nightingale\" by Kristin Hannah."
+  },
+  {
+   "item_id": "603deb26:22f98e9b5dd6",
+   "question_id": "603deb26",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "question": "How many times have I tried making a Negroni at home since my friend Emma showed me how to make it?",
+   "gold": "10",
+   "response": "You have tried making a Negroni at home 10 times."
+  },
+  {
+   "item_id": "0ddfec37:e365c59db24b",
+   "question_id": "0ddfec37",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "question": "How many autographed baseballs have I added to my collection in the first three months of collection?",
+   "gold": "15",
+   "response": "15 autographed baseballs."
+  },
+  {
+   "item_id": "cf22b7bf:eabfe896288a",
+   "question_id": "cf22b7bf",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "question": "How much weight have I lost since I started going to the gym consistently?",
+   "gold": "10 pounds",
+   "response": "You've lost 10 pounds since you started going to the gym consistently."
+  },
+  {
+   "item_id": "a2f3aa27:5c276d386c54",
+   "question_id": "a2f3aa27",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "question": "How many followers do I have on Instagram now?",
+   "gold": "1300",
+   "response": "You have 1250 followers on Instagram now."
+  },
+  {
+   "item_id": "c6853660:66b64dccc4a7",
+   "question_id": "c6853660",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "question": "Did I mostly recently increase or decrease the limit on the number of cups of coffee in the morning?",
+   "gold": "You increased the limit (from one cup to two cups)",
+   "response": "You mostly recently increased the limit to two cups."
+  },
+  {
+   "item_id": "0977f2af:769f01cd70b7",
+   "question_id": "0977f2af",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "question": "What new kitchen gadget did I invest in before getting the Air Fryer?",
+   "gold": "Instant Pot",
+   "response": "You did not mention investing in a new kitchen gadget before getting the Air Fryer."
+  },
+  {
+   "item_id": "0ddfec37_abs:e365c59db24b",
+   "question_id": "0ddfec37_abs",
+   "question_type": "knowledge-update",
+   "abstention": true,
+   "question": "How many autographed football have I added to my collection in the first three months of collection?",
+   "gold": "The information provided is not enough. You mentioned collecting autographed baseball but not football.",
+   "response": "15 autographed baseballs."
+  },
+  {
+   "item_id": "c4f10528:261af9ab8617",
+   "question_id": "c4f10528",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "question": "I'm planning to visit Bandung again and I was wondering if you could remind me of the name of that restaurant in Cihampelas Walk that serves a great Nasi Goreng?",
+   "gold": "Miss Bee Providore",
+   "response": "Miss Bee Providore."
+  },
+  {
+   "item_id": "89527b6b:880ded548f61",
+   "question_id": "89527b6b",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "question": "I'm going back to our previous conversation about the children's book on dinosaurs. Can you remind me what color was the scaly body of the Plesiosaur in the image?",
+   "gold": "The Plesiosaur had a blue scaly body.",
+   "response": "The Plesiosaur has a blue scaly body."
+  },
+  {
+   "item_id": "7e00a6cb:eb8b84219e45",
+   "question_id": "7e00a6cb",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "question": "I'm planning my trip to Amsterdam again and I was wondering, what was the name of that hostel near the Red Light District that you recommended last time?",
+   "gold": "International Budget Hostel",
+   "response": "International Budget Hostel."
+  },
+  {
+   "item_id": "ceb54acb:aa2e0092e94b",
+   "question_id": "ceb54acb",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "question": "In our previous chat, you suggested 'sexual compulsions' and a few other options for alternative terms for certain behaviors. Can you remind me what the other four options were?",
+   "gold": "I suggested 'sexual fixations', 'problematic sexual behaviors', 'sexual impulsivity', and 'compulsive sexuality'.",
+   "response": "1. Sexual fixations\n2. Problematic sexual behaviors\n3. Sexual impulsivity\n4. Compulsive sexuality"
+  },
+  {
+   "item_id": "dc439ea3:c7e57b272c6c",
+   "question_id": "dc439ea3",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "question": "I was looking back at our previous conversation about Native American powwows and I was wondering, which traditional game did you say was often performed by skilled dancers at powwows?",
+   "gold": "Hoop Dance",
+   "response": "Hoop Dance."
+  },
+  {
+   "item_id": "18dcd5a5:b03138acaca3",
+   "question_id": "18dcd5a5",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "question": "I'm going back to our previous chat about the Lost Temple of the Djinn one-shot. Can you remind me how many mummies the party will face in the temple?",
+   "gold": "4",
+   "response": "The party will face 4 mummies in the temple."
+  },
+  {
+   "item_id": "58470ed2:f77719abd1ab",
+   "question_id": "58470ed2",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "question": "I was going through our previous conversation about The Library of Babel, and I wanted to confirm - what did Borges say about the center and circumference of the Library?",
+   "gold": "According to Borges, 'The Library is a sphere whose exact center is any one of its hexagons and whose circumference is inaccessible.'",
+   "response": "Borges said, \"The Library is a sphere whose exact center is any one of its hexagons and whose circumference is inaccessible.\""
+  },
+  {
+   "item_id": "8cf51dda:79908cae39aa",
+   "question_id": "8cf51dda",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "question": "I'm going back to our previous conversation about the grant aim page on molecular subtypes and endometrial cancer. Can you remind me what were the three objectives we outlined for the project?",
+   "gold": "The three objectives were: 1) to identify molecular subtypes of endometrial cancer, 2) to investigate their clinical and biological significance, and 3) to develop biomarkers for early detection and prognosis.",
+   "response": "1. To identify molecular subtypes of endometrial cancer using a combination of genomic and transcriptomic approaches.\n2. To investigate the clinical and biological significance of the identified molecular subtypes, including their association with patient outcomes and response to therapy.\n3. To develop biomarkers for the early detection and prognosis of endometrial cancer based on the identified molecular subtypes."
+  },
+  {
+   "item_id": "1d4da289:44aadaabe6c8",
+   "question_id": "1d4da289",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "question": "I was thinking about our previous conversation about data privacy and security. You mentioned that companies use two-factor authentication to enhance security. Can you remind me what kind of two-factor authentication methods you were referring to?",
+   "gold": "I mentioned biometric authentication or one-time passwords (OTP) as examples of two-factor authentication methods.",
+   "response": "Two-factor authentication methods include biometric authentication and one-time passwords (OTP)."
+  },
+  {
+   "item_id": "1b9b7252:eed461a390e7",
+   "question_id": "1b9b7252",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "question": "I wanted to follow up on our previous conversation about mindfulness techniques. You mentioned some great resources for guided imagery exercises, can you remind me of the website that had free exercises like 'The Mountain Meditation' and 'The Body Scan Meditation'?",
+   "gold": "Mindful.org.",
+   "response": "Mindful.org."
+  },
+  {
+   "item_id": "1568498a:99fac8fa3506",
+   "question_id": "1568498a",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "question": "I'm looking back at our previous chess game and I was wondering, what was the move you made after 27. Kg2 Bd5+?",
+   "gold": "28. Kg3",
+   "response": "28. Kg3."
+  },
+  {
+   "item_id": "6222b6eb:52b9205acfa4",
+   "question_id": "6222b6eb",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "question": "I was going through our previous conversation about atmospheric correction methods, and I wanted to confirm - you mentioned that 6S, MAJA, and Sen2Cor are all algorithms for atmospheric correction of remote sensing images. Can you remind me which one is implemented in the SIAC_GEE tool?",
+   "gold": "The 6S algorithm is implemented in the SIAC_GEE tool.",
+   "response": "6S is implemented in the SIAC_GEE tool."
+  },
+  {
+   "item_id": "d596882b:34c744bd0bf5",
+   "question_id": "d596882b",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "question": "I'm planning another trip to New York City and I was wondering if you could remind me of that vegan eatery you recommended last time, the one with multiple locations throughout the city?",
+   "gold": "By Chloe",
+   "response": "By Chloe."
+  },
+  {
+   "item_id": "3e321797:caf10bc92d53",
+   "question_id": "3e321797",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "question": "I wanted to follow up on our previous conversation about natural remedies for dark circles under the eyes. You mentioned applying tomato juice mixed with lemon juice, how long did you say I should leave it on for?",
+   "gold": "10 minutes",
+   "response": "Leave it on for 10 minutes."
+  },
+  {
+   "item_id": "8b9d4367:6f802377d5cf",
+   "question_id": "8b9d4367",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "question": "I wanted to follow up on our previous conversation about private sector businesses in Chaudhary. Can you remind me of the company that employs over 40,000 people in the rug-manufacturing industry?",
+   "gold": "Jaipur Rugs",
+   "response": "Jaipur Rugs."
+  },
+  {
+   "item_id": "41275add:ec08233e58cf",
+   "question_id": "41275add",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "question": "I wanted to follow up on our previous conversation about YouTube videos for workplace posture. Can you remind me of the Mayo Clinic video you recommended?",
+   "gold": "The video is 'How to Sit Properly at a Desk to Avoid Back Pain' and the link is https://www.youtube.com/watch?v=UfOvNlX9Hh0.",
+   "response": "\"How to Sit Properly at a Desk to Avoid Back Pain\" by the Mayo Clinic: <https://www.youtube.com/watch?v=UfOvNlX9Hh0>"
+  },
+  {
+   "item_id": "4baee567:debd5cd403ed",
+   "question_id": "4baee567",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "question": "I was looking back at our previous chat and I wanted to confirm, how many times did the Chiefs play the Jaguars at Arrowhead Stadium?",
+   "gold": "The Chiefs played the Jaguars 12 times at Arrowhead Stadium.",
+   "response": "The Chiefs played the Jaguars 12 times at Arrowhead Stadium."
+  }
+ ],
+ "verdicts": {
+  "c5e8278d:3013b18f4387": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "6ade9755:c788d5e3e396": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "6f9b354f:a4a916bfc408": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "58ef2f1c:168ebbf48ddd": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "3b6f954b:d68eae84425d": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "726462e0:fa8e98e6dd9a": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "c8c3f81d:cd5b7b9fb7b9": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "21436231:89ec1526eea3": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "95bcc1c8:90ff9870f302": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "0862e8bf:9d77a24d0f4c": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "853b0a1d:67a9c1f34b27": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "a06e4cfe:73602294fc3b": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "37d43f65:c3f6db7a9929": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "25e5aa4f:ea0ccc25daea": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "86b68151:1e2b841a8b1d": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "577d4d32:ea91fe5411ca": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "ec81a493:45e2e5091bc1": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "19b5f2b3:5ff468c2d912": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "8e9d538c:ad4e9aa3c65e": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "0862e8bf_abs:78f59c4071b7": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "29f2956b_abs:9bac6077aab0": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": null,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": null,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "gpt4_59c863d7:5b8720006e20": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "aae3761f:977a0c663626": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "gpt4_f2262a51:18ee010aad32": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "dd2973ad:4b6b58bb92d2": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "6cb6f249:aa8314e18fa7": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "46a3abf7:2ea59e60a9b5": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "d682f1a2:677d965a2376": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "7024f17c:e25a8510eca2": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "gpt4_2ba83207:804c76ac8b30": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "2318644b:cde565a4ac49": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "2ce6a0f2:f4ea6e3f77fd": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "gpt4_31ff4165:cc9b9808dc62": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "a9f6b44c:c03fbcd0c68f": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "edced276:4c3604d125a4": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": null,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "10d9b85a:987a01a2e843": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "2b8f3739:8401a1842f61": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "1a8a66a6:626a0500889b": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "c2ac3c61:8de458c35479": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "gpt4_372c3eed:4f1693e90602": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "88432d0a_abs:a470e1533775": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "60bf93ed_abs:e7b198728942": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "edced276_abs:2937e79dd52d": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "75832dbd:09540429ccca": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "195a1a1b:c18b7e3b0c72": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "caf03d32:4522d79b635e": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "09d032c9:1bfc8ccb7283": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": null,
+    "qwen/qwen3.8-flash": null,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "95228167:494a435e2b3b": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "75f70248:2b58da771f90": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": null,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": null,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "1da05512:3ae20780d2ef": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "b6025781:a86a5d6481fd": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": null,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "1c0ddc50:2f3f6160ae32": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": null,
+    "deepseek/deepseek-v4-pro-0813": null,
+    "qwen/qwen3.8-flash": null,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "1f2b8d4f:6773e20de6e7": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "e6041065:147a63c68e8c": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "d905b33f:62b4fc2e946b": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "60036106:0ceef93f0e85": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": null,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "5025383b:3626e8e77ff6": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "a1cc6108:fdd4cd727a79": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "27016adc:e899f5fc7996": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "92a0aa75:7647e29d8cb0": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "0ea62687:62aae53eebd3": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "67e0d0f2:9168da3b63a5": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "60159905:590f6848ac43": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "078150f1:9dd81c6bd3a0": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "8cf4d046:10e271d4dcea": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "a346bb18:387ec59fd9e3": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "37f165cf:28970f717dea": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "21d02d0d:2439e75a578a": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "2311e44b_abs:552f78e21cd1": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "a96c20ee_abs:513241526dd2": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "gpt4_f49edff3:daef37a24825": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "71017276:af7b9f52c724": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "0bc8ad92:0cb55c4a8d1c": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "af082822:51201b578f32": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "gpt4_b5700ca9:9cc8014f2527": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": null,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "gpt4_1d4ab0c9:5e3ebb75b063": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "gpt4_e072b769:5eb479c88074": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "0db4c65d:5203a96ceebf": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "gpt4_6dc9b45b:7069c4d98909": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "gpt4_7a0daae1:cb9d64d04cf5": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "gpt4_468eb063:15a925e9697a": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "4dfccbf7:cb60a5299ad2": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "2ebe6c90:d0102e054a18": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "6e984301:5c5cc8d571cf": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "bcbe585f:b338f352713f": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "gpt4_21adecb5:c138d619e3c3": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "5e1b23de:7ef73ecd6efd": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "eac54adc:a981c9d32b39": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "gpt4_e414231e:a21a43f73835": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "gpt4_7bc6cf22:cd451e97ace7": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "gpt4_e061b84g:b70aacf56046": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": null,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": null,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "gpt4_e414231f:696db52ffa8d": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "gpt4_4929293b:497678c49054": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "eac54add:6004823003b9": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "6e984302:ee5591de3776": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "gpt4_8279ba03:02ec5eddfd0b": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "gpt4_2487a7cb:e290b3e993e4": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "gpt4_76048e76:49b6613744db": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "gpt4_2312f94c:dfa63e50acd3": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "2a1811e2:e2ef19de5a04": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "gpt4_70e84552:aaa26a57d93c": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "gpt4_2d58bcd6:5a17cc9a9613": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "b9cfe692:3e84f1b0fec7": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "gpt4_9a159967:e4183b95aaee": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "gpt4_d9af6064:75b4477c4191": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "gpt4_4cd9eba1:8b22b44a0749": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "6613b389:0e0140fa588c": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "gpt4_0a05b494:889a776c6dcf": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "8c18457d:19ccf96dcfc4": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "gpt4_70e84552_abs:5a2b72d742dd": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "830ce83f:b871ea7d05f0": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "d7c942c3:324ab4a60f76": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "ce6d2d27:59c58fc772c8": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "9ea5eabc:58fd5124f219": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "07741c44:439f9ed312c3": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "a1eacc2a:36060ae2ac18": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "184da446:d1450582b3f1": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "4d6b87c8:b4e3b6f2a145": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "08e075c7:4c4ff34afa82": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "2698e78f:bcd80a8ba78a": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "b6019101:c4483373a36b": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "6071bd76:6567ec7cdffc": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "e493bb7c:897447f33ed5": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": null,
+    "deepseek/deepseek-v4-pro-0813": null,
+    "qwen/qwen3.8-flash": null,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "72e3ee87:c51913252094": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "01493427:23ba3c1b20d3": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "b01defab:fcd0ddfe2be6": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "603deb26:22f98e9b5dd6": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "0ddfec37:e365c59db24b": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "cf22b7bf:eabfe896288a": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "a2f3aa27:5c276d386c54": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "c6853660:66b64dccc4a7": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "0977f2af:769f01cd70b7": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "0ddfec37_abs:e365c59db24b": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": false,
+    "openai/gpt-4o-mini": false,
+    "openai/gpt-6-sol": false,
+    "openai/gpt-6-luna": false,
+    "anthropic/claude-opus-5.5": false,
+    "anthropic/claude-sonnet-5": false,
+    "google/gemini-3.8-flash": false,
+    "deepseek/deepseek-v4.1-flash": false,
+    "z-ai/glm-5.3": false,
+    "x-ai/grok-4.7": false
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": false,
+    "deepseek/deepseek-v4-pro-0813": false,
+    "qwen/qwen3.8-flash": false,
+    "z-ai/glm-5.3": false,
+    "openai/gpt-4o-mini": false
+   }
+  },
+  "c4f10528:261af9ab8617": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "89527b6b:880ded548f61": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "7e00a6cb:eb8b84219e45": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "ceb54acb:aa2e0092e94b": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "dc439ea3:c7e57b272c6c": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "18dcd5a5:b03138acaca3": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "58470ed2:f77719abd1ab": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "8cf51dda:79908cae39aa": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "1d4da289:44aadaabe6c8": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "1b9b7252:eed461a390e7": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "1568498a:99fac8fa3506": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "6222b6eb:52b9205acfa4": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "d596882b:34c744bd0bf5": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "3e321797:caf10bc92d53": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "8b9d4367:6f802377d5cf": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "41275add:ec08233e58cf": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  },
+  "4baee567:debd5cd403ed": {
+   "lme": {
+    "openai/gpt-4o-2024-08-06": true,
+    "openai/gpt-4o-mini": true,
+    "openai/gpt-6-sol": true,
+    "openai/gpt-6-luna": true,
+    "anthropic/claude-opus-5.5": true,
+    "anthropic/claude-sonnet-5": true,
+    "google/gemini-3.8-flash": true,
+    "deepseek/deepseek-v4.1-flash": true,
+    "z-ai/glm-5.3": true,
+    "x-ai/grok-4.7": true
+   },
+   "aml": {
+    "deepseek/deepseek-v4.1-flash": true,
+    "deepseek/deepseek-v4-pro-0813": true,
+    "qwen/qwen3.8-flash": true,
+    "z-ai/glm-5.3": true,
+    "openai/gpt-4o-mini": true
+   }
+  }
+ },
+ "errors": []
+}

@@ -1,0 +1,100 @@
+{
+ "judgments": "bench/judge/results/real-judgments-2026-09-22.json",
+ "labels": "bench/judge/results/real-labels-2026-09-22.json",
+ "table": {
+  "lme": {
+   "anthropic/claude-opus-5.5": {
+    "agree": 146,
+    "n": 150,
+    "false_accept": 1,
+    "false_reject": 3
+   },
+   "anthropic/claude-sonnet-5": {
+    "agree": 146,
+    "n": 150,
+    "false_accept": 0,
+    "false_reject": 4
+   },
+   "deepseek/deepseek-v4.1-flash": {
+    "agree": 147,
+    "n": 150,
+    "false_accept": 0,
+    "false_reject": 3
+   },
+   "google/gemini-3.8-flash": {
+    "agree": 149,
+    "n": 150,
+    "false_accept": 1,
+    "false_reject": 0
+   },
+   "openai/gpt-4o-2024-08-06": {
+    "agree": 143,
+    "n": 150,
+    "false_accept": 3,
+    "false_reject": 4
+   },
+   "openai/gpt-4o-mini": {
+    "agree": 141,
+    "n": 150,
+    "false_accept": 1,
+    "false_reject": 8
+   },
+   "openai/gpt-6-luna": {
+    "agree": 145,
+    "n": 150,
+    "false_accept": 2,
+    "false_reject": 3
+   },
+   "openai/gpt-6-sol": {
+    "agree": 144,
+    "n": 150,
+    "false_accept": 3,
+    "false_reject": 3
+   },
+   "x-ai/grok-4.7": {
+    "agree": 146,
+    "n": 150,
+    "false_accept": 1,
+    "false_reject": 3
+   },
+   "z-ai/glm-5.3": {
+    "agree": 148,
+    "n": 150,
+    "false_accept": 0,
+    "false_reject": 2
+   }
+  },
+  "aml": {
+   "deepseek/deepseek-v4-pro-0813": {
+    "agree": 146,
+    "n": 150,
+    "false_accept": 1,
+    "false_reject": 3
+   },
+   "deepseek/deepseek-v4.1-flash": {
+    "agree": 145,
+    "n": 150,
+    "false_accept": 2,
+    "false_reject": 3
+   },
+   "openai/gpt-4o-mini": {
+    "agree": 147,
+    "n": 150,
+    "false_accept": 1,
+    "false_reject": 2
+   },
+   "qwen/qwen3.8-flash": {
+    "agree": 146,
+    "n": 150,
+    "false_accept": 0,
+    "false_reject": 4
+   },
+   "z-ai/glm-5.3": {
+    "agree": 148,
+    "n": 150,
+    "false_accept": 1,
+    "false_reject": 1
+   }
+  }
+ }
+}

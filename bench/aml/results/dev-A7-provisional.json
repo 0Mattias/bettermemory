@@ -1,0 +1,2429 @@
+{
+ "provenance": {
+  "bettermemory_version": "7.19.2",
+  "commit": "1576e92",
+  "tree_dirty": true,
+  "date": "2026-09-22"
+ },
+ "summary": {
+  "arm": "A7",
+  "split": "dev",
+  "ingest": "rounds-v2",
+  "fill": "none",
+  "order": "rank",
+  "annotate": "none",
+  "serve": 40,
+  "reader": "openai/gpt-4o-mini",
+  "judge": "deepseek/deepseek-v4.1-flash",
+  "top_k": 100,
+  "n": 150,
+  "errors": 0,
+  "accuracy": 0.5933,
+  "by_type": {
+   "knowledge-update": {
+    "n": 23,
+    "accuracy": 0.7391
+   },
+   "multi-session": {
+    "n": 40,
+    "accuracy": 0.475
+   },
+   "single-session-assistant": {
+    "n": 17,
+    "accuracy": 0.9412
+   },
+   "single-session-preference": {
+    "n": 9,
+    "accuracy": 0.2222
+   },
+   "single-session-user": {
+    "n": 21,
+    "accuracy": 0.9524
+   },
+   "temporal-reasoning": {
+    "n": 40,
+    "accuracy": 0.375
+   }
+  },
+  "unparseable_judgments": 5,
+  "mean_hits": 38.5,
+  "mean_prompt_chars": 92309,
+  "new_spend_usd": 0.4259,
+  "new_calls": 182,
+  "cache_hits": 118,
+  "seconds_ingest_search": 31.0
+ },
+ "rows": [
+  {
+   "question_id": "c5e8278d",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 98688,
+   "generated": "Johnson",
+   "verdict": true,
+   "judge_raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "evidence_sessions": [
+    "answer_f6168136"
+   ],
+   "evidence_served": 1,
+   "cost": 0.00318585
+  },
+  {
+   "question_id": "6ade9755",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 78634,
+   "generated": "Serenity Yoga.",
+   "verdict": true,
+   "judge_raw": "The generated answer exactly matches the gold answer, so it is correct.\n\n```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "evidence_sessions": [
+    "answer_9398da02"
+   ],
+   "evidence_served": 1,
+   "cost": 0.00255585
+  },
+  {
+   "question_id": "6f9b354f",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "n_hits": 25,
+   "prompt_chars": 53038,
+   "generated": "A lighter shade of gray.",
+   "verdict": true,
+   "judge_raw": "The generated answer exactly matches the gold answer in content, with only capitalization and punctuation differences.\n\n```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "evidence_sessions": [
+    "answer_feb5200f"
+   ],
+   "evidence_served": 1,
+   "cost": 0.0
+  },
+  {
+   "question_id": "58ef2f1c",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 81690,
+   "generated": "You volunteered at the \"Love is in the Air\" fundraising dinner back on Valentine's Day.",
+   "verdict": true,
+   "judge_raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "evidence_sessions": [
+    "answer_59547700"
+   ],
+   "evidence_served": 1,
+   "cost": 0.00269448
+  },
+  {
+   "question_id": "3b6f954b",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "n_hits": 36,
+   "prompt_chars": 90657,
+   "generated": "University of Melbourne.",
+   "verdict": true,
+   "judge_raw": "{\"label\": \"CORRECT\"}",
+   "evidence_sessions": [
+    "answer_94030872"
+   ],
+   "evidence_served": 1,
+   "cost": 0.0
+  },
+  {
+   "question_id": "726462e0",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 97624,
+   "generated": "10% discount.",
+   "verdict": true,
+   "judge_raw": "{\"label\": \"CORRECT\"}",
+   "evidence_sessions": [
+    "answer_f38f679b"
+   ],
+   "evidence_served": 1,
+   "cost": 0.00321915
+  },
+  {
+   "question_id": "c8c3f81d",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 88418,
+   "generated": "Nike",
+   "verdict": true,
+   "judge_raw": "```json\n{\"label\": \"CORRECT\"}\n```",
+   "evidence_sessions": [
+    "answer_761acef8"
+   ],
+   "evidence_served": 1,
+   "cost": 0.00291915
+  },
+  {
+   "question_id": "21436231",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 89509,
+   "generated": "You caught 12 largemouth bass on your last trip to Lake Michigan.",
+   "verdict": true,
+   "judge_raw": "The generated answer includes the gold answer’s key content, stating that 12 largemouth bass were caught, without contradiction.\n\n```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "evidence_sessions": [
+    "answer_1e6d4567"
+   ],
+   "evidence_served": 1,
+   "cost": 0.00283185
+  },
+  {
+   "question_id": "95bcc1c8",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 88898,
+   "generated": "You watched 10 amateur comedians perform at the open mic night.",
+   "verdict": true,
+   "judge_raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "evidence_sessions": [
+    "answer_cb742a61"
+   ],
+   "evidence_served": 1,
+   "cost": 0.0030009
+  },
+  {
+   "question_id": "0862e8bf",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "n_hits": 18,
+   "prompt_chars": 37303,
+   "generated": "Luna",
+   "verdict": true,
+   "judge_raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "evidence_sessions": [
+    "answer_c6fd8ebd"
+   ],
+   "evidence_served": 1,
+   "cost": 0.0
+  },
+  {
+   "question_id": "853b0a1d",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "n_hits": 21,
+   "prompt_chars": 48040,
+   "generated": "18 years old.",
+   "verdict": true,
+   "judge_raw": "```json\n{\"label\": \"CORRECT\"}\n```",
+   "evidence_sessions": [
+    "answer_69811d4a"
+   ],
+   "evidence_served": 1,
+   "cost": 0.0
+  },
+  {
+   "question_id": "a06e4cfe",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "n_hits": 22,
+   "prompt_chars": 56173,
+   "generated": "3:1 ratio.",
+   "verdict": true,
+   "judge_raw": "```json\n{\"label\": \"CORRECT\"}\n```",
+   "evidence_sessions": [
+    "answer_6fe9fb49"
+   ],
+   "evidence_served": 1,
+   "cost": 0.0
+  },
+  {
+   "question_id": "37d43f65",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 77960,
+   "generated": "16GB",
+   "verdict": true,
+   "judge_raw": "```json\n{\"label\": \"CORRECT\"}\n```",
+   "evidence_sessions": [
+    "answer_55161935"
+   ],
+   "evidence_served": 1,
+   "cost": 0.0025011
+  },
+  {
+   "question_id": "25e5aa4f",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "n_hits": 30,
+   "prompt_chars": 69192,
+   "generated": "UCLA",
+   "verdict": true,
+   "judge_raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "evidence_sessions": [
+    "answer_986de8c3"
+   ],
+   "evidence_served": 1,
+   "cost": 0.0
+  },
+  {
+   "question_id": "86b68151",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 91938,
+   "generated": "IKEA.",
+   "verdict": true,
+   "judge_raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "evidence_sessions": [
+    "answer_dc11c1eb"
+   ],
+   "evidence_served": 1,
+   "cost": 0.00290775
+  },
+  {
+   "question_id": "577d4d32",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 101087,
+   "generated": "By 7 pm.",
+   "verdict": true,
+   "judge_raw": "```json\n{\"label\": \"CORRECT\"}\n```",
+   "evidence_sessions": [
+    "answer_0dd4d99a"
+   ],
+   "evidence_served": 1,
+   "cost": 0.00312465
+  },
+  {
+   "question_id": "ec81a493",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 96721,
+   "generated": "Only 500 copies were released worldwide.",
+   "verdict": true,
+   "judge_raw": "{\"label\": \"CORRECT\"}",
+   "evidence_sessions": [
+    "answer_ed1982fc"
+   ],
+   "evidence_served": 1,
+   "cost": 0.00295905
+  },
+  {
+   "question_id": "19b5f2b3",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "n_hits": 22,
+   "prompt_chars": 50008,
+   "generated": "Two weeks.",
+   "verdict": true,
+   "judge_raw": "{\n    \"label\": \"CORRECT\"\n}",
+   "evidence_sessions": [
+    "answer_5ff494b9"
+   ],
+   "evidence_served": 1,
+   "cost": 0.0
+  },
+  {
+   "question_id": "8e9d538c",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 89777,
+   "generated": "17 skeins.",
+   "verdict": true,
+   "judge_raw": "{\"label\":\"CORRECT\"}",
+   "evidence_sessions": [
+    "answer_7bdcbd23"
+   ],
+   "evidence_served": 1,
+   "cost": 0.0032556
+  },
+  {
+   "question_id": "0862e8bf_abs",
+   "question_type": "single-session-user",
+   "abstention": true,
+   "n_hits": 11,
+   "prompt_chars": 16705,
+   "generated": "The memories do not contain any information about your hamster's name.",
+   "verdict": true,
+   "judge_raw": "The generated answer conveys the same key point: no information about the hamster’s name was provided.\n\n```json\n{\"label\": \"CORRECT\"}\n```",
+   "evidence_sessions": [
+    "answer_c6fd8ebd_abs"
+   ],
+   "evidence_served": 1,
+   "cost": 0.0
+  },
+  {
+   "question_id": "29f2956b_abs",
+   "question_type": "single-session-user",
+   "abstention": true,
+   "n_hits": 40,
+   "prompt_chars": 91688,
+   "generated": "You did not mention practicing the violin in the provided memories.",
+   "verdict": null,
+   "judge_raw": "",
+   "evidence_sessions": [
+    "answer_7cc5362f_abs"
+   ],
+   "evidence_served": 1,
+   "cost": 0.00340203
+  },
+  {
+   "question_id": "gpt4_59c863d7",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 102072,
+   "generated": "You have worked on or bought at least three model kits: a Tamiya 1/48 scale Spitfire Mk.V, a 1/72 scale B-29 bomber, and a 1/24 scale '69 Camaro.",
+   "verdict": false,
+   "judge_raw": "{\"label\":\"WRONG\"}",
+   "evidence_sessions": [
+    "answer_593bdffd_1",
+    "answer_593bdffd_2",
+    "answer_593bdffd_3",
+    "answer_593bdffd_4"
+   ],
+   "evidence_served": 4,
+   "cost": 0.00332775
+  },
+  {
+   "question_id": "aae3761f",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 88210,
+   "generated": "You spent a total of 15-17 hours driving to your three road trip destinations combined (4 hours to Outer Banks, 7-8 hours to Tybee Island, and 4-5 hours to Topsail Island).",
+   "verdict": false,
+   "judge_raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "evidence_sessions": [
+    "answer_526354c8_1",
+    "answer_526354c8_2",
+    "answer_526354c8_3"
+   ],
+   "evidence_served": 3,
+   "cost": 0.0034111799999999998
+  },
+  {
+   "question_id": "gpt4_f2262a51",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 92875,
+   "generated": "You visited at least two different doctors: Dr. Lee for the biopsy and Dr. Smith for the UTI.",
+   "verdict": false,
+   "judge_raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "evidence_sessions": [
+    "answer_55a6940c_1",
+    "answer_55a6940c_2",
+    "answer_55a6940c_3"
+   ],
+   "evidence_served": 3,
+   "cost": 0.0031191300000000003
+  },
+  {
+   "question_id": "dd2973ad",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 89054,
+   "generated": "You went to bed at 2 AM on the day before your doctor's appointment.",
+   "verdict": true,
+   "judge_raw": "The generated answer states the same time, 2 AM, as the gold answer.\n\n```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "evidence_sessions": [
+    "answer_f9de4602_1",
+    "answer_f9de4602_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.0028845
+  },
+  {
+   "question_id": "6cb6f249",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 90024,
+   "generated": "You took a week-long break from social media in mid-January and a 10-day break in mid-February, totaling 17 days.",
+   "verdict": true,
+   "judge_raw": "The generated answer states the total as 17 days, matching the gold answer without contradiction.\n\n```json\n{\"label\": \"CORRECT\"}\n```",
+   "evidence_sessions": [
+    "answer_a4204937_1",
+    "answer_a4204937_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.0028848
+  },
+  {
+   "question_id": "46a3abf7",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 103855,
+   "generated": "You currently have two tanks: a 20-gallon community tank and a 1-gallon tank for your friend's kid.",
+   "verdict": false,
+   "judge_raw": "The generated answer states there are two tanks, while the gold answer is three, so it contradicts the correct count.\n\n```json\n{\"label\": \"WRONG\"}\n```",
+   "evidence_sessions": [
+    "answer_c65042d7_1",
+    "answer_c65042d7_2",
+    "answer_c65042d7_3"
+   ],
+   "evidence_served": 3,
+   "cost": 0.00346158
+  },
+  {
+   "question_id": "d682f1a2",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 91288,
+   "generated": "You have used at least one food delivery service, Fresh Fusion, and mentioned Domino's Pizza three times last week.",
+   "verdict": false,
+   "judge_raw": "The generated answer does not provide the specific count of 3 different food delivery services, and it conflates mentioning Domino's Pizza three times with using three service types.\n\n```json\n{\"label\": \"WRONG\"}\n```",
+   "evidence_sessions": [
+    "answer_c008e5df_1",
+    "answer_c008e5df_2",
+    "answer_c008e5df_3"
+   ],
+   "evidence_served": 3,
+   "cost": 0.00307608
+  },
+  {
+   "question_id": "7024f17c",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 95822,
+   "generated": "You practiced yoga three times a week for 2 hours each time, totaling 6 hours. There is no mention of jogging in the memories.",
+   "verdict": false,
+   "judge_raw": "The generated answer states 6 hours of yoga and no jogging, which contradicts the gold answer of 0.5 hours total.\n\n```json\n{\"label\": \"WRONG\"}\n```",
+   "evidence_sessions": [
+    "answer_a21f3697_1",
+    "answer_a21f3697_2",
+    "answer_a21f3697_3"
+   ],
+   "evidence_served": 3,
+   "cost": 0.00331098
+  },
+  {
+   "question_id": "gpt4_2ba83207",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 94221,
+   "generated": "You spent around $150 at Thrive Market.",
+   "verdict": true,
+   "judge_raw": "The generated answer identifies Thrive Market as the store, matching the gold answer without contradiction.\n\n```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "evidence_sessions": [
+    "answer_6a3b5c13_1",
+    "answer_6a3b5c13_2",
+    "answer_6a3b5c13_3",
+    "answer_6a3b5c13_4"
+   ],
+   "evidence_served": 4,
+   "cost": 0.00319428
+  },
+  {
+   "question_id": "2318644b",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 92929,
+   "generated": "You spent over $300 per night in Hawaii compared to around $30 per night in Tokyo.",
+   "verdict": false,
+   "judge_raw": "{\"label\": \"WRONG\"}",
+   "evidence_sessions": [
+    "answer_eaa8e3ef_1",
+    "answer_eaa8e3ef_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.0030825
+  },
+  {
+   "question_id": "2ce6a0f2",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 93193,
+   "generated": "You attended two art-related events in the past month.",
+   "verdict": false,
+   "judge_raw": "The generated answer says two events, which contradicts the gold answer of four.\n\n```json\n{\"label\": \"WRONG\"}\n```",
+   "evidence_sessions": [
+    "answer_901a6763_1",
+    "answer_901a6763_2",
+    "answer_901a6763_3",
+    "answer_901a6763_4"
+   ],
+   "evidence_served": 3,
+   "cost": 0.00295935
+  },
+  {
+   "question_id": "gpt4_31ff4165",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 100390,
+   "generated": "You use one health-related device in a day (Fitbit Versa 3).",
+   "verdict": false,
+   "judge_raw": "{\"label\":\"WRONG\"}",
+   "evidence_sessions": [
+    "answer_02b63d04_1",
+    "answer_02b63d04_2",
+    "answer_02b63d04_3",
+    "answer_02b63d04_4",
+    "answer_02b63d04_5"
+   ],
+   "evidence_served": 5,
+   "cost": 0.00337788
+  },
+  {
+   "question_id": "a9f6b44c",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 87411,
+   "generated": "You serviced one bike on March 10th and cleaned and lubricated the chain on another bike on March 2nd.",
+   "verdict": true,
+   "judge_raw": "{ \"label\": \"CORRECT\" }",
+   "evidence_sessions": [
+    "answer_cc021f81_1",
+    "answer_cc021f81_2",
+    "answer_cc021f81_3"
+   ],
+   "evidence_served": 3,
+   "cost": 0.00303963
+  },
+  {
+   "question_id": "edced276",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 88106,
+   "generated": "You spent a total of 15 days traveling: 10 days in Hawaii and 5 days in New York City.",
+   "verdict": true,
+   "judge_raw": "{\"label\":\"CORRECT\"}",
+   "evidence_sessions": [
+    "answer_60e8941a_1",
+    "answer_60e8941a_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00291723
+  },
+  {
+   "question_id": "10d9b85a",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 102247,
+   "generated": "You attended workshops, lectures, and conferences for a total of 4 days in April (2 days for the workshop on April 17-18, and 1 day for the lecture on April 10).",
+   "verdict": false,
+   "judge_raw": "{\"label\":\"WRONG\"}",
+   "evidence_sessions": [
+    "answer_e0585cb5_1",
+    "answer_e0585cb5_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00339198
+  },
+  {
+   "question_id": "2b8f3739",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 105408,
+   "generated": "$345.",
+   "verdict": false,
+   "judge_raw": "The generated answer states $345, which does not match the gold amount of $495.\n\n```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "evidence_sessions": [
+    "answer_23759615_1",
+    "answer_23759615_2",
+    "answer_23759615_3"
+   ],
+   "evidence_served": 3,
+   "cost": 0.00331725
+  },
+  {
+   "question_id": "1a8a66a6",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 80474,
+   "generated": "You currently have two magazine subscriptions: The New Yorker and Forbes (which you recently canceled).",
+   "verdict": true,
+   "judge_raw": "{\"label\": \"CORRECT\"}",
+   "evidence_sessions": [
+    "answer_2bd23659_1",
+    "answer_2bd23659_2",
+    "answer_2bd23659_3",
+    "answer_2bd23659_4"
+   ],
+   "evidence_served": 3,
+   "cost": 0.00271713
+  },
+  {
+   "question_id": "c2ac3c61",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 100133,
+   "generated": "You have completed two courses on edX and three courses on Coursera, totaling five online courses.",
+   "verdict": true,
+   "judge_raw": "```json\n{\"label\": \"CORRECT\"}\n```",
+   "evidence_sessions": [
+    "answer_923c0221_1",
+    "answer_923c0221_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.0030291
+  },
+  {
+   "question_id": "gpt4_372c3eed",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 111718,
+   "generated": "Four years.",
+   "verdict": false,
+   "judge_raw": "The generated answer gives 4 years, which contradicts the gold answer of 10 years.\n\n```json\n{\"label\": \"WRONG\"}\n```",
+   "evidence_sessions": [
+    "answer_35c5419d_1",
+    "answer_35c5419d_2",
+    "answer_35c5419d_3"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00357573
+  },
+  {
+   "question_id": "88432d0a_abs",
+   "question_type": "multi-session",
+   "abstention": true,
+   "n_hits": 40,
+   "prompt_chars": 109094,
+   "generated": "You did not mention baking egg tarts in the past two weeks.",
+   "verdict": true,
+   "judge_raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "evidence_sessions": [
+    "answer_733e443a_abs_1",
+    "answer_733e443a_abs_2",
+    "answer_733e443a_abs_3",
+    "answer_733e443a_abs_4"
+   ],
+   "evidence_served": 4,
+   "cost": 0.0035655
+  },
+  {
+   "question_id": "60bf93ed_abs",
+   "question_type": "multi-session",
+   "abstention": true,
+   "n_hits": 40,
+   "prompt_chars": 100886,
+   "generated": "The iPad case took 7 days to arrive after you bought it.",
+   "verdict": false,
+   "judge_raw": "The generated answer invents a specific arrival time, while the gold answer states the information is insufficient because no iPad case purchase was mentioned.\n\n```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "evidence_sessions": [
+    "answer_e0956e0a_abs_1",
+    "answer_e0956e0a_abs_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00329328
+  },
+  {
+   "question_id": "edced276_abs",
+   "question_type": "multi-session",
+   "abstention": true,
+   "n_hits": 40,
+   "prompt_chars": 86223,
+   "generated": "You spent 10 days in total traveling in Hawaii and in Seattle.",
+   "verdict": false,
+   "judge_raw": "The generated answer contradicts the gold by claiming a total of 10 days including Seattle, whereas the gold states the information is insufficient.\n\n```json\n{\"label\": \"WRONG\"}\n```",
+   "evidence_sessions": [
+    "answer_60e8941a_abs_1",
+    "answer_60e8941a_abs_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.0027936
+  },
+  {
+   "question_id": "75832dbd",
+   "question_type": "single-session-preference",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 101758,
+   "generated": "I don't have specific recent publications or conferences to recommend.",
+   "verdict": false,
+   "judge_raw": "The generated answer provides no recommendations and does not include the gold’s key content about AI in healthcare or deep learning for medical image analysis.\n\n```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "evidence_sessions": [
+    "answer_d87a6ef8"
+   ],
+   "evidence_served": 0,
+   "cost": 0.00342558
+  },
+  {
+   "question_id": "195a1a1b",
+   "question_type": "single-session-preference",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 91811,
+   "generated": "Consider trying relaxation techniques, reading, journaling, or watching a movie.",
+   "verdict": false,
+   "judge_raw": "The generated answer includes non-relaxing/screen-based activity (watching a movie) and omits the preference for activities before 9:30 pm and avoiding TV-like activities, so it does not match the gold.\n\n```json\n{\"label\": \"WRONG\"}\n```",
+   "evidence_sessions": [
+    "answer_6dc4305e"
+   ],
+   "evidence_served": 1,
+   "cost": 0.00314718
+  },
+  {
+   "question_id": "caf03d32",
+   "question_type": "single-session-preference",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 97325,
+   "generated": "Use a thermometer to monitor temperatures, follow recipes closely, and adjust cooking times based on your slow cooker model.",
+   "verdict": false,
+   "judge_raw": "{\"label\":\"WRONG\"}",
+   "evidence_sessions": [
+    "answer_2fc6aabb"
+   ],
+   "evidence_served": 1,
+   "cost": 0.00348363
+  },
+  {
+   "question_id": "09d032c9",
+   "question_type": "single-session-preference",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 95392,
+   "generated": "Reduce screen brightness, close unused apps, and turn off location services.",
+   "verdict": true,
+   "judge_raw": "The generated answer provides phone battery-saving tips, which aligns with the gold’s stated acceptable preference for battery-saving feature suggestions and does not contradict it.\n\n```json\n{\"label\": \"CORRECT\"}\n```",
+   "evidence_sessions": [
+    "answer_b10dce5e"
+   ],
+   "evidence_served": 1,
+   "cost": 0.0030729
+  },
+  {
+   "question_id": "95228167",
+   "question_type": "single-session-preference",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 105399,
+   "generated": "Look for comfort, sound quality, playability, and your budget.",
+   "verdict": false,
+   "judge_raw": "The generated answer gives general guitar-buying tips and does not include the gold’s key content about comparing Fender Stratocaster and Gibson Les Paul differences.\n\n```json\n{\"label\": \"WRONG\"}\n```",
+   "evidence_sessions": [
+    "answer_5e613445"
+   ],
+   "evidence_served": 1,
+   "cost": 0.0033816
+  },
+  {
+   "question_id": "75f70248",
+   "question_type": "single-session-preference",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 100120,
+   "generated": "It could be due to dust or allergens in your living room.",
+   "verdict": null,
+   "judge_raw": "",
+   "evidence_sessions": [
+    "answer_8ee04a2e"
+   ],
+   "evidence_served": 1,
+   "cost": 0.0031536
+  },
+  {
+   "question_id": "1da05512",
+   "question_type": "single-session-preference",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 95781,
+   "generated": "Consider your current storage needs and budget; if they are pressing, buy now; if not, waiting for potential sales might be wise.",
+   "verdict": null,
+   "judge_raw": "",
+   "evidence_sessions": [
+    "answer_4d3be2ab"
+   ],
+   "evidence_served": 1,
+   "cost": 0.00369453
+  },
+  {
+   "question_id": "b6025781",
+   "question_type": "single-session-preference",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 87214,
+   "generated": "Try lentil bolognese, roasted sweet potatoes, or a gourmet food-themed dish with seasonal vegetables.",
+   "verdict": true,
+   "judge_raw": "{\"label\": \"CORRECT\"}",
+   "evidence_sessions": [
+    "answer_8414cc57"
+   ],
+   "evidence_served": 1,
+   "cost": 0.00323343
+  },
+  {
+   "question_id": "1c0ddc50",
+   "question_type": "single-session-preference",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 100000,
+   "generated": "Listen to podcasts, audiobooks, or music; practice mindfulness or deep breathing; or plan your day.",
+   "verdict": null,
+   "judge_raw": "",
+   "evidence_sessions": [
+    "answer_8da8c7e0"
+   ],
+   "evidence_served": 1,
+   "cost": 0.00377613
+  },
+  {
+   "question_id": "1f2b8d4f",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 94158,
+   "generated": "The difference in price is $750, as your luxury boots cost $800 and the similar pair at the budget store is $50.",
+   "verdict": true,
+   "judge_raw": "The generated answer states the price difference is $750, matching the gold answer, and provides consistent supporting details.\n\n```json\n{\"label\": \"CORRECT\"}\n```",
+   "evidence_sessions": [
+    "answer_d8454588_1",
+    "answer_d8454588_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00317523
+  },
+  {
+   "question_id": "e6041065",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 92519,
+   "generated": "40% of packed shoes.",
+   "verdict": true,
+   "judge_raw": "{\"label\":\"CORRECT\"}",
+   "evidence_sessions": [
+    "answer_4eb6d671_1",
+    "answer_4eb6d671_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.002997
+  },
+  {
+   "question_id": "d905b33f",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 98313,
+   "generated": "You got a 20% discount on the book.",
+   "verdict": true,
+   "judge_raw": "The generated answer includes the gold’s exact discount percentage (20%) without contradiction.\n\n```json\n{\"label\": \"CORRECT\"}\n```",
+   "evidence_sessions": [
+    "answer_85a77c48_1",
+    "answer_85a77c48_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00308835
+  },
+  {
+   "question_id": "60036106",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 105237,
+   "generated": "Your Facebook ad campaign reached around 2,000 people, and your Instagram influencer collaboration reached 10,000 followers.",
+   "verdict": true,
+   "judge_raw": "{\n    \"label\": \"CORRECT\"\n}",
+   "evidence_sessions": [
+    "answer_e552e1f9_1",
+    "answer_e552e1f9_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00333945
+  },
+  {
+   "question_id": "5025383b",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 97939,
+   "generated": "Cooking and photography.",
+   "verdict": true,
+   "judge_raw": "{\"label\": \"CORRECT\"}",
+   "evidence_sessions": [
+    "answer_688f9a3f_1",
+    "answer_688f9a3f_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00311535
+  },
+  {
+   "question_id": "a1cc6108",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 14,
+   "prompt_chars": 38689,
+   "generated": "You were 21 years old when Alex was born.",
+   "verdict": false,
+   "judge_raw": "The generated answer says 21, which contradicts the gold answer of 11.\n\n```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "evidence_sessions": [
+    "answer_17dc2f5b_1",
+    "answer_17dc2f5b_2"
+   ],
+   "evidence_served": 1,
+   "cost": 0.0
+  },
+  {
+   "question_id": "27016adc",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 101563,
+   "generated": "The renovations you plan to do on your current house cost $20,000, and the countryside property is listed at $200,000, which means the renovations are 10% of the property's price.",
+   "verdict": true,
+   "judge_raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "evidence_sessions": [
+    "answer_a37bdf22_1",
+    "answer_a37bdf22_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00328293
+  },
+  {
+   "question_id": "92a0aa75",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 112685,
+   "generated": "The memories do not provide information about your current role or how long you have been working in it.",
+   "verdict": false,
+   "judge_raw": "The generated answer does not include the gold answer and instead states that the information is unavailable, so it is incorrect.\n\n```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "evidence_sessions": [
+    "answer_6cb8f792_1",
+    "answer_6cb8f792_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00356673
+  },
+  {
+   "question_id": "0ea62687",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 94408,
+   "generated": "Your car was getting 2 miles per gallon more a few months ago (30 MPG compared to 28 MPG now).",
+   "verdict": true,
+   "judge_raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "evidence_sessions": [
+    "answer_dc5e537d_1",
+    "answer_dc5e537d_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00302505
+  },
+  {
+   "question_id": "67e0d0f2",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 102006,
+   "generated": "You have completed 12 courses on Coursera.",
+   "verdict": false,
+   "judge_raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "evidence_sessions": [
+    "answer_3a5010af_1",
+    "answer_3a5010af_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.0033757500000000003
+  },
+  {
+   "question_id": "60159905",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 110977,
+   "generated": "You attended one dinner party at Sarah's place.",
+   "verdict": false,
+   "judge_raw": "The generated answer says \"one,\" which contradicts the gold answer of \"three.\"\n\n```json\n{\"label\": \"WRONG\"}\n```",
+   "evidence_sessions": [
+    "answer_75eca223_1",
+    "answer_75eca223_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00371208
+  },
+  {
+   "question_id": "078150f1",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 97201,
+   "generated": "You raised $50 more than your initial goal.",
+   "verdict": true,
+   "judge_raw": "The generated answer states the same amount ($50 more than the initial goal), matching the gold answer exactly.\n\n```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "evidence_sessions": [
+    "answer_254d8b09_1",
+    "answer_254d8b09_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.0030405
+  },
+  {
+   "question_id": "8cf4d046",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 13,
+   "prompt_chars": 40175,
+   "generated": "The average GPA of your undergraduate and graduate studies is 3.83.",
+   "verdict": true,
+   "judge_raw": "The generated answer exactly matches the gold answer with no contradiction.\n\n```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "evidence_sessions": [
+    "answer_e2278b24_1",
+    "answer_e2278b24_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.0
+  },
+  {
+   "question_id": "a346bb18",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 96403,
+   "generated": "You exceeded your target time by 12 minutes.",
+   "verdict": true,
+   "judge_raw": "The generated answer matches the gold answer exactly in value and time granularity (12 minutes).\n\n```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "evidence_sessions": [
+    "answer_4934b2d7_1",
+    "answer_4934b2d7_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.0030612
+  },
+  {
+   "question_id": "37f165cf",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 28,
+   "prompt_chars": 74732,
+   "generated": "The page count of \"The Power\" by Naomi Alderman is 341 pages, and \"The Nightingale\" by Kristin Hannah is 440 pages.",
+   "verdict": false,
+   "judge_raw": "The generated answer provides individual page counts that sum to 781, not the gold combined page count of 856, so it does not include the required content.\n\n```json\n{\"label\": \"WRONG\"}\n```",
+   "evidence_sessions": [
+    "answer_6b9b2b1e_1",
+    "answer_6b9b2b1e_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.0
+  },
+  {
+   "question_id": "21d02d0d",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 82633,
+   "generated": "You missed two fun runs in March due to work commitments.",
+   "verdict": true,
+   "judge_raw": "{\n    \"label\": \"CORRECT\"\n}",
+   "evidence_sessions": [
+    "answer_2c637141_1",
+    "answer_2c637141_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.0025569
+  },
+  {
+   "question_id": "2311e44b_abs",
+   "question_type": "multi-session",
+   "abstention": true,
+   "n_hits": 40,
+   "prompt_chars": 82270,
+   "generated": "You have 250 pages left to read in 'Sapiens'.",
+   "verdict": false,
+   "judge_raw": "The generated answer invents a specific number, whereas the gold states there is not enough information to determine it.\n\n```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "evidence_sessions": [
+    "answer_bf633415_abs_1",
+    "answer_bf633415_abs_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.0026127
+  },
+  {
+   "question_id": "a96c20ee_abs",
+   "question_type": "multi-session",
+   "abstention": true,
+   "n_hits": 40,
+   "prompt_chars": 87669,
+   "generated": "Harvard University",
+   "verdict": false,
+   "judge_raw": "The generated answer provides a specific university, whereas the gold answer states that the information is insufficient, so it does not match the ground truth.\n\n```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "evidence_sessions": [
+    "answer_ef84b994_abs_1",
+    "answer_ef84b994_abs_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00248595
+  },
+  {
+   "question_id": "gpt4_f49edff3",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 96238,
+   "generated": "1. The day I helped my cousin pick out stuff for her baby shower.\n2. The day I helped my friend prepare the nursery.\n3. The day I ordered a customized phone case for my friend's birthday.",
+   "verdict": false,
+   "judge_raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "evidence_sessions": [
+    "answer_3e9fce53_1",
+    "answer_3e9fce53_2",
+    "answer_3e9fce53_3"
+   ],
+   "evidence_served": 3,
+   "cost": 0.0032671799999999997
+  },
+  {
+   "question_id": "71017276",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 81365,
+   "generated": "You received the crystal chandelier from your aunt three weeks ago.",
+   "verdict": false,
+   "judge_raw": "```json\n{\"label\": \"WRONG\"}\n```",
+   "evidence_sessions": [
+    "answer_0b4a8adc_1"
+   ],
+   "evidence_served": 1,
+   "cost": 0.00259155
+  },
+  {
+   "question_id": "0bc8ad92",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 99595,
+   "generated": "Three months have passed since you last visited a museum with a friend.",
+   "verdict": false,
+   "judge_raw": "The generated answer states \"three months,\" which contradicts the gold answer of \"5.\"\n\n```json\n{\"label\": \"WRONG\"}\n```",
+   "evidence_sessions": [
+    "answer_f4ea84fb_1",
+    "answer_f4ea84fb_2",
+    "answer_f4ea84fb_3"
+   ],
+   "evidence_served": 3,
+   "cost": 0.0032287799999999997
+  },
+  {
+   "question_id": "af082822",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 87275,
+   "generated": "You attended the friends and family sale at Nordstrom one week ago.",
+   "verdict": false,
+   "judge_raw": "```json\n{\"label\": \"WRONG\"}\n```",
+   "evidence_sessions": [
+    "answer_b51b6115_1"
+   ],
+   "evidence_served": 1,
+   "cost": 0.0029619299999999998
+  },
+  {
+   "question_id": "gpt4_b5700ca9",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 95309,
+   "generated": "You attended the Maundy Thursday service at the Episcopal Church 2 days ago.",
+   "verdict": false,
+   "judge_raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "evidence_sessions": [
+    "answer_a17423e7_1"
+   ],
+   "evidence_served": 1,
+   "cost": 0.00320238
+  },
+  {
+   "question_id": "gpt4_1d4ab0c9",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 120931,
+   "generated": "0 days; you harvested your first batch of fresh herbs on the same day you started watering your herb garden.",
+   "verdict": false,
+   "judge_raw": "{\"label\":\"WRONG\"}",
+   "evidence_sessions": [
+    "answer_febde667_1",
+    "answer_febde667_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00409638
+  },
+  {
+   "question_id": "gpt4_e072b769",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 94125,
+   "generated": "A few weeks ago.",
+   "verdict": false,
+   "judge_raw": "{\"label\":\"WRONG\"}",
+   "evidence_sessions": [
+    "answer_c19bd2bf_1"
+   ],
+   "evidence_served": 1,
+   "cost": 0.00317508
+  },
+  {
+   "question_id": "0db4c65d",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 116677,
+   "generated": "18 days.",
+   "verdict": true,
+   "judge_raw": "The generated answer matches the gold answer exactly by stating 18 days, which is acceptable.\n\n```json\n{\"label\": \"CORRECT\"}\n```",
+   "evidence_sessions": [
+    "answer_b9e32ff8_1",
+    "answer_b9e32ff8_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00373065
+  },
+  {
+   "question_id": "gpt4_6dc9b45b",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 91318,
+   "generated": "17 months ago.",
+   "verdict": false,
+   "judge_raw": "The generated answer contradicts the gold answer by stating 17 months instead of 4 months.\n```json\n{\"label\": \"WRONG\"}\n```",
+   "evidence_sessions": [
+    "answer_c4df007f_1"
+   ],
+   "evidence_served": 1,
+   "cost": 0.00293463
+  },
+  {
+   "question_id": "gpt4_7a0daae1",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 91058,
+   "generated": "One week.",
+   "verdict": true,
+   "judge_raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "evidence_sessions": [
+    "answer_4d5490f1_1",
+    "answer_4d5490f1_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00291705
+  },
+  {
+   "question_id": "gpt4_468eb063",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 92206,
+   "generated": "You met Emma 6 days ago.",
+   "verdict": false,
+   "judge_raw": "The generated answer says 6 days ago, which contradicts the gold answer of 9 days ago (or 10 including the last day).\n\n```json\n{\"label\": \"WRONG\"}\n```",
+   "evidence_sessions": [
+    "answer_9b09d95b_1"
+   ],
+   "evidence_served": 1,
+   "cost": 0.0030033
+  },
+  {
+   "question_id": "4dfccbf7",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 92668,
+   "generated": "24 days.",
+   "verdict": true,
+   "judge_raw": "The generated answer \"24 days\" matches the gold answer exactly, so it is correct.\n\n```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "evidence_sessions": [
+    "answer_4bebc782_1",
+    "answer_4bebc782_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00303375
+  },
+  {
+   "question_id": "2ebe6c90",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 104638,
+   "generated": "You finished \"The Nightingale\" in one day.",
+   "verdict": false,
+   "judge_raw": "The generated answer says it took one day, which contradicts the gold answer of 21 or 22 days.\n\n```json\n{\"label\": \"WRONG\"}\n```",
+   "evidence_sessions": [
+    "answer_c9d35c00_1",
+    "answer_c9d35c00_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00344448
+  },
+  {
+   "question_id": "6e984301",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 104109,
+   "generated": "You have been taking sculpting classes for about 6 weeks.",
+   "verdict": false,
+   "judge_raw": "The generated answer states 6 weeks, which contradicts the gold answer of 3 weeks.\n\n```json\n{\"label\": \"WRONG\"}\n```",
+   "evidence_sessions": [
+    "answer_88841f26_1",
+    "answer_88841f26_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.0032817
+  },
+  {
+   "question_id": "bcbe585f",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 104806,
+   "generated": "Three weeks ago.",
+   "verdict": false,
+   "judge_raw": "The generated answer says \"Three weeks ago\" while the gold answer is 4 weeks ago, so it contradicts the required number.\n\n```json\n{\"label\": \"WRONG\"}\n```",
+   "evidence_sessions": [
+    "answer_43ba3965_1"
+   ],
+   "evidence_served": 1,
+   "cost": 0.0032871
+  },
+  {
+   "question_id": "gpt4_21adecb5",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 94024,
+   "generated": "Five months.",
+   "verdict": false,
+   "judge_raw": "{\"label\":\"WRONG\"}",
+   "evidence_sessions": [
+    "answer_1e2369c9_1",
+    "answer_1e2369c9_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.0029058
+  },
+  {
+   "question_id": "5e1b23de",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 93861,
+   "generated": "About three months ago.",
+   "verdict": true,
+   "judge_raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "evidence_sessions": [
+    "answer_c18d480b_1"
+   ],
+   "evidence_served": 1,
+   "cost": 0.00311028
+  },
+  {
+   "question_id": "eac54adc",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 118761,
+   "generated": "22 days ago.",
+   "verdict": false,
+   "judge_raw": "{\"label\": \"WRONG\"}",
+   "evidence_sessions": [
+    "answer_0d4d0347_1",
+    "answer_0d4d0347_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00398298
+  },
+  {
+   "question_id": "gpt4_e414231e",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 95681,
+   "generated": "4 days.",
+   "verdict": true,
+   "judge_raw": "The generated answer exactly matches the gold answer of 4 days.\n\n```json\n{\"label\": \"CORRECT\"}\n```",
+   "evidence_sessions": [
+    "answer_e28c1f0d_1",
+    "answer_e28c1f0d_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.002985
+  },
+  {
+   "question_id": "gpt4_7bc6cf22",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 101211,
+   "generated": "5 days ago.",
+   "verdict": false,
+   "judge_raw": "The generated answer says 5 days ago, which contradicts the gold answer of 12 or 13 days ago.\n\n```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "evidence_sessions": [
+    "answer_e22d6aef_1"
+   ],
+   "evidence_served": 1,
+   "cost": 0.0030756
+  },
+  {
+   "question_id": "gpt4_e061b84g",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 93772,
+   "generated": "The charity soccer tournament.",
+   "verdict": true,
+   "judge_raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "evidence_sessions": [
+    "answer_8c64ce26_1",
+    "answer_8c64ce26_2",
+    "answer_8c64ce26_3"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00291045
+  },
+  {
+   "question_id": "gpt4_e414231f",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 95307,
+   "generated": "You fixed the flat tire on your mountain bike.",
+   "verdict": false,
+   "judge_raw": "The generated answer specifies a mountain bike, which contradicts the gold answer of road bike.\n\n```json\n{\"label\": \"WRONG\"}\n```",
+   "evidence_sessions": [
+    "answer_e28c1f0e_1",
+    "answer_e28c1f0e_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.0
+  },
+  {
+   "question_id": "gpt4_4929293b",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 106046,
+   "generated": "Your niece's kindergarten graduation ceremony.",
+   "verdict": false,
+   "judge_raw": "The generated answer refers to a different relative and event than the gold answer, so it does not include the required content.\n\n```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "evidence_sessions": [
+    "answer_add9b013_1",
+    "answer_add9b013_2"
+   ],
+   "evidence_served": 1,
+   "cost": 0.0032691
+  },
+  {
+   "question_id": "eac54add",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 100043,
+   "generated": "You signed a contract with your first client.",
+   "verdict": true,
+   "judge_raw": "The generated answer restates the same milestone as the gold answer, only changing the pronoun from “I” to “you.”\n\n```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "evidence_sessions": [
+    "answer_0d4d0348_1",
+    "answer_0d4d0348_2"
+   ],
+   "evidence_served": 1,
+   "cost": 0.0031674
+  },
+  {
+   "question_id": "6e984302",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 102364,
+   "generated": "You bought a silver necklace with a small pendant for $40.",
+   "verdict": false,
+   "judge_raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "evidence_sessions": [
+    "answer_88841f27_1",
+    "answer_88841f27_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.0032931
+  },
+  {
+   "question_id": "gpt4_8279ba03",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 99426,
+   "generated": "You bought a portable power bank from Anker.",
+   "verdict": false,
+   "judge_raw": "```json\n{\"label\": \"WRONG\"}\n```",
+   "evidence_sessions": [
+    "answer_56521e66_1"
+   ],
+   "evidence_served": 0,
+   "cost": 0.00334233
+  },
+  {
+   "question_id": "gpt4_2487a7cb",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 103570,
+   "generated": "You attended the 'Data Analysis using Python' webinar first.",
+   "verdict": true,
+   "judge_raw": "The generated answer matches the gold answer by stating that the 'Data Analysis using Python' webinar was attended first.\n\n```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "evidence_sessions": [
+    "answer_1c6b85ea_1",
+    "answer_1c6b85ea_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00324843
+  },
+  {
+   "question_id": "gpt4_76048e76",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 88402,
+   "generated": "The bike.",
+   "verdict": true,
+   "judge_raw": "The generated answer matches the gold answer by identifying the bike.\n\n```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "evidence_sessions": [
+    "answer_b535969f_1",
+    "answer_b535969f_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00283275
+  },
+  {
+   "question_id": "gpt4_2312f94c",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 90140,
+   "generated": "You got the Dell XPS 13 first.",
+   "verdict": false,
+   "judge_raw": "The generated answer contradicts the gold answer by naming the Dell XPS 13 instead of the Samsung Galaxy S22.\n\n```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "evidence_sessions": [
+    "answer_5328c3c2_1",
+    "answer_5328c3c2_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.0029178
+  },
+  {
+   "question_id": "2a1811e2",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 95361,
+   "generated": "26 days.",
+   "verdict": false,
+   "judge_raw": "The generated answer gives 26 days, which contradicts the gold answer of 21 days (or 22 days including the last day).\n\n```json\n{\"label\": \"WRONG\"}\n```",
+   "evidence_sessions": [
+    "answer_1cc3cd0c_1",
+    "answer_1cc3cd0c_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00318918
+  },
+  {
+   "question_id": "gpt4_70e84552",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 88704,
+   "generated": "You fixed the fence first.",
+   "verdict": true,
+   "judge_raw": "The generated answer states that fixing the fence was done first, which matches the gold answer.\n\n```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "evidence_sessions": [
+    "answer_b3070ec4_1",
+    "answer_b3070ec4_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.0027789
+  },
+  {
+   "question_id": "gpt4_2d58bcd6",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 101272,
+   "generated": "You finished reading \"The Hate U Give\" first.",
+   "verdict": true,
+   "judge_raw": "The generated answer matches the gold answer by identifying \"The Hate U Give\" as the first book finished.\n\n```json\n{\"label\": \"CORRECT\"}\n```",
+   "evidence_sessions": [
+    "answer_3e11e0ae_1",
+    "answer_3e11e0ae_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00324015
+  },
+  {
+   "question_id": "b9cfe692",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 92330,
+   "generated": "You took a total of five and a half weeks to finish both books combined.",
+   "verdict": true,
+   "judge_raw": "{\"label\":\"CORRECT\"}",
+   "evidence_sessions": [
+    "answer_5e3bb940_1",
+    "answer_5e3bb940_2",
+    "answer_5e3bb940_3"
+   ],
+   "evidence_served": 3,
+   "cost": 0.00302805
+  },
+  {
+   "question_id": "gpt4_9a159967",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 95030,
+   "generated": "United Airlines.",
+   "verdict": true,
+   "judge_raw": "The generated answer exactly matches the gold answer, United Airlines.\n\n```json\n{\"label\": \"CORRECT\"}\n```",
+   "evidence_sessions": [
+    "answer_8a42fedf_1",
+    "answer_8a42fedf_2",
+    "answer_8a42fedf_3"
+   ],
+   "evidence_served": 3,
+   "cost": 0.00295665
+  },
+  {
+   "question_id": "gpt4_d9af6064",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 97510,
+   "generated": "The new router.",
+   "verdict": true,
+   "judge_raw": "{\"label\":\"CORRECT\"}",
+   "evidence_sessions": [
+    "answer_da704e79_1",
+    "answer_da704e79_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.0031083
+  },
+  {
+   "question_id": "gpt4_4cd9eba1",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 97913,
+   "generated": "Three weeks.",
+   "verdict": false,
+   "judge_raw": "{\"label\": \"WRONG\"}",
+   "evidence_sessions": [
+    "answer_5fcca8bc_1",
+    "answer_5fcca8bc_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00303045
+  },
+  {
+   "question_id": "6613b389",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 106928,
+   "generated": "Rachel got engaged two months before your anniversary.",
+   "verdict": true,
+   "judge_raw": "{\"label\": \"CORRECT\"}",
+   "evidence_sessions": [
+    "answer_aaf71ce2_1",
+    "answer_aaf71ce2_2",
+    "answer_aaf71ce2_3"
+   ],
+   "evidence_served": 3,
+   "cost": 0.0033918
+  },
+  {
+   "question_id": "gpt4_0a05b494",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 94984,
+   "generated": "You met the tourist from Australia first.",
+   "verdict": false,
+   "judge_raw": "The generated answer contradicts the gold answer by saying the tourist from Australia was met first.\n\n```json\n{\"label\": \"WRONG\"}\n```",
+   "evidence_sessions": [
+    "answer_a68db5db_1",
+    "answer_a68db5db_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.0030273
+  },
+  {
+   "question_id": "8c18457d",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 108575,
+   "generated": "21 days.",
+   "verdict": false,
+   "judge_raw": "The generated answer states 21 days, which does not match the gold answer of 7 days (or acceptable 8 days).\n\n```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "evidence_sessions": [
+    "answer_124f5dc3_1",
+    "answer_124f5dc3_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00348285
+  },
+  {
+   "question_id": "gpt4_70e84552_abs",
+   "question_type": "temporal-reasoning",
+   "abstention": true,
+   "n_hits": 40,
+   "prompt_chars": 90113,
+   "generated": "You completed fixing the fence first.",
+   "verdict": false,
+   "judge_raw": "The generated answer asserts a specific order, while the gold answer says there is not enough information to determine it.\n\n```json\n{\"label\": \"WRONG\"}\n```",
+   "evidence_sessions": [
+    "answer_b3070ec4_abs_1",
+    "answer_b3070ec4_abs_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00306348
+  },
+  {
+   "question_id": "830ce83f",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 65585,
+   "generated": "Rachel moved back to the suburbs.",
+   "verdict": true,
+   "judge_raw": "The generated answer includes the gold location “the suburbs” and does not contradict it.\n\n```json\n{\"label\":\"CORRECT\"}\n```",
+   "evidence_sessions": [
+    "answer_0b1a0942_1",
+    "answer_0b1a0942_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.002091
+  },
+  {
+   "question_id": "d7c942c3",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 103247,
+   "generated": "Yes, your mom is using the same grocery list app as you.",
+   "verdict": true,
+   "judge_raw": "{\"label\":\"CORRECT\"}",
+   "evidence_sessions": [
+    "answer_eecb10d9_1",
+    "answer_eecb10d9_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00334815
+  },
+  {
+   "question_id": "ce6d2d27",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 99697,
+   "generated": "Fridays.",
+   "verdict": true,
+   "judge_raw": "The generated answer “Fridays” is a clear equivalent paraphrase of the gold answer “Friday,” so it is correct.\n\n```json\n{\"label\": \"CORRECT\"}\n```",
+   "evidence_sessions": [
+    "answer_73540165_1",
+    "answer_73540165_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.0031914
+  },
+  {
+   "question_id": "9ea5eabc",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 97783,
+   "generated": "Hawaii.",
+   "verdict": false,
+   "judge_raw": "The generated answer says Hawaii, which does not match the gold answer Paris and contradicts it.\n\n```json\n{\"label\": \"WRONG\"}\n```",
+   "evidence_sessions": [
+    "answer_02e66dec_1",
+    "answer_02e66dec_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00318225
+  },
+  {
+   "question_id": "07741c44",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 105041,
+   "generated": "Under my bed.",
+   "verdict": true,
+   "judge_raw": "{\"label\":\"CORRECT\"}",
+   "evidence_sessions": [
+    "answer_7e9ad7b4_1",
+    "answer_7e9ad7b4_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00332445
+  },
+  {
+   "question_id": "a1eacc2a",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 109748,
+   "generated": "Four short stories.",
+   "verdict": false,
+   "judge_raw": "{\"label\":\"WRONG\"}",
+   "evidence_sessions": [
+    "answer_0eb23770_1",
+    "answer_0eb23770_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00344955
+  },
+  {
+   "question_id": "184da446",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 77535,
+   "generated": "You are on page 220.",
+   "verdict": true,
+   "judge_raw": "{\n    \"label\": \"CORRECT\"\n}",
+   "evidence_sessions": [
+    "answer_e2f4f947_1",
+    "answer_e2f4f947_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.0024681
+  },
+  {
+   "question_id": "4d6b87c8",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 80878,
+   "generated": "25 titles.",
+   "verdict": true,
+   "judge_raw": "{\"label\":\"CORRECT\"}",
+   "evidence_sessions": [
+    "answer_766ab8da_1",
+    "answer_766ab8da_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00255975
+  },
+  {
+   "question_id": "08e075c7",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 111906,
+   "generated": "You have been using your Fitbit Charge 3 for 9 months.",
+   "verdict": true,
+   "judge_raw": "The generated answer exactly matches the gold answer's duration of 9 months.\n\n```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "evidence_sessions": [
+    "answer_cdbe2250_1",
+    "answer_cdbe2250_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.0035856
+  },
+  {
+   "question_id": "2698e78f",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 94847,
+   "generated": "You see Dr. Smith every week.",
+   "verdict": true,
+   "judge_raw": "The generated answer clearly includes the gold frequency “every week” without contradiction.\n\n```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "evidence_sessions": [
+    "answer_9282283d_1",
+    "answer_9282283d_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00306783
+  },
+  {
+   "question_id": "b6019101",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 109040,
+   "generated": "You watched 5 MCU films in the last 3 months.",
+   "verdict": true,
+   "judge_raw": "The generated answer states the same count (5) and time frame as the gold answer without contradiction.\n\n```json\n{\"label\": \"CORRECT\"}\n```",
+   "evidence_sessions": [
+    "answer_67074b4b_1",
+    "answer_67074b4b_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00359535
+  },
+  {
+   "question_id": "6071bd76",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 100287,
+   "generated": "You switched to less water per tablespoon of coffee.",
+   "verdict": true,
+   "judge_raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "evidence_sessions": [
+    "answer_4dac77cb_1",
+    "answer_4dac77cb_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00322395
+  },
+  {
+   "question_id": "e493bb7c",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 20,
+   "prompt_chars": 39181,
+   "generated": "Above the user's bed.",
+   "verdict": null,
+   "judge_raw": "",
+   "evidence_sessions": [
+    "answer_1a374afa_1",
+    "answer_1a374afa_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.0
+  },
+  {
+   "question_id": "72e3ee87",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 97421,
+   "generated": "You have completed 50 episodes of the Science series on Crash Course.",
+   "verdict": true,
+   "judge_raw": "The generated answer exactly matches the gold answer by stating 50 episodes.\n\n```json\n{\"label\": \"CORRECT\"}\n```",
+   "evidence_sessions": [
+    "answer_d7de9a6a_1",
+    "answer_d7de9a6a_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.0030138
+  },
+  {
+   "question_id": "01493427",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 88412,
+   "generated": "You have added 25 new postcards to your collection since you started collecting again.",
+   "verdict": true,
+   "judge_raw": "```json\n{\"label\": \"CORRECT\"}\n```",
+   "evidence_sessions": [
+    "answer_a7b44747_1",
+    "answer_a7b44747_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00292803
+  },
+  {
+   "question_id": "b01defab",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 35,
+   "prompt_chars": 66546,
+   "generated": "Yes, you finished reading \"The Nightingale\" by Kristin Hannah.",
+   "verdict": true,
+   "judge_raw": "{\n    \"label\": \"CORRECT\"\n}",
+   "evidence_sessions": [
+    "answer_8c0712af_1",
+    "answer_8c0712af_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.0
+  },
+  {
+   "question_id": "603deb26",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 97248,
+   "generated": "10 times.",
+   "verdict": true,
+   "judge_raw": "The generated answer matches the gold count exactly.\n\n```json\n{\"label\": \"CORRECT\"}\n```",
+   "evidence_sessions": [
+    "answer_8afdebac_1",
+    "answer_8afdebac_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00317895
+  },
+  {
+   "question_id": "0ddfec37",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 97920,
+   "generated": "You have added 15 autographed baseballs to your collection in the first three months.",
+   "verdict": true,
+   "judge_raw": "The generated answer states 15, which matches the gold answer exactly.\n\n```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "evidence_sessions": [
+    "answer_a22b654d_1",
+    "answer_a22b654d_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00313845
+  },
+  {
+   "question_id": "cf22b7bf",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 96536,
+   "generated": "You have lost 10 pounds since you started going to the gym consistently.",
+   "verdict": true,
+   "judge_raw": "The generated answer exactly matches the gold answer and does not contradict it.\n\n```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "evidence_sessions": [
+    "answer_ae3a122b_1",
+    "answer_ae3a122b_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00319035
+  },
+  {
+   "question_id": "a2f3aa27",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 91111,
+   "generated": "You have 1250 followers on Instagram now.",
+   "verdict": false,
+   "judge_raw": "```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "evidence_sessions": [
+    "answer_5126c02d_1",
+    "answer_5126c02d_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00287385
+  },
+  {
+   "question_id": "c6853660",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 103705,
+   "generated": "You mostly recently increased the limit to two cups of coffee in the morning.",
+   "verdict": true,
+   "judge_raw": "{\"label\":\"CORRECT\"}",
+   "evidence_sessions": [
+    "answer_626e93c4_1",
+    "answer_626e93c4_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00357288
+  },
+  {
+   "question_id": "0977f2af",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 95219,
+   "generated": "You didn't mention investing in a new kitchen gadget before getting the Air Fryer.",
+   "verdict": false,
+   "judge_raw": "The generated answer does not include the gold answer “Instant Pot” and instead denies that any such gadget was mentioned, so it is incorrect.\n\n```json\n{\n    \"label\": \"WRONG\"\n}\n```",
+   "evidence_sessions": [
+    "answer_3bf5b73b_1",
+    "answer_3bf5b73b_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00313545
+  },
+  {
+   "question_id": "0ddfec37_abs",
+   "question_type": "knowledge-update",
+   "abstention": true,
+   "n_hits": 40,
+   "prompt_chars": 100728,
+   "generated": "15 autographed baseballs.",
+   "verdict": false,
+   "judge_raw": "The generated answer addresses autographed baseballs, not football, and does not reflect the gold answer that the information is insufficient.\n\n```json\n{\"label\": \"WRONG\"}\n```",
+   "evidence_sessions": [
+    "answer_a22b654d_abs_1",
+    "answer_a22b654d_abs_2"
+   ],
+   "evidence_served": 2,
+   "cost": 0.00325965
+  },
+  {
+   "question_id": "c4f10528",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 88218,
+   "generated": "Miss Bee Providore.",
+   "verdict": true,
+   "judge_raw": "{\"label\": \"CORRECT\"}",
+   "evidence_sessions": [
+    "answer_ultrachat_234453"
+   ],
+   "evidence_served": 1,
+   "cost": 0.00291285
+  },
+  {
+   "question_id": "89527b6b",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 105086,
+   "generated": "The Plesiosaur has a blue scaly body.",
+   "verdict": true,
+   "judge_raw": "{\"label\": \"CORRECT\"}",
+   "evidence_sessions": [
+    "answer_sharegpt_YkWn1Ne_0"
+   ],
+   "evidence_served": 1,
+   "cost": 0.00343575
+  },
+  {
+   "question_id": "7e00a6cb",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 93371,
+   "generated": "International Budget Hostel.",
+   "verdict": true,
+   "judge_raw": "{\"label\":\"CORRECT\"}",
+   "evidence_sessions": [
+    "answer_ultrachat_370515"
+   ],
+   "evidence_served": 1,
+   "cost": 0.00314925
+  },
+  {
+   "question_id": "ceb54acb",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 83021,
+   "generated": "1. Sexual fixations\n2. Problematic sexual behaviors\n3. Sexual impulsivity\n4. Compulsive sexuality",
+   "verdict": true,
+   "judge_raw": "{\"label\":\"CORRECT\"}",
+   "evidence_sessions": [
+    "answer_sharegpt_cGdjmYo_0"
+   ],
+   "evidence_served": 1,
+   "cost": 0.0026205
+  },
+  {
+   "question_id": "dc439ea3",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 94734,
+   "generated": "Hoop Dance.",
+   "verdict": true,
+   "judge_raw": "The generated answer matches the gold answer exactly.\n\n```json\n{\"label\": \"CORRECT\"}\n```",
+   "evidence_sessions": [
+    "answer_ultrachat_459954"
+   ],
+   "evidence_served": 1,
+   "cost": 0.00298785
+  },
+  {
+   "question_id": "18dcd5a5",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 94129,
+   "generated": "The party will face 4 mummies in the temple.",
+   "verdict": true,
+   "judge_raw": "The generated answer matches the gold answer exactly by stating the party will face 4 mummies.\n\n```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "evidence_sessions": [
+    "answer_sharegpt_hn3IS1q_0"
+   ],
+   "evidence_served": 1,
+   "cost": 0.0030246
+  },
+  {
+   "question_id": "58470ed2",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 84852,
+   "generated": "Borges said, \"The Library is a sphere whose exact center is any one of its hexagons and whose circumference is inaccessible.\"",
+   "verdict": true,
+   "judge_raw": "The generated answer exactly reproduces the gold quote without contradiction.\n\n```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "evidence_sessions": [
+    "answer_sharegpt_U4oCSfU_7"
+   ],
+   "evidence_served": 1,
+   "cost": 0.002502
+  },
+  {
+   "question_id": "8cf51dda",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 105494,
+   "generated": "1. To identify molecular subtypes of endometrial cancer using a combination of genomic and transcriptomic approaches.  \n2. To investigate the clinical and biological significance of the identified molecular subtypes, including their association with patient outcomes and response to therapy.  \n3. To develop biomarkers for the early detection and prognosis of endometrial cancer based on the identified molecular subtypes.",
+   "verdict": true,
+   "judge_raw": "{\n    \"label\": \"CORRECT\"\n}",
+   "evidence_sessions": [
+    "answer_sharegpt_HFMn2ZX_0"
+   ],
+   "evidence_served": 1,
+   "cost": 0.0034026
+  },
+  {
+   "question_id": "1d4da289",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 99396,
+   "generated": "Two-factor authentication methods include biometric authentication and one-time passwords (OTP).",
+   "verdict": true,
+   "judge_raw": "The generated answer includes both example methods from the gold answer without contradicting it.\n\n```json\n{\"label\": \"CORRECT\"}\n```",
+   "evidence_sessions": [
+    "answer_ultrachat_348449"
+   ],
+   "evidence_served": 1,
+   "cost": 0.0030066
+  },
+  {
+   "question_id": "1b9b7252",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 113850,
+   "generated": "Mindful.org.",
+   "verdict": true,
+   "judge_raw": "{\"label\":\"CORRECT\"}",
+   "evidence_sessions": [
+    "answer_ultrachat_115151"
+   ],
+   "evidence_served": 1,
+   "cost": 0.00359325
+  },
+  {
+   "question_id": "1568498a",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 100868,
+   "generated": "28. Kg3 Be6.",
+   "verdict": false,
+   "judge_raw": "{\n    \"label\": \"WRONG\"\n}",
+   "evidence_sessions": [
+    "answer_sharegpt_d6JJiqH_76"
+   ],
+   "evidence_served": 1,
+   "cost": 0.00385668
+  },
+  {
+   "question_id": "6222b6eb",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 103712,
+   "generated": "6S is implemented in the SIAC_GEE tool.",
+   "verdict": true,
+   "judge_raw": "The generated answer matches the gold answer exactly in meaning and granularity.\n\n```json\n{\"label\": \"CORRECT\"}\n```",
+   "evidence_sessions": [
+    "answer_sharegpt_H9PiM5G_0"
+   ],
+   "evidence_served": 1,
+   "cost": 0.0031059
+  },
+  {
+   "question_id": "d596882b",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 90997,
+   "generated": "By Chloe.",
+   "verdict": true,
+   "judge_raw": "{\"label\": \"CORRECT\"}",
+   "evidence_sessions": [
+    "answer_ultrachat_252214"
+   ],
+   "evidence_served": 1,
+   "cost": 0.0029268
+  },
+  {
+   "question_id": "3e321797",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 92823,
+   "generated": "Leave it on for 10 minutes.",
+   "verdict": true,
+   "judge_raw": "{\"label\": \"CORRECT\"}",
+   "evidence_sessions": [
+    "answer_ultrachat_94624"
+   ],
+   "evidence_served": 1,
+   "cost": 0.00302895
+  },
+  {
+   "question_id": "8b9d4367",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 80917,
+   "generated": "Jaipur Rugs.",
+   "verdict": true,
+   "judge_raw": "```json\n{\"label\": \"CORRECT\"}\n```",
+   "evidence_sessions": [
+    "answer_ultrachat_289157"
+   ],
+   "evidence_served": 1,
+   "cost": 0.00259845
+  },
+  {
+   "question_id": "41275add",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 88894,
+   "generated": "\"How to Sit Properly at a Desk to Avoid Back Pain\" by the Mayo Clinic: <https://www.youtube.com/watch?v=UfOvNlX9Hh0>",
+   "verdict": true,
+   "judge_raw": "{\"label\":\"CORRECT\"}",
+   "evidence_sessions": [
+    "answer_sharegpt_81riySf_0"
+   ],
+   "evidence_served": 1,
+   "cost": 0.00286425
+  },
+  {
+   "question_id": "4baee567",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "n_hits": 40,
+   "prompt_chars": 89032,
+   "generated": "The Kansas City Chiefs played the Jacksonville Jaguars 12 times at Arrowhead Stadium.",
+   "verdict": true,
+   "judge_raw": "```json\n{\n    \"label\": \"CORRECT\"\n}\n```",
+   "evidence_sessions": [
+    "answer_sharegpt_i9adwQn_0"
+   ],
+   "evidence_served": 1,
+   "cost": 0.00294123
+  }
+ ],
+ "errors": []
+}

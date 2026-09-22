@@ -80,3 +80,8 @@ bench/instruments/data/
 # (/Volumes/data/bettermemory) — no trailing slash so the link itself is
 # covered too.
 bench/w/corpus
+
+# Model-response cache for the bench harnesses that call a model
+# (bench/llm.py). Rebuildable by rerunning; holds sampled text only.
+bench/.llm-cache/
+bench/aml/.stores/
