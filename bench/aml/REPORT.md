@@ -86,6 +86,16 @@ entry.
 | LoCoMo-Refined (1,382) | 0.6469 | 0.6310 | 98 vs 76 discordant, p = 0.111 | `results/locomo-C0.json`, `results/locomo-LF.json` |
 | BEAM-1M (700, rubric mean) | 0.3698 | 0.3701 | bettermemory minus FTS5 -0.0003, 95% CI [-0.0242, +0.0236] | `results/beam1m-C0.json`, `results/beam1m-BF.json` |
 | PersonaMem v1, 32k tier (589, multiple choice) | 0.5042 | 0.5110 | 25 vs 29 discordant, p = 0.683 | `results/pm1-P0.json`, `results/pm1-PF.json` |
+| PersonaMem v2, 128k histories (first 1,000 of 5,000, multiple choice) | 0.3890 | 0.3640 | 81 vs 56 discordant, p = 0.040 | `results/pm2-V0.json`, `results/pm2-VF.json` |
+| CL-bench, AML's 0-4k and 16-32k ranges (787, strict rubric) | 0.0673 | 0.0686 | bettermemory minus FTS5 -0.0013, 95% CI [-0.0095, +0.0070] | `results/clbench-CL0.json`, `results/clbench-CLF.json` |
+
+The FTS5 arms serve up to 100 rounds with no character budget; on PersonaMem v2 that is
+about 172,000 characters a question against the engine's 92,000. The first 1,000
+PersonaMem v2 questions are 40 whole personas (25 questions each). On CL-bench the judge
+(Qwen3-14B, AML's named judge) answers about one rubric prompt in five in prose rather
+than the JSON the pipeline parses, and such a task scores 0 on both arms, as it does
+under AML's own evaluator; most CL-bench stores hold one to four rounds, so both systems
+serve nearly the same text there.
 
 The LongMemEval-S split is fixed (`run.split`, seed 20260922, stratified by question
 type). The 350-question holdout is not used to choose configurations. Paired reads come
@@ -144,10 +154,9 @@ place the served configuration is built.
 
 - **Stand-in grading.** Local numbers use a stand-in judge and OpenRouter's serving
   of both models; AML's own runs will differ in level.
-- **Local coverage.** Four of the seven textual datasets have full local runs.
-  PersonaMem v2 (5,000 questions) and CL-bench have loaders and graders in
-  `bench/aml/ds_*.py` but no paid run yet;
-  ScriptMem cannot be reproduced from public data, and CAMBench is unreleased.
+- **Local coverage.** Six of the seven textual datasets have local runs, PersonaMem v2
+  on its first 1,000 questions. ScriptMem cannot be reproduced from public data (its
+  release withholds the scripts), and CAMBench is unreleased.
 - **Coding track.** It runs the same configuration as the Textual track. There is no
   coding-specific tuning, because nothing about the Coding track can be measured
   locally.
