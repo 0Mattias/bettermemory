@@ -18,6 +18,11 @@ public by the contract's own requirement.
 appended to the lexical query: the candidates are words the question is
 about, and a lexical ranker can only use words it is given.
 
+A payload the contract calls invalid gets 400, never 500: AML retries a
+500 up to 32 times, and a malformed request will not heal on retry.
+Nothing here logs request bodies; the contract forbids keeping
+evaluation data beyond the run, and access logs stay off.
+
 Run:
 
     AML_ADAPTER_TOKEN=... AML_STORE_ROOT=/var/lib/bm-aml \\
@@ -42,7 +47,7 @@ from starlette.routing import Route
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from aml.service import MemoryService  # noqa: E402
+from aml.service import SERVING_BUDGET_CHARS, MemoryService  # noqa: E402
 
 
 def _authorized(request: Request, token: str) -> bool:
@@ -55,6 +60,28 @@ def _authorized(request: Request, token: str) -> bool:
     return presented is not None and hmac.compare_digest(presented, token)
 
 
+async def _json_object(request: Request) -> dict[str, Any] | None:
+    try:
+        body = await request.json()
+    except ValueError:
+        return None
+    return body if isinstance(body, dict) else None
+
+
+def _valid_messages(messages: Any) -> bool:
+    return (
+        isinstance(messages, list)
+        and bool(messages)
+        and all(
+            isinstance(m, dict)
+            and isinstance(m.get("role"), str)
+            and m.get("content") not in (None, "", [])
+            and (m.get("timestamp") is None or isinstance(m["timestamp"], (int, float)))
+            for m in messages
+        )
+    )
+
+
 def build_app(service: MemoryService, token: str) -> Starlette:
     async def health(_: Request) -> JSONResponse:
         return JSONResponse({"status": "ok"})
@@ -62,13 +89,17 @@ def build_app(service: MemoryService, token: str) -> Starlette:
     async def add(request: Request) -> JSONResponse:
         if not _authorized(request, token):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
-        body: dict[str, Any] = await request.json()
+        body = await _json_object(request)
+        if body is None:
+            return JSONResponse(
+                {"error": "body must be a JSON object"}, status_code=400
+            )
         missing = [
             k
             for k in ("request_id", "messages", "user_id", "session_id")
             if k not in body
         ]
-        if missing or not isinstance(body.get("messages"), list):
+        if missing or not _valid_messages(body.get("messages")):
             return JSONResponse(
                 {"error": f"missing or invalid: {missing or ['messages']}"},
                 status_code=400,
@@ -92,12 +123,19 @@ def build_app(service: MemoryService, token: str) -> Starlette:
     async def search(request: Request) -> JSONResponse:
         if not _authorized(request, token):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
-        body = await request.json()
+        body = await _json_object(request)
+        if body is None:
+            return JSONResponse(
+                {"error": "body must be a JSON object"}, status_code=400
+            )
         if "query" not in body or "user_id" not in body:
             return JSONResponse(
                 {"error": "query and user_id are required"}, status_code=400
             )
-        top_k = max(1, min(int(body.get("top_k") or 100), 100))
+        try:
+            top_k = max(1, min(int(body.get("top_k") or 100), 100))
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "top_k must be an integer"}, status_code=400)
         query = str(body["query"])
         options = body.get("options")
         if isinstance(options, list) and options:
@@ -116,6 +154,11 @@ def build_app(service: MemoryService, token: str) -> Starlette:
     )
 
 
+def serving_service(root: Path) -> MemoryService:
+    """The configuration the public endpoint runs, and nothing else."""
+    return MemoryService(root, budget=SERVING_BUDGET_CHARS)
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="bettermemory AML adapter")
     p.add_argument("--host", default="127.0.0.1")
@@ -131,10 +174,12 @@ def main() -> None:
         raise SystemExit("AML_STORE_ROOT is required")
     root.mkdir(parents=True, exist_ok=True)
     uvicorn.run(
-        build_app(MemoryService(root), token),
+        build_app(serving_service(root), token),
         host=args.host,
         port=args.port,
         log_level="warning",
+        access_log=False,
+        timeout_keep_alive=75,
     )
 
 

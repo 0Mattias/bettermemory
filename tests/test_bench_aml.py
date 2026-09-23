@@ -106,6 +106,95 @@ def test_served_rounds_carry_the_source_date_header_and_created_at(
     assert hit["created_at"] == "2023-05-20T12:00:00+00:00"
 
 
+def _aml_chunks(
+    messages: list[dict[str, Any]], max_msgs: int = 20, max_words: int = 2000
+) -> list[list[dict[str, Any]]]:
+    """AML's Add split: a chunk closes at 20 messages or 2,000 words."""
+    out: list[list[dict[str, Any]]] = []
+    cur: list[dict[str, Any]] = []
+    words = 0
+    for m in messages:
+        n = len(str(m["content"]).split())
+        if cur and (len(cur) >= max_msgs or words + n > max_words):
+            out.append(cur)
+            cur, words = [], 0
+        cur.append(m)
+        words += n
+    if cur:
+        out.append(cur)
+    return out
+
+
+def test_a_round_split_across_two_adds_is_stored_as_the_whole_session_pairs_it(
+    tmp_path: Path,
+) -> None:
+    long_reply = " ".join(["filler"] * 900)
+    session = _msgs(
+        *[
+            (f"question {i} about the kayak trip", f"answer {i} {long_reply}")
+            for i in range(4)
+        ],
+        ("last question about the kayak", ""),
+    )
+    chunks = _aml_chunks(session)
+    assert any(c[0]["role"] == "assistant" for c in chunks[1:])  # the case under test
+    whole = service.MemoryService(tmp_path / "whole")
+    whole.add("w", "u", session, "s")
+    split = service.MemoryService(tmp_path / "split")
+    for i, chunk in enumerate(chunks):
+        split.add(f"c{i}", "u", chunk, "s")
+    split.add("c1", "u", chunks[1], "s")  # a retry changes nothing
+
+    def served(svc: Any) -> list[str]:
+        return sorted(
+            h["content"] for h in svc.search("u", "kayak question answer", 100)
+        )
+
+    assert served(split) == served(whole)
+    assert served(service.MemoryService(tmp_path / "split")) == served(whole)
+
+
+def test_an_unpaired_tail_is_searchable_before_its_reply_arrives(
+    tmp_path: Path,
+) -> None:
+    svc = service.MemoryService(tmp_path)
+    svc.add("c0", "u", [{"role": "user", "content": "Where is the kayak stored?"}], "s")
+    assert [h["content"].strip() for h in svc.search("u", "kayak", 100)] == [
+        "user: Where is the kayak stored?"
+    ]
+    svc.add("c1", "u", [{"role": "assistant", "content": "In the garage."}], "s")
+    assert [h["content"].strip() for h in svc.search("u", "kayak", 100)] == [
+        "user: Where is the kayak stored?\nassistant: In the garage."
+    ]
+
+
+def test_a_tail_pairs_only_with_the_same_session_and_the_other_role(
+    tmp_path: Path,
+) -> None:
+    svc = service.MemoryService(tmp_path)
+    svc.add("a0", "u", [{"role": "user", "content": "kayak one"}], "s1")
+    svc.add("b0", "u", [{"role": "assistant", "content": "kayak two"}], "s2")
+    svc.add("a1", "u", [{"role": "user", "content": "kayak three"}], "s1")
+    assert sorted(h["content"].strip() for h in svc.search("u", "kayak", 100)) == [
+        "assistant: kayak two",
+        "user: kayak one",
+        "user: kayak three",
+    ]
+
+
+def test_parsed_memories_are_kept_for_a_bounded_number_of_stores(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(service, "LOADED_STORES", 2)
+    svc = service.MemoryService(tmp_path)
+    for u in ("a", "b", "c"):
+        svc.add(u, u, _msgs((f"kayak note for {u}", "")), "s")
+        assert svc.search(u, "kayak", 100)
+    loaded = [us for us in svc._stores.values() if us.memories is not None]
+    assert len(loaded) == 2
+    assert svc.search("a", "kayak", 100)  # an evicted store reloads from disk
+
+
 # ---------------------------------------------------------------- levers
 
 
@@ -284,6 +373,44 @@ def test_search_returns_rank_ordered_data_and_uses_options(client: Any) -> None:
         headers=auth,
     ).json()["data"]
     assert [set(h) for h in with_options] == [{"id", "content", "score", "created_at"}]
+
+
+def test_the_public_endpoint_serves_the_measured_budget(tmp_path: Path) -> None:
+    assert server.serving_service(tmp_path).budget == service.SERVING_BUDGET_CHARS
+    assert service.SERVING_BUDGET_CHARS == 90_000
+
+
+@pytest.mark.parametrize(
+    ("path", "payload"),
+    [
+        ("/add", b"not json"),
+        ("/add", b"[1, 2]"),
+        ("/search", b"not json"),
+        ("/search", b'{"query": "q", "user_id": "u", "top_k": "many"}'),
+    ],
+)
+def test_a_malformed_payload_is_a_400_never_a_retryable_500(
+    client: Any, path: str, payload: bytes
+) -> None:
+    resp = client.post(path, content=payload, headers={"X-Api-Key": "t0k"})
+    assert resp.status_code == 400
+
+
+@pytest.mark.parametrize(
+    "messages",
+    [
+        [],
+        [{"role": "user"}],
+        [{"role": "user", "content": ""}],
+        [{"content": "no role"}],
+        [{"role": "user", "content": "x", "timestamp": "yesterday"}],
+    ],
+)
+def test_add_refuses_invalid_messages(client: Any, messages: list[Any]) -> None:
+    body = {**_ADD, "messages": messages}
+    assert (
+        client.post("/add", json=body, headers={"X-Api-Key": "t0k"}).status_code == 400
+    )
 
 
 # ---------------------------------------------------------------- calibration arm

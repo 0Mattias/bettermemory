@@ -31,6 +31,18 @@ IDEMPOTENCY. AML retries Add with the same request_id up to 32 times.
 A retried chunk must not write its rounds twice, so completed
 request_ids are recorded in the same sidecar, and the write and the
 record happen under the store's lock.
+
+A ROUND SPLIT ACROSS TWO ADDS. AML cuts a session into Add requests at
+20 messages or 2,000 words, so a chunk can end on a user message whose
+reply opens the next chunk (on BEAM-1M about 35% of rounds, LongMemEval-S
+7%, LoCoMo 2%). Pairing each chunk on its own would store the question
+and its answer as two memories, which is not what the whole-session
+harness measured. So a chunk that ends on an unpaired message records it
+as the session's tail; it is written, and so searchable at once as the
+contract requires, and when the next chunk of the same session opens
+with the other role, the tail is paired with it and the lone copy is
+hidden from Search. The rounds that result are exactly the rounds
+`rounds_of` makes from the whole session.
 """
 
 from __future__ import annotations
@@ -38,6 +50,7 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -50,6 +63,15 @@ from bettermemory.store import Store
 
 SCOPE = ["aml"]
 
+# The serving configuration the live endpoint runs, measured in
+# bench/aml/results (commits 333870b, 0f34c7b): at most this many
+# characters of ranked rounds per Search. AML's own answer step keeps a
+# 117,760-token prefix of what Search returns; a 90,000-character budget
+# read best of the budgets tried on all three datasets measured.
+SERVING_BUDGET_CHARS = 90_000
+# How many stores keep their parsed memories in RAM between Searches.
+LOADED_STORES = 64
+
 
 def _fmt_ts(ms: int | None) -> str | None:
     if ms is None:
@@ -58,26 +80,32 @@ def _fmt_ts(ms: int | None) -> str | None:
     return dt.strftime("%Y/%m/%d (%a) %H:%M")
 
 
+def round_spans(messages: list[dict[str, Any]]) -> list[tuple[int, int]]:
+    """Greedy pairing: a message and the next one when their roles differ,
+    else the message alone. Returns [start, end) index spans."""
+    spans: list[tuple[int, int]] = []
+    i = 0
+    while i < len(messages):
+        pair = i + 1 < len(messages) and messages[i + 1].get("role") != messages[i].get(
+            "role"
+        )
+        spans.append((i, i + 2 if pair else i + 1))
+        i = spans[-1][1]
+    return spans
+
+
 def rounds_of(messages: list[dict[str, Any]]) -> list[tuple[str, int | None]]:
     """Pair messages into rounds; returns (body, source timestamp ms)."""
     out: list[tuple[str, int | None]] = []
-    i = 0
-    while i < len(messages):
-        first = messages[i]
-        parts = [f"{first.get('role', '?')}: {_text(first.get('content'))}"]
-        ts = first.get("timestamp")
-        if i + 1 < len(messages) and messages[i + 1].get("role") != first.get("role"):
-            parts.append(
-                f"{messages[i + 1].get('role', '?')}: {_text(messages[i + 1].get('content'))}"
-            )
-            if ts is None:
-                ts = messages[i + 1].get("timestamp")
-            i += 2
-        else:
-            i += 1
-        out.append(
-            ("\n".join(parts), int(ts) if isinstance(ts, (int, float)) else None)
+    for start, end in round_spans(messages):
+        group = messages[start:end]
+        body = "\n".join(
+            f"{m.get('role', '?')}: {_text(m.get('content'))}" for m in group
         )
+        ts = next(
+            (m["timestamp"] for m in group if m.get("timestamp") is not None), None
+        )
+        out.append((body, int(ts) if isinstance(ts, (int, float)) else None))
     return out
 
 
@@ -133,6 +161,9 @@ class _UserStore:
     session_of: dict[str, str] = field(default_factory=dict)
     seq: dict[str, int] = field(default_factory=dict)
     done_requests: set[str] = field(default_factory=set)
+    # session_id -> {"id": memory id, "message": the unpaired message}
+    tails: dict[str, dict[str, Any]] = field(default_factory=dict)
+    hidden: set[str] = field(default_factory=set)
     memories: list[Memory] | None = None
 
     @property
@@ -146,6 +177,8 @@ class _UserStore:
             self.session_of = dict(data.get("session_of", {}))
             self.seq = {k: int(v) for k, v in data.get("seq", {}).items()}
             self.done_requests = set(data.get("done_requests", []))
+            self.tails = dict(data.get("tails", {}))
+            self.hidden = set(data.get("hidden", []))
 
     def save(self) -> None:
         tmp = self.sidecar.with_suffix(".tmp")
@@ -156,6 +189,8 @@ class _UserStore:
                     "session_of": self.session_of,
                     "seq": self.seq,
                     "done_requests": sorted(self.done_requests),
+                    "tails": self.tails,
+                    "hidden": sorted(self.hidden),
                 }
             ),
             encoding="utf-8",
@@ -326,6 +361,7 @@ class MemoryService:
         self.serve = serve
         self.budget = budget
         self._stores: dict[str, _UserStore] = {}
+        self._loaded: OrderedDict[str, None] = OrderedDict()
         self._guard = threading.Lock()
 
     def _user(self, user_id: str) -> _UserStore:
@@ -352,11 +388,24 @@ class MemoryService:
                 return 0
             store = Store(us.root)
             n = 0
-            units = (
-                turns_of(messages, self.chunk_chars)
-                if self.granularity == "turns"
-                else rounds_of(messages)
-            )
+            if self.granularity == "turns":
+                units = turns_of(messages, self.chunk_chars)
+                lone_tail = None
+            else:
+                tail = us.tails.pop(session_id, None)
+                if (
+                    tail is not None
+                    and messages
+                    and messages[0].get("role") != tail["message"].get("role")
+                ):
+                    us.hidden.add(tail["id"])
+                    messages = [tail["message"], *messages]
+                spans = round_spans(messages)
+                units = rounds_of(messages)
+                lone_tail = (
+                    messages[-1] if spans and spans[-1][1] - spans[-1][0] == 1 else None
+                )
+            last_id = None
             for body, ts in units:
                 stamp = _fmt_ts(ts)
                 content = f"[{stamp}]\n{body}" if stamp else body
@@ -365,7 +414,10 @@ class MemoryService:
                     us.event_ts[memory.id] = ts
                 us.session_of[memory.id] = session_id
                 us.seq[memory.id] = len(us.seq)
+                last_id = memory.id
                 n += 1
+            if lone_tail is not None and last_id is not None:
+                us.tails[session_id] = {"id": last_id, "message": lone_tail}
             us.done_requests.add(request_id)
             us.save()
             us.memories = None
@@ -375,13 +427,13 @@ class MemoryService:
         us = self._user(user_id)
         with us.lock:
             if us.memories is None:
-                us.memories = (
-                    Store(us.root).load_all() if any(us.root.glob("*.md")) else []
-                )
+                loaded = Store(us.root).load_all() if any(us.root.glob("*.md")) else []
+                us.memories = [m for m in loaded if m.id not in us.hidden]
             memories = us.memories
             event_ts = dict(us.event_ts)
             session_of = dict(us.session_of)
             seq = dict(us.seq)
+        self._touch(us)
         if not memories:
             return []
         now = (
@@ -431,6 +483,19 @@ class MemoryService:
                 }
             )
         return out
+
+    def _touch(self, us: _UserStore) -> None:
+        """Keep parsed memories for the LOADED_STORES most recently searched
+        stores only; a full evaluation opens thousands."""
+        with self._guard:
+            key = us.root.name
+            self._loaded[key] = None
+            self._loaded.move_to_end(key)
+            while len(self._loaded) > LOADED_STORES:
+                old, _ = self._loaded.popitem(last=False)
+                evicted = self._stores.get(old)
+                if evicted is not None:
+                    evicted.memories = None
 
     def _fill(
         self,
