@@ -28,9 +28,10 @@ SQLite-FTS-Baseline entry on the Cycle 1 open-source board.
 
 - **Isolation.** One store per AML `user_id`, in a directory named by
   `sha256(user_id)[:32]`; Search reads only that store.
-- **Unit.** One memory per *round*: a message plus the next message when its role
-  differs (a user turn and the reply to it). A message with no differing-role
-  neighbour is stored alone (`service.round_spans`, `service.rounds_of`).
+- **Unit.** One memory per *round*: a `user` turn and the `assistant` turn beside it,
+  in either order. A turn with no such neighbour, or with any other role (a `system`
+  prompt, for one), is stored alone, so it can never shift the pairing of the rounds
+  after it (`service.round_spans`, `service.rounds_of`).
 - **Rounds split across Add requests.** AML cuts a session into Add requests at 20
   messages or 2,000 words, so a request can end on a user turn whose reply opens the
   next request. That unpaired turn is written at once (so it is searchable
@@ -144,7 +145,8 @@ place the served configuration is built.
 - **Stand-in grading.** Local numbers use a stand-in judge and OpenRouter's serving
   of both models; AML's own runs will differ in level.
 - **Local coverage.** Four of the seven textual datasets have full local runs.
-  PersonaMem v2 and CL-bench have loaders and graders in `bench/aml/ds_*.py`;
+  PersonaMem v2 (5,000 questions) and CL-bench have loaders and graders in
+  `bench/aml/ds_*.py` but no paid run yet;
   ScriptMem cannot be reproduced from public data, and CAMBench is unreleased.
 - **Coding track.** It runs the same configuration as the Textual track. There is no
   coding-specific tuning, because nothing about the Coding track can be measured
