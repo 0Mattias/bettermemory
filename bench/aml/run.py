@@ -49,6 +49,7 @@ _BENCH = _HERE.parent
 sys.path.insert(0, str(_BENCH))
 
 from aml.fts import FtsService  # noqa: E402
+from aml.fused import FusedService  # noqa: E402
 from aml.service import MemoryService  # noqa: E402
 from judge.prompts import (  # noqa: E402
     aml_prompt,
@@ -506,6 +507,12 @@ async def main_async(args: argparse.Namespace) -> None:
     service = (
         FtsService(STORES / f"{prefix}fts-v1", serve=args.serve)
         if args.system == "fts"
+        else FusedService(
+            STORES / f"{prefix}{args.ingest}",
+            STORES / f"{prefix}fts-v1",
+            budget=args.budget_chars,
+        )
+        if args.system == "fused"
         else MemoryService(
             STORES / f"{prefix}{args.ingest}",
             fill=args.fill,
@@ -632,7 +639,9 @@ def main() -> None:
     p.add_argument("--i-declared", action="store_true")
     p.add_argument("--limit", type=int, default=0)
     p.add_argument("--arm", default="baseline")
-    p.add_argument("--system", choices=("bettermemory", "fts"), default="bettermemory")
+    p.add_argument(
+        "--system", choices=("bettermemory", "fts", "fused"), default="bettermemory"
+    )
     p.add_argument("--ingest", default="rounds-v2")
     p.add_argument("--fill", default="none")
     p.add_argument("--order", default="rank")

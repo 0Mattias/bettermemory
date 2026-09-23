@@ -48,6 +48,7 @@ service = _load("aml.service", _BENCH / "aml" / "service.py")
 fts = _load("aml.fts", _BENCH / "aml" / "fts.py")
 server = _load("aml.server", _BENCH / "aml" / "server.py")
 prompts = _load("judge.prompts", _BENCH / "judge" / "prompts.py")
+fused = _load("aml.fused", _BENCH / "aml" / "fused.py")
 runner = _load("bench_aml_run", _BENCH / "aml" / "run.py")
 
 DAY = 86_400_000
@@ -484,3 +485,23 @@ def test_turns_split_long_assistant_replies_on_paragraphs() -> None:
         "assistant (part 3 of 3)",
     ]
     assert all(len(p) <= 1500 + 40 for p in parts)
+
+
+def test_fusion_merges_both_rankings_once_each_and_keeps_sessions(
+    tmp_path: Path,
+) -> None:
+    svc = fused.FusedService(tmp_path / "e", tmp_path / "f", budget=10_000)
+    svc.add(
+        "r",
+        "u",
+        _msgs(
+            ("My beagle is named Biscuit.", "Cute."), ("I drive a red Volvo.", "Nice.")
+        ),
+        "s1",
+    )
+    served = svc.search("u", "What is my beagle called?", 100)
+    contents = [h["content"] for h in served]
+    assert len(contents) == len(set(contents))  # a round both stores rank appears once
+    assert "Biscuit" in contents[0]  # ranked first by both, so first after fusion
+    assert svc.sessions_for("u", [h["id"] for h in served]) == ["s1"] * len(served)
+    assert svc.search("other", "beagle", 100) == []
