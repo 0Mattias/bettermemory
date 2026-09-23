@@ -452,6 +452,25 @@ class Finding:
 # guard deletes any entry that stops matching a live finding.
 _ALLOWLIST: dict[tuple[str, str, str], str] = {
     (
+        "bench/aml/ds_clbench.py",
+        "module-file",
+        "memory_search.py",
+    ): (
+        "Docstring of a function copied verbatim, with `ast`, from the Agent "
+        "Memory Leaderboard's data/clbench/pipeline.py (commit 1b8142b), which "
+        "names a file of AML's own unpublished CL-Bench implementation. The copy "
+        "stays verbatim, so the citation is correct as written and resolves in "
+        "no repository this one tracks."
+    ),
+    (
+        "bench/aml/ds_clbench.py",
+        "module-file",
+        "rubric_clbench.py",
+    ): (
+        "Same verbatim copy from AML's data/clbench/pipeline.py: names the "
+        "rubric-judge file of AML's unpublished CL-Bench implementation."
+    ),
+    (
         "src/bettermemory/credentials.py",
         "dotted-symbol",
         "config.SECRET_KEY_V2",
