@@ -806,10 +806,10 @@ class TestApplyIngestPlan:
     def test_user_inference_lands_in_active_store_not_pending(
         self, source_root: Path, store: Store
     ) -> None:
-        """The MCP write handler routes `category=user-inference`
-        through a pending-confirm gate (the model staging a user claim
-        needs human ack before commit). Ingest deliberately bypasses
-        that gate because the source file is itself the user's act of
+        """The MCP write handler stages a write for confirmation only
+        under `require_write_confirmation`, and `user-inference` commits
+        there like any category. Ingest never stages, whatever the
+        config, because the source file is itself the user's act of
         commit. The bypass is structural — `apply_ingest_plan` calls
         `store.write` directly rather than going through the handler
         — but this test locks in the contract: a USER_INFERENCE

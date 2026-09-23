@@ -90,9 +90,8 @@ DESC_MEMORY_UPDATE = (
     "list, or `[]` to clear.\n"
     "- `confidence`: low / medium / high.\n"
     "- `category`: accepts `fact` and `ambient`. "
-    "`user-inference` is REJECTED here — that category exists "
-    "to gate WRITES through the pending-confirm flow; updates "
-    "have no equivalent gate.\n\n"
+    "`user-inference` is REJECTED here — file a claim about the "
+    "user with memory_write.\n\n"
     'Returns `status="stale"` when another agent updated the '
     "memory first; the `hint` says to re-fetch and retry." + DESC_MEMORY_LINKS_TAIL
 )
@@ -193,24 +192,24 @@ async def memory_update(
 
     new_category = existing.category
     if category is not None:
-        # `user-inference` is a write-time gate (pending-confirm flow);
-        # there's no analogous gate on update, so allowing a retag
-        # *into* `user-inference` would silently bypass that gate.
-        # Allow `fact` and `ambient` only. Sourced from
-        # `models._PROPOSABLE_CATEGORIES` — the same closed-protocol
-        # whitelist gates the LLM-consolidation validators
-        # (`_validate_demote`, `_validate_propose_new` in `llm.py`),
-        # which can't supply the user confirmation `user-inference`
-        # demands either. Sharing the constant means a future
-        # ``Category`` member ships the automation-eligibility
-        # decision to one place; silent divergence between this site
-        # and the LLM validators can't happen.
+        # A retag *into* `user-inference` stays refused: that label is
+        # set where a claim about the user is filed as one, never by a
+        # relabel after the fact. `models._PROPOSABLE_CATEGORIES` owns
+        # the reasoning, including why the refusal outlived the
+        # pending-confirm gate it was first written to protect. Allow
+        # `fact` and `ambient` only. The same closed-protocol whitelist
+        # gates the LLM-consolidation validators (`_validate_demote`,
+        # `_validate_propose_new` in `llm.py`); sharing the constant
+        # means a future ``Category`` member ships the
+        # automation-eligibility decision to one place, and silent
+        # divergence between this site and the LLM validators can't
+        # happen.
         if category not in _PROPOSABLE_CATEGORIES:
             raise ValueError(
                 "category must be one of "
                 f"{sorted(_PROPOSABLE_CATEGORIES)} on update "
-                "(`user-inference` is write-only — it gates the "
-                "pending-confirm flow which has no equivalent here)"
+                "(`user-inference` is not a retag target — file a claim "
+                "about the user with memory_write)"
             )
         new_category = Category(category)
 
@@ -319,20 +318,20 @@ async def memory_update(
         # EDITING one. Same laundering shape the credential gate above closes
         # for secrets: `memory_write` hard-refuses this body, so without the
         # mirror a caller writes an innocuous body, updates it to the claim,
-        # and the pending/veto handshake whose entire purpose is the user's
-        # veto never runs. Runs AFTER the credential gate for the reason the
-        # write chain orders them that way — a secret is refused before any
-        # other gate records body-derived data (here, `claim_phrases`) in the
-        # event log.
+        # and the claim reads back as an established fact under a label that
+        # hides it from anyone correcting inferences. Runs AFTER the
+        # credential gate for the reason the write chain orders them that
+        # way — a secret is refused before any other gate records
+        # body-derived data (here, `claim_phrases`) in the event log.
         #
         # Judged against the category the record will HAVE after this edit,
         # which is what `UserClaimGate` reads off the write payload. That can
         # only be `user-inference` when the record already was one, since the
         # retag INTO that category is refused above — and that is exactly the
         # structural escape this gate wants: a claim about the user belongs in
-        # a `user-inference` memory, and only `memory_write` can create one,
-        # staged so the user gets the veto. A legacy `category=None` record is
-        # gated, matching the runtime's fact-default reading of that field.
+        # a `user-inference` memory, and on this surface only `memory_write`
+        # can create one. A legacy `category=None` record is gated,
+        # matching the runtime's fact-default reading of that field.
         #
         # `acknowledge_user_claim` mirrors the write path's escape for a body
         # whose subject is someone or something else ("Black prefers double
@@ -382,14 +381,12 @@ async def memory_update(
                     "The updated body reads as a claim ABOUT THE USER, "
                     "but this memory is filed as "
                     f"`{(new_category or Category.FACT).value}`, so the "
-                    "edit would commit without asking them. "
-                    "Misattribution sticks, so the user gets the veto: "
-                    "file the claim with memory_write and "
-                    "category='user-inference', which stages it and "
-                    "returns a pending_id so you can ask in plain "
-                    "language first. Retagging this record into "
-                    "`user-inference` is not available — that is the "
-                    "write-time gate. When the subject is someone or "
+                    "edit would store it as an established fact. File "
+                    "the claim with memory_write and "
+                    "category='user-inference', which commits it "
+                    "labelled as an inference about the user. Retagging "
+                    "this record into `user-inference` is not available "
+                    "on memory_update. When the subject is someone or "
                     "something else (a teammate, a tool that 'prefers' "
                     "a setting), re-issue this same memory_update with "
                     "acknowledge_user_claim=True."

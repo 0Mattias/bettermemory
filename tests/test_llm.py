@@ -1363,9 +1363,10 @@ def test_parse_rejects_propose_new_general_scope() -> None:
 
 
 def test_parse_rejects_propose_new_user_inference_category() -> None:
-    """`user-inference` requires explicit user confirmation; the
-    consolidate path can't supply that, so the LLM may not propose
-    new memories at that tier."""
+    """The LLM may not propose new memories as `user-inference`: the
+    proposable set is fact/ambient, and `models._PROPOSABLE_CATEGORIES`
+    records why that exclusion stands now that the tier commits
+    directly on `memory_write`."""
     cluster = _make_transcript_cluster([_make_memory("x")], "[user] I prefer tabs.")
     raw = json.dumps(
         {

@@ -148,9 +148,9 @@ _GITIGNORE_LINES = [
     PROPOSALS_FILENAME,
     # Staged writes awaiting `memory_write_confirm`. Same stance as the
     # proposals queue and for a stronger reason: a pending row is a memory
-    # body the USER HAS NOT AGREED TO STORE YET — the user-inference tier
-    # stages precisely so they can veto it — and syncing it would push a
-    # rejected claim to every clone before anyone said yes. Host-local by
+    # body nobody has confirmed yet — `require_write_confirmation` stages
+    # precisely so it can still be dropped — and syncing it would push a
+    # rejected write to every clone before anyone said yes. Host-local by
     # construction too: rows are keyed by the client identifier of the
     # session that staged them, which means nothing on another machine.
     PENDING_WRITES_FILENAME,

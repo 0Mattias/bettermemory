@@ -99,11 +99,9 @@ DESC_MEMORY_WRITE = (
     "`user-inference`, `ambient`.\n"
     "  - `fact`: project / infra / reference / tooling. Commits "
     "immediately (unless `require_write_confirmation`).\n"
-    "  - `user-inference`: claims ABOUT THE USER. Always returns "
-    "{status:'pending', pending_id} regardless of config — ask "
-    "the user in plain language, then memory_write_confirm or "
-    "memory_write_cancel. Misattribution sticks; user gets the "
-    "veto.\n"
+    "  - `user-inference`: claims ABOUT THE USER. Commits like fact; "
+    "the label keeps an inference distinguishable from an "
+    "established fact, and correctable.\n"
     "  - `ambient`: context that shapes replies without being "
     "cited. Commits like fact, excluded from dead-weight curation; "
     "a body over 500 words gets a non-blocking `ambient_body_long` "
@@ -138,10 +136,10 @@ DESC_MEMORY_WRITE = (
     "`acknowledge_*` / `force=True` override.\n"
     "- `user_claim_warning` — the body reads as a claim ABOUT THE "
     "USER but `category` isn't `user-inference`. Re-issue as that "
-    "(the user gets the veto) or pass `acknowledge_user_claim=True` "
-    "if the subject is someone else.\n"
-    "- `pending` — `category='user-inference'` or "
-    "`require_write_confirmation`. `pending_reason` distinguishes.\n"
+    "or pass `acknowledge_user_claim=True` if the subject is someone "
+    "else.\n"
+    "- `pending` — `require_write_confirmation` is on (any "
+    "category); memory_write_confirm or memory_write_cancel.\n"
     "- `ungrounded` — groundedness gate fired.\n\n"
     "A `committed` or confirm response may carry a one-shot per-session "
     "`curation_hint` block (`{pressure, threshold, counts, message}`) "
@@ -447,11 +445,11 @@ def _find_user_claims(content: str) -> list[UserClaimHit]:
     hook the text it reads was typed BY the user. A memory body is
     written by the assistant, so first person there is either the
     assistant's own voice or a transcription of somebody else's — never
-    the shape this gate exists to stage. Measured on the 360-body
+    the shape this gate exists to relabel. Measured on the 360-body
     dogfood store: 9 of the leg's 11 fires sat inside a quotation, all
     nine on owner rulings and directives recorded verbatim, and filing
-    those as `user-inference` would ask the user to confirm that they
-    said what they are quoted saying. `_USER_CLAIM_RE` keeps firing
+    those as `user-inference` would label what the user is quoted
+    saying as something inferred about them. `_USER_CLAIM_RE` keeps firing
     inside quotations — it reads the THIRD-person shape a model writes
     when it files a claim of its own, its evidence is nine fires none of
     which is quoted, and narrowing an unfired leg on no evidence is how
@@ -496,15 +494,17 @@ class UserClaimGate(WriteGate):
     """Reject bodies that read as claims ABOUT THE USER unless they are
     filed as `user-inference` (or `acknowledge_user_claim` is set).
 
-    `PendingGate` triggers on the category LABEL, so a claim about the
-    user written as `category='fact'` commits instantly and the staging
-    flow whose entire purpose is the user's veto never runs. This gate
-    classifies the BODY instead, which is why it sits next to
-    `TransientGate` rather than next to `PendingGate`: it must precede
-    dedup (a re-categorized re-issue must not be routed to
-    `memory_update` against a mis-filed parent) and precede
-    `PendingGate` (re-issuing as `user-inference` has to stage
-    normally).
+    The category LABEL is the only thing that marks a stored claim about
+    the user as an inference, and `user-inference` commits exactly as
+    `fact` does, so the label is all this gate protects: a claim about
+    the user written as `category='fact'` would read back as an
+    established fact, indistinguishable from the project facts beside it
+    and invisible to anyone looking for inferences to correct. The fix
+    costs the writer one re-issue and the user nothing — they never see
+    this refusal. The gate classifies the BODY, which is why it sits
+    next to `TransientGate`: it must precede dedup (a re-categorized
+    re-issue must not be routed to `memory_update` against a mis-filed
+    parent).
 
     Precision-first, and porous by the same trade the transient and
     credential gates make: it matches predicating shapes, so a nominalised
@@ -532,14 +532,14 @@ class UserClaimGate(WriteGate):
                 ],
                 "hint": (
                     "The body reads as a claim ABOUT THE USER but was "
-                    f"filed as `{category_enum.value}`, which commits "
-                    "without asking them. Re-issue with "
-                    "category='user-inference' — that stages the write "
-                    "and returns a pending_id so you can ask in plain "
-                    "language first; misattribution sticks, so the user "
-                    "gets the veto. Pass acknowledge_user_claim=True "
-                    "when the subject is someone or something else (a "
-                    "teammate, a tool that 'prefers' a setting)."
+                    f"filed as `{category_enum.value}`, which would store "
+                    "it as an established fact. Re-issue with "
+                    "category='user-inference' — it commits the same way, "
+                    "labelled as an inference about the user so it stays "
+                    "distinguishable and correctable. Pass "
+                    "acknowledge_user_claim=True when the subject is "
+                    "someone or something else (a teammate, a tool that "
+                    "'prefers' a setting)."
                 ),
             },
             event_kwargs={
@@ -724,18 +724,19 @@ class DedupTombstoneGate(WriteGate):
 
 
 class PendingGate(WriteGate):
-    """Stage the write through the SessionState when either the global
-    config flag (`require_write_confirmation`) OR
-    `category=='user-inference'` requires it. User-inference is
-    structurally enforced regardless of config: misattribution sticks
-    and the user gets the veto. The category check runs first because
-    `pending_reason` is what selects the confirm hint — the ask-the-user
-    ceremony must survive the config flag also applying."""
+    """Stage the write through the SessionState when the operator opted
+    into `require_write_confirmation` — the one confirmation path, and
+    uniform across categories.
+
+    It reads config and nothing else, and that is deliberate. It used to
+    stage every `user-inference` write regardless of config, so the model
+    stopped mid-conversation for the user's go-ahead before a stated
+    preference could land. That round trip is gone: `user-inference`
+    commits like `fact`, and its label is what keeps a stored inference
+    distinguishable and correctable afterwards. A category branch here
+    would bring the interruption back."""
 
     def evaluate(self, deps: GateDeps, gc: GateContext) -> GateResult:
-        category_enum: Category = gc.payload["category"]
-        if category_enum == Category.USER_INFERENCE:
-            return Pending(pending_reason="user-inference")
         if deps.config.behavior.require_write_confirmation:
             return Pending(pending_reason="config")
         return Continue()
@@ -746,13 +747,12 @@ class PendingGate(WriteGate):
 # transient before dedup so the writer isn't routed to memory_update on a
 # transient parent; user-claim next to transient because both classify the
 # BODY, and before dedup for the same reason transient is (a re-categorized
-# re-issue must not be routed to memory_update on a mis-filed parent) and
-# before pending so re-issuing as user-inference stages normally;
+# re-issue must not be routed to memory_update on a mis-filed parent);
 # scope-mismatch before dedup so the writer doesn't get a
 # duplicate hit on a memory tagged for a different scope; groundedness
 # before dedup because a hallucinated write being a "duplicate" of a real
-# one is misleading; dedup before pending so the user-inference
-# confirmation flow doesn't ask about a write we'd already reject.
+# one is misleading; dedup before pending so a write staged under
+# `require_write_confirmation` is not one we'd already reject.
 # PendingGate is last because everything else either rejects or accepts.
 _WRITE_GATES: tuple[WriteGate, ...] = (
     CredentialGate(),
@@ -874,9 +874,11 @@ class GateBundle:
 
 
 # The gates that judge CONTENT — everything except the two gates whose
-# correctness depends on the caller having a human to ask: `PendingGate`
-# (the confirmation handshake itself) and `UserClaimGate` (which refuses
-# in order to route the write INTO that handshake). Both are excluded by
+# correctness depends on an interactive writer: `PendingGate` (the opt-in
+# confirmation handshake, which needs a session to stage into) and
+# `UserClaimGate` (a refusal whose remedy is a re-issue under another
+# label or an acknowledge flag, which only a live caller can supply).
+# Both are excluded by
 # name rather than by "everything but Pending", because the exclusion is
 # what keeps the batch callers correct: `apply_ingest_plan` is a bulk
 # import of the user's OWN prior auto-memory files — first-person
@@ -913,15 +915,16 @@ CONTENT_GATES: tuple[WriteGate, ...] = tuple(
 # not the batch callers' reason: a pulled file was written on ANOTHER
 # host, through that host's own gates, with that host's user in the
 # loop. `TransientGate` and `UserClaimGate` are soft locally (an
-# acknowledgement or the pending handshake lifts them), and neither the
-# acknowledgement nor the confirmation travels with the file, so running
-# them here would refuse files the same user already admitted, which is
+# acknowledgement lifts either; a `user-inference` label, which does
+# travel, means the user-claim gate never fired), and the acknowledgement
+# does not travel with the file, so running them here would refuse
+# files the same user already admitted, which is
 # the one-user-many-machines case the sync exists for. The dedup gates
 # would score an update pull against the record's own stored copy (the
 # `find_similar` exclusion problem `memory_update` documents) and a pull
 # is not this host's write to refuse as a duplicate; `ScopeMismatchGate`
 # judges the caller's checkout, which a pull has none of;
-# `GroundednessGate` needs a transcript; `PendingGate` needs the user.
+# `GroundednessGate` needs a transcript; `PendingGate` needs a session.
 # What is left is the one gate whose refusal is a property of the bytes
 # alone: a secret-shaped token is a leak wherever the file came from.
 # The size cap, the parser and the id-alias check run beside it in the
@@ -945,7 +948,7 @@ ADMISSION_GATES: tuple[WriteGate, ...] = tuple(
 # - `TransientGate` / `UserClaimGate` / `ScopeMismatchGate` judge the BODY,
 #   and the body has not changed since staging. Re-running them can only
 #   re-raise a verdict the caller already answered (by rewording, by
-#   acknowledging, or by staging deliberately), and the caller has no way to
+#   relabelling, or by acknowledging), and the caller has no way to
 #   pass an acknowledgement through `memory_write_confirm` even if it wanted
 #   to. What they would produce is a refusal with no legal escape.
 # - `GroundednessGate` needs the source transcript, which is not staged
@@ -976,8 +979,9 @@ def apply_write_gates(
 
     - `Reject` — refuse the write; `.response` is the caller-facing dict and
       `.event_kwargs` the audit payload the caller should record.
-    - `Pending` — the write needs user confirmation before it commits. Only
-      reachable when `gates` includes `PendingGate`.
+    - `Pending` — `require_write_confirmation` is on, so the write stages
+      for confirmation before it commits. Only reachable when `gates`
+      includes `PendingGate`.
     - `None` — every gate passed; the caller may commit.
 
     `gates` defaults to the full chain so the MCP path cannot silently lose
@@ -1222,16 +1226,12 @@ def _stage_pending(
     very gate the caller already overrode."""
     category_enum: Category = payload["category"]
     pending = state.stage_write(payload, gate_flags=gate_flags)
+    # One hint for every category. The config flag is an operator's
+    # opt-in, so this names the two calls and leaves the decision to the
+    # caller; it does not script a question to put to the user.
     hint = (
-        "User-inference category — ask the user in plain "
-        "language ('want me to remember that you prefer X?') "
-        "and only then call memory_write_confirm(pending_id), "
-        "or memory_write_cancel(pending_id) if they decline."
-        if pending_reason == "user-inference"
-        else (
-            "Confirm with memory_write_confirm(pending_id) or "
-            "drop with memory_write_cancel(pending_id)."
-        )
+        "Confirm with memory_write_confirm(pending_id) or "
+        "drop with memory_write_cancel(pending_id)."
     )
     response: dict[str, Any] = {
         "status": "pending",

@@ -437,36 +437,46 @@ async def test_confirmation_disabled_writes_immediately(server: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
-# memory_write category="user-inference" — structural confirmation tier
+# memory_write category="user-inference" — a label, not a confirmation tier
 #
-# A claim *about* the user (preferences, beliefs, working style) is always
-# routed through the pending-write flow, regardless of the global
-# `require_write_confirmation` config. Misattribution sticks; the user
-# gets the veto.
+# A claim *about* the user (preferences, beliefs, working style) commits
+# like a fact. It used to stage pending regardless of config, which put
+# a confirmation round trip in front of every stated preference; the
+# label is what now keeps a stored inference distinguishable and
+# correctable. `require_write_confirmation` is the one opt-in that stages
+# writes, and it applies to this category exactly as to the others.
 # ---------------------------------------------------------------------------
 
 
-async def test_user_inference_category_stages_even_without_global_flag(
+async def test_user_inference_commits_and_is_searchable_immediately(
     server: Any,
 ) -> None:
-    """category='user-inference' triggers pending on a default-config server
-    where global require_write_confirmation is off."""
+    """The write lands on the first call — no pending id, nothing to
+    confirm — and the very next search finds it under its own label."""
     res = await _call(
         server,
         "memory_write",
-        content="Prefers code-driven tutorials over walkthroughs.",
+        content="Prefers code-driven tutorials over prose walkthroughs.",
         scopes=["learning-style"],
         category="user-inference",
     )
-    assert res["status"] == "pending"
-    assert res["pending_reason"] == "user-inference"
-    assert res["pending_id"].startswith("pending_")
-    assert res["preview"]["category"] == "user-inference"
-    # Hint should explicitly tell the model to ask the user first.
-    assert "ask the user" in res["hint"].lower()
+    assert res["status"] == "committed"
+    assert "pending_id" not in res
+    assert res["category"] == "user-inference"
+    hits = _unwrap(await _call(server, "memory_search", query="tutorials"))
+    assert [h["id"] for h in hits] == [res["id"]]
+    assert hits[0]["category"] == "user-inference"
+    shown = await _call(server, "memory_show", id=res["id"])
+    assert shown["category"] == "user-inference"
 
 
-async def test_user_inference_pending_commits_after_confirm(server: Any) -> None:
+async def test_user_inference_stages_only_under_the_global_flag(
+    confirming_server: tuple[Any, SessionState],
+) -> None:
+    """The opt-in applies uniformly: under `require_write_confirmation` a
+    user-inference write stages with the SAME reason and hint as any
+    other category, and the confirm lands it with its label intact."""
+    server, _ = confirming_server
     pending = await _call(
         server,
         "memory_write",
@@ -474,14 +484,27 @@ async def test_user_inference_pending_commits_after_confirm(server: Any) -> None
         scopes=["learning-style"],
         category="user-inference",
     )
+    assert pending["status"] == "pending"
+    assert pending["pending_reason"] == "config"
+    assert pending["preview"]["category"] == "user-inference"
+    fact = await _call(
+        server,
+        "memory_write",
+        content="The CI runs on runners-large.",
+        scopes=["tools"],
+    )
+    assert fact["hint"] == pending["hint"]
     committed = await _call(
         server, "memory_write_confirm", pending_id=pending["pending_id"]
     )
     assert committed["status"] == "committed"
-    assert committed["id"]
+    assert committed["category"] == "user-inference"
 
 
-async def test_user_inference_pending_can_be_cancelled(server: Any) -> None:
+async def test_user_inference_staged_under_the_flag_can_be_cancelled(
+    confirming_server: tuple[Any, SessionState],
+) -> None:
+    server, _ = confirming_server
     pending = await _call(
         server,
         "memory_write",
@@ -3052,12 +3075,39 @@ async def test_episode_promote_keeps_episode_when_durability_rejects(
     assert any(e["id"] == ep["id"] for e in listed)
 
 
-async def test_episode_promote_user_inference_returns_pending_keeps_episode(
+async def test_episode_promote_user_inference_commits_and_deletes_source(
     server: Any,
 ) -> None:
-    """`category='user-inference'` routes through PendingGate — the
-    handler returns `status='pending'` and the source episode is kept
-    so memory_write_confirm can act on it later."""
+    """`category='user-inference'` commits on the promote itself, like
+    any other category on a default-config server: the durable memory
+    lands with its label and the source episode is distilled away."""
+    ep = await _call(
+        server,
+        "episode_write",
+        body="Iter 2 — observed the user reaching for terse summaries.",
+        takeaway="user prefers terse summaries",
+    )
+    res = await _call(
+        server,
+        "episode_promote",
+        episode_id=ep["id"],
+        scopes=["learning-style"],
+        category="user-inference",
+    )
+    assert res["status"] == "committed"
+    assert res["category"] == "user-inference"
+    assert res["promoted_from_episode_id"] == ep["id"]
+    listed = _unwrap(await _call(server, "episode_search"))
+    assert not any(e["id"] == ep["id"] for e in listed)
+
+
+async def test_episode_promote_under_the_flag_returns_pending_keeps_episode(
+    confirming_server: tuple[Any, SessionState],
+) -> None:
+    """Under `require_write_confirmation` the promote routes through
+    PendingGate — the handler returns `status='pending'` and the source
+    episode is kept so memory_write_confirm can act on it later."""
+    server, _ = confirming_server
     ep = await _call(
         server,
         "episode_write",
@@ -3072,7 +3122,7 @@ async def test_episode_promote_user_inference_returns_pending_keeps_episode(
         category="user-inference",
     )
     assert res["status"] == "pending"
-    assert res["pending_reason"] == "user-inference"
+    assert res["pending_reason"] == "config"
     assert res["pending_id"].startswith("pending_")
     assert res["promoted_from_episode_id"] == ep["id"]
     # Source episode is still on disk — confirm/cancel hasn't happened.
@@ -3080,14 +3130,15 @@ async def test_episode_promote_user_inference_returns_pending_keeps_episode(
     assert any(e["id"] == ep["id"] for e in listed)
 
 
-async def test_episode_promote_user_inference_confirm_deletes_source(
-    server: Any,
+async def test_episode_promote_confirm_deletes_source(
+    confirming_server: tuple[Any, SessionState],
 ) -> None:
-    """When the user confirms a promoted user-inference write, the
-    durable memory commits AND the source episode is deleted. This
-    pins the SessionState-stash hand-off between `episode_promote`
-    and `memory_write_confirm` — without it, the pending round-trip
-    leaks the journal entry past confirmation as a duplicate."""
+    """When a staged promotion is confirmed, the durable memory commits
+    AND the source episode is deleted. This pins the SessionState-stash
+    hand-off between `episode_promote` and `memory_write_confirm` —
+    without it, the pending round-trip leaks the journal entry past
+    confirmation as a duplicate."""
+    server, _ = confirming_server
     ep = await _call(
         server,
         "episode_write",
@@ -3102,7 +3153,6 @@ async def test_episode_promote_user_inference_confirm_deletes_source(
         category="user-inference",
     )
     assert pending["status"] == "pending"
-    # User confirms.
     committed = await _call(
         server, "memory_write_confirm", pending_id=pending["pending_id"]
     )
@@ -3112,13 +3162,14 @@ async def test_episode_promote_user_inference_confirm_deletes_source(
     assert not any(e["id"] == ep["id"] for e in listed)
 
 
-async def test_episode_promote_user_inference_cancel_keeps_source(
-    server: Any,
+async def test_episode_promote_cancel_keeps_source(
+    confirming_server: tuple[Any, SessionState],
 ) -> None:
-    """When the user declines a promoted user-inference write, the
-    pending is dropped but the source episode survives so the caller
-    can rephrase and re-promote. The promotion link should be cleared
-    so a redundant later cancel doesn't try to act on it."""
+    """When a staged promotion is cancelled, the pending is dropped but
+    the source episode survives so the caller can rephrase and
+    re-promote. The promotion link should be cleared so a redundant
+    later cancel doesn't try to act on it."""
+    server, _ = confirming_server
     ep = await _call(
         server,
         "episode_write",
@@ -3236,7 +3287,7 @@ def test_delete_source_episode_holds_flock(memory_dir: Path) -> None:
 
 
 async def test_delete_source_episode_filenotfound_still_succeeds(
-    server: Any, monkeypatch: pytest.MonkeyPatch
+    confirming_server: tuple[Any, SessionState], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The `FileNotFoundError` catch in `_delete_source_episode` is
     preserved on purpose: a peer prune (or a duplicate confirm) that
@@ -3245,13 +3296,14 @@ async def test_delete_source_episode_filenotfound_still_succeeds(
     still fires inside the locked section so the confirm flow surfaces
     a normal committed status even when the file is already gone.
 
-    Stage a user-inference promote (forces the `_delete_source_episode`
-    path to fire from `memory_write_confirm`), monkeypatch
-    `pathlib.Path.unlink` to raise `FileNotFoundError` ONLY on the
-    episode file (so the durable store's writes aren't affected), and
-    assert the confirm call returns the standard committed envelope."""
+    Stage a promote under `require_write_confirmation` (forces the
+    `_delete_source_episode` path to fire from `memory_write_confirm`),
+    monkeypatch `pathlib.Path.unlink` to raise `FileNotFoundError` ONLY
+    on the episode file (so the durable store's writes aren't affected),
+    and assert the confirm call returns the standard committed envelope."""
     import pathlib
 
+    server, _ = confirming_server
     ep = await _call(
         server,
         "episode_write",
@@ -3290,7 +3342,7 @@ async def test_delete_source_episode_filenotfound_still_succeeds(
 
 
 async def test_delete_source_episode_fsyncs_session_dir(
-    server: Any, monkeypatch: pytest.MonkeyPatch
+    confirming_server: tuple[Any, SessionState], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Audit-3 A3-06: after `ep_path.unlink()` inside the per-session
     flock, `_delete_source_episode` must call `fsync_dir(session_dir)`
@@ -3303,9 +3355,10 @@ async def test_delete_source_episode_fsyncs_session_dir(
     branches.
 
     Spy on the `fsync_dir` binding the `episode_promote` module
-    imported. Run the full promote → confirm round-trip (user-inference
-    forces the deferred delete path via `memory_write_confirm`). After
-    confirm, assert the spy recorded a call against the session_dir.
+    imported. Run the full promote → confirm round-trip
+    (`require_write_confirmation` forces the deferred delete path via
+    `memory_write_confirm`). After confirm, assert the spy recorded a
+    call against the session_dir.
 
     Note: `import bettermemory.handlers.episode_promote as m` would
     resolve to the FUNCTION `episode_promote` (re-exported from the
@@ -3319,6 +3372,7 @@ async def test_delete_source_episode_fsyncs_session_dir(
 
     promote_mod = importlib.import_module("bettermemory.handlers.episode_promote")
 
+    server, _ = confirming_server
     ep = await _call(
         server,
         "episode_write",
@@ -4460,9 +4514,10 @@ async def test_verify_stale_snapshot_returns_structured_stale_response(
 # with edits. The new `category` parameter on memory_update lets callers
 # retag a `fact` memory as `ambient` (or back) without that round trip,
 # which matters for legacy memories written before the `ambient` tier
-# existed in 1.2.0. `user-inference` is deliberately rejected here:
-# that category gates the pending-confirm WRITE flow, and there is no
-# equivalent gate on update.
+# existed in 1.2.0. `user-inference` is deliberately rejected here: a
+# claim about the user is filed through memory_write, not relabelled in
+# place (`models._PROPOSABLE_CATEGORIES` records why the rule outlived
+# the pending gate it was first written for).
 # ---------------------------------------------------------------------------
 
 
@@ -4602,9 +4657,8 @@ async def test_update_category_only_satisfies_at_least_one_field(
 # value is outside `models._PROPOSABLE_CATEGORIES` — the same closed-
 # protocol whitelist that gates the LLM-consolidation validators
 # (`_validate_demote` / `_validate_propose_new` in `llm.py`, pinned
-# in `tests/test_llm.py`). `user-inference` is deliberately excluded
-# because that tier requires the pending-confirm flow and update has
-# no equivalent gate. Existing coverage hits both members
+# in `tests/test_llm.py`). `user-inference` is deliberately excluded;
+# the constant's comment in `models.py` says why. Existing coverage hits both members
 # tangentially (`test_update_can_retag_to_ambient` exercises
 # `ambient`, `test_update_can_retag_back_to_fact` exercises `fact`)
 # but the tests below pin the contract explicitly — a deletion from
@@ -4920,9 +4974,9 @@ async def test_dedup_passes_through_to_pending_with_related(
 # tagged for a different scope doesn't get a duplicate hit; groundedness
 # before dedup because (the comment's load-bearing example) a
 # hallucinated write being reported as a "duplicate" of a real one is
-# misleading; dedup before pending so the user-inference confirmation
-# flow doesn't ask about a write we'd already reject; PendingGate last
-# because everything else either rejects or accepts.
+# misleading; dedup before pending so a write staged under
+# `require_write_confirmation` is not one we'd already reject;
+# PendingGate last because everything else either rejects or accepts.
 #
 # This is the HIGH-HAZARD pin in the closed-protocol audit-loop sweep.
 # Hazard surface: a silent reorder violates the security / correctness
@@ -4953,8 +5007,8 @@ async def test_dedup_passes_through_to_pending_with_related(
 # write.py:474-481 rationale: would the new ordering still bounce a
 # hallucinated write before reporting it as a duplicate? Still bounce
 # a transient-parent write before routing the writer to update? Still
-# stage user-inference last so dedup doesn't ask the user about a
-# write we'd reject? If yes, update both. If unsure, don't reorder.
+# stage last so a confirmation-mode write is never one dedup would
+# reject? If yes, update both. If unsure, don't reorder.
 #
 # Negative-control: swapping `DedupActiveGate` and `GroundednessGate`
 # in `_WRITE_GATES` (a plausible "performance" reorder that puts
@@ -4976,11 +5030,10 @@ def test_write_gates_match_expected_types_in_order() -> None:
     write isn't routed to ``memory_update``, (c) a scope-mismatched
     write doesn't get a misleading duplicate hit, (d) a body
     re-categorized as ``user-inference`` isn't routed to
-    ``memory_update`` on a mis-filed parent; ``UserClaimGate`` also
-    BEFORE pending, so that re-issue stages through ``PendingGate``
-    normally; dedup BEFORE pending so the user-inference confirmation
-    flow doesn't ask about a write we'd already reject;
-    ``PendingGate`` last because everything else either rejects or
+    ``memory_update`` on a mis-filed parent; dedup BEFORE pending so a
+    write staged under ``require_write_confirmation`` is not one we'd
+    already reject; ``PendingGate`` last because everything else
+    either rejects or
     accepts. A silent reorder breaks the security/correctness
     invariant the source comment documents.
 
@@ -4988,7 +5041,7 @@ def test_write_gates_match_expected_types_in_order() -> None:
     update both the source AND this expected tuple in the same
     commit, AND re-read the write.py:474-481 rationale to confirm
     the new ordering still preserves: hallucinated-before-dedup,
-    transient-before-dedup, user-claim-before-dedup-and-pending,
+    transient-before-dedup, user-claim-before-dedup,
     scope-before-dedup, dedup-before-pending, and pending-last."""
     from bettermemory.handlers.write import (
         CredentialGate,
@@ -6471,6 +6524,15 @@ _DESC_BUDGET_PRESSURE = _DESC_BUDGET_CEILING - 100
 # memory_search 3,575 -> 3,444 (-131), repaired here per the rule above.
 # Live total 25,976: 24 under `_DESC_BUDGET_CEILING`, over the pressure
 # line as it has been since 6.6.0 (25,970).
+#
+# Re-measured 2026-09-23 for the removal of the user-inference confirmation
+# round trip. Live total 25,090 -> 24,886, and exactly the three rows that
+# commit edits moved: memory_write 3,020 -> 2,911 (-109), memory_update
+# 1,686 -> 1,630 (-56), episode_promote 1,539 -> 1,500 (-39). All three
+# spans described the pending handshake — `user-inference` always pending,
+# ask the user, the veto — and now describe a label and the one opt-in
+# (`require_write_confirmation`) that still stages. A correction rather
+# than a trim, so the ceiling is not moved.
 _DESC_BASELINE = {
     "episode_handoff": 1554,
     # Re-measured 2026-07-31: 1597 -> 1700 (+103) for the state-channel
@@ -6479,7 +6541,9 @@ _DESC_BASELINE = {
     # those two are resident; the rationale sits in docs/api.md and the
     # skill body, which cost nothing per turn. Deliberately NOT mirrored
     # into episode_write's DESC, so the policy is paid for once.
-    "episode_promote": 1539,
+    # Re-measured 2026-09-23: 1539 -> 1500 (-39), the pending clauses now
+    # name `require_write_confirmation` instead of the user-inference veto.
+    "episode_promote": 1500,
     # Re-measured 2026-07-30: 3071 -> 2064 after the proportionality trim
     # (18 recorded calls across 544 sessions against ~3.2 KB billed every
     # turn). Rationale moved to docs/api.md; every pinned cue kept.
@@ -6550,7 +6614,11 @@ _DESC_BASELINE = {
     # Total lands at 25,857: 43 under the pressure line, no reclamation
     # spent — the slack the 2026-08-04 links-tail collapse bought is
     # what absorbed the feature.
-    "memory_update": 1686,
+    #
+    # Re-measured 2026-09-23: 1686 -> 1630 (-56), the `category` bullet's
+    # reason for refusing `user-inference` (a pending-confirm gate that no
+    # longer exists) replaced by where such a claim is filed instead.
+    "memory_update": 1630,
     # Re-measured 2026-09-05 for the evidence-free stamp refusal: 1919 ->
     # 2041 (+122), one sentence naming the refusal and its remedy, under
     # the 26,500 ceiling recalibrated the same day. Re-measured again for
@@ -6569,7 +6637,11 @@ _DESC_BASELINE = {
     # after the last recalibration (memory_verify +109, memory_update
     # +92 against this table); those are re-measured with the next
     # ceiling recalibration, not here.
-    "memory_write": 3020,
+    #
+    # Re-measured 2026-09-23: 3020 -> 2911 (-109). The `user-inference`
+    # bullet stops promising a pending status and an ask; the `pending`
+    # status line names the config flag as its only trigger.
+    "memory_write": 2911,
     "memory_write_cancel": 216,
     "memory_write_confirm": 515,
 }
@@ -7228,22 +7300,18 @@ async def test_memory_proposals_accept_writes_memory_and_removes(
         proposal_id="p1",
         scopes=["learning-style"],
     )
-    # A user-inference accept from a session goes through the user's veto
-    # (7.3.0): the proposal leaves the queue at staging and the memory lands
-    # on confirm.
-    assert res["status"] == "pending"
-    assert res["pending_reason"] == "user-inference"
-    assert res["preview"]["category"] == "user-inference"
-    assert ProposalQueue(memory_dir).load() == []
-    assert Store(memory_dir).load_all() == []
-    confirmed = await _call(
-        server, "memory_write_confirm", pending_id=res["pending_id"]
-    )
-    assert confirmed["status"] == "committed"
-    assert confirmed["category"] == "user-inference"
+    # A user-inference accept commits on the accept itself, like every
+    # other category: no pending id, the label rides on the record.
+    assert res["status"] == "accepted"
+    assert res["category"] == "user-inference"
+    assert "pending_id" not in res
     # Proposal consumed; a real memory now exists with that body.
-    bodies = [m.body for m in Store(memory_dir).load_all()]
-    assert any("terse explanations" in b for b in bodies)
+    assert ProposalQueue(memory_dir).load() == []
+    [stored] = Store(memory_dir).load_all()
+    assert stored.id == res["id"]
+    assert "terse explanations" in stored.body
+    assert stored.category is not None
+    assert stored.category.value == "user-inference"
 
 
 async def test_memory_proposals_accept_rejects_oversized_body(
@@ -7630,7 +7698,12 @@ async def test_memory_write_confirm_handler_converts_oserror_to_value_error(
     structured ValueError (flagging the pending id is consumed), not a
     bare path-leaking OSError. Staging does not call store.write, so the
     monkeypatch is installed after staging and only bites on confirm."""
-    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    from bettermemory.config import BehaviorConfig
+
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(require_write_confirmation=True),
+    )
     store = Store(memory_dir)
     server = build_server(config=cfg, store=store, state=SessionState())
     pending = await _call(

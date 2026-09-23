@@ -3,16 +3,16 @@
 Promote an episodic takeaway into a durable memory. Routes through
 the standard `memory_write` path so the full durability gate fires:
 TRANSIENT_PHRASE_MARKERS rejection, scope-mismatch detection,
-groundedness, dedup, dedup-tombstone, the user-inference pending flow
+groundedness, dedup, dedup-tombstone, the opt-in confirmation flow
 — everything `memory_write` does. The promotion adds nothing to the
 gate stack; it just supplies the body+scopes from an existing episode.
 
 On successful commit, the source episode is deleted (its content has
 been distilled into the durable memory). On a `pending` outcome
-(category='user-inference' or the global confirm flag), the source
-episode is left in place but a `pending_id → (session, episode_id)`
+(`require_write_confirmation`), the source episode is left in place
+but a `pending_id → (session, episode_id)`
 link is stashed on the session so `memory_write_confirm` can delete
-the episode on user-confirm — without that linkage, the confirm path
+the episode on confirm — without that linkage, the confirm path
 would commit the durable memory and leave the journal entry as a
 duplicate that survives until the 30-day TTL. `memory_write_cancel`
 drops the link without acting on the episode so the caller can retry.
@@ -248,7 +248,7 @@ def _delete_source_episode(
 DESC_EPISODE_PROMOTE = (
     "Promote a journal entry (episode) into a durable memory. Routes "
     "through memory_write — the durability gate, scope-mismatch "
-    "detection, dedup, and user-inference confirmation flow all "
+    "detection, dedup, and the opt-in confirmation flow all "
     "apply.\n\n"
     "Use this when an iteration's takeaway turns out to be a fact "
     "worth keeping across sessions, not just a run-state note.\n\n"
@@ -262,8 +262,8 @@ DESC_EPISODE_PROMOTE = (
     "Loop/working state belongs in episodes; session close is when "
     "to promote the takeaways that hardened.\n\n"
     "On successful commit the source episode is deleted (its content "
-    "has been distilled). On `pending` (user-inference category), the "
-    "source episode is held for memory_write_confirm to delete — "
+    "has been distilled). On `pending` (require_write_confirmation), "
+    "the source episode is held for memory_write_confirm to delete — "
     "memory_write_cancel keeps the episode so you can retry. On any "
     "other non-committed status (duplicate, previously_removed, "
     "transient_warning, scope_mismatch, ungrounded) the source "
@@ -277,8 +277,8 @@ DESC_EPISODE_PROMOTE = (
     "Parameters:\n"
     "- `episode_id`: ULID of the source episode.\n"
     "- `scopes`: scopes for the durable memory. Required.\n"
-    "- `category` (default 'fact'): memory category. user-inference "
-    "still requires explicit user confirmation.\n"
+    "- `category` (default 'fact'): memory category, as on "
+    "memory_write.\n"
     "- `confidence` (default 'medium'), `source` (default "
     "'explicit-statement'): standard memory_write fields.\n"
     "- `use_body=False`: when True, use the episode's body instead "

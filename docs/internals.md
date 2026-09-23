@@ -84,7 +84,11 @@ declared claims on `memory_write` / `memory_verify` (3.40.0).
   deliberately unmeasured; two instrumentation shapes were considered
   and rejected, both because they would have re-corrupted the cadence
   census the mandate exists to protect.
-- Claims about the user always stage for confirmation before commit.
+- Claims about the user commit like any fact but carry the
+  `user-inference` label, so a stored inference stays distinguishable
+  and correctable; a body that reads as one while filed as `fact` is
+  refused until it is relabelled. Confirmation before commit is an
+  opt-in for every category (`require_write_confirmation`).
 - Write gates instead of trust: durability check (rejects transient
   state), credential check (rejects secret-shaped tokens), duplicate
   and tombstone dedup, scope-mismatch check, optional groundedness
@@ -207,8 +211,8 @@ rebuilt, inside the same store-wide sync lock. The chain, in order:
 4. The credential gate the write path runs (`ADMISSION_GATES` in
    `handlers/write.py`, the one gate whose refusal is a property of the
    bytes alone). The transient and user-claim gates are soft locally
-   (an acknowledgement or the pending handshake lifts them) and neither
-   travels with the file, so they are detected and reported as
+   (an acknowledgement lifts them) and the acknowledgement does not
+   travel with the file, so they are detected and reported as
    advisory flags on admitted files, never refused; the dedup gates
    would score an update pull against the record's own stored copy;
    the scope gate judges a checkout a pull has none of.
@@ -360,7 +364,7 @@ if it exists, else `~/.claude-memory/`.
 
 27 MCP tools; 18 register by default. Nine curation/power-user tools
 sit behind `[behavior] full_tool_surface = true`, and most of those
-have a CLI counterpart. Grouped: retrieval, writing (with a
+have a CLI counterpart. Grouped: retrieval, writing (with an opt-in
 staged-confirm flow), lifecycle, verification, curation, session-local
 scope toggles, and episodes. Signatures, defaults, and return shapes:
 [api.md](api.md).

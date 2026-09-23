@@ -578,8 +578,9 @@ def test_demotion_skips_user_inference_memories() -> None:
     None as the demotion-eligible categories, but the pass used to skip
     only AMBIENT — user-inference sailed through to the unattended
     fact->ambient retag. The retag is one-way (memory_update's
-    _PROPOSABLE_CATEGORIES gate cannot restore 'user-inference'), so
-    the confirmation-protected tier must be whitelisted out."""
+    _PROPOSABLE_CATEGORIES gate cannot restore 'user-inference') and
+    would erase the label that marks a claim about the user, so the
+    category must be whitelisted out."""
     now = datetime.now(timezone.utc)
     old = now - timedelta(days=90)
     m = _memory(

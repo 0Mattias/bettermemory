@@ -1,15 +1,16 @@
 """Integration tests for the user-claim gate on memory_update.
 
-`UserClaimGate` (handlers/write.py) exists so a claim ABOUT THE USER filed
-as `fact` cannot commit without the pending/veto handshake. It hung off
+`UserClaimGate` (handlers/write.py) exists so a claim ABOUT THE USER is
+not stored as an established `fact`: the `user-inference` label is what
+keeps an inference distinguishable and correctable. It hung off
 `memory_write` alone, and `memory_update` replaces a body without
 consulting it — so the refusal was one hop wide:
 
     memory_write(content="the deploy script lives in bin/", category="fact")
     memory_update(id, content="Mattias prefers tabs over spaces.")
 
-landed verbatim the body `memory_write` hard-refuses, in the category whose
-label `PendingGate` reads, and the user was never asked. Same laundering
+landed verbatim the body `memory_write` hard-refuses, under the `fact`
+label that hides it from anyone correcting inferences. Same laundering
 shape the credential gate on this surface already closes for secrets
 (tests/test_server_credentials.py), which is why these tests are shaped
 like that module's.
@@ -22,8 +23,8 @@ What they pin beyond "the gate fires":
 - The gate reads the category the record will HAVE, not the one the call
   named. `ambient` is gated exactly as `fact` is; `user-inference` is the
   one category it passes, and that is the structural escape — a claim about
-  the user belongs in a `user-inference` memory, which only `memory_write`
-  can create, staged.
+  the user belongs in a `user-inference` memory, which on this surface only
+  `memory_write` can create.
 - BODY edits only. A metadata edit on a record whose body already reads as
   a claim has to stay possible, or curating the mis-filed records that
   predate the gate becomes impossible.
@@ -185,26 +186,23 @@ async def test_a_user_inference_record_accepts_a_claim_body_edit(
     server_with_events: tuple[Any, Path],
 ) -> None:
     """The acknowledged path that exists today. A claim about the user is
-    legal in a `user-inference` memory — the one the user has already
-    vetoed or confirmed — so refining that body must stay possible, or the
-    gate refuses the only category it wants the claim to live in."""
+    legal in a `user-inference` memory — the label says it is one — so
+    refining that body must stay possible, or the gate refuses the only
+    category it wants the claim to live in."""
     server, _ = server_with_events
-    staged = await _call(
+    written = await _call(
         server,
         "memory_write",
         content=_CLAIM,
         scopes=["learning-style"],
         category="user-inference",
     )
-    assert staged["status"] == "pending"
-    confirmed = await _call(
-        server, "memory_write_confirm", pending_id=staged["pending_id"]
-    )
-    assert confirmed["category"] == "user-inference"
+    assert written["status"] == "committed"
+    assert written["category"] == "user-inference"
     res = await _call(
         server,
         "memory_update",
-        id=confirmed["id"],
+        id=written["id"],
         content="Mattias prefers tabs over spaces in every editor.",
     )
     assert res["status"] == "committed"
@@ -348,10 +346,10 @@ async def test_the_override_waves_through_one_gate_and_not_the_chain(
 async def test_the_override_does_not_license_the_user_inference_retag(
     server_with_events: tuple[Any, Path],
 ) -> None:
-    """The other thing the flag must not buy. `user-inference` is a
-    WRITE-time gate with no equivalent here, so acknowledging the claim
-    cannot become a back door into the category whose whole purpose is
-    the pending/veto handshake."""
+    """The other thing the flag must not buy. A retag INTO
+    `user-inference` is refused on this surface (the category rule above;
+    `models._PROPOSABLE_CATEGORIES` records why), so acknowledging the
+    claim cannot become a back door around that rule."""
     server, _ = server_with_events
     memory_id = await _seed_fact(server)
     with pytest.raises(Exception, match="category must be one of"):

@@ -14,8 +14,8 @@ Two invariants make this safe to run unattended:
 
 1. **Nothing here ever writes to the memory store.** Proposals are inert
    JSON until a human/model explicitly accepts one — the same
-   "stage, then confirm" discipline the `user-inference` write path uses.
-   A bad proposal costs one dismissal, never a bad memory.
+   "stage, then confirm" discipline `require_write_confirmation` gives
+   the write path. A bad proposal costs one dismissal, never a bad memory.
 2. **Generation-agnostic.** The heuristic extractor below is v1
    (cheap, no LLM, runs in the turn-end hook without blocking it). The
    queue + review surface are deliberately decoupled from how proposals
@@ -217,8 +217,8 @@ class Proposal:
       provenance, mirroring `consolidate --from-transcript`'s stamping.
     - ``suggested_category``: heuristic guess (``user-inference`` for a
       first-person preference, else ``fact``). The model may override on
-      accept; ``user-inference`` proposals are exactly the tier that
-      needs human confirmation, which the review step provides.
+      accept; an accepted ``user-inference`` proposal commits with that
+      label, as ``memory_write`` files a claim about the user.
     - ``created``: ISO-8601 capture time.
     """
 
@@ -546,8 +546,8 @@ def extract_proposals(
                 )
             continue
         # An explicit capture request is a stated fact; a bare first-person
-        # preference is a claim about the user → the tier that wants
-        # confirmation, which the review step supplies.
+        # preference is a claim about the user → `user-inference`, the
+        # label that keeps it distinguishable from an established fact.
         category = "fact" if is_explicit else "user-inference"
         out.append(
             Proposal(

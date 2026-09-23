@@ -328,7 +328,7 @@ class PendingWriteLog:
     user has not yet agreed to store at all).
 
     ROWS ARE KEYED BY CLIENT, NOT BY PENDING ID. `SessionRegistry` exists
-    to stop client B confirming client A's staged user-inference write,
+    to stop client B confirming client A's staged write,
     and a sidecar keyed by pending_id alone would hand that back through
     the disk. Every mutator touches only the rows it names and leaves
     every other client's untouched, so two clients sharing a store root

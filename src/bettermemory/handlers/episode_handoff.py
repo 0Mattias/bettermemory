@@ -919,7 +919,7 @@ def _episode_promoted_out_of_session(root: Path, session_id: str) -> _PromotionT
     `episode_promote` deletes the source episode when the durable write
     commits — synchronously on `status="committed"`, or via
     `memory_write_confirm` when the write staged as `status="pending"`
-    (the user-inference confirmation flow). Either way the session that
+    (the `require_write_confirmation` flow). Either way the session that
     wrote the episode ends up floor-only (if it had called
     episode_handoff) or zero-episode (if it hadn't) on disk,
     byte-identical to the crash / clean-tick shapes the handoff notes

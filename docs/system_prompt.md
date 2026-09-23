@@ -26,7 +26,7 @@ only see what these tools surface.
 |---|---|
 | Search? | shared-context reference or ambiguity → yes. Otherwise no. |
 | Write? | something durable just entered the conversation → yes. Don't wait for "remember that". State or timestamps → no (durability check will reject; rephrase to the durable level-up form). A commit SHA is an anchor, not state — cite it freely. |
-| Category? | claim about the user → `user-inference` (always pending). Atmospheric / no verifiable claims → `ambient`. Else → `fact`. |
+| Category? | claim about the user → `user-inference`. Atmospheric / no verifiable claims → `ambient`. Else → `fact`. |
 | Outcome? | retrieval shaped reply → silence (settles as `applied` at turn end). Off-topic / wrong → explicit `ignored` / `contradicted` / `corrected`. |
 | Verify? | `staleness_verdict != "fresh"` → `path_drift.claim_anchored_missing` is the escalating subset; memory_update those, memory_verify the rest with `verified_paths`. |
 | Scope? | project name if obvious; never `general`. |
@@ -120,8 +120,8 @@ durable enters the conversation. Don't wait for "remember that";
 by then the user is paying you to forget.
 
 Triggers:
-- User states a preference → category="user-inference" (server
-  stages pending; ask the user before confirming).
+- User states a preference → category="user-inference" (commits
+  immediately, labelled as an inference about the user).
 - Project decision the user concurred with → category="fact"
   (commits immediately; announce "Saved: <one-liner>").
 - Tool/infrastructure/configuration fact → category="fact".
@@ -148,14 +148,16 @@ inter-memory edges (supersedes / contradicts / extends /
 depends_on) with REPLACE semantics; surfaces bidirectionally on
 memory_show.
 
-Confirmation tiers via `category`:
+Categories:
 - `fact` (default): commits immediately.
-- `user-inference`: always returns {status: "pending", pending_id}
-  regardless of config. Ask the user, then memory_write_confirm
-  or memory_write_cancel. Misattribution sticks — user gets the
-  veto.
+- `user-inference`: a claim about the user. Commits like fact; the
+  label keeps an inference distinguishable from an established
+  fact, and correctable.
 - `ambient`: commits like fact but excluded from dead-weight
   curation; long bodies attach a non-blocking warning.
+With `require_write_confirmation` on, every category returns
+{status: "pending", pending_id}: memory_write_confirm or
+memory_write_cancel.
 
 Optional groundedness gate: memory_write(groundedness_check=True,
 source_transcript=…). Sentences with <30% overlap to the transcript

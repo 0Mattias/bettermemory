@@ -9,6 +9,67 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+### Changed
+
+- **A claim about the user commits on the first call; nothing stops the
+  conversation to ask before it is saved.** `memory_write` with
+  `category="user-inference"` was documented as "Always returns
+  {status:'pending', pending_id} regardless of config", and its hint
+  told the model to ask the user in plain language, then call
+  `memory_write_confirm`. That contract is gone: the category now
+  passes through every gate `fact` does (credential, transient,
+  scope-mismatch, groundedness, both dedup gates, declared claims,
+  supersession) and returns `committed`. It keeps its label, so a
+  stored inference stays distinguishable from an established fact and
+  can be found and corrected. `pending_reason: "user-inference"` is no
+  longer produced. Under the compatibility contract this changes what
+  an existing enum value does rather than adding one, so it is not an
+  additive change; which version carries it is decided at release.
+
+- **`require_write_confirmation` is the one staging path, and it is
+  uniform.** It stages every category, `user-inference` included, with
+  `pending_reason: "config"` and a single hint that names
+  `memory_write_confirm` and `memory_write_cancel` without scripting a
+  question. `memory_write_confirm` / `memory_write_cancel`, the pending
+  sidecar, the confirm-time re-gate and `memory_scope_overview`'s
+  `pending_writes` count are unchanged and serve that path.
+
+- **A `user-inference` proposal accept commits.** Since 7.3.0 an accept
+  through `memory_proposals` staged a pending write from a session,
+  mirroring the pending gate above; it now returns `accepted` like every
+  other category, from the MCP tool and the CLI alike. The accept is
+  still the queue's confirmation step, so the config flag adds no second
+  one there. `accept_proposal` loses the `state` parameter that existed
+  only to stage.
+
+- **The user-claim gate stays, and says what it is for.** A body that
+  reads as a claim about the user filed as `fact` or `ambient` is still
+  refused with `user_claim_warning` on `memory_write`, `memory_update`
+  and `episode_promote`, because the label is the only thing that marks
+  it as an inference. The hint now says re-issuing as `user-inference`
+  files it under that label; it no longer says the re-issue stages or
+  that the model should ask. `memory_update` still refuses a retag INTO
+  `user-inference`, and `consolidate --llm` still proposes only `fact`
+  and `ambient`: both rules were written to protect the pending gate,
+  and they are kept as they stood rather than widened in the same
+  change, with the reasoning now in the comment on the shared whitelist
+  in `src/bettermemory/models.py`.
+
+- **Every surface that scripted the ask was rewritten**: the
+  `memory_write`, `memory_update`, `episode_promote`,
+  `episode_patterns` and `memory_proposals` descriptions, the server
+  `instructions` block, the long-form addendum and
+  `docs/system_prompt.md`, the plugin skill and README, the README,
+  `docs/api.md` and `docs/internals.md`.
+  `tests/test_no_ask_before_save.py` reads every served description,
+  the `instructions` block, the addendum, those docs, and the live
+  hints on each path that used to carry the ask, and fails on the
+  phrasings that carried it; its patterns are pinned against the
+  removed wording, so a rewrite cannot leave them matching nothing.
+  The description baselines are re-measured in the same commit, and
+  the footprint table's descriptions row picks up +266 it had not
+  recorded since 2026-09-16.
+
 ### Added
 
 - `bettermemory.session_capture`: the prompt, output contract and

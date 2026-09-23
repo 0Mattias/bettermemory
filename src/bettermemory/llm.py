@@ -116,9 +116,8 @@ DEFAULT_MAX_OUTPUT_TOKENS = 2048
 # closed-protocol whitelist of `category` values an LLM is allowed
 # to propose, both for retag (``demote_tier``) and for new memories
 # (``propose_new``). ``user-inference`` is deliberately excluded —
-# that tier requires explicit user confirmation, which the
-# consolidate path can't supply. The ``Literal[…]`` typedefs on
-# ``DemoteTierProposal.new_category`` and
+# the constant's comment in ``models`` says why. The ``Literal[…]``
+# typedefs on ``DemoteTierProposal.new_category`` and
 # ``ProposeNewProposal.category`` mirror this set but are mypy-only;
 # the imported frozenset is the runtime enforcement, exercised by
 # ``_validate_demote`` and ``_validate_propose_new`` below. The same
@@ -334,12 +333,11 @@ class ProposeNewProposal:
 
     `scope`, `category`, and `body` are the same parameters
     `memory_write` takes. `category` is restricted to `fact` or
-    `ambient` — `user-inference` is excluded because that tier
-    requires explicit user confirmation, which the consolidate path
-    can't supply. `source_excerpt` is the conversation snippet the
-    LLM extracted the fact from; the applier writes it into the
-    memory body as a provenance line so future audits can trace the
-    claim back to a turn.
+    `ambient` — `user-inference` is excluded, and the comment on
+    `models._PROPOSABLE_CATEGORIES` records why the exclusion stands.
+    `source_excerpt` is the conversation snippet the LLM extracted the
+    fact from; the applier writes it into the memory body as a
+    provenance line so future audits can trace the claim back to a turn.
     """
 
     scope: str
@@ -607,7 +605,7 @@ You may propose any combination of these five action types:
 2. "resolve_contradiction" — Two memories disagree and one is clearly current. Pick a "winner_id" and a "loser_id" (both from the cluster); the loser will be tombstoned. Provide a one-line "rationale" naming the disagreement.
 3. "rewrite_relative_date" — A memory body contains relative phrases referencing dates that have drifted. Provide "memory_id" and the full "new_body" with absolute dates substituted. Do NOT propose this for bodies already using absolute dates.
 4. "demote_tier" — A memory's verifiable claims have been superseded but the surrounding context is still useful for response shaping. Provide "memory_id" and "new_category" (must be "fact" or "ambient"; almost always "ambient" for demotions). Do NOT propose demoting a memory that has any path/version/commit claim still valid against current reality.
-5. "propose_new" — A TRANSCRIPT is attached and it surfaced a durable fact NOT already covered by any cluster member. Provide "scope" (e.g. "projects:foo", "tools", "infrastructure" — never the catch-all "general"), "category" (must be "fact" or "ambient"; never "user-inference" — that tier requires explicit user confirmation the consolidate pass can't supply), "body" (the durable claim, two to four sentences), "source_excerpt" (the literal turn from the transcript the body distils — max 500 chars). DO NOT propose: facts the cluster members already cover, transient state ("today I", "we just"), time-bound markers, or anything that boils down to "what we discussed". Only durable claims — preferences, decisions, infrastructure / configuration facts, finished units of work whose what-and-why git won't capture.
+5. "propose_new" — A TRANSCRIPT is attached and it surfaced a durable fact NOT already covered by any cluster member. Provide "scope" (e.g. "projects:foo", "tools", "infrastructure" — never the catch-all "general"), "category" (must be "fact" or "ambient"; never "user-inference" — this pass does not file claims about the user), "body" (the durable claim, two to four sentences), "source_excerpt" (the literal turn from the transcript the body distils — max 500 chars). DO NOT propose: facts the cluster members already cover, transient state ("today I", "we just"), time-bound markers, or anything that boils down to "what we discussed". Only durable claims — preferences, decisions, infrastructure / configuration facts, finished units of work whose what-and-why git won't capture.
 
 Strict rules:
 
@@ -1091,8 +1089,7 @@ def _validate_propose_new(
       "general" (the prompt explicitly forbids it; reject if the LLM
       ignored that).
     - category MUST be "fact" or "ambient" — never "user-inference"
-      (that tier requires explicit user confirmation the consolidate
-      pass can't supply).
+      (`models._PROPOSABLE_CATEGORIES` records why).
     - body MUST be non-empty.
     - source_excerpt MUST be a non-empty string capped at
       `MAX_SOURCE_EXCERPT_CHARS`.

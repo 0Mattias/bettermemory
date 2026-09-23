@@ -42,10 +42,10 @@ applies, with `--apply`) four kinds of curation:
    so they stop appearing in the dead-weight bucket on future health
    passes; their content stays available for retrieval. Ambient
    memories already get this treatment, so they're skipped, and
-   `user-inference` (plus any future category) keeps its
-   confirmation-protected tier — `memory_update` cannot restore that
-   tag, so an automated retag would be one-way. Memories carrying an
-   unresolved contradiction flag are skipped (they're parked for
+   `user-inference` (plus any future category) keeps its label —
+   `memory_update` cannot restore that tag, so an automated retag
+   would be one-way. Memories carrying an unresolved contradiction
+   flag are skipped (they're parked for
    explicit resolution, not lacking value), as are memories whose
    earliest retrieval is too recent for the auto-applied endorsement
    window to have elapsed.
@@ -858,12 +858,12 @@ def find_demotion_candidates(
 
     On top of the predicate, this ACTION pass keeps its own category
     whitelist: only ``fact`` and (legacy) None are demotion-eligible,
-    per the module docstring's enumeration. ``user-inference`` carries
-    a user-confirmation ceremony an automated pass cannot re-supply,
-    and `memory_update` cannot restore the tag — the retag would be
-    one-way. Future categories are protected by default. (The health
-    REPORT still surfaces such rows as dead weight; only the
-    unattended retag is category-restricted.)
+    per the module docstring's enumeration. ``user-inference`` marks a
+    claim about the user, and `memory_update` cannot restore the tag —
+    the retag would be one-way, and would erase the one marker that
+    keeps the inference distinguishable. Future categories are
+    protected by default. (The health REPORT still surfaces such rows
+    as dead weight; only the unattended retag is category-restricted.)
 
     `hook_telemetry_events` arms the telemetry-coverage gate — same
     contract as `health.compute_health`'s parameter (`None` = caller
@@ -954,7 +954,7 @@ def find_demotion_candidates(
     for memory in memories:
         # Whitelist, not skip-list: only `fact` and (legacy) None are
         # demotion-eligible. Ambient is already demoted; user-inference
-        # (and any future category) keeps its protected tier. This is
+        # (and any future category) keeps its label. This is
         # the action-side gate layered ON TOP of the shared predicate.
         if memory.category is not None and memory.category != Category.FACT:
             continue
@@ -2691,15 +2691,14 @@ def _apply_llm_proposal(
         # User-claim body classification — the same body-shape rule
         # `UserClaimGate` enforces at the memory_write surface
         # (handlers/write.py): a body that reads as a claim ABOUT THE
-        # USER ("Mattias prefers tabs") must go through the
-        # `user-inference` pending-confirm flow so the user keeps the
-        # veto — misattribution sticks. This branch is literally a model
-        # inferring claims about the user from a transcript, the exact
-        # high-risk surface that flow exists for, yet
-        # `_validate_propose_new` whitelists only fact/ambient (the
-        # user-inference tier needs a confirmation the consolidate pass
-        # can't supply), so a user-claim-shaped body here cannot be
-        # rerouted into staging — only refused. Scoped to
+        # USER ("Mattias prefers tabs") must never be stored as a
+        # `fact` — misattribution sticks, and a claim filed under that
+        # label reads back as established. This branch is literally a
+        # model inferring claims about the user from a transcript, yet
+        # `_validate_propose_new` whitelists only fact/ambient
+        # (`models._PROPOSABLE_CATEGORIES` records why), so a
+        # user-claim-shaped body here cannot be relabelled
+        # `user-inference` — only refused. Scoped to
         # `proposal.body` like the transient and dedup gates above: the
         # provenance excerpt is a verbatim user turn, and first-person
         # phrasing there ("My Postgres is on 5433") would bounce genuine
@@ -2711,9 +2710,9 @@ def _apply_llm_proposal(
             phrases = ", ".join(h.phrase for h in user_claims)
             raise RuntimeError(
                 f"propose_new body reads as a claim about the user "
-                f"({phrases}); refuse — that tier requires the "
-                "user-inference pending-confirm flow, which the "
-                "consolidate path can't stage"
+                f"({phrases}); refuse — a claim about the user is "
+                "filed as user-inference, which the consolidate path "
+                "does not propose"
             )
 
         from .search import find_similar, find_similar_tombstones

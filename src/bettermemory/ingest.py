@@ -45,13 +45,13 @@ Design notes:
   pattern as the MCP `memory_write` handler's dedup gate. Imports of
   memories the user already chose to remove don't quietly resurrect.
 
-- **`user-inference` category writes are kept.** The MCP handler's
-  always-pending gate exists because the *model* infers user claims
-  in conversation; that's the high-risk surface. An ingest run is the
-  user telling bettermemory "these pre-existing user-curated files
-  are mine, ingest them" — going through pending-confirm per row
-  would be ergonomic theatre. The category lands on the record so
-  downstream curation still treats them as user-claim memories.
+- **`user-inference` category writes are kept.** They commit as the
+  MCP handler commits that category, and `require_write_confirmation`
+  does not reach them: an ingest run is the user telling bettermemory
+  "these pre-existing user-curated files are mine, ingest them", so
+  confirming per row would be ergonomic theatre. The category lands on
+  the record so downstream curation still treats them as user-claim
+  memories.
 
 - **No source-file mutation.** Modifying the source `.md` files
   would race Claude Code's own auto-memory writes. The dedup contract

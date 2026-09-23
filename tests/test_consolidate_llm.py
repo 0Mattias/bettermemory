@@ -1499,15 +1499,15 @@ def test_propose_new_rejects_a_body_that_reopens_a_tombstone(tmp_path: Path) -> 
 def test_propose_new_rejects_a_body_that_reads_as_a_user_claim(
     tmp_path: Path,
 ) -> None:
-    """The user-inference veto ceremony, on the one entry path that IS
+    """The user-claim labelling rule, on the one entry path that IS
     "a model inferring claims about the user from conversation". A
     third-person user claim ("Mattias prefers tabs") distilled as
-    category=fact used to commit with no pending-confirm, where the
+    category=fact used to commit as an established fact, where the
     byte-identical body through `memory_write` triggers
     `user_claim_warning`. `_validate_propose_new` whitelists only
-    fact/ambient (the user-inference tier needs a confirmation this
-    pass can't supply), so the body cannot be rerouted into staging —
-    only refused. Scoped to `proposal.body` like the transient gate:
+    fact/ambient (`models._PROPOSABLE_CATEGORIES` records why), so the
+    body cannot be relabelled `user-inference` — only refused. Scoped
+    to `proposal.body` like the transient gate:
     the excerpt is a verbatim user turn whose first-person phrasing
     ("i prefer …") must NOT bounce the proposal — the positive
     controls above ("My Postgres is on port 5433…" excerpts) pin that

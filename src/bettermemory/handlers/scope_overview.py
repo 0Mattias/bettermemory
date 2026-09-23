@@ -318,9 +318,9 @@ async def memory_scope_overview(
     # off and the queue file doesn't exist.
     proposals_pending = len(ProposalQueue(deps.store.root).load())
 
-    # Unresolved staged writes for THIS session (user-inference writes
-    # awaiting memory_write_confirm / memory_write_cancel, or any write
-    # under require_write_confirmation). `_advance_turn` above already
+    # Unresolved staged writes for THIS session (any write staged under
+    # require_write_confirmation, awaiting memory_write_confirm /
+    # memory_write_cancel). `_advance_turn` above already
     # evicted TTL-expired entries, so this is the live count. Surfaced
     # because the dogfood event log shows staged writes silently
     # expiring — the model staged, the conversation moved on, and

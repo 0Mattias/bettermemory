@@ -42,7 +42,7 @@ from typing import Any
 import pytest
 
 from bettermemory import session as session_mod
-from bettermemory.config import Config, StorageConfig
+from bettermemory.config import BehaviorConfig, Config, StorageConfig
 from bettermemory.events import Recorder, iter_events
 from bettermemory.handlers.write import (
     CredentialGate,
@@ -101,11 +101,20 @@ async def _call_as(server: Any, name: str, session_id: str, **kwargs: Any) -> An
     return await fn(ctx=_fake_ctx(session_id), **kwargs)
 
 
+def _config(memory_dir: Path) -> Config:
+    """`require_write_confirmation` on: the one path that stages a write.
+    Every write in this module is meant to stage, whatever its category."""
+    return Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(require_write_confirmation=True),
+    )
+
+
 def _boot(memory_dir: Path, *, sessions: Any = None) -> tuple[Any, Any]:
     """One server process over `memory_dir`. Calling it twice against the
     same directory is what "a restart" means in this module: fresh
     `SessionState`, fresh `Store`, same disk."""
-    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    cfg = _config(memory_dir)
     state = sessions if sessions is not None else SessionState()
     session_id = getattr(state, "session_id", "sess_registry")
     server = build_server(
@@ -124,8 +133,9 @@ def booted(memory_dir: Path) -> tuple[Any, SessionState, Path]:
 
 
 async def _stage(server: Any, content: str, **kwargs: Any) -> str:
-    """Stage a write and return its pending id. `user-inference` is the
-    structural always-pending tier, so this needs no config flag."""
+    """Stage a write and return its pending id. Staging comes from the
+    config flag `_config` sets; the `user-inference` default category is
+    kept so the body shapes below stay clear of the user-claim gate."""
     res = await _call(
         server,
         "memory_write",
@@ -510,10 +520,10 @@ async def test_a_restart_does_not_hand_one_client_another_client_s_write(
     memory_dir: Path,
 ) -> None:
     """The `SessionRegistry` exists to stop client B confirming client A's
-    staged user-inference write. A sidecar keyed by pending id alone would
+    staged write. A sidecar keyed by pending id alone would
     hand that back through the disk — every restart would re-pool the
     staged writes of every client that ever used the store."""
-    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    cfg = _config(memory_dir)
     first = build_server(config=cfg, store=Store(memory_dir), state=SessionRegistry())
     res = await _call_as(
         first,
@@ -544,7 +554,7 @@ async def test_one_client_s_rewrite_keeps_the_other_client_s_rows(
     mutation rewrites it. A `save` that wrote only the calling client's
     rows would silently delete everyone else's staged writes — a data-loss
     bug that only shows up with two clients and a restart between them."""
-    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    cfg = _config(memory_dir)
     server = build_server(config=cfg, store=Store(memory_dir), state=SessionRegistry())
     ids = {}
     for name in ("alice", "bob"):
@@ -666,8 +676,8 @@ async def test_a_committed_or_cancelled_write_leaves_no_row_behind(
 
 
 async def test_the_sidecar_is_written_private(memory_dir: Path) -> None:
-    """A staged row is a memory body the user has NOT agreed to store —
-    the user-inference tier stages precisely so they can veto it. It is
+    """A staged row is a memory body nobody has confirmed yet —
+    `require_write_confirmation` stages precisely so it can be dropped. It is
     written with the mode set before the rename, so there is no
     world-readable instant at the visible name (`atomic_write_bytes`'s
     `mode_before_rename`, the discipline the proposals queue uses for raw
@@ -950,7 +960,7 @@ async def test_one_client_s_claim_keeps_another_client_s_rows(
     client's rows has to survive the switch to deltas — and now also across
     the tombstone: alice's consumed marker must not shadow bob's live row,
     which is what a sidecar keyed by pending id alone would produce."""
-    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    cfg = _config(memory_dir)
     server = build_server(config=cfg, store=Store(memory_dir), state=SessionRegistry())
     ids = {}
     for name in ("alice", "bob"):

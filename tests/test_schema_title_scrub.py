@@ -423,13 +423,12 @@ async def test_the_served_schema_is_not_on_the_call_path(tmp_path: Path) -> None
         ("memory_write", {"content": "we merged the PR today", "scopes": ["tools"]}),
         # reject: duplicate of the first write
         ("memory_write", {"content": "uv drives the build here", "scopes": ["tools"]}),
-        # reject: staged pending, the user-inference path
+        # reject: a claim about the user filed as a fact
         (
             "memory_write",
             {
                 "content": "User prefers terse comments",
                 "scopes": ["learning-style"],
-                "category": "user-inference",
             },
         ),
         ("memory_search", {"query": "uv build"}),
@@ -461,7 +460,7 @@ async def test_the_served_schema_is_not_on_the_call_path(tmp_path: Path) -> None
         "committed",
         "transient_warning",
         "duplicate",
-        "pending",
+        "user_claim_warning",
     ], f"the battery stopped covering the commit and reject paths: {statuses}"
     # The two reads are shaped like reads, not like a repeated error.
     assert "result" in rows[4] and "scopes" in rows[5]

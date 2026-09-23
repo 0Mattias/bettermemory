@@ -64,8 +64,8 @@ instead, `uv tool install bettermemory` and edit `.mcp.json` to
 Ask the model *"what memory tools do you have?"* — you should see tools
 with the `mcp__bettermemory__` prefix. Then try *"remember that I
 prefer hands-on tutorials with runnable code"*: the model should call
-`memory_write` with `category="user-inference"`, ask for confirmation,
-and a markdown file lands in `~/.claude-memory/`.
+`memory_write` with `category="user-inference"`, and a markdown file
+lands in `~/.claude-memory/` without a confirmation round trip.
 
 ## Troubleshooting
 

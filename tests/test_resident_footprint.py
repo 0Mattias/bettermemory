@@ -254,9 +254,17 @@ class Footprint(NamedTuple):
 # is NOT this commit at all: no schema was touched here, and the input
 # schemas had drifted that far unrecorded since 7.0.0. Repaired in the
 # commit that made it visible, per the rule at the top of this file.
+# Re-measured 2026-09-23 for the removal of the user-inference
+# confirmation round trip: instructions 1,608 -> 1,592 (-16, "stages
+# pending" dropped from the stated-preference trigger) and descriptions
+# 24,824 -> 24,886 (+62). The +62 is two movements, reported apart as the
+# 7.16.0 note does: this commit's -204 (memory_write, memory_update and
+# episode_promote, per-row in `_DESC_BASELINE`), and +266 this row had not
+# recorded since 2026-09-16 — memory_list +243 and memory_scope_overview
+# +23, both already re-measured in `_DESC_BASELINE` and left behind here.
 _FOOTPRINT_BASELINE = Footprint(
-    instructions=1_608,
-    descriptions=24_824,
+    instructions=1_592,
+    descriptions=24_886,
     input_schemas=6_031,
     output_schemas=1_077,
     skill_frontmatter=759,

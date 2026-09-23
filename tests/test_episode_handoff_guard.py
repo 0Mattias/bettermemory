@@ -27,7 +27,7 @@ from typing import Any
 
 import pytest
 
-from bettermemory.config import Config, StorageConfig
+from bettermemory.config import BehaviorConfig, Config, StorageConfig
 from bettermemory.handlers.episode_handoff import DESC_EPISODE_HANDOFF
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
@@ -665,8 +665,8 @@ async def test_episode_handoff_promotion_note_covers_deferred_confirm_path(
     memory_dir: Path,
 ) -> None:
     """The promotion delete has TWO triggers: synchronous (promote
-    returns `committed`) and deferred (promote stages `pending` for the
-    user-inference flow; `memory_write_confirm` commits AND deletes the
+    returns `committed`) and deferred (promote stages `pending` under
+    `require_write_confirmation`; `memory_write_confirm` commits AND deletes the
     source episode later). On the deferred path `memory_write_confirm`
     stamps the deleted source-episode id onto its `write_confirm` event —
     that confirm-TIME `episode_id` is the durable proof the promotion
@@ -686,10 +686,15 @@ async def test_episode_handoff_promotion_note_covers_deferred_confirm_path(
     """
     from bettermemory.episodes import EpisodeStore
 
-    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    # `require_write_confirmation` is what stages a promotion; the
+    # category no longer does.
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(require_write_confirmation=True),
+    )
 
-    # S_a: write → promote as user-inference (stages pending) → user
-    # confirms → durable memory commits, source episode deleted. No
+    # S_a: write → promote (stages pending) → confirm → durable
+    # memory commits, source episode deleted. No
     # handoff, so no floor: S_a ends zero-episode.
     server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
     ep = await _call(
@@ -707,7 +712,8 @@ async def test_episode_handoff_promotion_note_covers_deferred_confirm_path(
         category="user-inference",
     )
     assert pending["status"] == "pending", (
-        f"test precondition: user-inference promotion must stage pending; "
+        f"test precondition: a confirmation-mode promotion must stage "
+        f"pending; "
         f"got: {pending!r}"
     )
     confirmed = await _call(
@@ -745,7 +751,8 @@ async def test_episode_handoff_pending_promotion_not_named_after_cancel_then_pru
     memory_search for content that does not exist.
 
     Every trigger step is a designed flow: unattended /loop ticks promote
-    user-inference takeaways that stage pending and expire/cancel unconfirmed,
+    takeaways that stage pending under `require_write_confirmation` and
+    expire/cancel unconfirmed,
     and the prune is automatic.
 
     Mutation-soundness: pre-fix `_episode_promoted_out_of_session` counted a
@@ -762,9 +769,14 @@ async def test_episode_handoff_pending_promotion_not_named_after_cancel_then_pru
     from bettermemory.episodes import EpisodeStore
     from bettermemory.models import utcnow
 
-    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    # `require_write_confirmation` is what stages a promotion; the
+    # category no longer does.
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(require_write_confirmation=True),
+    )
 
-    # S_a: write a takeaway, promote it as user-inference (stages pending),
+    # S_a: write a takeaway, promote it (stages pending),
     # then CANCEL. Cancel drops the linkage but KEEPS the source episode on
     # disk so the caller can retry — no promotion ever committed.
     server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
@@ -783,7 +795,8 @@ async def test_episode_handoff_pending_promotion_not_named_after_cancel_then_pru
         category="user-inference",
     )
     assert pending["status"] == "pending", (
-        f"test precondition: user-inference promotion must stage pending; "
+        f"test precondition: a confirmation-mode promotion must stage "
+        f"pending; "
         f"got: {pending!r}"
     )
     cancelled = await _call(
@@ -852,8 +865,8 @@ async def test_episode_handoff_pre_window_deferred_confirm_hedges_not_false_empt
     episode, so no code change can prove the commit — the honest answer is to
     hedge, never to assert either a promotion or that nothing was journaled.
 
-    We drive the real deferred path (episode_write -> episode_promote(
-    category="user-inference") -> memory_write_confirm), then strip
+    We drive the real deferred path (episode_write -> episode_promote
+    under `require_write_confirmation` -> memory_write_confirm), then strip
     `episode_id` from the `write_confirm` event on disk to reconstruct the
     pre-window shape (the exact reproduction the audit used).
 
@@ -869,9 +882,14 @@ async def test_episode_handoff_pre_window_deferred_confirm_hedges_not_false_empt
 
     from bettermemory.episodes import EpisodeStore
 
-    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    # `require_write_confirmation` is what stages a promotion; the
+    # category no longer does.
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(require_write_confirmation=True),
+    )
 
-    # S_a: write -> promote user-inference (stages pending) -> confirm. Confirm
+    # S_a: write -> promote (stages pending) -> confirm. Confirm
     # commits the durable memory AND deletes the source episode. No handoff, so
     # no floor: S_a ends zero-episode on disk.
     server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
@@ -890,7 +908,8 @@ async def test_episode_handoff_pre_window_deferred_confirm_hedges_not_false_empt
         category="user-inference",
     )
     assert pending["status"] == "pending", (
-        f"test precondition: user-inference promotion must stage pending; "
+        f"test precondition: a confirmation-mode promotion must stage "
+        f"pending; "
         f"got: {pending!r}"
     )
     confirmed = await _call(

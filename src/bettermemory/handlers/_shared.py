@@ -370,11 +370,9 @@ def _drain_pending_expired(state: SessionState, recorder: Recorder) -> None:
     if not drained:
         return
     for pending in drained:
-        # `category` is the headline payload field used to distinguish
-        # user-inference writes (the always-pending tier) from regular
-        # writes. Surface it so the curation cue downstream can tell
-        # which tier was lost — losing a user-inference confirmation
-        # is worse than losing a plain fact.
+        # `category` is the headline payload field, surfaced so the
+        # curation cue downstream can tell what kind of claim was lost
+        # when a staged write expires unconfirmed.
         category = None
         payload = pending.payload
         if isinstance(payload, dict):

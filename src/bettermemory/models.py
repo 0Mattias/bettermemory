@@ -118,8 +118,9 @@ class Category(str, Enum):
     - ``"fact"``: project / infrastructure / reference / tooling facts
       about the world. Default. Counts toward dead-weight curation.
     - ``"user-inference"``: a claim about the user themselves
-      (preferences, beliefs, working style). Routed through the
-      pending-write flow so the user can confirm before commit.
+      (preferences, beliefs, working style). Commits like ``"fact"``;
+      the label is what keeps an inference distinguishable from an
+      established fact, and correctable.
     - ``"ambient"``: response-shaping context that informs every reply
       without being cited (user identity, persistent environment
       quirks). Excluded from the dead-weight rule because its value
@@ -136,21 +137,26 @@ class Category(str, Enum):
     AMBIENT = "ambient"
 
 
-# Closed-protocol whitelist: the `Category` values an automated /
-# unattended path is allowed to set without explicit user
-# confirmation. ``user-inference`` is deliberately excluded — that
-# tier requires explicit user confirmation, supplied by
-# ``memory_write``'s pending-confirm flow. Two production sites need
-# the same set:
+# Closed-protocol whitelist: the `Category` values a relabel or an
+# automated / unattended path is allowed to set. ``user-inference`` is
+# deliberately excluded. The exclusion was first written while that
+# tier staged every write for the user's confirmation, which these
+# paths could not supply. The tier now commits directly, and the
+# exclusion was kept as it stood rather than widened in the same
+# change: dropping the conversational confirmation is one decision,
+# and letting a relabel or an unattended LLM pass mint claims about
+# the user — the class where misattribution sticks — is another that
+# nothing has measured. Until it is made, the label is set only where
+# a claim about the user is filed as one (``memory_write``, an
+# accepted proposal, an ingested ``type: user`` file). Two production
+# sites need the same set:
 #
-# - ``handlers.update.memory_update``'s ``category`` retag gate: a
-#   retag *into* ``user-inference`` would silently bypass the
-#   write-time pending-confirm gate (update has no equivalent), so
-#   ``fact`` and ``ambient`` only.
-# - ``llm._validate_demote`` and ``llm._validate_propose_new``: an
-#   LLM running ``consolidate --llm`` can't supply the user
-#   confirmation that the ``user-inference`` tier demands, so the
-#   proposable set is the same ``{fact, ambient}``.
+# - ``handlers.update.memory_update``'s ``category`` retag gate:
+#   ``fact`` and ``ambient`` only; a claim about the user is filed
+#   through ``memory_write`` instead.
+# - ``llm._validate_demote`` and ``llm._validate_propose_new``: the
+#   proposable set for an LLM running ``consolidate --llm`` is the
+#   same ``{fact, ambient}``.
 #
 # Shared here (alongside the ``Category`` enum that defines the
 # universe of values) so silent divergence between the two sites

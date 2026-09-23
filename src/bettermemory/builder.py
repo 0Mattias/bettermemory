@@ -216,7 +216,7 @@ def build_server(
             "Writing is the OPPOSITE axis: PROACTIVE. memory_write is "
             "a routine reflex — reach for it whenever something "
             "durable enters the conversation: a stated preference (→ "
-            "category='user-inference', stages pending), a project "
+            "category='user-inference'), a project "
             "decision (→ category='fact'), a tool/infra/config fact, "
             "a finished unit of work with a why git won't capture. "
             'Don\'t wait for "remember that" — your job is to '

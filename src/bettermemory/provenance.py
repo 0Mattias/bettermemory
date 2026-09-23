@@ -118,6 +118,8 @@ def creation_id(event: Mapping[str, Any]) -> str | None:
     if kind == "memory_proposals":
         # A staged accept (`status: pending`) carries a pending id and no
         # memory id; the `write_confirm` that commits it is the creation.
+        # Accepts no longer stage, but event logs written while
+        # `user-inference` accepts did still carry these rows.
         if event.get("action") == "accept" and event.get("status") != "pending":
             return _id_field(event, "id")
         return None

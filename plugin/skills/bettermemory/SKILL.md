@@ -7,7 +7,7 @@ description: Verification-grade memory between sessions. Use bettermemory's MCP 
 
 Persistent memory between sessions lives in this plugin's MCP tools. **Do not fragment memory across ad-hoc files alongside** (`MEMORY.md`, scratch markdown elsewhere) — future sessions only see what these tools surface. If Claude Code's auto-memory at `~/.claude/projects/*/memory/` already exists from before bettermemory was installed, ingest it (one-shot `bettermemory ingest --from <path>`) rather than letting it accumulate alongside; the ingest CLI maps each auto-memory file to a bettermemory record, dedups against the active store and tombstone log, and stamps an `imported-from-claude-code` scope for traceability.
 
-This skill is the long-form companion to the MCP server's `instructions` block: Claude Code truncates that block at ~1.8 KB, so the full writing-discipline / scope-hygiene / confirmation-tier policy lives here. Non-plugin clients get the same content via [`docs/system_prompt.md`](../../../docs/system_prompt.md).
+This skill is the long-form companion to the MCP server's `instructions` block: Claude Code truncates that block at ~1.8 KB, so the full writing-discipline / scope-hygiene / category policy lives here. Non-plugin clients get the same content via [`docs/system_prompt.md`](../../../docs/system_prompt.md).
 
 ## Quick card
 
@@ -85,12 +85,12 @@ Writing is **PROACTIVE** — `memory_write` is a routine reflex. Reach for it wh
 
 Triggers:
 
-- User states a preference or convention → `category="user-inference"` (server stages pending; ask before confirming).
+- User states a preference or convention → `category="user-inference"` (commits immediately; the label keeps it distinguishable from an established fact, and correctable).
 - Project decision the user concurred with → `category="fact"` (commits immediately; announce the save in one line).
 - Tool / infrastructure / configuration fact (env vars, ports, paths, versions, topology) → `category="fact"`.
 - A unit of work finishes whose what-and-why isn't captured by git or CHANGELOG → `category="fact"`.
 
-The structural guardrails (durability check, dedup, user-inference pending tier, scope-mismatch check) do the policing. Aggressive writing is safe — write the fact, let the guardrails fire if it's wrong-shaped, fix it, re-write.
+The structural guardrails (durability check, dedup, user-claim labelling check, scope-mismatch check) do the policing. Aggressive writing is safe — write the fact, let the guardrails fire if it's wrong-shaped, fix it, re-write.
 
 ### Refining vs creating
 
@@ -150,7 +150,7 @@ episode_search(parent_session_id=<this session id>, include_bodies=False)  # che
 episode_promote(episode_id="01K...", scopes=["projects:bettermemory"])     # only the ones that hardened
 ```
 
-Step 3's promote is a **filter, not a loop** over the scan — a twelve-takeaway session typically promotes zero or one. `episode_promote` routes through `memory_write`, so a promotion that should not have happened still meets the durability gate, dedup and (for `user-inference`) the confirmation flow; the source episode is deleted on commit and left in place on any rejection, so guessing wrong costs a status code rather than the work.
+Step 3's promote is a **filter, not a loop** over the scan — a twelve-takeaway session typically promotes zero or one. `episode_promote` routes through `memory_write`, so a promotion that should not have happened still meets the durability gate, dedup and the rest of the write gates; the source episode is deleted on commit and left in place on any rejection, so guessing wrong costs a status code rather than the work.
 
 `memory_search(since_prior_session=True)` is the memory-tier companion: filter the durable memory store to entries `updated` since the prior session boundary. The semantic is "what THIS session has changed since the last other-session activity" — your own intra-session diff. For what the *prior* iteration did, use `episode_handoff` instead.
 

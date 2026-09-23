@@ -1,14 +1,16 @@
-"""A `user-inference` proposal accepted through the MCP tool stages the
-write instead of committing it.
+"""A `user-inference` proposal accepted through the MCP tool commits; it
+does not go pending.
 
 The extractor stamps first-person preferences `user-inference` by
-default, and `accept` ran `CONTENT_GATES`, which leaves `PendingGate`
-out, so a claim about the user reached the store on the model's own
-say-so — the one model-reachable route past the veto that category
-exists for (the 2026-09-01 integrity recon's fifth weak point). The
-shared core now stages such an accept when it is given a session, and
-the CLI, with no session, still commits: the human typing it is the
-confirmation.
+default. From 7.3.0 an accept of one from a session staged a pending
+write, mirroring the pending gate `memory_write` then applied to that
+category, so a captured preference waited on a confirmation round trip
+before it landed. Both stagings are gone: every category commits on
+accept, from the MCP tool and the CLI alike, and the label rides on the
+record, which is what keeps the inference distinguishable and
+correctable. The accept is still the confirmation step the queue's
+contract rests on, so `require_write_confirmation` does not add a
+second one here, for this category or any other.
 """
 
 from __future__ import annotations
@@ -41,10 +43,12 @@ def _proposal(body: str, *, pid: str, cat: str) -> Proposal:
     )
 
 
-def _build(root: Path) -> tuple[Any, Store]:
+def _build(root: Path, *, confirm: bool = False) -> tuple[Any, Store]:
     cfg = Config(
         storage=StorageConfig(directory=str(root)),
-        behavior=BehaviorConfig(full_tool_surface=True),
+        behavior=BehaviorConfig(
+            full_tool_surface=True, require_write_confirmation=confirm
+        ),
     )
     state = SessionState()
     store = Store(root)
@@ -64,7 +68,7 @@ async def _accept(server: Any, pid: str, **kwargs: Any) -> Any:
     )
 
 
-async def test_a_user_inference_accept_stages_and_confirm_commits(
+async def test_a_user_inference_accept_commits_with_its_label(
     memory_dir: Path,
 ) -> None:
     queue = ProposalQueue(memory_dir)
@@ -72,45 +76,36 @@ async def test_a_user_inference_accept_stages_and_confirm_commits(
     server, store = _build(memory_dir)
 
     res = await _accept(server, "ui1")
-    assert res["status"] == "pending"
+    assert res["status"] == "accepted"
     assert res["action"] == "accept" and res["proposal_id"] == "ui1"
-    assert res["pending_reason"] == "user-inference"
-    assert res["preview"]["category"] == "user-inference"
-    assert "memory_write_confirm" in res["hint"]
-    pending_id = res["pending_id"]
-    # Claimed at staging, written nowhere.
+    assert res["category"] == "user-inference"
+    assert "pending_id" not in res and "hint" not in res
     assert queue.load() == []
-    assert store.load_all() == []
-    staged = [
-        e
-        for e in iter_events(memory_dir)
-        if e["kind"] == "memory_proposals" and e.get("action") == "accept"
-    ]
-    assert [(e.get("status"), e.get("pending_id")) for e in staged] == [
-        ("pending", pending_id)
-    ]
-
-    confirmed = await _call(server, "memory_write_confirm", pending_id=pending_id)
-    assert confirmed["status"] == "committed"
-    assert confirmed["category"] == "user-inference"
-    stored = store.load_one(confirmed["id"])
+    stored = store.load_one(res["id"])
     assert stored.category is not None and stored.category.value == "user-inference"
     assert stored.scopes == ["learning-style"]
     assert stored.source.value == "inferred"
     assert stored.body.strip() == _PREFERENCE
-    shown = await _call(server, "memory_show", id=confirmed["id"])
+    # One accept event, naming the memory it created — no staged row.
+    accepts = [
+        e
+        for e in iter_events(memory_dir)
+        if e["kind"] == "memory_proposals" and e.get("action") == "accept"
+    ]
+    assert [(e.get("status"), e.get("id")) for e in accepts] == [(None, res["id"])]
+    shown = await _call(server, "memory_show", id=res["id"])
     assert shown["provenance"] == "local"
 
 
-async def test_cancelling_the_staged_accept_drops_the_claim(memory_dir: Path) -> None:
+async def test_the_accept_stages_nothing_for_the_session(memory_dir: Path) -> None:
+    """No staged row is left for `memory_scope_overview` to report as a
+    dangling confirmation."""
     queue = ProposalQueue(memory_dir)
     queue.append([_proposal(_PREFERENCE, pid="ui2", cat="user-inference")])
-    server, store = _build(memory_dir)
-    res = await _accept(server, "ui2")
-    cancelled = await _call(server, "memory_write_cancel", pending_id=res["pending_id"])
-    assert cancelled["existed"] is True
-    assert store.load_all() == []
-    assert queue.load() == []
+    server, _ = _build(memory_dir)
+    await _accept(server, "ui2")
+    overview = await _call(server, "memory_scope_overview")
+    assert overview["pending_writes"] == 0
 
 
 async def test_a_fact_proposal_still_commits_on_accept(memory_dir: Path) -> None:
@@ -124,20 +119,35 @@ async def test_a_fact_proposal_still_commits_on_accept(memory_dir: Path) -> None
     assert [m.id for m in store.load_all()] == [res["id"]]
 
 
-async def test_an_explicit_user_inference_override_stages_too(memory_dir: Path) -> None:
-    """The category the accept lands with is what the handshake reads,
+async def test_an_explicit_user_inference_override_commits_too(
+    memory_dir: Path,
+) -> None:
+    """The category the accept lands with is what the record carries,
     whether it came from the extractor's guess or the caller's override."""
     queue = ProposalQueue(memory_dir)
     queue.append([_proposal(_PREFERENCE, pid="ov1", cat="fact")])
     server, store = _build(memory_dir)
     res = await _accept(server, "ov1", category="user-inference")
-    assert res["status"] == "pending"
-    assert store.load_all() == []
+    assert res["status"] == "accepted"
+    [stored] = store.load_all()
+    assert stored.category is not None and stored.category.value == "user-inference"
 
 
-def test_the_shared_core_without_a_session_commits_directly(tmp_path: Path) -> None:
-    """The CLI's path: no session, no staging — the human accepting is the
-    confirmation, and the recorded accept event names the memory."""
+async def test_the_global_flag_does_not_stage_an_accept(memory_dir: Path) -> None:
+    """Accepting IS the confirmation step this queue is built on, so the
+    opt-in flag adds no second one — for `user-inference` exactly as for
+    every other category."""
+    queue = ProposalQueue(memory_dir)
+    queue.append([_proposal(_PREFERENCE, pid="cf1", cat="user-inference")])
+    server, store = _build(memory_dir, confirm=True)
+    res = await _accept(server, "cf1")
+    assert res["status"] == "accepted"
+    assert [m.id for m in store.load_all()] == [res["id"]]
+
+
+def test_the_shared_core_commits_directly(tmp_path: Path) -> None:
+    """The CLI's path, which shares the core: the same commit, and the
+    recorded accept event names the memory."""
     queue = ProposalQueue(tmp_path)
     queue.append([_proposal(_PREFERENCE, pid="cli1", cat="user-inference")])
     config = Config(storage=StorageConfig(directory=str(tmp_path)))

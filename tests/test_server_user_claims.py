@@ -1,10 +1,13 @@
 """Integration tests for the user-claim gate on memory_write.
 
-`PendingGate` triggers on the category LABEL, so before this gate a claim
-ABOUT THE USER written as `category='fact'` committed instantly and the
-staging flow whose entire purpose is the user's veto never ran. The
-content-shape detector that would have caught it (`proposals._PREFERENCE_RE`)
-existed, was tested, and was wired ONLY into the Stop-hook extractor.
+The category LABEL is the only thing that marks a stored claim about the
+user as an inference, so before this gate a claim ABOUT THE USER written
+as `category='fact'` read back as an established fact, indistinguishable
+from the project facts beside it. The content-shape detector that would
+have caught it (`proposals._PREFERENCE_RE`) existed, was tested, and was
+wired ONLY into the Stop-hook extractor. The gate fixes the label only:
+`user-inference` commits exactly as `fact` does, and the user never sees
+the refusal.
 
 What these tests pin, beyond "the gate fires":
 
@@ -13,8 +16,7 @@ What these tests pin, beyond "the gate fires":
   third-person ("Mattias prefers tabs"). A gate built on `_PREFERENCE_RE`
   alone passes a naive test and misses the dominant real shape.
 - The gate's POSITION: before dedup (or a re-issue gets routed to
-  memory_update against a mis-filed parent) and before Pending (or
-  re-issuing as `user-inference` stops staging).
+  memory_update against a mis-filed parent).
 - The per-sentence, apostrophe-normalized application. Matching the raw
   body instead silently kills the `^(?:my|our)` branch and every curly-quote
   contraction — both fail open, with no test noticing.
@@ -135,9 +137,9 @@ async def test_the_user_subject_as_fact_warns(
 async def test_ambient_category_is_gated_too(
     server_with_events: tuple[Any, Path],
 ) -> None:
-    """`ambient` commits without a veto exactly like `fact` does, so
-    filing a user claim there is the same bypass wearing a different
-    label. Only `user-inference` is exempt."""
+    """`ambient` reads back as unlabelled context exactly like `fact`
+    reads back as established, so filing a user claim there is the same
+    mislabel wearing a different name. Only `user-inference` is exempt."""
     server, _ = server_with_events
     res = await _call(
         server,
@@ -246,14 +248,15 @@ async def test_refusal_event_carries_the_matched_phrase_not_the_body(
 # ---------------------------------------------------------------------------
 
 
-async def test_user_inference_category_stages_instead_of_warning(
+async def test_the_relabelled_reissue_commits(
     server_with_events: tuple[Any, Path],
 ) -> None:
-    """The re-categorize hint has to work. The gate sits BEFORE
-    PendingGate, so an exemption that skipped the gate by rejecting
-    early would strand the caller in a loop: warned as `fact`, warned
-    again as `user-inference`."""
-    server, _ = server_with_events
+    """The re-categorize hint has to work, and in one call: an exemption
+    that skipped the gate by rejecting early would strand the caller in a
+    loop (warned as `fact`, warned again as `user-inference`), and a
+    re-issue that staged would put the confirmation round trip back in
+    front of the user. The claim lands, with its label, on the re-issue."""
+    server, memory_dir = server_with_events
     res = await _call(
         server,
         "memory_write",
@@ -261,20 +264,24 @@ async def test_user_inference_category_stages_instead_of_warning(
         scopes=["learning-style"],
         category="user-inference",
     )
-    assert res["status"] == "pending"
-    assert res["pending_reason"] == "user-inference"
+    assert res["status"] == "committed"
+    assert res["category"] == "user-inference"
+    [stored] = Store(memory_dir).load_all()
+    assert stored.category is not None
+    assert stored.category.value == "user-inference"
+    event = _write_events(memory_dir)[-1]
+    assert event["status"] == "committed"
+    assert event["category"] == "user-inference"
 
 
-async def test_user_inference_reason_wins_over_global_confirmation(
+async def test_global_confirmation_treats_user_inference_like_any_category(
     memory_dir: Path,
 ) -> None:
-    """Ordering INSIDE PendingGate: when `category='user-inference'`
-    and `require_write_confirmation=true` both apply, the category's
-    reason must win. The hint dispatched on `pending_reason` is the
-    only enforcement of the ask-the-user veto — a `config` reason
-    hands the model the generic self-confirm hint, so the stricter
-    global setting would silently drop the ceremony the category
-    structurally promises."""
+    """`require_write_confirmation` is the one staging path, and it has
+    one reason and one hint. `user-inference` used to carry its own
+    reason, whose hint scripted a question for the model to put to the
+    user; under the flag it now stages exactly as `fact` does, and the
+    event log attributes it to the flag."""
     cfg = Config(
         storage=StorageConfig(directory=str(memory_dir)),
         behavior=BehaviorConfig(require_write_confirmation=True),
@@ -295,11 +302,12 @@ async def test_user_inference_reason_wins_over_global_confirmation(
         category="user-inference",
     )
     assert res["status"] == "pending"
-    assert res["pending_reason"] == "user-inference"
-    assert "ask the user" in res["hint"].lower()
+    assert res["pending_reason"] == "config"
+    assert "memory_write_confirm" in res["hint"]
+    assert "memory_write_cancel" in res["hint"]
     # The event log carries the same attribution the response does.
     event = _write_events(memory_dir)[-1]
-    assert event["pending_reason"] == "user-inference"
+    assert event["pending_reason"] == "config"
     assert event["category"] == "user-inference"
 
 
@@ -312,8 +320,8 @@ async def test_user_claim_beats_duplicate_on_a_mis_filed_parent(
     Store API, which is how it got there before this gate existed). With
     the gate after dedup the caller gets `duplicate`, whose hint routes
     them to memory_update ON THAT PARENT — the claim is edited into the
-    wrong category forever and the user is never asked. The user-claim
-    verdict has to win."""
+    wrong category forever, and memory_update cannot relabel it. The
+    user-claim verdict has to win."""
     server, memory_dir = server_with_events
     Store(memory_dir).write(
         content="Mattias prefers tabs over spaces in every editor.",
@@ -572,8 +580,8 @@ def test_quoted_owner_words_do_not_read_as_a_user_claim() -> None:
     """`_PREFERENCE_RE` is a transcript miner — first person there means
     the user because the user typed it. In a memory BODY the author is the
     assistant, so first person is either its own voice or a transcription.
-    Staging a verbatim owner ruling as `user-inference` would ask the user
-    to confirm that they said what they are quoted saying."""
+    Filing a verbatim owner ruling as `user-inference` would label what
+    the user is quoted saying as something inferred about them."""
     body = (
         "(2) 2026-08-11 canonical correction: \"I never said 'no neural "
         "weights', I said no sloppy bullshit. You can add neural weights "

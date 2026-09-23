@@ -51,7 +51,8 @@ Offline, throwaway store.
   stamp instead of riding along.
 - Retrieval is deliberate. Memory is a tool call, not an
   injection. Write gates bounce transient state, secret-shaped tokens
-  and near-duplicates; claims about *you* stage for confirmation.
+  and near-duplicates; claims about *you* are labelled as inferences,
+  so they stay distinguishable and correctable.
 - The code is the model. Search is deterministic lexical ranking —
   keyword + BM25, fused — over your own vocabulary. No embedding
   models, no downloads, nothing to warm up, same answer every time.

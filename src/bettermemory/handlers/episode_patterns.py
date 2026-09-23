@@ -9,17 +9,18 @@ Promotion deliberately requires the model to AUTHOR the body: the
 server can prove that four sessions kept circling the same terms, but
 only the model can write the sentence that is true across all four.
 The write routes through the full `memory_write` gate stack (dedup,
-durability, scope-mismatch, user-inference confirmation), so a pattern
+durability, scope-mismatch, the opt-in confirmation), so a pattern
 whose fact is already stored dedup-rejects — and that rejection records
 a corroboration on the existing memory, which is the recurrence signal
 landing where it belongs.
 
 On a committed promote the member episodes are deleted (their content
 is distilled — same lifecycle as `episode_promote`). On `pending`
-(user-inference) the episodes are LEFT IN PLACE: the multi-episode
-confirm-time cleanup isn't wired, and the worst case — journal entries
-surviving until their ~30-day TTL — is the pre-existing behavior for
-every unpromoted episode. On any other non-committed status the
+(`require_write_confirmation`) the episodes are LEFT IN PLACE: the
+multi-episode confirm-time cleanup isn't wired, and the worst case —
+journal entries surviving until their ~30-day TTL — is the
+pre-existing behavior for every unpromoted episode. On any other
+non-committed status the
 episodes are untouched so the caller can adjust and retry.
 
 READ-SURFACE FILTERS: the listing walk applies the same two hides
@@ -68,8 +69,8 @@ DESC_EPISODE_PATTERNS = (
     "category/confidence/source accepted as on memory_write. On "
     "commit, member episodes are deleted (distilled). A `duplicate` "
     "rejection is still a WIN: it records a corroboration on the "
-    "existing memory. On `pending` (user-inference) episodes stay "
-    "until their TTL.\n"
+    "existing memory. On `pending` (require_write_confirmation) "
+    "episodes stay until their TTL.\n"
     "- `dismiss=<pattern_id>`: not worth consolidating (incidental "
     "vocabulary overlap). Sticky for that exact episode set; a NEW "
     "episode joining the theme legitimately reopens it under a fresh "
