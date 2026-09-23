@@ -92,7 +92,7 @@ entry.
 The FTS5 arms serve up to 100 rounds with no character budget; on PersonaMem v2 that is
 about 172,000 characters a question against the engine's 92,000. The first 1,000
 PersonaMem v2 questions are 40 whole personas (25 questions each). On CL-bench the judge
-(Qwen3-14B, AML's named judge) answers about one rubric prompt in five in prose rather
+(`qwen/qwen3-14b`, the model AML's pipelines name) answers about one rubric prompt in five in prose rather
 than the JSON the pipeline parses, and such a task scores 0 on both arms, as it does
 under AML's own evaluator; most CL-bench stores hold one to four rounds, so both systems
 serve nearly the same text there.
