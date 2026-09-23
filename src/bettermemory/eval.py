@@ -2795,9 +2795,10 @@ def compute_usage_replay(
     distinct memories with explicit non-auto `applied` use events, and
     distinct memories with negative (`ignored` / `contradicted`) use
     events, both inside the window. `memories` feeds the
-    corroboration-liveness counts (the persisted rollup is the signal
-    `corroboration_boost` ranks on; the event log has nothing to say
-    about it).
+    corroboration-liveness counts, read off the persisted rollup
+    because the event log has nothing to say about it. No flag has
+    ranked on that rollup since 8.0.0 removed `corroboration_boost`;
+    the counts stay because this is the one aggregate read of it.
 
     Audit/recall rows honor the bulk `silent_miss_cutoff` marker with
     `compute_eval`'s global latest-wins semantics — buffered during

@@ -93,13 +93,13 @@ git config core.hooksPath .githooks
 
 ## Versioning and the compatibility contract
 
-The project uses semver with the conventions below. The headline: **within a major line, the surface defined in [`docs/api.md`](docs/api.md) and the on-disk format defined by `models.SCHEMA_VERSION` are stable.** Strangers who pin `bettermemory==7.x` get a contract they can rely on. The current major is 7; the same shape held for 1.x through 6.x and will hold for any future major line.
+The project uses semver with the conventions below. The headline: **within a major line, the surface defined in [`docs/api.md`](docs/api.md) and the on-disk format defined by `models.SCHEMA_VERSION` are stable.** Strangers who pin `bettermemory==8.x` get a contract they can rely on. The current major is 8; the same shape held for 1.x through 7.x and will hold for any future major line.
 
 The 2.0 bump itself was a scope-only bump — nine 1.6-plan features shipped in one release. SCHEMA_VERSION stayed at 1, every new wire field was opt-in or absence-as-signal, and no 1.x surface was renamed or removed. The 3.0 bump was the same shape: a soft API break trimming defensive `bettermemory.server` re-exports after verifying zero in-tree consumers, packaged with the post-2.7.3 audit-loop. 4.0 and 5.0 were the first hard breaks: 4.0 removed the embedding lane whole (the `semantic` module, both embedding extras, the `[behavior] semantic_provider` and `semantic_dedup` knobs, and the `"semantic"` search mode), and 5.0 removed the web UI whole (the `web` module, the `bettermemory ui` subcommand, the `[ui]` extra). 6.0 was the same kind of break: it re-removed the embedding lane whole after its 5.5.0 opt-in reentry was revoked by owner doctrine (`CHANGELOG.md`, 6.0.0). 7.0 was the 3.0 shape again, one narrow surface change as the only break: `episode_handoff` rows carry `body` only when `include_bodies=True` is passed, because the reflexive handoff had delivered whole bodies with no provenance check (`CHANGELOG.md`, 7.0.0). SCHEMA_VERSION stayed at 1 across all six transitions; treat the rules below as continuous across every boundary — they describe the project's stance on stability, not a one-off cleanup.
 
 ### Surface (the 27 MCP tools)
 
-Stable within the current major (7.x):
+Stable within the current major (8.x):
 
 - Tool names. `memory_search` will not be renamed to `mem_search`.
 - Required parameter names and positions. `memory_remove(id, reason)` will not flip to `(reason, id)`.
@@ -136,8 +136,8 @@ When a tool, Python API, config key, parameter, or field is destined for removal
 
 1. The deprecation lands in a minor of the current major with a `Deprecated` entry in the changelog. The entry names the deprecated surface, the replacement (if any), and the planned-removal target version.
 2. The implementation emits a runtime warning when the deprecated surface is used, with the same replacement pointer. Which channel carries the warning depends on who consumes the surface — two lanes, described below.
-3. The deprecated surface continues to function, since semver says so, until the next major bump (8.0).
-4. At 8.0, the surface is removed. The 8.0 release notes reiterate every removed item.
+3. The deprecated surface continues to function, since semver says so, until the next major bump (9.0).
+4. At 9.0, the surface is removed. The 9.0 release notes reiterate every removed item.
 
 Write step 1's planned-removal target as the *next* major at the time of writing, and re-target it if the surface outlives that major. The `origin.py` trio below is the worked example of the failure mode: it was deprecated against 4.0, 4.0 and 5.0 both shipped as removal releases without taking it, and the messages went on naming a version that was already history. Nothing forces the removal — only the release that decides to take it; 7.0 took it.
 

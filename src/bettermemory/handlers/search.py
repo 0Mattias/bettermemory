@@ -288,9 +288,9 @@ class RankingInputs(NamedTuple):
     audit producers) the silent-miss probe. The helper earned its keep
     when a third surface existed: the pre-5.0 web UI ran the same ranker
     with the config inputs dropped, so `endorsement_boost` /
-    `outcome_demotion` / `corroboration_boost` / a tuned
-    `recency_boost_half_life_days` reordered results for the model and
-    did nothing for the human reading the curation page. The shape stays
+    `outcome_demotion` / a tuned `recency_boost_half_life_days`
+    reordered results for the model and did nothing for the human
+    reading the curation page. The shape stays
     so the next ranking surface starts threaded instead of drifted.
 
     `rescue_expansion` (5.1) is here because it did drift: the flag
@@ -316,7 +316,6 @@ class RankingInputs(NamedTuple):
 
     applied_by_id: dict[str, int] | None
     negative_by_id: dict[str, tuple[int, int]] | None
-    corroboration_boost: bool
     half_life_days: float
     rescue_expansion: bool
     conversational: bool
@@ -438,7 +437,6 @@ def resolve_ranking_inputs(
     return RankingInputs(
         applied_by_id=applied_by_id,
         negative_by_id=negative_by_id,
-        corroboration_boost=behavior.corroboration_boost,
         half_life_days=behavior.recency_boost_half_life_days,
         rescue_expansion=behavior.rescue_expansion,
         conversational=behavior.conversational,
@@ -864,7 +862,6 @@ async def memory_search(
         query,
         applied_by_id=applied_by_id,
         negative_by_id=negative_by_id,
-        corroboration_boost=ranking.corroboration_boost,
         scopes=scopes,
         excluded_scopes=set(state.disabled_scopes),
         repo_filter=repo_filter,

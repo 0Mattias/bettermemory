@@ -120,27 +120,6 @@ endorsement_boost = false
 # the usage loop in both directions.
 outcome_demotion = false
 
-# Recurrence as ranking evidence. Every time a memory_write is
-# dedup-rejected against an existing memory, that memory's persisted
-# `corroborations` rollup bumps (once per session per memory — the
-# recording is always on; it's cheap, additive telemetry). When THIS
-# flag is true, the rollup feeds a bounded ranking nudge (same +10%
-# ceiling and saturating shape as endorsement_boost): a claim that
-# keeps independently re-entering conversations wins a near-tie over a
-# one-off remark. No event-log read — the counter lives on the memory
-# record itself.
-#
-# DEPRECATED in 7.6.0, REMOVAL AT 8.0. The nudge cannot fire: the
-# rollup only bumps on a dedup-rejected write, which needs raw Jaccard
-# >= 0.75 between two independently written bodies. Measured on a real
-# 367-memory store, the closest of 67,161 pairs scored 0.575 — the
-# containment ceiling, which sits below the bar by construction — and
-# 639 production writes over four months produced no duplicate
-# rejection outside test scopes. Setting this changes no ranking. The
-# `corroborations` rollup itself is NOT deprecated and keeps feeding
-# dead-weight curation.
-corroboration_boost = false
-
 # Write-time supersession. When a claim-sized memory_write carries a
 # change cue (moved, switched, renamed, raised, no longer, the previous,
 # ...) and diverges on a value from a stored claim about the same
@@ -453,11 +432,6 @@ class BehaviorConfig:
     # Negative mirror of endorsement_boost: recently ignored/contradicted
     # memories slide down (bounded ≥0.85x). Opt-in — see DEFAULT_CONFIG.
     outcome_demotion: bool = False
-    # Recurrence-fed ranking nudge (bounded ≤ +10%) reading the persisted
-    # `corroborations` rollup. Opt-in — see DEFAULT_CONFIG. DEPRECATED in
-    # 7.6.0 (removal at 8.0): the signal it ranks on is unreachable, so
-    # the flag cannot change a ranking. See `_DEPRECATED_BEHAVIOR_KEYS`.
-    corroboration_boost: bool = False
     # Write-time supersession (`supersession.detect_supersession`): a
     # claim-sized write that carries a change cue and diverges on a value
     # from a stored claim about the same subject gets a `supersedes` link
@@ -1043,44 +1017,44 @@ def default_config_path() -> Path:
 # rereads config on signal shouldn't spam the log on every reload, but
 # two distinct config paths in the same process each get their own
 # warning. Drop this shim no earlier than 3.4.x — long enough that any
-# 3.1.x user has seen the deprecation warning at least once.
+# 3.1.x user has seen the deprecation warning at least once. The
+# removed-key notice below shares the set, keyed `<key>+removed`.
 _DEPRECATED_KEY_WARNED_PATHS: set[tuple[Path, str]] = set()
 
 
-# [behavior] keys that still work but are destined for removal at the
-# next major, per the deprecation cycle in CONTRIBUTING.md: value ->
-# (removal target, why). The key keeps functioning until that major —
-# semver says so — and the warning is the operator's notice.
-_DEPRECATED_BEHAVIOR_KEYS: dict[str, tuple[str, str]] = {
+# [behavior] keys a major release removed after a deprecation cycle:
+# key -> (the release that removed it, why). A config written for the
+# earlier line can still carry the line, and the upgrade must not turn
+# that into a failed load — the same rule `_coerce_search_mode` applies
+# to a stale `search_mode = "semantic"`. The key is ignored and the
+# operator is told once, since nothing else will ever report it.
+_REMOVED_BEHAVIOR_KEYS: dict[str, tuple[str, str]] = {
     "corroboration_boost": (
-        "8.0",
-        "the ranking nudge it enables reads the `corroborations` rollup, "
+        "8.0.0",
+        "the ranking nudge it enabled read the `corroborations` rollup, "
         "which only bumps when a memory_write is dedup-rejected — a bar "
-        "prose-sized memories do not reach, so the flag cannot change a "
-        "ranking whether it is on or off. The rollup itself is NOT "
-        "deprecated and still keeps corroborated memories out of "
-        "dead-weight curation",
+        "prose-sized memories do not reach, so the flag never changed a "
+        "ranking (deprecated in 7.6.0). The rollup itself stays and "
+        "still keeps corroborated memories out of dead-weight curation",
     ),
 }
 
 
-def _warn_deprecated_behavior_keys(
+def _drop_removed_behavior_keys(
     behavior_raw: dict[str, object], config_path: Path
 ) -> None:
-    """Warn once per (config, key) for a `[behavior]` key that is
-    deprecated but still live.
+    """Drop every removed `[behavior]` key, warning once per (config, key).
 
-    The key is deliberately NOT dropped: CONTRIBUTING.md's deprecation
-    cycle says a deprecated surface keeps functioning until the next
-    major, so the loader below reads it exactly as before and only the
-    warning is new. Config-key deprecations use `log.warning` rather
-    than `DeprecationWarning` — the operator who set the line reads
-    server logs, not Python's warnings channel — with the same one-shot
-    `(resolved path, key)` guard as
+    Whatever value the line holds is discarded unread, so no spelling
+    of it (`true`, `false`, a quoted string) can fail the load: the
+    setting it named no longer exists to receive one. Removed keys use
+    the log lane, like the deprecation notices that preceded them — the
+    operator who set the line reads server logs, not Python's warnings
+    channel — with the same one-shot `(resolved path, key)` guard as
     `_apply_legacy_endorsement_debt_alias`, so a long-lived server that
-    rereads config on signal does not spam.
+    rereads config on signal does not repeat itself.
     """
-    present = [k for k in _DEPRECATED_BEHAVIOR_KEYS if k in behavior_raw]
+    present = [k for k in _REMOVED_BEHAVIOR_KEYS if k in behavior_raw]
     if not present:
         return
 
@@ -1093,19 +1067,21 @@ def _warn_deprecated_behavior_keys(
 
     log = logging.getLogger("bettermemory.config")
     for key in present:
-        removal_target, why = _DEPRECATED_BEHAVIOR_KEYS[key]
-        guard_key = (resolved, f"{key}+deprecated")
+        # Popped, as the legacy alias pops its stale key, so the dict the
+        # loader reads below holds only settings that still exist.
+        behavior_raw.pop(key)
+        removed_in, why = _REMOVED_BEHAVIOR_KEYS[key]
+        guard_key = (resolved, f"{key}+removed")
         if guard_key in _DEPRECATED_KEY_WARNED_PATHS:
             continue
         _DEPRECATED_KEY_WARNED_PATHS.add(guard_key)
         log.warning(
             "bettermemory: TOML config at %s sets [behavior] `%s`, which "
-            "is deprecated and will be removed in bettermemory %s — %s. "
-            "It still loads and behaves exactly as before; delete the "
-            "line to silence this warning.",
+            "was removed in bettermemory %s — %s. The line is ignored; "
+            "delete it to silence this warning.",
             resolved,
             key,
-            removal_target,
+            removed_in,
             why,
         )
 
@@ -1222,9 +1198,9 @@ def load_config(path: Path | None = None) -> Config:
     # below pick up the legacy value under the new key.
     _apply_legacy_endorsement_debt_alias(behavior_raw, config_path)
 
-    # Deprecated-but-live keys: warn once so the operator gets notice
-    # before the removal major. The key itself still loads below.
-    _warn_deprecated_behavior_keys(behavior_raw, config_path)
+    # Keys a major removed: ignored with a one-time notice, so a config
+    # written for the previous line still loads.
+    _drop_removed_behavior_keys(behavior_raw, config_path)
 
     return Config(
         storage=StorageConfig(
@@ -1259,9 +1235,6 @@ def load_config(path: Path | None = None) -> Config:
                 behavior_raw.get("endorsement_boost"), False
             ),
             outcome_demotion=_coerce_bool(behavior_raw.get("outcome_demotion"), False),
-            corroboration_boost=_coerce_bool(
-                behavior_raw.get("corroboration_boost"), False
-            ),
             write_supersession=_coerce_bool(
                 behavior_raw.get("write_supersession"), True
             ),

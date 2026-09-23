@@ -415,13 +415,13 @@ def _probe_message(
     # rank on a different set of factors than the model's actual
     # retrieval would have. That covers both usage-aware directions —
     # `endorsement_boost` nudges applied memories up, `outcome_demotion`
-    # slides recently ignored/contradicted ones down — plus
-    # `corroboration_boost` and the recency half-life. Threading only the
-    # endorsement half was a telemetry-honesty bug in both directions,
-    # because the miss verdict reads ONLY the rank-1 hit: a memory
-    # production had demoted out of the top slot still held rank 1 here
-    # (masked miss), and the hit production's demotion promoted instead
-    # was never the one this probe judged (phantom miss).
+    # slides recently ignored/contradicted ones down — plus the recency
+    # half-life. Threading only the endorsement half was a
+    # telemetry-honesty bug in both directions, because the miss verdict
+    # reads ONLY the rank-1 hit: a memory production had demoted out of
+    # the top slot still held rank 1 here (masked miss), and the hit
+    # production's demotion promoted instead was never the one this
+    # probe judged (phantom miss).
     #
     # The event read is issued HERE, not inside the helper, and is
     # separately scoped — NOT the dedup-widened `recent` the caller
@@ -470,7 +470,6 @@ def _probe_message(
         half_life_days=ranking.half_life_days,
         applied_by_id=ranking.applied_by_id,
         negative_by_id=ranking.negative_by_id,
-        corroboration_boost=ranking.corroboration_boost,
         rescue_expansion=ranking.rescue_expansion,
         conversational=ranking.conversational,
         corpus_stats_provider=probe_pool.corpus_stats_provider,

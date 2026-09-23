@@ -145,10 +145,9 @@ class TestSearchToggleCapture:
         signal, the captured (or implied-unchanged) counterfactual
         top-1 must equal what `search()` actually returns with that
         one flag's input removed. Run over a mixed fixture — an
-        endorsed near-tie loser, a demoted near-tie winner, and a
-        corroborated near-tie loser — in both hybrid and keyword
-        modes, so all three factors and both fusion paths are
-        exercised against ground truth."""
+        endorsed near-tie loser and a demoted near-tie winner — in both
+        hybrid and keyword modes, so both factors and both fusion paths
+        are exercised against ground truth."""
         older, newer = _near_tie_pair()
         demoted_pair_a = _memory(
             "redis cluster failover waits for quorum election",
@@ -158,6 +157,10 @@ class TestSearchToggleCapture:
             "redis cluster failover waits for quorum election",
             created=_NOW - timedelta(days=8),
         )
+        # A corroborated near-tie loser, the fixture that exercised the
+        # factor 8.0.0 removed. It stays in the pool as the negative
+        # case: its query must now report NO live flag, since the rollup
+        # no longer reaches any scorer.
         corroborated = _memory(
             "nginx reload stays graceful without dropping live sessions",
             created=_NOW - timedelta(days=9, hours=1),
@@ -175,16 +178,16 @@ class TestSearchToggleCapture:
             corroborated,
             corroborated_rival,
         ]
-        # Each query hits exactly one designed near-tie pair, so exactly
+        # Each query hits exactly one designed near-tie pair, so at most
         # one flag has live signal per query — "active" means a
         # non-neutral factor on a SCORED candidate, not a non-empty map.
-        cases = [
+        cases: list[tuple[str, set[str]]] = [
             (
                 "how does postgres connection pooling work with pgbouncer",
                 {"endorsement_boost"},
             ),
             ("redis cluster failover quorum", {"outcome_demotion"}),
-            ("is nginx reload graceful for live sessions", {"corroboration_boost"}),
+            ("is nginx reload graceful for live sessions", set()),
         ]
         applied = {older.id: 3}
         # `demoted_pair_a` is the newer (winning) twin; demotion should
@@ -200,11 +203,16 @@ class TestSearchToggleCapture:
                     mode=mode,
                     applied_by_id=applied,
                     negative_by_id=negatives,
-                    corroboration_boost=True,
                     usage_toggles_out=capture,
                 )
                 assert on_hits, query
-                assert set(capture["active"]) == expected_active, (query, mode)
+                assert set(capture.get("active", ())) == expected_active, (query, mode)
+                if not expected_active:
+                    # No live flag: the capture stays empty and the top-1
+                    # is the plain tiebreak winner, the newer twin.
+                    assert capture == {}, (query, mode)
+                    assert on_hits[0].id == corroborated_rival.id, (query, mode)
+                    continue
                 for flag in USAGE_FLAG_NAMES:
                     off_hits = search(
                         pool,
@@ -217,7 +225,6 @@ class TestSearchToggleCapture:
                         negative_by_id=(
                             None if flag == "outcome_demotion" else negatives
                         ),
-                        corroboration_boost=(flag != "corroboration_boost"),
                     )
                     toggle = capture["toggles"].get(flag)
                     expected = (
@@ -760,3 +767,48 @@ class TestComputeUsageReplay:
         report = compute_usage_replay(events, since=None, now=_NOW)
         change = {f.flag: f for f in report.flags}["endorsement_boost"].changes[0]
         assert change.query_unique == 4
+
+    def test_removed_flag_captures_from_a_7x_log_are_skipped(self) -> None:
+        """Logs outlive releases. A 7.x producer could record
+        `corroboration_boost` in `usage_active` / `usage_toggles`; 8.0.0
+        removed the flag, so the reader must neither crash on those
+        entries nor report a row for a flag that no longer exists. The
+        turn itself still counts: it was captured, and its surviving
+        flags are judged as before."""
+        t0 = _NOW - timedelta(hours=1)
+        events = [
+            # Only the removed flag: a captured turn with nothing left
+            # to judge.
+            _ev(
+                "turn_audited",
+                t0,
+                verdict="ok",
+                top_hits=_top1("M1"),
+                usage_active=["corroboration_boost"],
+                usage_toggles={"corroboration_boost": _toggle("M2", "high", 3)},
+            ),
+            # The removed flag beside a live one: the live one is judged.
+            _ev(
+                "turn_audited",
+                t0 + timedelta(minutes=5),
+                verdict="ok",
+                top_hits=_top1("M3", "high", 3),
+                usage_active=["endorsement_boost", "corroboration_boost"],
+                usage_toggles={
+                    "endorsement_boost": _toggle("M4", "medium", 2),
+                    "corroboration_boost": _toggle("M5", "low", 1),
+                },
+            ),
+        ]
+        report = compute_usage_replay(events, since=None, now=_NOW)
+        assert report.replayable_turns == 2
+        assert report.turns_without_capture == 0
+        assert [f.flag for f in report.flags] == list(USAGE_FLAG_NAMES)
+        endorsement = {f.flag: f for f in report.flags}["endorsement_boost"]
+        assert endorsement.active_turns == 1
+        assert endorsement.changed_turns == 1
+        assert endorsement.changes[0].off_top1_id == "M4"
+        assert endorsement.improving == 1
+        # The JSON surface carries no row for it either.
+        flags_out = {row["flag"] for row in report.to_dict()["flags"]}
+        assert "corroboration_boost" not in flags_out

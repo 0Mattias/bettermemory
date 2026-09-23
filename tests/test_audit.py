@@ -1366,16 +1366,14 @@ def test_probe_forwards_ranker_config_to_run_search(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Wiring pin for every threaded ranker knob: `half_life_days` and
-    the three usage-aware factors
-    (`applied_by_id`, `negative_by_id`, `corroboration_boost`) must
+    the usage-aware factors (`applied_by_id`, `negative_by_id`) must
     reach `run_search` verbatim — the probe-matches-the-ranker rule is
     only as good as the forwarding.
 
-    The usage factors travel as a SET on purpose. `negative_by_id` and
-    `corroboration_boost` were absent from this signature while
-    production `memory_search` passed both, so an `outcome_demotion`
-    deployment probed with a strictly different ranker than the model
-    retrieved with."""
+    The usage factors travel as a SET on purpose. `negative_by_id` was
+    absent from this signature while production `memory_search` passed
+    it, so an `outcome_demotion` deployment probed with a strictly
+    different ranker than the model retrieved with."""
     from bettermemory import audit as audit_mod
     from bettermemory.search import search as real_run_search
 
@@ -1399,12 +1397,10 @@ def test_probe_forwards_ranker_config_to_run_search(
         half_life_days=7.0,
         applied_by_id=sentinel_counts,
         negative_by_id=sentinel_negatives,
-        corroboration_boost=True,
     )
     assert captured["half_life_days"] == 7.0
     assert captured["applied_by_id"] is sentinel_counts
     assert captured["negative_by_id"] is sentinel_negatives
-    assert captured["corroboration_boost"] is True
 
 
 # `_DEMOTION_*`: a two-memory near-tie whose rank-1 slot the bounded
@@ -1960,8 +1956,8 @@ async def test_audit_probe_usage_factors_match_production_search(
 
     The audit probe exists to measure what production retrieval would
     have surfaced, so it has to rank with production's inputs. Pre-fix
-    `probe_for_miss` had no `negative_by_id` / `corroboration_boost`
-    parameters at all and neither producer tallied active negatives, so
+    `probe_for_miss` had no `negative_by_id` parameter at all and
+    neither producer tallied active negatives, so
     with `[behavior] outcome_demotion` on the probe ranked one factor
     short of `memory_search` — and the miss verdict reads only the
     rank-1 hit, exactly the slot a demotion moves.
@@ -1976,7 +1972,7 @@ async def test_audit_probe_usage_factors_match_production_search(
 
     cfg = Config(
         storage=StorageConfig(directory=str(memory_dir)),
-        behavior=BehaviorConfig(outcome_demotion=True, corroboration_boost=True),
+        behavior=BehaviorConfig(outcome_demotion=True),
     )
     state = SessionState()
     rec = Recorder(root=memory_dir, session_id=state.session_id, enabled=True)
@@ -2018,10 +2014,6 @@ async def test_audit_probe_usage_factors_match_production_search(
         "active contradicted for this memory"
     )
     assert captured_probe["negative_by_id"] == captured_search["negative_by_id"]
-    assert captured_probe["corroboration_boost"] is True
-    assert (
-        captured_probe["corroboration_boost"] == captured_search["corroboration_boost"]
-    )
 
 
 # `_STARVED_*`: a store where the FTS5 candidate prefilter is SATURATED

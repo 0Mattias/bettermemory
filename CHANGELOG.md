@@ -70,6 +70,34 @@ spells out exactly what's stable.
   the footprint table's descriptions row picks up +266 it had not
   recorded since 2026-09-16.
 
+### Removed
+
+- **`[behavior] corroboration_boost`, deprecated in 7.6.0 for removal
+  at 8.0.** The flag goes with everything it threaded: the ranking
+  factor (`search._corroboration_factor`), the `corroboration_boost`
+  keyword on `search()` and `probe_for_miss`, the `RankingInputs`
+  field, and its `USAGE_FLAG_NAMES` entry. The 7.6.0 entry carries the
+  reason: the factor read the `corroborations` rollup, which bumps only
+  on a dedup-rejected write, a bar prose-sized memories do not reach,
+  so the flag never changed a ranking. It was also off by default, so
+  the shipped ranking is byte-identical;
+  `test_rollup_never_moves_a_ranking` pins that the rollup reaches no
+  scorer in any mode.
+
+- **A config that still sets the key loads.** `corroboration_boost =`
+  under `[behavior]`, with any value, is ignored with one logged
+  warning per config file naming 8.0.0 and asking for the line to be
+  deleted; every other key in the file loads as before. A stale line
+  must not take a server down, the rule a pre-4.0
+  `search_mode = "semantic"` already follows. Usage-toggle captures a
+  7.x event log recorded under the name are skipped by
+  `bettermemory eval --usage-replay` rather than reported as a flag.
+
+- **The `corroborations` / `last_corroborated` rollup stays.** Dedup
+  rejections still bump it, `memory_show` and `memory_list` still
+  surface it, dead-weight curation still reads it, and
+  `eval --usage-replay` still counts corroborated memories.
+
 ### Added
 
 - `bettermemory.session_capture`: the prompt, output contract and

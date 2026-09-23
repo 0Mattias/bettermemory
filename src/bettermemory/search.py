@@ -2192,38 +2192,6 @@ def _demotion_factor(ignored_count: int, contradicted_count: int) -> float:
     return 1.0 - 0.15 * (1.0 - math.exp(-weighted / 3.0))
 
 
-def _corroboration_factor(corroborations: int) -> float:
-    """1 + 0.1 * (1 - exp(-corroborations / 3)). Same shape and +10% cap
-    as `_endorsement_factor`, fed by a different signal: endorsement is
-    "the model deliberately APPLIED this in a reply"; corroboration is
-    "the claim independently RE-ENTERED a conversation and dedup caught
-    it" (`Store.record_corroboration`, once per session per memory). A
-    claim that keeps coming up wins a near-tie over a one-off remark —
-    recurrence accumulating into retrieval weight, capped so it can
-    never override relevance. Reads the persisted rollup on the Memory
-    record, so unlike the event-fed factors it costs no event-log walk.
-
-    DEPRECATED in 7.6.0, REMOVAL AT 8.0 — with the `corroboration_boost`
-    flag, the threading through `_score_keyword` / `_score_bm25`, and
-    the `USAGE_FLAG_NAMES` entry. This factor cannot fire, and the
-    reason is a fact about the BANDS above rather than about the
-    factor: a corroboration needs a `high` hit from `find_similar`,
-    i.e. raw Jaccard >= HIGH_SIMILARITY (0.75) between two
-    independently written bodies. The containment leg cannot get there
-    by construction (`_CONTAINMENT_CEILING` < HIGH_SIMILARITY,
-    deliberately — see `_pairwise_content_jaccard`), and on a real
-    367-memory store whose median body runs ~460 words the closest of
-    67,161 pairs scored 0.575, pinned exactly at that ceiling and 0.175
-    short of the bar, with all 1,918 above-medium hits labeled `medium`
-    and not one `high`. 639 production writes over four months produced
-    three `duplicate` rejections, all from test scopes. The
-    `corroborations` rollup it reads is NOT deprecated — dead-weight
-    windowing in `health._freshest_touch_ts` still uses it."""
-    if corroborations <= 0:
-        return 1.0
-    return 1.0 + 0.1 * (1.0 - math.exp(-corroborations / 3.0))
-
-
 # ---------------------------------------------------------------------------
 # BM25 scorer (Okapi variant)
 # ---------------------------------------------------------------------------
@@ -3117,7 +3085,6 @@ def _score_keyword(
     half_life_days: float,
     applied_by_id: dict[str, int] | None = None,
     negative_by_id: dict[str, tuple[int, int]] | None = None,
-    corroboration_boost: bool = False,
     candidate_tokens: list[_MemoryTokens] | None = None,
     scaffold_terms: frozenset[str] | None = None,
     scaffold_weight: float = 0.0,
@@ -3158,8 +3125,6 @@ def _score_keyword(
             if negative_by_id:
                 ig, ct = negative_by_id.get(memory.id, (0, 0))
                 score *= _demotion_factor(ig, ct)
-            if corroboration_boost and memory.corroborations:
-                score *= _corroboration_factor(memory.corroborations)
             out.append((memory, score, matched))
     return out
 
@@ -3172,7 +3137,6 @@ def _score_bm25(
     half_life_days: float,
     applied_by_id: dict[str, int] | None = None,
     negative_by_id: dict[str, tuple[int, int]] | None = None,
-    corroboration_boost: bool = False,
     candidate_tokens: list[_MemoryTokens] | None = None,
     stopword_fallback: bool = False,
     corpus_stats: CorpusStats | None = None,
@@ -3208,8 +3172,6 @@ def _score_bm25(
             if negative_by_id:
                 ig, ct = negative_by_id.get(memory.id, (0, 0))
                 score *= _demotion_factor(ig, ct)
-            if corroboration_boost and memory.corroborations:
-                score *= _corroboration_factor(memory.corroborations)
             out.append((memory, score, matched))
     return out
 
@@ -3350,10 +3312,15 @@ def _hybrid_fuse(
 # Order is presentation order; the names are the `[behavior]` keys verbatim
 # so the offline reader (`eval.compute_usage_replay`) and the declared
 # flip bars talk about the same identifiers.
+#
+# 8.0.0 removed `corroboration_boost` from this set along with the flag
+# itself. Event logs written by 7.x can still carry that name in
+# `usage_active` / `usage_toggles`; the reader walks THIS tuple rather
+# than the logged keys, so a historical entry is skipped, not reported
+# under a flag that no longer exists.
 USAGE_FLAG_NAMES: tuple[str, ...] = (
     "endorsement_boost",
     "outcome_demotion",
-    "corroboration_boost",
 )
 
 
@@ -3361,14 +3328,12 @@ def _usage_factor_components(
     memory: Memory,
     applied_by_id: dict[str, int] | None,
     negative_by_id: dict[str, tuple[int, int]] | None,
-    corroboration_boost: bool,
 ) -> dict[str, float]:
-    """The three per-memory usage factors exactly as the scorers apply them.
+    """The two per-memory usage factors exactly as the scorers apply them.
 
     Keyed by `USAGE_FLAG_NAMES`. A flag whose input is absent (or whose
     signal is neutral for this memory) contributes exactly 1.0, mirroring
-    the `if applied_by_id:` / `if negative_by_id:` / `if
-    corroboration_boost and memory.corroborations:` guards in
+    the `if applied_by_id:` / `if negative_by_id:` guards in
     `_score_keyword` / `_score_bm25` — the capture must divide out
     precisely what the scorer multiplied in, nothing else.
     """
@@ -3380,15 +3345,9 @@ def _usage_factor_components(
         demotion = _demotion_factor(ig, ct)
     else:
         demotion = 1.0
-    corroboration = (
-        _corroboration_factor(memory.corroborations)
-        if corroboration_boost and memory.corroborations
-        else 1.0
-    )
     return {
         "endorsement_boost": endorsement,
         "outcome_demotion": demotion,
-        "corroboration_boost": corroboration,
     }
 
 
@@ -3404,7 +3363,6 @@ def _compute_usage_toggles(
     query_unique: int,
     applied_by_id: dict[str, int] | None,
     negative_by_id: dict[str, tuple[int, int]] | None,
-    corroboration_boost: bool,
 ) -> dict[str, Any] | None:
     """Per-flag counterfactual top-1s for the usage-aware ranking flags.
 
@@ -3435,7 +3393,7 @@ def _compute_usage_toggles(
     or demoted memory that didn't match this query contributes nothing
     to any leg, so its flag was inert on this ranking and inflating
     the per-flag denominator with such turns would be dishonest. The
-    same rule covers all three flags symmetrically. Otherwise a dict:
+    same rule covers both flags symmetrically. Otherwise a dict:
     `{"active": [flag, ...], "toggles": {flag: {"top1": {...}}}}` where
     `toggles` carries ONLY the flags whose toggle CHANGES the top-1
     memory, and `top1` is the counterfactual winner's raw coverage
@@ -3446,7 +3404,7 @@ def _compute_usage_toggles(
     """
     if not scored:
         return None
-    if not applied_by_id and not negative_by_id and not corroboration_boost:
+    if not applied_by_id and not negative_by_id:
         return None
 
     factors_by_id: dict[str, dict[str, float]] = {}
@@ -3454,7 +3412,7 @@ def _compute_usage_toggles(
         for memory, _, _ in leg:
             if memory.id not in factors_by_id:
                 factors_by_id[memory.id] = _usage_factor_components(
-                    memory, applied_by_id, negative_by_id, corroboration_boost
+                    memory, applied_by_id, negative_by_id
                 )
     active = [
         flag
@@ -3530,7 +3488,6 @@ def search(
     rrf_k: int = _RRF_K_DEFAULT,
     applied_by_id: dict[str, int] | None = None,
     negative_by_id: dict[str, tuple[int, int]] | None = None,
-    corroboration_boost: bool = False,
     allow_empty_query: bool = False,
     corpus_stats_provider: Callable[[list[str]], CorpusStats | None] | None = None,
     matched_leg_out: dict[str, str] | None = None,
@@ -3583,11 +3540,6 @@ def search(
       (windowing, applied-supersedes, resolution clearing — see
       `handlers.search._active_negative_counts`); this layer just
       applies the factor. `None` (the default) is byte-stable.
-    - `corroboration_boost`: when True, a bounded `_corroboration_factor`
-      (≤ +10%) nudges memories whose persisted `corroborations` rollup is
-      non-zero — claims that keep independently re-entering conversations
-      win near-ties over one-off remarks. Reads the Memory record
-      directly (no event walk). False (the default) is byte-stable.
     - `allow_empty_query`: when True, an empty or stopword-only query
       no longer short-circuits to `[]`. Instead the function runs the
       `_filter_candidates` pass (scope / repo / worktree / excluded)
@@ -3840,7 +3792,6 @@ def search(
             half_life_days=half_life_days,
             applied_by_id=applied_by_id,
             negative_by_id=negative_by_id,
-            corroboration_boost=corroboration_boost,
             candidate_tokens=candidate_tokens,
         )
         # Sort by score, then created (newer wins on tie), then id as the
@@ -3862,7 +3813,6 @@ def search(
             half_life_days=half_life_days,
             applied_by_id=applied_by_id,
             negative_by_id=negative_by_id,
-            corroboration_boost=corroboration_boost,
             candidate_tokens=candidate_tokens,
             stopword_fallback=stopword_fallback,
             corpus_stats=corpus_stats,
@@ -3912,7 +3862,6 @@ def search(
                 half_life_days=half_life_days,
                 applied_by_id=applied_by_id,
                 negative_by_id=negative_by_id,
-                corroboration_boost=corroboration_boost,
                 candidate_tokens=candidate_tokens,
                 scaffold_terms=conv_scaffold,
                 scaffold_weight=_CONV_KEYWORD_SCAFFOLD_WEIGHT or 0.0,
@@ -3924,7 +3873,6 @@ def search(
                 half_life_days=half_life_days,
                 applied_by_id=applied_by_id,
                 negative_by_id=negative_by_id,
-                corroboration_boost=corroboration_boost,
                 candidate_tokens=candidate_tokens,
                 stopword_fallback=stopword_fallback,
                 corpus_stats=hybrid_stats,
@@ -3998,7 +3946,6 @@ def search(
                         half_life_days=half_life_days,
                         applied_by_id=applied_by_id,
                         negative_by_id=negative_by_id,
-                        corroboration_boost=corroboration_boost,
                         candidate_tokens=candidate_tokens,
                         corpus_stats=exp_stats,
                     )
@@ -4067,7 +4014,6 @@ def search(
             query_unique=query_unique,
             applied_by_id=applied_by_id,
             negative_by_id=negative_by_id,
-            corroboration_boost=corroboration_boost,
         )
         if toggle_capture is not None:
             usage_toggles_out.update(toggle_capture)

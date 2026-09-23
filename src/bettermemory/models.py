@@ -411,10 +411,10 @@ class Memory(BaseModel):
     `updated` moves on content edits, `last_verified_at` on
     reality-checks, `last_corroborated` on recurrence. Feeds the
     freshest-touch curation window (a corroborated memory isn't dead
-    weight) and, under `[behavior] corroboration_boost`, a bounded
-    ranking nudge — that second consumer is deprecated in 7.6.0 for
-    removal at 8.0 (it cannot fire; see `search._corroboration_factor`),
-    the curation consumer is not. Additive frontmatter fields — legacy
+    weight). It no longer feeds ranking: 8.0.0 removed the
+    `[behavior] corroboration_boost` nudge, because a corroboration
+    needs a dedup rejection that prose-sized bodies do not reach, so
+    the nudge never fired. Additive frontmatter fields — legacy
     memories load as 0 / None.
     """
 

@@ -249,9 +249,9 @@ Five additional modes:
   audits`), so the counts and the listed turns can never disagree.
 - `--usage-replay`: the measurement surface for the usage-signal
   ranking flags' declared flip bars, which are maintainer-held and
-  not published here. On a store running any of `endorsement_boost` /
-  `outcome_demotion` / `corroboration_boost`, every probe records —
-  additively, on `turn_audited` and `prompt_recall` events — which
+  not published here. On a store running `endorsement_boost` or
+  `outcome_demotion`, every probe records — additively, on
+  `turn_audited` and `prompt_recall` events — which
   flags had live signal (`usage_active`: a non-neutral factor on at
   least one scored candidate) and, per flag whose single-flag toggle
   would have changed the top-1, the counterfactual winner's raw
@@ -272,10 +272,13 @@ Five additional modes:
   `outcome_demotion` invariant
   (`v1_later_top1_explicit_apply_within_600s`), and the density
   preconditions (distinct explicitly-endorsed and negative-outcome
-  memories in the window; corroborated-memory liveness from the store
-  rollup). Each turn counts once: a delivered recall's same-turn
-  Stop-hook companion audit (which re-carries the same capture under
-  an `ok` verdict) is skipped on the producers' own
+  memories in the window), alongside corroborated-memory liveness
+  from the store rollup — kept as the one aggregate read of that
+  rollup, though no flag has ranked on it since 8.0.0 removed
+  `corroboration_boost`. Captures a 7.x log wrote under that name are
+  skipped, not reported. Each turn counts once: a delivered recall's
+  same-turn Stop-hook companion audit (which re-carries the same
+  capture under an `ok` verdict) is skipped on the producers' own
   (session, probe-query) dedup key, keeping the `prompt_recall` row —
   the one recording what the model was shown. Audit/recall rows honor
   the bulk `silent_miss_cutoff` marker with the rate surfaces' global

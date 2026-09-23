@@ -751,7 +751,6 @@ def probe_for_miss(
     half_life_days: float = 30.0,
     applied_by_id: dict[str, int] | None = None,
     negative_by_id: dict[str, tuple[int, int]] | None = None,
-    corroboration_boost: bool = False,
     rescue_expansion: bool = False,
     conversational: bool = True,
     corpus_stats_provider: Callable[[list[str]], CorpusStats | None] | None = None,
@@ -789,15 +788,13 @@ def probe_for_miss(
     whether a search should have happened.
 
     `half_life_days`, `applied_by_id`, `negative_by_id`,
-    `corroboration_boost`, `rescue_expansion`, and `conversational` are
-    forwarded verbatim
+    `rescue_expansion`, and `conversational` are forwarded verbatim
     to `search` so the probe ranks with the same scorer configuration
     production retrieval uses — the same probe-matches-the-ranker rule
     the `mode` parameter exists for. They travel as a SET, matching the
     `RankingInputs` shape `handlers.search.resolve_ranking_inputs` hands
     the production ranker: `applied_by_id` (under `endorsement_boost`)
     nudges up, `negative_by_id` (under `outcome_demotion`) slides down,
-    `corroboration_boost` reads the persisted per-memory rollup,
     `rescue_expansion` adds the coverage-gated expansion leg to the
     fusion, and `conversational` runs the Lane L temporal repairs
     (default ON since 6.1.0, `[behavior] conversational` opting out).
@@ -1007,7 +1004,6 @@ def probe_for_miss(
         mode=cast(SearchMode, mode),
         applied_by_id=applied_by_id,
         negative_by_id=negative_by_id,
-        corroboration_boost=corroboration_boost,
         corpus_stats_provider=corpus_stats_provider,
         rescue_expansion=rescue_expansion,
         conversational=conversational,

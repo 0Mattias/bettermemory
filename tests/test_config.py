@@ -1298,72 +1298,93 @@ def test_search_mode_absent_and_valid_values_are_untouched(tmp_path: Path) -> No
 
 
 # ---------------------------------------------------------------------------
-# Deprecated [behavior] keys: a key destined for removal at the next major
-# keeps working (CONTRIBUTING.md's deprecation cycle, step 3) and warns
-# once per (config, key) on the log lane. `corroboration_boost` is the
-# first — deprecated 7.6.0, removal at 8.0, because the ranking nudge it
-# gates provably cannot fire.
+# Removed [behavior] keys: a key a major removed must not fail the load of a
+# config written for the previous line — the rule `search_mode = "semantic"`
+# already follows. The line is ignored and the operator is told once per
+# (config, key) on the log lane. `corroboration_boost` is the first:
+# deprecated in 7.6.0, removed in 8.0.0, because the ranking nudge it gated
+# provably could not fire.
 # ---------------------------------------------------------------------------
 
 
-def test_deprecated_behavior_key_still_loads_and_warns_once(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
+def _removed_key_warnings(caplog: pytest.LogCaptureFixture, key: str) -> list[str]:
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if r.levelname == "WARNING" and key in r.getMessage()
+    ]
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "corroboration_boost = true",
+        "corroboration_boost = false",
+        # Quoted and junk spellings: the value is never read, so no
+        # spelling of it can fail the load either.
+        'corroboration_boost = "yes"',
+        "corroboration_boost = 3",
+    ],
+)
+def test_removed_behavior_key_is_ignored_with_one_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, line: str
 ) -> None:
-    """The deprecation must be a NOTICE, not a behavior change: the flag
-    still reaches `BehaviorConfig` with the value the operator set, and
-    the warning names the removal target so they can plan for it."""
+    """A 7.x config still setting the key loads, keeps every other
+    setting it carries, and gets exactly one warning naming the release
+    that removed the key and the file to edit."""
     _reset_deprecated_key_guard()
     config_path = tmp_path / "config.toml"
     config_path.write_text(
-        "[behavior]\ncorroboration_boost = true\ndefault_max_results = 9\n",
+        f"[behavior]\n{line}\ndefault_max_results = 9\noutcome_demotion = true\n",
         encoding="utf-8",
     )
     with caplog.at_level("WARNING", logger="bettermemory.config"):
         cfg = load_config(config_path)
 
-    # Step 3 of the cycle: the deprecated surface continues to function.
-    assert cfg.behavior.corroboration_boost is True
+    # The neighbouring keys load exactly as they would without the line.
     assert cfg.behavior.default_max_results == 9
+    assert cfg.behavior.outcome_demotion is True
+    assert not hasattr(cfg.behavior, "corroboration_boost")
 
-    records = [
-        r
-        for r in caplog.records
-        if r.levelname == "WARNING" and "corroboration_boost" in r.getMessage()
-    ]
-    assert len(records) == 1, [r.getMessage() for r in records]
-    message = records[0].getMessage()
-    assert "deprecated and will be removed in bettermemory 8.0" in message
-    assert str(config_path.resolve()) in message
+    messages = _removed_key_warnings(caplog, "corroboration_boost")
+    assert len(messages) == 1, messages
+    assert "was removed in bettermemory 8.0.0" in messages[0]
+    assert "The line is ignored" in messages[0]
+    assert str(config_path.resolve()) in messages[0]
 
-    # One-shot per (path, key): a reload stays quiet.
+    # One-shot per (path, key): a reload — a long-lived server rereading
+    # config on signal — stays quiet and still loads.
     caplog.clear()
     with caplog.at_level("WARNING", logger="bettermemory.config"):
-        load_config(config_path)
-    assert not [r for r in caplog.records if "corroboration_boost" in r.getMessage()]
+        reloaded = load_config(config_path)
+    assert reloaded.behavior.default_max_results == 9
+    assert not _removed_key_warnings(caplog, "corroboration_boost")
 
 
-def test_unset_deprecated_key_is_silent(
+def test_config_without_the_removed_key_is_silent(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """The warning fires when a CALLER uses the surface, not on every
+    """The notice fires for a config that carries the line, not on every
     load — a config that never mentions the key must stay quiet."""
     _reset_deprecated_key_guard()
     config_path = tmp_path / "config.toml"
     config_path.write_text("[behavior]\ndefault_max_results = 5\n", encoding="utf-8")
     with caplog.at_level("WARNING", logger="bettermemory.config"):
         load_config(config_path)
-    assert not [r for r in caplog.records if "corroboration_boost" in r.getMessage()]
+    assert not _removed_key_warnings(caplog, "corroboration_boost")
 
 
-def test_every_deprecated_key_is_a_real_behavior_field() -> None:
-    """A key in the registry that no longer exists on `BehaviorConfig`
-    has been REMOVED, not deprecated — the two states warn differently
-    and this catches the day someone conflates them."""
-    from bettermemory.config import _DEPRECATED_BEHAVIOR_KEYS
+def test_every_removed_key_is_gone_from_the_config_surface() -> None:
+    """A key in the removed registry that still exists on `BehaviorConfig`
+    or in the shipped `DEFAULT_CONFIG` has been only half removed: the
+    loader would drop the operator's value and warn that the setting is
+    gone while the field and the shipped prose say otherwise."""
+    from bettermemory.config import _REMOVED_BEHAVIOR_KEYS
 
-    for key in _DEPRECATED_BEHAVIOR_KEYS:
-        assert hasattr(BehaviorConfig(), key), key
-        assert key in DEFAULT_CONFIG, key
+    assert _REMOVED_BEHAVIOR_KEYS, "the registry has no entry to pin"
+    for key in _REMOVED_BEHAVIOR_KEYS:
+        assert not hasattr(BehaviorConfig(), key), key
+        assert key not in DEFAULT_CONFIG, key
 
 
 def _unreadable_dir_is_enforceable() -> bool:

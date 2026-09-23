@@ -3,18 +3,17 @@
 A dedup-rejected memory_write IS the stored claim re-entering a
 conversation — `Store.record_corroboration` bumps a persisted rollup
 (`corroborations`, `last_corroborated`) on the matched memory without
-touching `updated`. Consumers: the freshest-touch curation window
-(always), memory_show / memory_list surfacing (always, absent while
-zero), and the opt-in `[behavior] corroboration_boost` ranking nudge.
+touching `updated`. Consumers: the freshest-touch curation window and
+memory_show / memory_list surfacing (absent while zero).
 
-That third consumer is DEPRECATED in 7.6.0 for removal at 8.0 — the
-nudge cannot fire in practice, because a corroboration needs raw
-Jaccard >= 0.75 between two independently written bodies and prose-sized
-memories do not reach it (the measurement is in
-`search._corroboration_factor`'s docstring). The tests below still
-exercise it: a deprecated surface keeps working until the major, so the
-tie-break and ceiling contracts stay pinned until 8.0 deletes them. The
-deprecation notice itself is tested in `test_config.py`.
+Ranking is NOT a consumer. 8.0.0 removed the `[behavior]
+corroboration_boost` nudge (deprecated in 7.6.0): a corroboration needs
+raw Jaccard >= 0.75 between two independently written bodies, which
+prose-sized memories do not reach, so the nudge never fired. The flag
+was off by default, so removing it must leave the shipped ranking
+byte-identical — `test_rollup_never_moves_a_ranking` pins that the rollup
+has no path into any scorer. How a config still setting the key loads
+is tested in `test_config.py`.
 
 The write-handler hook is once-per-(memory, session)
 (`SessionState.corroborated_ids`) and best-effort — a telemetry bump
@@ -34,7 +33,7 @@ from bettermemory.config import BehaviorConfig, Config, StorageConfig
 from bettermemory.events import Recorder
 from bettermemory.health import _freshest_touch_ts
 from bettermemory.models import Confidence, Memory, Source, generate_ulid
-from bettermemory.search import _corroboration_factor, search
+from bettermemory.search import USAGE_FLAG_NAMES, search
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
 from bettermemory.store import Store
@@ -56,39 +55,51 @@ def _memory(body: str, *, corroborations: int = 0) -> Memory:
 
 
 # ---------------------------------------------------------------------------
-# The factor
+# Ranking: the rollup has no path into any scorer
 # ---------------------------------------------------------------------------
 
 
-def test_corroboration_factor_is_bounded_and_monotonic() -> None:
-    assert _corroboration_factor(0) == 1.0
-    assert _corroboration_factor(-3) == 1.0
-    prev = 1.0
-    for n in (1, 3, 10, 100, 10_000):
-        f = _corroboration_factor(n)
-        assert f > prev, f"factor not increasing at {n}"
-        assert 1.0 < f <= 1.1, f"factor {f} out of bounds at {n}"
-        prev = f
+def _ranking(hits: list[Any]) -> list[tuple[str, float, str, list[str]]]:
+    return [(h.id, h.score, h.relevance, h.match_terms) for h in hits]
 
 
-def test_corroboration_breaks_a_tie_only_when_enabled() -> None:
-    a = _memory("alpha beta gamma")
-    b = _memory("alpha beta gamma", corroborations=5)
-    mems = [a, b]
+def test_rollup_never_moves_a_ranking() -> None:
+    """The removal's byte-identity pin. `corroboration_boost` defaulted
+    off, so the shipped ranking never read the rollup; with the flag gone
+    nothing can. Rank one corpus twice — once carrying corroborations,
+    once with every count zeroed — and require the same ids, scores,
+    labels and matched terms in every mode.
 
-    default_winner = search(mems, "alpha beta gamma", mode="keyword")[0].id
-    boosted = search(mems, "alpha beta gamma", mode="keyword", corroboration_boost=True)
-    assert boosted[0].id == b.id, "corroborated memory should win the tie"
-    # And the flag off (the shipped default) never reads the rollup.
-    if default_winner != b.id:
-        assert default_winner == a.id
+    The identical-body twins are the case the old factor existed to
+    flip: equal leg scores, so only the (created, id) tiebreaker orders
+    them, and a +10% nudge on the corroborated twin would have reversed
+    it. The weak/strong pair is the relevance case a nudge must never
+    override. Both have to stay put."""
+    twin_plain = _memory("alpha beta gamma")
+    twin_corroborated = _memory("alpha beta gamma", corroborations=5)
+    strong = _memory("alpha alpha alpha alpha alpha delta")
+    weak = _memory("alpha lone unrelated body text delta", corroborations=100_000)
+    other = _memory("beta gamma epsilon notes", corroborations=1)
+    corroborated = [twin_plain, twin_corroborated, strong, weak, other]
+    zeroed = [m.model_copy(update={"corroborations": 0}) for m in corroborated]
 
+    for mode in ("keyword", "bm25", "hybrid"):
+        for query in ("alpha beta gamma", "alpha", "delta alpha", "gamma notes"):
+            capture: dict[str, Any] = {}
+            with_rollup = search(
+                corroborated, query, now=_T, mode=mode, usage_toggles_out=capture
+            )
+            without = search(zeroed, query, now=_T, mode=mode)
+            assert with_rollup, (mode, query)
+            assert _ranking(with_rollup) == _ranking(without), (mode, query)
+            # No usage input was supplied, so the toggle capture has
+            # nothing to report — a corroborated candidate is no longer
+            # live signal for any flag.
+            assert capture == {}, (mode, query)
 
-def test_corroboration_cannot_override_relevance() -> None:
-    strong = _memory("alpha alpha alpha alpha alpha")
-    weak = _memory("alpha lone unrelated body text", corroborations=100_000)
-    hits = search([strong, weak], "alpha", mode="keyword", corroboration_boost=True)
-    assert hits[0].id == strong.id
+    # The removed flag is gone from the capture's closed set too, so no
+    # new event can name it.
+    assert "corroboration_boost" not in USAGE_FLAG_NAMES
 
 
 # ---------------------------------------------------------------------------
