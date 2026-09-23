@@ -73,6 +73,42 @@ SERVING_BUDGET_CHARS = 90_000
 LOADED_STORES = 64
 
 
+# SEARCH COST. The engine tokenizes every candidate once per search, and
+# builds a query-biased snippet for every hit it returns; on a 400-round
+# store those two are ~88% of a Search, and on the live host a Search is
+# CPU-bound on one core. The adapter's memories never change after they
+# are written, so each store keeps its candidates' token streams across
+# Searches, and the snippet (a display field this adapter never serves)
+# is skipped. Both are active only on a thread inside `MemoryService.search`
+# (a thread-local the adapter sets), so every other caller of the engine,
+# including the tests that share this process, runs the unmodified code.
+# Ranking is unchanged: a test asserts byte-identical Search results with
+# and without the cache.
+_adapter_call = threading.local()
+_engine_memory_tokens = _engine._memory_tokens
+_engine_snippet = _engine._query_biased_snippet
+
+
+def _memory_tokens_cached(memory: Memory) -> Any:
+    cache: dict[str, Any] | None = getattr(_adapter_call, "tokens", None)
+    if cache is None:
+        return _engine_memory_tokens(memory)
+    toks = cache.get(memory.id)
+    if toks is None:
+        toks = cache[memory.id] = _engine_memory_tokens(memory)
+    return toks
+
+
+def _snippet_unless_adapter(body: str, matched: list[str], max_chars: int = 200) -> str:
+    if getattr(_adapter_call, "tokens", None) is not None:
+        return ""
+    return _engine_snippet(body, matched, max_chars)
+
+
+_engine._memory_tokens = _memory_tokens_cached
+_engine._query_biased_snippet = _snippet_unless_adapter
+
+
 def _fmt_ts(ms: int | None) -> str | None:
     if ms is None:
         return None
@@ -165,6 +201,8 @@ class _UserStore:
     tails: dict[str, dict[str, Any]] = field(default_factory=dict)
     hidden: set[str] = field(default_factory=set)
     memories: list[Memory] | None = None
+    # memory id -> the engine's token streams for it; dropped with `memories`
+    tokens: dict[str, Any] = field(default_factory=dict)
 
     @property
     def sidecar(self) -> Path:
@@ -342,7 +380,9 @@ class MemoryService:
         budget: int = 0,
         trim: str = "none",
         trim_min_chars: int = 0,
+        cache_tokens: bool = True,
     ) -> None:
+        self.cache_tokens = cache_tokens
         if trim not in TRIMS:
             raise ValueError(f"trim {trim!r}")
         self.trim = trim
@@ -421,6 +461,7 @@ class MemoryService:
             us.done_requests.add(request_id)
             us.save()
             us.memories = None
+            us.tokens = {}
             return n
 
     def search(self, user_id: str, query: str, top_k: int) -> list[dict[str, Any]]:
@@ -429,7 +470,9 @@ class MemoryService:
             if us.memories is None:
                 loaded = Store(us.root).load_all() if any(us.root.glob("*.md")) else []
                 us.memories = [m for m in loaded if m.id not in us.hidden]
+                us.tokens = {}
             memories = us.memories
+            tokens = us.tokens
             event_ts = dict(us.event_ts)
             session_of = dict(us.session_of)
             seq = dict(us.seq)
@@ -442,14 +485,18 @@ class MemoryService:
             else None
         )
         top_k = min(top_k, self.serve)
-        hits = run_search(
-            memories,
-            query,
-            max_results=top_k,
-            mode="hybrid",
-            conversational=self.conversational,
-            now=now,
-        )
+        _adapter_call.tokens = tokens if self.cache_tokens else None
+        try:
+            hits = run_search(
+                memories,
+                query,
+                max_results=top_k,
+                mode="hybrid",
+                conversational=self.conversational,
+                now=now,
+            )
+        finally:
+            _adapter_call.tokens = None
         by_id = {m.id: m for m in memories}
         chosen = [h.id for h in hits if h.id in by_id]
         scores = {h.id: float(h.score) for h in hits}
@@ -496,6 +543,7 @@ class MemoryService:
                 evicted = self._stores.get(old)
                 if evicted is not None:
                     evicted.memories = None
+                    evicted.tokens = {}
 
     def _fill(
         self,

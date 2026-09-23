@@ -195,6 +195,29 @@ def test_parsed_memories_are_kept_for_a_bounded_number_of_stores(
     assert svc.search("a", "kayak", 100)  # an evicted store reloads from disk
 
 
+def test_the_token_cache_changes_no_search_result(tmp_path: Path) -> None:
+    words = "kayak garage paddle lake cabin recipe tomato garden flight museum".split()
+    rounds = [
+        (" ".join(words[(i * 3 + j) % len(words)] for j in range(6)), f"reply {i}")
+        for i in range(60)
+    ]
+    cached = service.MemoryService(tmp_path, budget=2000)
+    plain = service.MemoryService(tmp_path, budget=2000, cache_tokens=False)
+    cached.add("r", "u", _msgs(*rounds), "s")
+    queries = ["kayak lake?", "tomato garden recipe", "museum flight cabin paddle"]
+    for q in queries * 2:  # the second pass reads the warm cache
+        assert cached.search("u", q, 100) == plain.search("u", q, 100)
+    assert cached._stores[next(iter(cached._stores))].tokens  # it was used
+
+
+def test_the_adapter_leaves_the_engine_unchanged_for_other_callers() -> None:
+    from bettermemory import search as engine
+
+    body = "alpha " * 80 + "the kayak is in the garage " + "omega " * 80
+    assert engine._query_biased_snippet(body, ["kayak"]) != ""
+    assert getattr(service._adapter_call, "tokens", None) is None
+
+
 # ---------------------------------------------------------------- levers
 
 
