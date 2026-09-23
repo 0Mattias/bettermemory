@@ -672,3 +672,51 @@ def test_fusion_merges_both_rankings_once_each_and_keeps_sessions(
     assert "Biscuit" in contents[0]  # ranked first by both, so first after fusion
     assert svc.sessions_for("u", [h["id"] for h in served]) == ["s1"] * len(served)
     assert svc.search("other", "beagle", 100) == []
+
+
+# ---------------------------------------------------------------- distilled units (E1)
+
+distill = _load("aml.distill", _BENCH / "aml" / "distill.py")
+
+
+def test_relative_times_are_dated_against_the_message() -> None:
+    ts = T0  # 2023-05-20, a Saturday
+    out = distill.resolve_times(
+        "I went yesterday. Two weeks ago I moved. Last Tuesday I started.", ts
+    )
+    assert "yesterday [= 2023/05/19 (Fri)]" in out
+    assert "Two weeks ago [= about 2023/05/06 (Sat)]" in out
+    assert "Last Tuesday [= 2023/05/16 (Tue)]" in out
+    assert distill.resolve_times("I went yesterday.", None) == "I went yesterday."
+
+
+def test_units_are_first_person_statements_from_user_turns_only() -> None:
+    text = (
+        "I'm looking for some book recommendations. I just started 'The Nightingale' "
+        "today. Can you suggest something similar? I prefer historical fiction."
+    )
+    units = distill.units_of("user", text, T0)
+    assert [k for k, _ in units] == ["fact", "preference"]
+    assert units[0][1].startswith(
+        "I just started 'The Nightingale' today [= 2023/05/20"
+    )
+    assert distill.units_of("assistant", "I think you would enjoy it.", T0) == []
+
+
+def test_the_sheet_is_off_by_default_and_served_first_when_on(tmp_path: Path) -> None:
+    msgs = _msgs(("I adopted a beagle named Biscuit yesterday.", "Great name!"))
+    plain = service.MemoryService(tmp_path / "plain")
+    plain.add("r", "u", msgs, "s")
+    assert all(h["id"] != "sheet" for h in plain.search("u", "beagle name", 100))
+    sheeted = service.MemoryService(tmp_path / "sheet", sheet="units")
+    sheeted.add("r", "u", msgs, "s")
+    hits = sheeted.search("u", "beagle name", 100)
+    assert hits[0]["id"] == "sheet"
+    assert "yesterday [= 2023/05/19 (Fri)]" in hits[0]["content"]
+    assert hits[1]["content"].startswith("[2023/05/20")
+    last = service.MemoryService(tmp_path / "sheet", sheet="units", sheet_last=True)
+    assert last.search("u", "beagle name", 100)[-1]["id"] == "sheet"
+
+
+def test_the_public_endpoint_serves_no_sheet(tmp_path: Path) -> None:
+    assert server.serving_service(tmp_path).sheet == "none"

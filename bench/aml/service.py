@@ -49,13 +49,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import threading
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from aml import distill
 from bettermemory import search as _engine
 from bettermemory.models import Memory
 from bettermemory.search import search as run_search
@@ -107,6 +109,10 @@ def _snippet_unless_adapter(body: str, matched: list[str], max_chars: int = 200)
 
 _engine._memory_tokens = _memory_tokens_cached
 _engine._query_biased_snippet = _snippet_unless_adapter
+
+
+def _utc_day(ms: int) -> date:
+    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).date()
 
 
 def _fmt_ts(ms: int | None) -> str | None:
@@ -213,10 +219,18 @@ class _UserStore:
     memories: list[Memory] | None = None
     # memory id -> the engine's token streams for it; dropped with `memories`
     tokens: dict[str, Any] = field(default_factory=dict)
+    # distilled units (declaration E1): id -> {"ts", "kind", "round"}
+    unit_meta: dict[str, dict[str, Any]] = field(default_factory=dict)
+    unit_memories: list[Memory] | None = None
 
     @property
     def sidecar(self) -> Path:
         return self.root / "aml-sidecar.json"
+
+    @property
+    def units_root(self) -> Path:
+        """A sibling of the rounds store, so neither store reads the other."""
+        return self.root.parent / f"{self.root.name}.units"
 
     def load(self) -> None:
         if self.sidecar.exists():
@@ -227,6 +241,7 @@ class _UserStore:
             self.done_requests = set(data.get("done_requests", []))
             self.tails = dict(data.get("tails", {}))
             self.hidden = set(data.get("hidden", []))
+            self.unit_meta = dict(data.get("unit_meta", {}))
 
     def save(self) -> None:
         tmp = self.sidecar.with_suffix(".tmp")
@@ -239,6 +254,7 @@ class _UserStore:
                     "done_requests": sorted(self.done_requests),
                     "tails": self.tails,
                     "hidden": sorted(self.hidden),
+                    "unit_meta": self.unit_meta,
                 }
             ),
             encoding="utf-8",
@@ -250,6 +266,8 @@ FILLS = ("none", "neighbors", "neighbors-recent")
 ORDERS = ("rank", "chronological", "session")
 ANNOTATIONS = ("none", "age")
 TRIMS = ("none", "assistant", "tail")
+SHEETS = ("none", "units", "units-age")
+_UNIT_STAMP = re.compile(r"^\[[^\]]*\]\s*")
 TRIM_KEEP_WHOLE = 10
 
 
@@ -391,7 +409,19 @@ class MemoryService:
         trim: str = "none",
         trim_min_chars: int = 0,
         cache_tokens: bool = True,
+        sheet: str = "none",
+        sheet_chars: int = 8000,
+        sheet_units: int = 40,
+        sheet_prefs: int = 15,
+        sheet_last: bool = False,
     ) -> None:
+        self.sheet_last = sheet_last
+        if sheet not in SHEETS:
+            raise ValueError(f"sheet {sheet!r}")
+        self.sheet = sheet
+        self.sheet_chars = sheet_chars
+        self.sheet_units = sheet_units
+        self.sheet_prefs = sheet_prefs
         self.cache_tokens = cache_tokens
         if trim not in TRIMS:
             raise ValueError(f"trim {trim!r}")
@@ -443,6 +473,7 @@ class MemoryService:
                 lone_tail = None
             else:
                 tail = us.tails.pop(session_id, None)
+                merged_tail = False
                 if (
                     tail is not None
                     and messages
@@ -450,12 +481,14 @@ class MemoryService:
                 ):
                     us.hidden.add(tail["id"])
                     messages = [tail["message"], *messages]
+                    merged_tail = True
                 spans = round_spans(messages)
                 units = rounds_of(messages)
                 lone_tail = (
                     messages[-1] if spans and spans[-1][1] - spans[-1][0] == 1 else None
                 )
             last_id = None
+            round_ids: list[str] = []
             for body, ts in units:
                 stamp = _fmt_ts(ts)
                 content = f"[{stamp}]\n{body}" if stamp else body
@@ -465,14 +498,51 @@ class MemoryService:
                 us.session_of[memory.id] = session_id
                 us.seq[memory.id] = len(us.seq)
                 last_id = memory.id
+                round_ids.append(memory.id)
                 n += 1
             if lone_tail is not None and last_id is not None:
                 us.tails[session_id] = {"id": last_id, "message": lone_tail}
+            if self.sheet != "none" and self.granularity == "rounds":
+                self._write_units(us, messages, spans, round_ids, merged_tail)
             us.done_requests.add(request_id)
             us.save()
             us.memories = None
+            us.unit_memories = None
             us.tokens = {}
             return n
+
+    def _write_units(
+        self,
+        us: _UserStore,
+        messages: list[dict[str, Any]],
+        spans: list[tuple[int, int]],
+        round_ids: list[str],
+        merged_tail: bool,
+    ) -> None:
+        """Distil the chunk's user turns into dated units (declaration E1).
+        A tail re-joined from the previous chunk was distilled when it first
+        arrived, so it is skipped here."""
+        ustore = Store(us.units_root)
+        round_of = {
+            i: rid for (a, b), rid in zip(spans, round_ids) for i in range(a, b)
+        }
+        for i, m in enumerate(messages):
+            if merged_tail and i == 0:
+                continue
+            ts = m.get("timestamp")
+            ts = int(ts) if isinstance(ts, (int, float)) else None
+            for kind, text in distill.units_of(
+                str(m.get("role", "")), _text(m.get("content")), ts
+            ):
+                stamp = _fmt_ts(ts)
+                memory = ustore.write(
+                    content=f"[{stamp}] {text}" if stamp else text, scopes=SCOPE
+                )
+                us.unit_meta[memory.id] = {
+                    "ts": ts,
+                    "kind": kind,
+                    "round": round_of.get(i, ""),
+                }
 
     def search(self, user_id: str, query: str, top_k: int) -> list[dict[str, Any]]:
         us = self._user(user_id)
@@ -516,6 +586,13 @@ class MemoryService:
         terms = query_terms(query) if self.trim != "none" else set()
         out: list[dict[str, Any]] = []
         used = 0
+        sheet = None
+        if self.sheet != "none":
+            sheet = self._sheet(us, query, now, tokens, latest)
+            if sheet is not None:
+                used += len(sheet["content"])
+                if not self.sheet_last:
+                    out.append(sheet)
         for rank, mid in enumerate(chosen):
             m = by_id[mid]
             ts = event_ts.get(mid)
@@ -539,7 +616,119 @@ class MemoryService:
                     ),
                 }
             )
+        if sheet is not None and self.sheet_last:
+            # nearest the question, where a reader weighs context most
+            out.append(sheet)
         return out
+
+    def sheet_unit_ids(
+        self, us: _UserStore, query: str, now: datetime | None, tokens: dict[str, Any]
+    ) -> list[str]:
+        """The units a Search puts on the sheet, most relevant first: the
+        engine's ranking over the user's units, and, for a question asking
+        for suggestions, the user's stated preferences even where they share
+        no word with it (the preference that shapes a recommendation rarely
+        repeats the question's words)."""
+        with us.lock:
+            if us.unit_memories is None:
+                root = us.units_root
+                us.unit_memories = (
+                    Store(root).load_all()
+                    if root.exists() and any(root.glob("*.md"))
+                    else []
+                )
+            units = us.unit_memories
+            meta = dict(us.unit_meta)
+        if not units:
+            return []
+        _adapter_call.tokens = tokens if self.cache_tokens else None
+        try:
+            hits = run_search(
+                units,
+                query,
+                max_results=self.sheet_units,
+                mode="hybrid",
+                conversational=self.conversational,
+                now=now,
+            )
+        finally:
+            _adapter_call.tokens = None
+        chosen = [h.id for h in hits if h.score > 0]
+        if distill.wants_suggestions(query):
+            prefs = [
+                m.id
+                for m in sorted(
+                    units, key=lambda m: meta.get(m.id, {}).get("ts") or 0, reverse=True
+                )
+                if meta.get(m.id, {}).get("kind") == "preference" and m.id not in chosen
+            ]
+            chosen += prefs[: self.sheet_prefs]
+        return chosen
+
+    def _sheet(
+        self,
+        us: _UserStore,
+        query: str,
+        now: datetime | None,
+        tokens: dict[str, Any],
+        latest_ms: int | None = None,
+    ) -> dict[str, Any] | None:
+        ids = self.sheet_unit_ids(us, query, now, tokens)
+        if not ids:
+            return None
+        by_id = {m.id: m for m in us.unit_memories or []}
+        meta = us.unit_meta
+        picked: list[str] = []
+        size = 0
+        for uid in ids:
+            body = by_id[uid].body.strip()
+            if size + len(body) + 3 > self.sheet_chars and picked:
+                continue
+            picked.append(uid)
+            size += len(body) + 3
+        picked.sort(key=lambda uid: (meta.get(uid, {}).get("ts") or 0, uid))
+        latest = max((meta.get(uid, {}).get("ts") or 0 for uid in picked), default=0)
+        if self.sheet == "units-age" and latest_ms:
+            # Dates as distances from the store's newest conversation, the
+            # nearest clock the store has (AML's Search carries no question
+            # date): "weeks ago" becomes a division, "days between" a
+            # subtraction of two integers.
+            head = (
+                "Things the user said, oldest first. The latest conversation "
+                f"was on {_fmt_ts(latest_ms)[:16]}.\n"
+            )
+            lines = []
+            for uid in picked:
+                ts = meta.get(uid, {}).get("ts")
+                text = _UNIT_STAMP.sub("", by_id[uid].body.strip(), count=1)
+                if ts:
+                    days = (_utc_day(latest_ms) - _utc_day(ts)).days
+                    when = (
+                        "the day of the latest conversation"
+                        if days == 0
+                        else f"{days} day{'s' if days != 1 else ''} before the latest conversation"
+                    )
+                    lines.append(f"- {_fmt_ts(ts)[:16]}, {when}: {text}")
+                else:
+                    lines.append(f"- {text}")
+            content = head + "\n".join(lines)
+        else:
+            lines = [f"- {by_id[uid].body.strip()}" for uid in picked]
+            content = "Things the user said, oldest first:\n" + "\n".join(lines)
+        return {
+            "id": "sheet",
+            "content": content,
+            "score": 1e6,
+            **(
+                {
+                    "created_at": datetime.fromtimestamp(
+                        latest / 1000, tz=timezone.utc
+                    ).isoformat()
+                }
+                if latest
+                else {}
+            ),
+        }
 
     def _touch(self, us: _UserStore) -> None:
         """Keep parsed memories for the LOADED_STORES most recently searched
@@ -553,6 +742,7 @@ class MemoryService:
                 evicted = self._stores.get(old)
                 if evicted is not None:
                     evicted.memories = None
+                    evicted.unit_memories = None
                     evicted.tokens = {}
 
     def _fill(

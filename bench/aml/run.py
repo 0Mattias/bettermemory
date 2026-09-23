@@ -556,6 +556,9 @@ async def main_async(args: argparse.Namespace) -> None:
             trim_min_chars=args.trim_min_chars,
             budget=args.budget_chars,
             granularity="turns" if args.ingest.startswith("turns") else "rounds",
+            sheet=args.sheet,
+            sheet_chars=args.sheet_chars,
+            sheet_last=args.sheet_last,
         )
     )
     print(
@@ -609,6 +612,9 @@ async def main_async(args: argparse.Namespace) -> None:
         "trim": args.trim,
         "trim_min_chars": args.trim_min_chars,
         "budget_chars": args.budget_chars,
+        "sheet": args.sheet,
+        "sheet_chars": args.sheet_chars,
+        "sheet_last": args.sheet_last,
         "reader": args.reader,
         "judge": args.judge,
         "judge_thinking": args.judge_thinking,
@@ -682,6 +688,14 @@ def main() -> None:
     p.add_argument("--trim", default="none")
     p.add_argument("--trim-min-chars", type=int, default=0)
     p.add_argument("--budget-chars", type=int, default=0)
+    p.add_argument(
+        "--sheet",
+        default="none",
+        help="units: serve a sheet of distilled user statements first (declaration "
+        "E1); needs an ingest name of its own, since units are derived at Add",
+    )
+    p.add_argument("--sheet-chars", type=int, default=8000)
+    p.add_argument("--sheet-last", action="store_true")
     p.add_argument("--reader", default="openai/gpt-4o-mini")
     p.add_argument("--judge", required=True)
     p.add_argument(
