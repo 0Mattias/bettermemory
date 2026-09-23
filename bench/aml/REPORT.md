@@ -19,10 +19,10 @@ ranking code. `bench/aml/service.py` is the whole adapter; `bench/aml/server.py`
 HTTP face.
 
 **No model is called on the Add or Search path.** There are no LLM calls, no embedding
-models and no network calls; what Search returns depends only on the stored text and
-the order it was written. AML's checklist says open-source entries are expected to use
-gpt-4o-mini during Add; this entry calls no model at all, and neither does the
-SQLite-FTS-Baseline entry on the Cycle 1 open-source board.
+models and no network calls: `src/bettermemory/search.py` imports the standard library
+only. AML requires that any model a non-industry entry uses during Add or Search be
+gpt-4o-mini; this entry uses none, like the SQLite-FTS-Baseline entry on the Cycle 1
+open-source board. Section 6 covers reproducing it.
 
 ## 2. Add
 
@@ -56,8 +56,12 @@ SQLite-FTS-Baseline entry on the Cycle 1 open-source board.
   question is about. The options never carry the gold label.
 - **Ranking.** The engine's `hybrid` mode: reciprocal-rank fusion (k = 60) of a keyword
   scorer (term frequency and query-term coverage) and Okapi BM25 over stemmed tokens,
-  in conversational mode, with a bounded recency factor relative to the store's latest
-  source time.
+  in conversational mode. The engine also multiplies each score by a recency factor of
+  at most 1.1, computed from the memory's storage time against a clock. The adapter
+  sets that clock to the store's latest source time, and every round is stored after
+  the time it records, so the factor is the same 1.1 for every round and does not
+  change the ranking. Source time reaches the answer model through the date header
+  instead.
 - **What is returned.** Up to `top_k` (at most 100) rounds in rank order, within a
   budget of **90,000 characters** (`service.SERVING_BUDGET_CHARS`): ranked rounds are
   taken while they fit, the first is always served, and a round too long for what is
@@ -136,7 +140,29 @@ The measurements are in `bench/aml/results/` and the commit messages that added 
   license. ScriptMem's public release withholds its scripts, so it is not reproduced
   locally.
 
-## 6. Deployment
+## 6. Reproducing the entry
+
+The entry is this repository at the evaluated commit; nothing else is deployed.
+
+```
+git clone https://github.com/0Mattias/bettermemory && cd bettermemory
+git checkout <evaluated commit>
+uv sync --frozen --no-dev --python 3.11
+AML_ADAPTER_TOKEN=<key> AML_STORE_ROOT=<empty directory> \
+    .venv/bin/python bench/aml/server.py --host 0.0.0.0 --port 8080
+```
+
+`uv.lock` pins every dependency. There are no model files, no API keys other than the
+token the server checks, and no outbound network calls. What Search returns is a
+function of the Add requests and the order they arrive in: rounds with equal scores are
+ordered by storage time, then id (`search.py` sorts on all three). So a rerun that sends
+the same Adds in the same order returns the same results. One exception: for a store
+with no timestamps at all, the engine's clock is the wall clock, and the recency factor
+can then reorder rounds whose scores are nearly equal, by a margin that depends on how
+far apart in time they were written. Any other difference between an original and a
+reproduced score comes from AML's answer and judge models.
+
+## 7. Deployment
 
 The endpoint runs `bench/aml/server.py` (Starlette under uvicorn, one process) behind
 Caddy for TLS, on one AWS t4g.large instance. `server.serving_service` is the only
@@ -150,7 +176,7 @@ place the served configuration is built.
 - **Evaluation data.** It is not logged (access logs are off, Caddy discards its
   request log) and is deleted within 30 days of a run, as the contract requires.
 
-## 7. Limitations
+## 8. Limitations
 
 - **Stand-in grading.** Local numbers use a stand-in judge and OpenRouter's serving
   of both models; AML's own runs will differ in level.
