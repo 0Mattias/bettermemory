@@ -52,6 +52,7 @@ import json
 import re
 import threading
 from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -267,8 +268,28 @@ ORDERS = ("rank", "chronological", "session")
 ANNOTATIONS = ("none", "age")
 TRIMS = ("none", "assistant", "tail")
 SHEETS = ("none", "units", "units-age")
+UNIT_SOURCES = ("regex", "claude")
+EXPANDS = ("none", "keys", "keys-inline")
 _UNIT_STAMP = re.compile(r"^\[[^\]]*\]\s*")
 TRIM_KEEP_WHOLE = 10
+# Reciprocal-rank fusion constant for `expand`, the value the engine's own
+# hybrid mode and bench/aml/fused.py use.
+RRF_K = 60
+
+# (kind, body, index of the message it came from) per unit of one Add's
+# messages; bench/aml/extract_claude.py's `units_from_cache` is one.
+Extractor = Callable[[list[dict[str, Any]]], list[tuple[str, str, int]]]
+
+
+def _with_notes(content: str, notes: list[str]) -> str:
+    """The round with its units as notes under its date header: the dated
+    fact sits beside the evidence it came from."""
+    block = "Noted from this conversation:\n" + "\n".join(f"- {n}" for n in notes)
+    if content.startswith("["):
+        head, sep, rest = content.partition("\n")
+        if sep:
+            return f"{head}\n{block}\n{rest}"
+    return f"{block}\n{content}"
 
 
 def query_terms(query: str) -> set[str]:
@@ -392,6 +413,27 @@ class MemoryService:
                           rounds only; the strongest evidence stays whole,
                           since a trim can cut a line the question points at
                           by position ("the 7th item") rather than by word
+
+    Units are the distilled memory layer (declarations E1 to E3): short,
+    dated statements derived from each Add, kept in a sibling store and
+    linked to the round they came from.
+
+      units   regex        bench/aml/distill.py, no model (E1/E2)
+              claude       the product's session-capture prompt, via an
+                           `extractor` (E3); the service itself never calls
+                           a model
+      sheet   see SHEETS: a separate item of units served before (or after)
+              the rounds
+      expand  none         units are not used for ranking
+              keys         a unit is an extra search key for its round: the
+                           rounds the units rank are fused (RRF) with the
+                           rounds the engine ranks, and raw rounds are
+                           served. LongMemEval's own ablation (arXiv
+                           2410.10813, Table 3) found this beats either
+                           representation alone
+              keys-inline  the same, and each served round also carries its
+                           own units, so a dated fact sits beside its
+                           evidence instead of spending a separate budget
     """
 
     def __init__(
@@ -414,7 +456,21 @@ class MemoryService:
         sheet_units: int = 40,
         sheet_prefs: int = 15,
         sheet_last: bool = False,
+        units: str = "regex",
+        extractor: Extractor | None = None,
+        expand: str = "none",
+        expand_units: int = 100,
     ) -> None:
+        if units not in UNIT_SOURCES:
+            raise ValueError(f"units {units!r}")
+        if units == "claude" and extractor is None:
+            raise ValueError("units='claude' needs an extractor")
+        if expand not in EXPANDS:
+            raise ValueError(f"expand {expand!r}")
+        self.units = units
+        self.extractor = extractor
+        self.expand = expand
+        self.expand_units = expand_units
         self.sheet_last = sheet_last
         if sheet not in SHEETS:
             raise ValueError(f"sheet {sheet!r}")
@@ -468,12 +524,17 @@ class MemoryService:
                 return 0
             store = Store(us.root)
             n = 0
+            # What the request carried, before a tail from the previous
+            # request is joined to it: the extractor is keyed by exactly
+            # these messages (bench/aml/extract_claude.py warms that key).
+            request_messages = messages
+            merged_tail = False
+            spans: list[tuple[int, int]] = []
             if self.granularity == "turns":
                 units = turns_of(messages, self.chunk_chars)
                 lone_tail = None
             else:
                 tail = us.tails.pop(session_id, None)
-                merged_tail = False
                 if (
                     tail is not None
                     and messages
@@ -502,8 +563,12 @@ class MemoryService:
                 n += 1
             if lone_tail is not None and last_id is not None:
                 us.tails[session_id] = {"id": last_id, "message": lone_tail}
-            if self.sheet != "none" and self.granularity == "rounds":
-                self._write_units(us, messages, spans, round_ids, merged_tail)
+            if self.granularity == "rounds" and (
+                self.sheet != "none" or self.expand != "none"
+            ):
+                self._write_units(
+                    us, messages, request_messages, spans, round_ids, merged_tail
+                )
             us.done_requests.add(request_id)
             us.save()
             us.memories = None
@@ -515,17 +580,36 @@ class MemoryService:
         self,
         us: _UserStore,
         messages: list[dict[str, Any]],
+        request_messages: list[dict[str, Any]],
         spans: list[tuple[int, int]],
         round_ids: list[str],
         merged_tail: bool,
     ) -> None:
-        """Distil the chunk's user turns into dated units (declaration E1).
-        A tail re-joined from the previous chunk was distilled when it first
-        arrived, so it is skipped here."""
+        """Distil the chunk into dated units (declarations E1 to E3). A tail
+        re-joined from the previous chunk was distilled when it first
+        arrived, so it is skipped here. `messages` is the chunk with that
+        tail in front; `request_messages` is the chunk as it arrived."""
         ustore = Store(us.units_root)
         round_of = {
             i: rid for (a, b), rid in zip(spans, round_ids) for i in range(a, b)
         }
+        if self.units == "claude":
+            assert self.extractor is not None
+            offset = 1 if merged_tail else 0
+            for kind, text, i in self.extractor(request_messages):
+                j = i + offset
+                ts = messages[j].get("timestamp") if 0 <= j < len(messages) else None
+                ts = int(ts) if isinstance(ts, (int, float)) else None
+                stamp = _fmt_ts(ts)
+                memory = ustore.write(
+                    content=f"[{stamp}] {text}" if stamp else text, scopes=SCOPE
+                )
+                us.unit_meta[memory.id] = {
+                    "ts": ts,
+                    "kind": kind,
+                    "round": round_of.get(j, ""),
+                }
+            return
         for i, m in enumerate(messages):
             if merged_tail and i == 0:
                 continue
@@ -580,6 +664,11 @@ class MemoryService:
         by_id = {m.id: m for m in memories}
         chosen = [h.id for h in hits if h.id in by_id]
         scores = {h.id: float(h.score) for h in hits}
+        notes: dict[str, list[str]] = {}
+        if self.expand != "none":
+            chosen, scores, notes = self._expand(
+                us, query, now, tokens, chosen, by_id, top_k
+            )
         chosen = self._fill(chosen, top_k, by_id, event_ts, session_of, seq)
         chosen = self._order(chosen, event_ts, session_of, seq)
         latest = max(event_ts.values()) if event_ts else None
@@ -597,6 +686,8 @@ class MemoryService:
             m = by_id[mid]
             ts = event_ts.get(mid)
             content = self._present(m.body, ts, latest, terms, rank)
+            if notes.get(mid):
+                content = _with_notes(content, notes[mid])
             if self.budget and out and used + len(content) > self.budget:
                 continue
             used += len(content)
@@ -621,14 +712,7 @@ class MemoryService:
             out.append(sheet)
         return out
 
-    def sheet_unit_ids(
-        self, us: _UserStore, query: str, now: datetime | None, tokens: dict[str, Any]
-    ) -> list[str]:
-        """The units a Search puts on the sheet, most relevant first: the
-        engine's ranking over the user's units, and, for a question asking
-        for suggestions, the user's stated preferences even where they share
-        no word with it (the preference that shapes a recommendation rarely
-        repeats the question's words)."""
+    def _units(self, us: _UserStore) -> tuple[list[Memory], dict[str, dict[str, Any]]]:
         with us.lock:
             if us.unit_memories is None:
                 root = us.units_root
@@ -637,23 +721,86 @@ class MemoryService:
                     if root.exists() and any(root.glob("*.md"))
                     else []
                 )
-            units = us.unit_memories
-            meta = dict(us.unit_meta)
-        if not units:
-            return []
+            return us.unit_memories, dict(us.unit_meta)
+
+    def _rank_units(
+        self,
+        units: list[Memory],
+        query: str,
+        now: datetime | None,
+        tokens: dict[str, Any],
+        limit: int,
+    ) -> list[str]:
         _adapter_call.tokens = tokens if self.cache_tokens else None
         try:
             hits = run_search(
                 units,
                 query,
-                max_results=self.sheet_units,
+                max_results=limit,
                 mode="hybrid",
                 conversational=self.conversational,
                 now=now,
             )
         finally:
             _adapter_call.tokens = None
-        chosen = [h.id for h in hits if h.score > 0]
+        return [h.id for h in hits if h.score > 0]
+
+    def _expand(
+        self,
+        us: _UserStore,
+        query: str,
+        now: datetime | None,
+        tokens: dict[str, Any],
+        chosen: list[str],
+        by_id: dict[str, Memory],
+        top_k: int,
+    ) -> tuple[list[str], dict[str, float], dict[str, list[str]]]:
+        """Units as extra search keys for their rounds. The rounds the units
+        rank (each round at its best unit's rank) are fused with the rounds
+        the engine ranked, by reciprocal rank; what is served is still the
+        raw round. Under `keys-inline` each chosen round also gets its own
+        units, oldest first, as notes."""
+        units, meta = self._units(us)
+        if not units:
+            return chosen, {mid: 0.0 for mid in chosen}, {}
+        unit_rounds: list[str] = []
+        seen: set[str] = set()
+        for uid in self._rank_units(units, query, now, tokens, self.expand_units):
+            rid = meta.get(uid, {}).get("round", "")
+            if rid in by_id and rid not in seen:
+                seen.add(rid)
+                unit_rounds.append(rid)
+        fused: dict[str, float] = {}
+        for ranking in (chosen, unit_rounds):
+            for rank, rid in enumerate(ranking, start=1):
+                fused[rid] = fused.get(rid, 0.0) + 1.0 / (RRF_K + rank)
+        first = {rid: i for i, rid in enumerate(chosen + unit_rounds)}
+        order = sorted(fused, key=lambda rid: (-fused[rid], first[rid]))[:top_k]
+        notes: dict[str, list[str]] = {}
+        if self.expand == "keys-inline":
+            wanted = set(order)
+            for u in sorted(
+                units, key=lambda u: (meta.get(u.id, {}).get("ts") or 0, u.id)
+            ):
+                rid = meta.get(u.id, {}).get("round", "")
+                if rid in wanted:
+                    notes.setdefault(rid, []).append(
+                        _UNIT_STAMP.sub("", u.body.strip(), count=1)
+                    )
+        return order, {rid: fused[rid] for rid in order}, notes
+
+    def sheet_unit_ids(
+        self, us: _UserStore, query: str, now: datetime | None, tokens: dict[str, Any]
+    ) -> list[str]:
+        """The units a Search puts on the sheet, most relevant first: the
+        engine's ranking over the user's units, and, for a question asking
+        for suggestions, the user's stated preferences even where they share
+        no word with it (the preference that shapes a recommendation rarely
+        repeats the question's words)."""
+        units, meta = self._units(us)
+        if not units:
+            return []
+        chosen = self._rank_units(units, query, now, tokens, self.sheet_units)
         if distill.wants_suggestions(query):
             prefs = [
                 m.id

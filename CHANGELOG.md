@@ -7,6 +7,24 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## Unreleased
+
+### Added
+
+- `bettermemory.session_capture`: the prompt, output contract and
+  validator that turn a conversation into dated memories, the first
+  slice of session capture. Pure functions only (no network, no store,
+  no config, nothing calls it yet): `render_turns` numbers each turn and
+  writes its timestamp with the weekday, so a model can resolve
+  "yesterday" or "last Tuesday" against the line it appears in;
+  `build_capture_messages` fences the conversation with a nonce;
+  `parse_capture` keeps a memory only when its quote is found in the
+  conversation, re-citing a miscounted turn and dropping an invented
+  one. The benchmark harness imports the same prompt
+  (`bench/aml/extract_claude.py`, arms `--units claude` with
+  `--expand keys` or `keys-inline`), so what is measured is what will
+  ship.
+
 ## 7.19.2 - 2026-09-20
 
 Teams Phase 1 / D2: the per-request store seam. **The mechanism only —

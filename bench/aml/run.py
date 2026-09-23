@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import functools
 import importlib
 import json
 import random
@@ -292,47 +293,82 @@ def search_query(inst: dict[str, Any]) -> str:
     return inst["question"]
 
 
+def adds_for(
+    inst: dict[str, Any],
+    sessions: dict[str, list[dict[str, Any]]] | None = None,
+) -> tuple[str, list[dict[str, Any]]]:
+    """The user_id a question is asked of, and every Add its store gets:
+    {request_id, messages, session_id} in order. The one place the Add
+    requests are built, so an extraction warmed from them is keyed by
+    exactly what Add receives."""
+    if sessions is not None:
+        user_id = inst["user_id"]
+        return user_id, [
+            {
+                "request_id": f"{user_id}:{chunk['session_id']}",
+                "messages": chunk["messages"],
+                "session_id": chunk["session_id"],
+            }
+            for chunk in sessions[user_id]
+        ]
+    user_id = f"lme-s:{inst['question_id']}"
+    dates = inst.get("haystack_dates") or []
+    adds = []
+    for idx, (sid, session) in enumerate(
+        zip(inst["haystack_session_ids"], inst["haystack_sessions"])
+    ):
+        ts = _ms(dates[idx]) if idx < len(dates) else None
+        adds.append(
+            {
+                "request_id": f"{user_id}:{idx}:{sid}",
+                "messages": [
+                    {
+                        "role": t.get("role", "user"),
+                        "content": t.get("content", ""),
+                        **({"timestamp": ts} if ts else {}),
+                    }
+                    for t in session
+                ],
+                "session_id": sid,
+            }
+        )
+    return user_id, adds
+
+
+def check_units_store(root: Path, source: str) -> None:
+    """Refuse a store whose units came from another source, or that was
+    built with none. Units are derived at Add, and a finished Add is never
+    repeated (its request_id is recorded), so reusing such a store would
+    serve an arm with the wrong units or none, and measure nothing. The
+    source is recorded in the store the first time units are written. A
+    store with no record is taken as a regex store: E1/E2 built theirs
+    (rounds-u1) before the record existed."""
+    marker = root / ".units-source"
+    if marker.exists():
+        recorded = marker.read_text(encoding="utf-8").strip()
+        if recorded != source:
+            raise SystemExit(
+                f"{root.name} holds {recorded} units, not {source}; pass a new --ingest"
+            )
+        return
+    if source != "regex" and root.exists() and any(root.iterdir()):
+        raise SystemExit(
+            f"{root.name} was built without {source} units; pass a new --ingest"
+        )
+    root.mkdir(parents=True, exist_ok=True)
+    marker.write_text(source + "\n", encoding="utf-8")
+
+
 def ingest_and_search(
     service: Any,
     inst: dict[str, Any],
     sessions: dict[str, list[dict[str, Any]]] | None = None,
 ) -> list[dict[str, Any]]:
-    if sessions is not None:
-        user_id = inst["user_id"]
-        for chunk in sessions[user_id]:
-            service.add(
-                request_id=f"{user_id}:{chunk['session_id']}",
-                user_id=user_id,
-                messages=chunk["messages"],
-                session_id=chunk["session_id"],
-            )
-        hits = service.search(user_id, search_query(inst), TOP_K)
-        for h, sess in zip(
-            hits, service.sessions_for(user_id, [h["id"] for h in hits])
-        ):
-            h["_session"] = sess
-        return hits
-    user_id = f"lme-s:{inst['question_id']}"
-    dates = inst.get("haystack_dates") or []
-    for idx, (sid, session) in enumerate(
-        zip(inst["haystack_session_ids"], inst["haystack_sessions"])
-    ):
-        ts = _ms(dates[idx]) if idx < len(dates) else None
-        messages = [
-            {
-                "role": t.get("role", "user"),
-                "content": t.get("content", ""),
-                **({"timestamp": ts} if ts else {}),
-            }
-            for t in session
-        ]
-        service.add(
-            request_id=f"{user_id}:{idx}:{sid}",
-            user_id=user_id,
-            messages=messages,
-            session_id=sid,
-        )
-    hits = service.search(user_id, inst["question"], TOP_K)
+    user_id, adds = adds_for(inst, sessions)
+    for add in adds:
+        service.add(user_id=user_id, **add)
+    query = search_query(inst) if sessions is not None else inst["question"]
+    hits = service.search(user_id, query, TOP_K)
     for h, sess in zip(hits, service.sessions_for(user_id, [h["id"] for h in hits])):
         h["_session"] = sess
     return hits
@@ -537,6 +573,33 @@ async def main_async(args: argparse.Namespace) -> None:
     if args.limit:
         todo = todo[: args.limit]
     prefix = "" if args.dataset == "longmemeval-s" else f"{args.dataset}-"
+    extractor: Any = None
+    extraction: dict[str, Any] | None = None
+    if args.system == "bettermemory" and (
+        args.sheet != "none" or args.expand != "none"
+    ):
+        check_units_store(STORES / f"{prefix}{args.ingest}", args.units)
+        if args.units == "claude":
+            from aml import extract_claude
+
+            chunks = [add["messages"] for q in todo for add in adds_for(q, sessions)[1]]
+            stats = await extract_claude.warm(
+                chunks,
+                budget_usd=args.extract_budget,
+                concurrency=args.concurrency,
+                model=args.extract_model,
+            )
+            print(f"extraction {json.dumps(stats)}", file=sys.stderr)
+            if stats["errors"]:
+                raise SystemExit(
+                    f"extraction failed on {stats['errors']} chunks "
+                    f"({stats['first_error']}); an arm is never measured "
+                    "on a partial extraction"
+                )
+            extraction = stats
+            extractor = functools.partial(
+                extract_claude.units_from_cache, model=args.extract_model
+            )
     service = (
         FtsService(STORES / f"{prefix}fts-v1", serve=args.serve)
         if args.system == "fts"
@@ -559,6 +622,9 @@ async def main_async(args: argparse.Namespace) -> None:
             sheet=args.sheet,
             sheet_chars=args.sheet_chars,
             sheet_last=args.sheet_last,
+            units=args.units,
+            extractor=extractor,
+            expand=args.expand,
         )
     )
     print(
@@ -615,6 +681,10 @@ async def main_async(args: argparse.Namespace) -> None:
         "sheet": args.sheet,
         "sheet_chars": args.sheet_chars,
         "sheet_last": args.sheet_last,
+        "units": args.units,
+        "expand": args.expand,
+        "extract_model": args.extract_model if args.units == "claude" else None,
+        "extraction": extraction,
         "reader": args.reader,
         "judge": args.judge,
         "judge_thinking": args.judge_thinking,
@@ -696,6 +766,27 @@ def main() -> None:
     )
     p.add_argument("--sheet-chars", type=int, default=8000)
     p.add_argument("--sheet-last", action="store_true")
+    p.add_argument(
+        "--units",
+        choices=("regex", "claude"),
+        default="regex",
+        help="claude: units from the product's session-capture prompt (declaration "
+        "E3), fetched once before any Add; needs an ingest name of its own",
+    )
+    p.add_argument(
+        "--expand",
+        choices=("none", "keys", "keys-inline"),
+        default="none",
+        help="keys: units as extra search keys for their rounds (RRF), raw rounds "
+        "served; keys-inline: the same, each served round carrying its units",
+    )
+    p.add_argument("--extract-model", default="anthropic/claude-haiku-4.5")
+    p.add_argument(
+        "--extract-budget",
+        type=float,
+        default=0.0,
+        help="cap on NEW extraction spend in USD; cached extractions are free",
+    )
     p.add_argument("--reader", default="openai/gpt-4o-mini")
     p.add_argument("--judge", required=True)
     p.add_argument(

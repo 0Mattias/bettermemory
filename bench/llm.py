@@ -97,11 +97,12 @@ class Client:
         blob = json.dumps(payload, sort_keys=True, ensure_ascii=False)
         return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
-    def _cache_path(self, key: str) -> Path:
+    @staticmethod
+    def _cache_path(key: str) -> Path:
         return CACHE_DIR / key[:2] / f"{key}.json"
 
-    async def complete(
-        self,
+    @staticmethod
+    def payload(
         model: str,
         messages: list[dict[str, str]],
         *,
@@ -109,7 +110,8 @@ class Client:
         temperature: float = 0.0,
         reasoning_effort: str | None = None,
         response_json: bool = False,
-    ) -> Completion:
+    ) -> dict[str, Any]:
+        """The request body, and so the cache key, for one completion."""
         payload: dict[str, Any] = {
             "model": model,
             "messages": messages,
@@ -124,6 +126,36 @@ class Client:
             payload["reasoning"] = {"effort": reasoning_effort, "exclude": True}
         if response_json:
             payload["response_format"] = {"type": "json_object"}
+        return payload
+
+    @classmethod
+    def cached_text(cls, payload: dict[str, Any]) -> str | None:
+        """The cached reply to `payload`, or None: no network, no key, no
+        spend. For a synchronous consumer of replies an async pass has
+        already fetched (bench/aml/extract_claude.py)."""
+        path = cls._cache_path(cls.cache_key(payload))
+        if not path.exists():
+            return None
+        return str(json.loads(path.read_text(encoding="utf-8"))["text"])
+
+    async def complete(
+        self,
+        model: str,
+        messages: list[dict[str, str]],
+        *,
+        max_tokens: int = 1024,
+        temperature: float = 0.0,
+        reasoning_effort: str | None = None,
+        response_json: bool = False,
+    ) -> Completion:
+        payload = self.payload(
+            model,
+            messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            reasoning_effort=reasoning_effort,
+            response_json=response_json,
+        )
         key = self.cache_key(payload)
         path = self._cache_path(key)
         if path.exists():

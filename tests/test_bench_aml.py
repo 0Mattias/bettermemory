@@ -720,3 +720,179 @@ def test_the_sheet_is_off_by_default_and_served_first_when_on(tmp_path: Path) ->
 
 def test_the_public_endpoint_serves_no_sheet(tmp_path: Path) -> None:
     assert server.serving_service(tmp_path).sheet == "none"
+
+
+# ---------------------------------------------------------------- claude units (E3)
+
+extract_claude = _load("aml.extract_claude", _BENCH / "aml" / "extract_claude.py")
+
+_LAKE = _msgs(
+    ("We finally went to that place by the water on Friday.", "Sounds lovely!"),
+    ("My dog is a beagle.", "Beagles are great."),
+)
+
+
+def _lake_extractor(calls: list[list[dict[str, Any]]]) -> Any:
+    def extract(messages: list[dict[str, Any]]) -> list[tuple[str, str, int]]:
+        calls.append(messages)
+        return [
+            (
+                "event",
+                "2023-05-19: The user visited Lake Bled.",
+                next(
+                    i
+                    for i, m in enumerate(messages)
+                    if "place by the water" in str(m["content"])
+                ),
+            )
+        ]
+
+    return extract
+
+
+def test_claude_units_need_an_extractor_and_unknown_expands_are_refused(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError):
+        service.MemoryService(tmp_path, units="claude")
+    with pytest.raises(ValueError):
+        service.MemoryService(tmp_path, expand="facts-only")
+    with pytest.raises(ValueError):
+        service.MemoryService(tmp_path, units="gpt")
+
+
+def test_a_unit_is_a_search_key_for_its_round_and_the_raw_round_is_served(
+    tmp_path: Path,
+) -> None:
+    plain = service.MemoryService(tmp_path / "plain")
+    plain.add("r", "u", _LAKE, "s")
+    assert all(
+        "place by the water" not in h["content"]
+        for h in plain.search("u", "Lake Bled", 100)
+    )
+    calls: list[list[dict[str, Any]]] = []
+    keyed = service.MemoryService(
+        tmp_path / "keys",
+        units="claude",
+        extractor=_lake_extractor(calls),
+        expand="keys",
+    )
+    keyed.add("r", "u", _LAKE, "s")
+    hits = keyed.search("u", "Lake Bled", 100)
+    assert "place by the water" in hits[0]["content"]
+    assert "Lake Bled" not in hits[0]["content"]  # keys rank; the raw round is served
+    assert calls == [_LAKE]
+
+
+def test_keys_inline_puts_a_rounds_units_under_its_date_header(tmp_path: Path) -> None:
+    svc = service.MemoryService(
+        tmp_path, units="claude", extractor=_lake_extractor([]), expand="keys-inline"
+    )
+    svc.add("r", "u", _LAKE, "s")
+    top = svc.search("u", "Lake Bled", 100)[0]["content"]
+    header, notes, fact = top.splitlines()[:3]
+    assert header.startswith("[2023/05/20")
+    assert notes == "Noted from this conversation:"
+    assert fact == "- 2023-05-19: The user visited Lake Bled."
+    others = [h["content"] for h in svc.search("u", "beagle", 100)[1:]]
+    assert all("Noted from" not in c for c in others if "beagle" in c)
+
+
+def test_the_extractor_sees_the_request_as_sent_even_when_a_tail_is_joined(
+    tmp_path: Path,
+) -> None:
+    calls: list[list[dict[str, Any]]] = []
+
+    def extract(messages: list[dict[str, Any]]) -> list[tuple[str, str, int]]:
+        calls.append(messages)
+        return [("fact", f"Unit from message {i}.", i) for i in range(len(messages))]
+
+    svc = service.MemoryService(
+        tmp_path, units="claude", extractor=extract, expand="keys-inline"
+    )
+    first = [
+        {"role": "user", "content": "Where should I fish near Porto?", "timestamp": T0}
+    ]
+    second = [
+        {"role": "assistant", "content": "Try the Douro estuary.", "timestamp": T0},
+        {"role": "user", "content": "Thanks, and my boat is blue.", "timestamp": T0},
+    ]
+    svc.add("r1", "u", first, "s")
+    svc.add("r2", "u", second, "s")
+    assert calls == [first, second]
+    served = svc.search("u", "Douro estuary Porto", 100)
+    joined = next(h["content"] for h in served if "Douro" in h["content"])
+    # the second request's message 0 is the reply that completes the tail's round
+    assert "- Unit from message 0." in joined
+
+
+def test_extract_claude_reads_units_from_the_cache_and_refuses_a_missing_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The Client extract_claude imported: an earlier test re-executes
+    # bench/llm.py, so sys.modules["llm"] may be a different copy.
+    client = extract_claude.Client
+    monkeypatch.setitem(client._cache_path.__globals__, "CACHE_DIR", tmp_path)
+    msgs = _LAKE
+    with pytest.raises(extract_claude.MissingExtraction):
+        extract_claude.units_from_cache(msgs)
+    payload = extract_claude.payload(msgs)
+    assert payload == extract_claude.payload(list(msgs))  # same chunk, same request
+    reply = json.dumps(
+        {
+            "memories": [
+                {
+                    "kind": "event",
+                    "body": "2023-05-19: The user visited a place by the water.",
+                    "happened_at": "2023-05-19",
+                    "turns": [0],
+                    "quote": "We finally went to that place by the water",
+                },
+                {
+                    "kind": "fact",
+                    "body": "The user owns a parrot.",
+                    "turns": [2],
+                    "quote": "my parrot says hello",
+                },
+            ]
+        }
+    )
+    path = client._cache_path(client.cache_key(payload))
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"text": reply}), encoding="utf-8")
+    assert extract_claude.units_from_cache(msgs) == [
+        ("event", "2023-05-19: The user visited a place by the water.", 0)
+    ]
+    assert extract_claude.units_from_cache([]) == []
+
+
+def test_a_units_store_refuses_another_source_or_a_build_without_units(
+    tmp_path: Path,
+) -> None:
+    fresh = tmp_path / "c1"
+    runner.check_units_store(fresh, "claude")
+    runner.check_units_store(fresh, "claude")
+    with pytest.raises(SystemExit):
+        runner.check_units_store(fresh, "regex")
+    legacy = tmp_path / "u1"
+    (legacy / "abc").mkdir(parents=True)
+    with pytest.raises(SystemExit):
+        runner.check_units_store(legacy, "claude")
+    runner.check_units_store(legacy, "regex")  # E1/E2 stores predate the record
+    assert (legacy / ".units-source").read_text(encoding="utf-8").strip() == "regex"
+
+
+def test_adds_for_builds_the_same_requests_ingest_makes() -> None:
+    inst = {
+        "question_id": "q1",
+        "haystack_session_ids": ["a", "b"],
+        "haystack_sessions": [
+            [{"role": "user", "content": "hi"}],
+            [{"role": "user", "content": "yo"}],
+        ],
+        "haystack_dates": ["2023/05/20 (Sat) 12:00", "2023/05/21 (Sun) 09:30"],
+    }
+    user_id, adds = runner.adds_for(inst)
+    assert user_id == "lme-s:q1"
+    assert [a["request_id"] for a in adds] == ["lme-s:q1:0:a", "lme-s:q1:1:b"]
+    assert adds[0]["messages"] == [{"role": "user", "content": "hi", "timestamp": T0}]
