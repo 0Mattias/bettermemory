@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import importlib
 import json
 import random
 import re
@@ -249,6 +250,18 @@ def load_beam(
     return questions, sessions
 
 
+# Datasets whose loader and answer/grade protocol live in their own module
+# (`bench/aml/ds_<name>.py`). Each module exposes `load() -> (questions,
+# sessions)` in the shape load_locomo returns and `answer_and_grade(client,
+# inst, hits, reader, judge, thinking) -> row` in the shape answer_and_judge
+# returns, with its prompts copied from the AML pipeline that grades it.
+EXTERNAL = {
+    "scriptmem": "aml.ds_scriptmem",
+    "personamem-v1": "aml.ds_personamem_v1",
+    "clbench": "aml.ds_clbench",
+}
+
+
 def render_answer(
     question: str,
     contents: list[str],
@@ -269,6 +282,15 @@ def render_answer(
     )
 
 
+def search_query(inst: dict[str, Any]) -> str:
+    """The query exactly as server.py composes it from AML's Search body:
+    multiple-choice `options` travel separately and are appended."""
+    options = inst.get("options")
+    if isinstance(options, list) and options:
+        return inst["question"] + "\n" + "\n".join(str(o) for o in options)
+    return inst["question"]
+
+
 def ingest_and_search(
     service: Any,
     inst: dict[str, Any],
@@ -283,7 +305,7 @@ def ingest_and_search(
                 messages=chunk["messages"],
                 session_id=chunk["session_id"],
             )
-        hits = service.search(user_id, inst["question"], TOP_K)
+        hits = service.search(user_id, search_query(inst), TOP_K)
         for h, sess in zip(
             hits, service.sessions_for(user_id, [h["id"] for h in hits])
         ):
@@ -474,7 +496,17 @@ def _provenance() -> dict[str, Any]:
 async def main_async(args: argparse.Namespace) -> None:
     t0 = time.time()
     sessions: dict[str, list[dict[str, Any]]] | None = None
-    if args.dataset.startswith("beam-"):
+    grade = answer_and_judge
+    if args.dataset in EXTERNAL:
+        module = importlib.import_module(EXTERNAL[args.dataset])
+        corpus, sessions = module.load()
+        grade = module.answer_and_grade
+        dev, holdout = [q["question_id"] for q in corpus], []
+        if args.split != "all":
+            raise SystemExit(
+                f"{args.dataset} is a validation instrument; run --split all"
+            )
+    elif args.dataset.startswith("beam-"):
         corpus, sessions = load_beam(args.dataset.split("-", 1)[1].upper())
         dev, holdout = [q["question_id"] for q in corpus], []
         if args.split != "all":
@@ -541,9 +573,7 @@ async def main_async(args: argparse.Namespace) -> None:
     async with Client(budget_usd=args.budget, concurrency=args.concurrency) as client:
         results = await asyncio.gather(
             *(
-                answer_and_judge(
-                    client, q, h, args.reader, args.judge, args.judge_thinking
-                )
+                grade(client, q, h, args.reader, args.judge, args.judge_thinking)
                 for q, h in zip(todo, hits_all)
             ),
             return_exceptions=True,
@@ -632,6 +662,7 @@ def main() -> None:
             "beam-100k",
             "beam-500k",
             "beam-1m",
+            *EXTERNAL,
         ),
         default="longmemeval-s",
     )
