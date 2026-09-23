@@ -258,6 +258,7 @@ def load_beam(
 EXTERNAL = {
     "scriptmem": "aml.ds_scriptmem",
     "personamem-v1": "aml.ds_personamem_v1",
+    "personamem-v2": "aml.ds_personamem_v2",
     "clbench": "aml.ds_clbench",
 }
 

@@ -63,11 +63,11 @@ from bettermemory.store import Store
 
 SCOPE = ["aml"]
 
-# The serving configuration the live endpoint runs, measured in
-# bench/aml/results (commits 333870b, 0f34c7b): at most this many
+# The serving configuration the live endpoint runs: at most this many
 # characters of ranked rounds per Search. AML's own answer step keeps a
-# 117,760-token prefix of what Search returns; a 90,000-character budget
-# read best of the budgets tried on all three datasets measured.
+# 117,760-token prefix of what Search returns; 90,000 characters read best
+# of the budgets measured (bench/aml/REPORT.md cites each run), and a
+# larger budget read worse on PersonaMem v1 and LongMemEval-S.
 SERVING_BUDGET_CHARS = 90_000
 # How many stores keep their parsed memories in RAM between Searches.
 LOADED_STORES = 64
@@ -116,15 +116,25 @@ def _fmt_ts(ms: int | None) -> str | None:
     return dt.strftime("%Y/%m/%d (%a) %H:%M")
 
 
+DIALOGUE_ROLES = frozenset({"user", "assistant"})
+
+
+def _pairs(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    """Two adjacent messages form a round when both are dialogue turns of
+    different roles. Any other role (a "system" persona prompt, a tool
+    result) stands alone: pairing it with the next turn would shift every
+    later round of the session by one message."""
+    ra, rb = a.get("role"), b.get("role")
+    return ra in DIALOGUE_ROLES and rb in DIALOGUE_ROLES and ra != rb
+
+
 def round_spans(messages: list[dict[str, Any]]) -> list[tuple[int, int]]:
-    """Greedy pairing: a message and the next one when their roles differ,
+    """Greedy pairing: a message and the next one when `_pairs` holds,
     else the message alone. Returns [start, end) index spans."""
     spans: list[tuple[int, int]] = []
     i = 0
     while i < len(messages):
-        pair = i + 1 < len(messages) and messages[i + 1].get("role") != messages[i].get(
-            "role"
-        )
+        pair = i + 1 < len(messages) and _pairs(messages[i], messages[i + 1])
         spans.append((i, i + 2 if pair else i + 1))
         i = spans[-1][1]
     return spans
@@ -436,7 +446,7 @@ class MemoryService:
                 if (
                     tail is not None
                     and messages
-                    and messages[0].get("role") != tail["message"].get("role")
+                    and _pairs(tail["message"], messages[0])
                 ):
                     us.hidden.add(tail["id"])
                     messages = [tail["message"], *messages]

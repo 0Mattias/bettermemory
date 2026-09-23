@@ -78,6 +78,23 @@ def test_rounds_pair_user_with_following_assistant_and_keep_a_trailing_turn() ->
     assert rounds == [("user: a\nassistant: b", T0), ("user: c", T0 + 1)]
 
 
+def test_a_non_dialogue_message_stands_alone_and_shifts_nothing() -> None:
+    rounds = service.rounds_of(
+        [
+            {"role": "system", "content": "persona"},
+            {"role": "user", "content": "q1"},
+            {"role": "assistant", "content": "a1"},
+            {"role": "user", "content": "q2"},
+            {"role": "assistant", "content": "a2"},
+        ]
+    )
+    assert [body for body, _ in rounds] == [
+        "system: persona",
+        "user: q1\nassistant: a1",
+        "user: q2\nassistant: a2",
+    ]
+
+
 def test_a_retried_add_writes_nothing_the_second_time(tmp_path: Path) -> None:
     svc = service.MemoryService(tmp_path)
     msgs = _msgs(("I adopted a beagle named Biscuit.", "Great name!"))
