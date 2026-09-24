@@ -1045,13 +1045,22 @@ class AttributedRecorder(Recorder):
     `cli_` prefix as its second axis; stamping the field here, once, at
     construction, is what keeps every CLI mutation on that axis without
     each call site having to remember it. A caller-supplied
-    `attribution` on a single event wins over the default."""
+    `attribution` on a single event wins over the default.
+
+    `triggered_from` is stamped the same way when set. Session capture
+    sets it: it records from outside the server under a transcript's
+    session id, and `hook._latest_in_process_session` recognises an
+    out-of-process writer by that field alone, so a capture event
+    without it would read as the live server session's."""
 
     attribution: str = ""
+    triggered_from: str = ""
 
     def record(self, kind: str, **fields: Any) -> None:
         if self.attribution:
             fields.setdefault("attribution", self.attribution)
+        if self.triggered_from:
+            fields.setdefault("triggered_from", self.triggered_from)
         super().record(kind, **fields)
 
 

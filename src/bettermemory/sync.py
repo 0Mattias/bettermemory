@@ -60,6 +60,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Iterable
 
 from ._fsutil import atomic_write_bytes, flock_excl
+from .capture import CAPTURES_DIR
 from .conflicts import CONFLICTS_FILENAME
 from .consolidate import AUTO_CONSOLIDATE_CLOCK_FILENAME
 from .doctor import DOCTOR_PROBE_FILENAME
@@ -200,6 +201,13 @@ _GITIGNORE_LINES = [
     # `.tombstones/`, by contrast, is canonical store data and stays synced —
     # a removal on one host must remain restorable from every clone.
     EPISODES_DIR,
+    # Session capture's raw segments and watermarks (`capture.py`),
+    # host-local for the episodes' reason and a stronger one: each segment
+    # file is a stretch of a conversation, redacted of known secret shapes
+    # but otherwise verbatim, and the watermark names a transcript path
+    # on this host. The memories distilled from them are ordinary store
+    # files and sync like any other.
+    CAPTURES_DIR,
     "*.lock",
     # Orphaned atomic-write temp files. `_fsutil.atomic_write_bytes` writes
     # `<target>.<random>.tmp` next to its target and only unlinks it inside a

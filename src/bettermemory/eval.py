@@ -3292,6 +3292,16 @@ TOOLS_WITHOUT_TELEMETRY: tuple[str, ...] = ("memory_health",)
 # emitted through ``consolidate._emit`` rather than a bare
 # ``recorder.record``; the parity scan in ``tests/test_eval.py`` reads
 # that helper's second positional for exactly this reason.
+#
+# ``capture_write`` names each memory ``bettermemory capture`` committed
+# (the provenance join, like ``consolidate_write``), and
+# ``capture_run`` is that command's one summary per run. Capture
+# writes under its own kind rather than ``write`` so the model's
+# ``memory_write`` count, and the write telemetry ``health`` reads off
+# ``write`` events, stay the model's. Both are recorded by a process
+# outside any server session, under the captured transcript's id with
+# the ``cli_capture`` attribution, so they are admin by kind: a
+# transcript id seen only through them was never a server session.
 _KNOWN_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
     {
         "search_miss",
@@ -3306,6 +3316,8 @@ _KNOWN_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
         "migrate",
         "consolidate_write",
         "consolidate_update",
+        "capture_write",
+        "capture_run",
     }
 )
 

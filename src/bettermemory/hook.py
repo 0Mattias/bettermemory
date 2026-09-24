@@ -194,8 +194,13 @@ _STDIN_PAYLOAD_CAP_BYTES = 64 * 1024
 # server-emitted retrieval event, silently killing it (the same
 # structurally-dead-shield failure the `retrieval_session_id` bridge
 # exists to prevent). `audit._VALID_TRIGGERED_FROM` cross-references
-# this set; extend both together.
-_OUT_OF_PROCESS_TRIGGERS: frozenset[str] = frozenset({"stop_hook", "prompt_hook"})
+# this set; extend both together. `session_capture` is the third
+# out-of-process writer: `bettermemory capture` records its writes under
+# the captured transcript's session id, from a process that is not the
+# server.
+_OUT_OF_PROCESS_TRIGGERS: frozenset[str] = frozenset(
+    {"stop_hook", "prompt_hook", "session_capture"}
+)
 
 
 def _read_payload(stdin_text: str) -> dict[str, Any]:

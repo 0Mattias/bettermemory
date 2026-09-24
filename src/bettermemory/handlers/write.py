@@ -936,6 +936,22 @@ ADMISSION_GATES: tuple[WriteGate, ...] = tuple(
 )
 
 
+# The gates session capture runs over each memory it distils from a
+# transcript (`capture.capture_transcript`): the whole chain except
+# `PendingGate`. Capture is the batch caller that KEEPS `UserClaimGate`,
+# because unlike ingest and the proposal accept it can supply the gate's
+# remedy itself: its bodies are a model's paraphrase of a conversation,
+# exactly the "model asserting a claim about the user" the gate exists
+# to label, and on a `user_claim_warning` capture re-files the memory as
+# `user-inference` instead of refusing it. `PendingGate` is left out
+# because there is no session to stage into; under
+# `require_write_confirmation` capture queues each survivor on the
+# proposal queue instead, where the accept is the confirmation.
+CAPTURE_GATES: tuple[WriteGate, ...] = tuple(
+    g for g in _WRITE_GATES if not isinstance(g, PendingGate)
+)
+
+
 # The gates `memory_write_confirm` re-runs against a staged payload before
 # it commits. A pending write can sit for an hour, and the store is not
 # frozen while it does: the duplicate it is now a duplicate OF may have been
@@ -1380,14 +1396,15 @@ def _validate_declared_supersedes(deps: ToolHandlers, ids: Any) -> list[dict[str
 
 
 def _persist(
-    deps: ToolHandlers,
+    deps: GateDeps,
     payload: dict[str, Any],
     *,
     active_snapshot: list[Memory] | None = None,
 ) -> tuple[Memory, SupersessionOutcome]:
     """Detect supersession, write the record with its links in one locked
-    write, file the cue-less disagreements. Shared by the direct commit
-    and the confirm path so the two cannot drift on what a write sets.
+    write, file the cue-less disagreements. Shared by the direct commit,
+    the confirm path and session capture (`capture._Writer`, through a
+    `GateBundle`) so none of them can drift on what a write sets.
 
     `active_snapshot` is the `load_all` the dedup gate already paid for
     on the direct path; the confirm path has none and loads. A target
@@ -1420,7 +1437,7 @@ def _persist(
 
 
 def _file_conflicts(
-    deps: ToolHandlers, memory: Memory, matches: list[SupersessionMatch]
+    deps: GateDeps, memory: Memory, matches: list[SupersessionMatch]
 ) -> list[tuple[str, SupersessionMatch]]:
     """Queue each cue-less disagreement for `memory_conflicts`.
     Best-effort by contract: the memory is already on disk, and a

@@ -7,6 +7,58 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## Unreleased
+
+### Added
+
+- **`bettermemory capture`: a Claude Code session in, dated memories
+  out.** Step 2 of session capture. The command reads a transcript from
+  where the last capture of that session stopped, asks a model for
+  memories with `session_capture`'s prompt and validator, and writes the
+  survivors through `memory_write`'s gate chain (`CAPTURE_GATES`, the
+  whole chain but the pending stage). It keeps each segment the model
+  saw in `captures/<session>/`, host-local and never synced, with a
+  watermark that makes a re-run write nothing twice. `--dry-run` shows
+  what would be saved and writes nothing. The model is `claude -p` on
+  Claude Code's own login, or the Messages API when `ANTHROPIC_API_KEY`
+  is set. Nothing calls it automatically yet; the session-end hook is
+  the next step. `docs/api.md` has the full contract.
+- Captured memories carry scope `session-capture`, source `inferred`,
+  and an `actor` whose client is `bettermemory-capture`, so
+  `bettermemory rollback --by-actor bettermemory-capture` undoes a run
+  and the `client` filter on `memory_search` and `memory_list` can
+  include or leave them out.
+- Two checks run only on captured memories, after the gates. A plan with
+  no date later than the conversation is dropped as `open_plan`: a
+  working session's to-do list belongs in its journal. A memory whose
+  content words, and every number and identifier in it, already sit in
+  one stored memory is dropped as `covered`. Both were measured on two
+  real sessions against a 443-memory store: of 44 memories the model
+  proposed, the 12 at or above the 0.85 coverage line were each a
+  restatement of a stored memory.
+- `session_capture.WORK_SESSION_RULES`, added to the prompt for a coding
+  session: skip to-dos and progress notes, keep decisions, changes,
+  releases, failures and what the user says about themselves. The
+  benchmark (`bench/aml`) keeps the base prompt.
+
+### Changed
+
+- `events.AttributedRecorder` and `cli._common.cli_recorder` take a
+  `triggered_from` that is stamped on every event, like `attribution`.
+  `session_capture` joins `hook._OUT_OF_PROCESS_TRIGGERS` and
+  `audit._VALID_TRIGGERED_FROM`, so capture's events, recorded under a
+  transcript's session id from outside the server, are never read as the
+  live server session's.
+- `handlers.write._persist` and `_file_conflicts` take the narrow
+  `GateDeps` protocol instead of `ToolHandlers`, which is how capture
+  commits through the same persist step as `memory_write` (supersession
+  links, disagreements filed for `memory_conflicts`).
+- Two event kinds: `capture_write`, one per memory capture commits (a
+  provenance creation kind, so the memory reads `local`), and
+  `capture_run`, one summary per run. Capture records no `write`
+  event, so `bettermemory eval --tool-usage` and the write telemetry in
+  `memory_health` count only the model's own writes.
+
 ## 8.0.0 - 2026-09-24
 
 A major by the [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract),

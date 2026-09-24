@@ -66,6 +66,7 @@ def cli_recorder(
     *,
     attribution: str,
     session_id: str | None = None,
+    triggered_from: str = "",
 ) -> AttributedRecorder:
     """An event recorder for a CLI command that mutates the store.
 
@@ -88,7 +89,9 @@ def cli_recorder(
     copy anywhere in `src/`); `tests/test_cli_smoke.py` scans every
     call site against the real constant instead. `session_id` lets a
     command reuse the id it already stamped on tombstones (consolidate);
-    the default mints a fresh one.
+    the default mints a fresh one. `triggered_from` marks an
+    out-of-process writer on every event (`AttributedRecorder` says why);
+    only `bettermemory capture` sets it.
     """
     from ..events import AttributedRecorder
     from ..session import SessionState
@@ -100,6 +103,7 @@ def cli_recorder(
         max_bytes=ctx.config.telemetry.max_bytes,
         log_queries_verbatim=ctx.config.telemetry.log_queries_verbatim,
         attribution=attribution,
+        triggered_from=triggered_from,
     )
 
 

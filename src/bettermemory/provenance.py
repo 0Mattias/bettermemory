@@ -10,8 +10,8 @@ evidence the file cannot forge, and the index carries it.
 
 The four labels
 ---------------
-- ``local``: written, ingested, promoted, accepted or restored by this
-  host's own code path. Stamped at the index upsert `Store.write` and
+- ``local``: written, ingested, promoted, accepted, captured or restored
+  by this host's own code path. Stamped at the index upsert `Store.write` and
   `Store.restore` perform (so every in-process creation is covered even
   with telemetry off), and re-derived at rebuild from the write-side
   events that carry the memory id (`creation_id` is the join). Sticky:
@@ -94,7 +94,7 @@ LABELS: tuple[str, ...] = (LOCAL, SYNCED, UNTRACKED, UNACCOUNTED)
 # never consulted here. `update` and `verify` name ids too, but they
 # prove a memory was touched locally, not that it entered locally.
 _CREATION_KINDS: frozenset[str] = frozenset(
-    {"write_confirm", "restore", "consolidate_write"}
+    {"write_confirm", "restore", "consolidate_write", "capture_write"}
 )
 _WRITE_STATUSES: frozenset[str] = frozenset({"committed", "ingested"})
 _GIT_TIMEOUT_S = 10.0
