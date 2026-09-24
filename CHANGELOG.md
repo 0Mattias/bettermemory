@@ -7,7 +7,17 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
-## Unreleased
+## 8.0.0 - 2026-09-24
+
+A major by the [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract),
+with two breaks, each on a surface the "forbidden within a major" list
+protects: a `category="user-inference"` write commits on the first call
+where it returned `pending`, and the `[behavior] corroboration_boost`
+flag 7.6.0 deprecated is removed. Nothing on disk changes:
+`SCHEMA_VERSION` stays at 1, the index schema stays at 11, no memory or
+episode written under 7.x reads differently, and there is no migrate
+subcommand. The first slice of session capture ships beside them as a
+library module that nothing calls yet.
 
 ### Changed
 
@@ -24,7 +34,7 @@ spells out exactly what's stable.
   can be found and corrected. `pending_reason: "user-inference"` is no
   longer produced. Under the compatibility contract this changes what
   an existing enum value does rather than adding one, so it is not an
-  additive change; which version carries it is decided at release.
+  additive change, and it is why this release is a major.
 
 - **`require_write_confirmation` is the one staging path, and it is
   uniform.** It stages every category, `user-inference` included, with
@@ -113,6 +123,43 @@ spells out exactly what's stable.
   (`bench/aml/extract_claude.py`, arms `--units claude` with
   `--expand keys` or `keys-inline`), so what is measured is what will
   ship.
+
+### Internal
+
+- `1576e92` unquotes the 121 quoted annotations `ce4df17` left, across
+  56 files. Every touched file carries `from __future__ import
+  annotations`, so each annotation reaches `__annotations__` as the same
+  string; no behaviour changes.
+- The AML adapter and dataset loaders under `bench/aml/` (`ec6afee`,
+  `ccd8aca`, `8ff0dda` and the docs commits after them) and the E1 to E3
+  measurements are benchmark code and results; none of it ships in the
+  package.
+
+### Migration
+
+- A client that runs the ask-then-confirm flow for `user-inference`
+  receives `status: "committed"` and an `id` from the first
+  `memory_write`; there is no `pending_id` to confirm. Branch on
+  `status`, as for `fact`. To keep a confirmation step before any write
+  lands, set `require_write_confirmation = true` under `[behavior]`: it
+  stages every category with `pending_reason: "config"`, and
+  `memory_write_confirm` / `memory_write_cancel` serve it unchanged.
+- `pending_reason: "user-inference"` is no longer produced; a branch on
+  it can be deleted.
+- Accepting a `user-inference` proposal returns `accepted`. Python code
+  calling `bettermemory.handlers.proposals.accept_proposal` drops the
+  `state` keyword, which no longer exists.
+- Instruction files that tell the model a `user-inference` write stays
+  pending until confirmed, or to ask the user before saving one, should
+  say it commits with its label; `docs/system_prompt.md` carries the
+  current wording.
+- A config that sets `corroboration_boost` under `[behavior]` still
+  loads: the line is ignored with one logged warning. Delete it. Code
+  passing `corroboration_boost=` to `bettermemory.search.search()` or
+  `bettermemory.audit.probe_for_miss()`, or reading the field off
+  `BehaviorConfig` or `RankingInputs`, drops it; it never changed a
+  ranking.
+- No stored data changes shape.
 
 ## 7.19.2 - 2026-09-20
 
