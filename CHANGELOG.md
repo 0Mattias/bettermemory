@@ -39,16 +39,6 @@ spells out exactly what's stable.
 - `bettermemory capture --pending` and `--checkpoint`, what the hooks
   run; `--provider` and `--model` now default to `[capture] provider`
   and `[capture] model`.
-- **A capture provider for any OpenAI-compatible server:**
-  `provider = "openai"` with `base_url`, `api_key_env` (the name of the
-  variable holding the key, never the key) and `model`, or
-  `--base-url` / `--api-key-env` on the command. That covers OpenAI,
-  DeepSeek, OpenRouter and a local Ollama or vLLM, so capture no longer
-  needs a Claude login or an Anthropic key. Standard library only, so a
-  bare `uvx bettermemory` can use it. Measured end to end through the
-  SessionEnd hook with DeepSeek V3.2 via OpenRouter on a real 4.7 MB
-  session against a copy of a 693-file store: 2 segments, 15 memories
-  committed, 7 already stored, $0.0057.
 - A failed model call is recorded on the session's watermark
   (`failures`, `last_failure_at`, `last_error`), and the hooks back off
   (an hour, doubling to a day, giving up after six in a row), so a

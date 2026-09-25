@@ -14,12 +14,8 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from ._common import CliContext, cli_context, cli_recorder
-
-if TYPE_CHECKING:
-    from ..capture import CaptureModel
 
 
 def add_subparser(
@@ -80,27 +76,7 @@ def add_subparser(
         help=(
             "Model backend. `auto` uses the Messages API when "
             "ANTHROPIC_API_KEY is set, else Claude Code's own login "
-            "through `claude -p`; `openai` is any server with OpenAI's "
-            "chat completions API. Default: [capture] provider, `auto`."
-        ),
-    )
-    parser.add_argument(
-        "--base-url",
-        default=None,
-        metavar="URL",
-        help=(
-            "For --provider openai: the API root before /chat/completions "
-            "(e.g. https://api.deepseek.com). Default: [capture] base_url, "
-            "else OpenAI's."
-        ),
-    )
-    parser.add_argument(
-        "--api-key-env",
-        default=None,
-        metavar="NAME",
-        help=(
-            "For --provider openai: the environment variable holding the "
-            "key. Default: [capture] api_key_env, else OPENAI_API_KEY."
+            "through `claude -p`. Default: [capture] provider, `auto`."
         ),
     )
     parser.add_argument(
@@ -135,6 +111,7 @@ def run(args: argparse.Namespace) -> None:
         CaptureError,
         capture_transcript,
         render_text,
+        resolve_model,
     )
 
     if os.environ.get(CHILD_ENV):
@@ -152,13 +129,15 @@ def run(args: argparse.Namespace) -> None:
         sys.exit(2)
 
     ctx = cli_context()
+    provider = args.provider or ctx.config.capture.provider
+    model_id = args.model or ctx.config.capture.model or None
     if args.pending:
-        _run_pending(args, ctx)
+        _run_pending(args, ctx, provider, model_id)
         return
     transcript = Path(args.transcript)
     session = args.session_id or transcript.stem
     try:
-        model = _model(args, ctx)
+        model = resolve_model(provider, model_id)
         recorder = cli_recorder(
             ctx,
             attribution="cli_capture",
@@ -194,20 +173,9 @@ def run(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
-def _model(args: argparse.Namespace, ctx: CliContext) -> CaptureModel:
-    """The model the flags name, each flag falling back to `[capture]`."""
-    from ..capture import resolve_model
-
-    conf = ctx.config.capture
-    return resolve_model(
-        args.provider or conf.provider,
-        args.model or conf.model or None,
-        base_url=args.base_url or conf.base_url or None,
-        api_key_env=args.api_key_env or conf.api_key_env or None,
-    )
-
-
-def _run_pending(args: argparse.Namespace, ctx: CliContext) -> None:
+def _run_pending(
+    args: argparse.Namespace, ctx: CliContext, provider: str, model_id: str | None
+) -> None:
     """`--pending`: capture each session `capture_hook.pending_sessions`
     names, one after another. A session another capture is running, or
     one that cannot be read, is left for the next sweep; the exit status
@@ -218,6 +186,7 @@ def _run_pending(args: argparse.Namespace, ctx: CliContext) -> None:
         CaptureError,
         capture_transcript,
         render_text,
+        resolve_model,
     )
     from ..capture_hook import pending_sessions
 
@@ -231,7 +200,7 @@ def _run_pending(args: argparse.Namespace, ctx: CliContext) -> None:
             print("[]")
         return
     try:
-        model = _model(args, ctx)
+        model = resolve_model(provider, model_id)
     except CaptureError as exc:
         print(f"capture: {exc}", file=sys.stderr)
         sys.exit(1)

@@ -74,8 +74,6 @@ import stat
 import subprocess
 import sys
 import tempfile
-import urllib.error
-import urllib.request
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -675,126 +673,6 @@ class AnthropicApiModel:
         return ModelReply(text=text)
 
 
-# The most of a chat-completions reply read into memory. A capture reply
-# is at most sixteen short memories; anything near this is not one.
-_REPLY_MAX_BYTES = 1024 * 1024
-
-
-@dataclass
-class OpenAICompatibleModel:
-    """Any server that speaks OpenAI's chat completions API: OpenAI,
-    DeepSeek, OpenRouter, a local Ollama, vLLM or LM Studio. Standard
-    library only, so it works in a bare `uvx bettermemory` with no SDK
-    installed.
-
-    `base_url` is the API root the server documents (the part before
-    `/chat/completions`), `api_key_env` the name of the environment
-    variable holding the key: the key itself never goes in the config
-    file. An unset or empty variable sends no Authorization header,
-    which is what a local server expects. JSON mode is asked for, and
-    asked for once more without it when a server refuses the option.
-    """
-
-    name: str = "openai"
-    model: str = ""
-    base_url: str = "https://api.openai.com/v1"
-    api_key_env: str = "OPENAI_API_KEY"
-    max_tokens: int = 4096
-    timeout_s: float = 120.0
-    opener: Callable[..., Any] = urllib.request.urlopen
-
-    def complete(self, messages: list[dict[str, str]]) -> ModelReply:
-        if not self.model:
-            raise CaptureModelError(
-                "the openai provider needs a model: set [capture] model or --model"
-            )
-        body: dict[str, Any] = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": 0,
-            "max_tokens": self.max_tokens,
-            "response_format": {"type": "json_object"},
-        }
-        try:
-            payload = self._post(body)
-        except _Refused as exc:
-            if "response_format" not in exc.detail:
-                raise CaptureModelError(str(exc)) from exc
-            del body["response_format"]
-            try:
-                payload = self._post(body)
-            except _Refused as again:
-                raise CaptureModelError(str(again)) from again
-        choices = payload.get("choices") if isinstance(payload, dict) else None
-        if not isinstance(choices, list) or not choices:
-            raise CaptureModelError(f"{self._url()} replied without choices")
-        choice = choices[0] if isinstance(choices[0], dict) else {}
-        if choice.get("finish_reason") == "length":
-            raise CaptureModelError(f"reply truncated at max_tokens={self.max_tokens}")
-        message = choice.get("message")
-        content = message.get("content") if isinstance(message, dict) else None
-        if not isinstance(content, str):
-            raise CaptureModelError(f"{self._url()} replied without message content")
-        usage = payload.get("usage")
-        cost = usage.get("cost") if isinstance(usage, dict) else None
-        return ModelReply(
-            text=content,
-            cost_usd=float(cost) if isinstance(cost, int | float) else None,
-        )
-
-    def _url(self) -> str:
-        return f"{self.base_url.rstrip('/')}/chat/completions"
-
-    def _post(self, body: dict[str, Any]) -> Any:
-        headers = {"Content-Type": "application/json"}
-        key = os.environ.get(self.api_key_env, "").strip() if self.api_key_env else ""
-        if key:
-            headers["Authorization"] = f"Bearer {key}"
-        request = urllib.request.Request(  # noqa: S310 — the configured endpoint
-            self._url(),
-            data=json.dumps(body).encode("utf-8"),
-            headers=headers,
-            method="POST",
-        )
-        try:
-            with self.opener(request, timeout=self.timeout_s) as response:
-                raw = response.read(_REPLY_MAX_BYTES + 1)
-        except urllib.error.HTTPError as exc:
-            detail = _read_error(exc)
-            if exc.code == 400:
-                raise _Refused(
-                    f"{self._url()} returned HTTP 400: {detail}", detail
-                ) from exc
-            raise CaptureModelError(
-                f"{self._url()} returned HTTP {exc.code}: {detail}"
-            ) from exc
-        except (urllib.error.URLError, OSError, ValueError) as exc:
-            raise CaptureModelError(
-                f"{self._url()} could not be reached: {exc}"
-            ) from exc
-        if len(raw) > _REPLY_MAX_BYTES:
-            raise CaptureModelError(f"{self._url()} replied with more than 1 MB")
-        try:
-            return json.loads(raw)
-        except ValueError as exc:
-            raise CaptureModelError(f"{self._url()} replied with no JSON body") from exc
-
-
-class _Refused(Exception):
-    """An HTTP 400, with the server's own words in `detail`."""
-
-    def __init__(self, message: str, detail: str) -> None:
-        super().__init__(message)
-        self.detail = detail
-
-
-def _read_error(exc: urllib.error.HTTPError) -> str:
-    try:
-        return exc.read(600).decode("utf-8", errors="replace").strip()[:300]
-    except OSError:
-        return ""
-
-
 def child_env() -> dict[str, str]:
     """This process's environment minus the live session's variables
     (`_SESSION_ENV`), marked as a capture child."""
@@ -803,19 +681,12 @@ def child_env() -> dict[str, str]:
     return env
 
 
-PROVIDERS = ("auto", "claude-cli", "anthropic", "openai")
+PROVIDERS = ("auto", "claude-cli", "anthropic")
 
 
-def resolve_model(
-    provider: str = "auto",
-    model: str | None = None,
-    *,
-    base_url: str | None = None,
-    api_key_env: str | None = None,
-) -> CaptureModel:
-    """`auto` takes the Anthropic API when a key is set, else Claude
-    Code's own login when `claude` is on PATH. `openai` is never chosen
-    automatically: it needs a server and a model named for it."""
+def resolve_model(provider: str = "auto", model: str | None = None) -> CaptureModel:
+    """`auto` takes the API when a key is set, else Claude Code's own
+    login when `claude` is on PATH."""
     if provider not in PROVIDERS:
         raise CaptureError(f"unknown provider {provider!r}; valid: {PROVIDERS}")
     if provider == "auto":
@@ -832,12 +703,6 @@ def resolve_model(
                 "Claude Code's `claude` command on PATH"
             )
     model = model or None
-    if provider == "openai":
-        return OpenAICompatibleModel(
-            model=model or "",
-            base_url=base_url or OpenAICompatibleModel.base_url,
-            api_key_env=api_key_env or OpenAICompatibleModel.api_key_env,
-        )
     if provider == "anthropic":
         return AnthropicApiModel(model=model or AnthropicApiModel.model)
     return ClaudeCliModel(model=model or ClaudeCliModel.model)
