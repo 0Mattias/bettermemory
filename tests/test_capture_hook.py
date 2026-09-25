@@ -484,11 +484,19 @@ def test_spawn_detaches_and_logs(store: Store, monkeypatch: pytest.MonkeyPatch) 
         "capture",
         "--pending",
     ]
-    assert seen["kwargs"]["start_new_session"] is True
+    # Its own process group, so the hook's exit does not take it along:
+    # a new session on POSIX, a detached new group on Windows.
+    if sys.platform == "win32":
+        flags = seen["kwargs"]["creationflags"]
+        assert flags & subprocess.DETACHED_PROCESS  # type: ignore[attr-defined,unused-ignore]
+        assert flags & subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined,unused-ignore]
+    else:
+        assert seen["kwargs"]["start_new_session"] is True
     assert seen["kwargs"]["stdin"] is subprocess.DEVNULL
     log = store.root / cap.CAPTURES_DIR / ch.LOG_FILENAME
     assert "capture --pending" in log.read_text()
-    assert log.stat().st_mode & 0o777 == 0o600
+    if sys.platform != "win32":
+        assert log.stat().st_mode & 0o777 == 0o600
 
 
 def test_the_log_keeps_its_newest_half(
