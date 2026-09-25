@@ -392,10 +392,21 @@ max_pending = 20
 enabled = false
 
 # Model backend: "auto" (the Messages API when ANTHROPIC_API_KEY is set,
-# else Claude Code's own login through `claude -p`), "claude-cli" or
-# "anthropic". An empty model means Haiku.
+# else Claude Code's own login through `claude -p`), "claude-cli",
+# "anthropic", or "openai": any server with OpenAI's chat completions
+# API (OpenAI, DeepSeek, OpenRouter, a local Ollama). An empty model
+# means Haiku for the first three; "openai" needs one named.
 provider = "auto"
 model = ""
+
+# For provider = "openai": the API root before /chat/completions, and
+# the NAME of the environment variable holding the key (never the key
+# itself). A local server needs no key. DeepSeek, for example:
+#   base_url = "https://api.deepseek.com"
+#   api_key_env = "DEEPSEEK_API_KEY"
+#   model = "deepseek-chat"
+base_url = ""
+api_key_env = ""
 
 # Capture an open session once this much uncaptured conversation has
 # built up (tokens, estimated at four characters each). The newest
@@ -687,7 +698,9 @@ class ProposalsConfig:
     max_pending: int = 20
 
 
-CAPTURE_PROVIDERS = ("auto", "claude-cli", "anthropic")
+# Kept equal to `capture.PROVIDERS` (a test holds them together); not
+# imported from there, since loading config must not load the pipeline.
+CAPTURE_PROVIDERS = ("auto", "claude-cli", "anthropic", "openai")
 
 
 @dataclass
@@ -696,7 +709,9 @@ class CaptureConfig:
     prose; `capture_hook` reads it.
 
     Default OFF. `provider` is one of `CAPTURE_PROVIDERS` and `model` an
-    id or alias, empty for the provider's default. `checkpoint_tokens`
+    id or alias, empty for the provider's default. `base_url` and
+    `api_key_env` (a variable's name, never a key) configure the
+    `openai` provider, empty for its defaults. `checkpoint_tokens`
     is the uncaptured backlog that triggers a capture of an open session,
     and `idle_minutes` how long a transcript must sit unchanged before a
     new session's start picks it up.
@@ -705,6 +720,8 @@ class CaptureConfig:
     enabled: bool = False
     provider: str = "auto"
     model: str = ""
+    base_url: str = ""
+    api_key_env: str = ""
     checkpoint_tokens: int = 40_000
     idle_minutes: int = 30
 
@@ -1424,15 +1441,22 @@ def _load_capture(raw: dict[str, object], config_path: Path | None) -> CaptureCo
                 "one of " + ", ".join(CAPTURE_PROVIDERS),
             )
         )
-    model = raw.get("model", "")
-    if not isinstance(model, str):
-        raise ValueError(
-            _malformed_config_msg("[capture] model", model, config_path, "a string")
-        )
+    strings: dict[str, str] = {}
+    for key in ("model", "base_url", "api_key_env"):
+        value = raw.get(key, "")
+        if not isinstance(value, str):
+            raise ValueError(
+                _malformed_config_msg(
+                    f"[capture] {key}", value, config_path, "a string"
+                )
+            )
+        strings[key] = value.strip()
     return CaptureConfig(
         enabled=_coerce_bool(raw.get("enabled"), False),
         provider=provider,
-        model=model.strip(),
+        model=strings["model"],
+        base_url=strings["base_url"],
+        api_key_env=strings["api_key_env"],
         checkpoint_tokens=max(
             _coerce_int(
                 raw.get("checkpoint_tokens"),

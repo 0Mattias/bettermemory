@@ -114,7 +114,12 @@ def test_capture_is_off_by_default_and_reads_its_section(tmp_path: Path) -> None
 
 @pytest.mark.parametrize(
     "line",
-    ['provider = "openai"', "model = 3", 'checkpoint_tokens = "lots"'],
+    [
+        'provider = "gpt"',
+        "model = 3",
+        "base_url = true",
+        'checkpoint_tokens = "lots"',
+    ],
 )
 def test_a_malformed_capture_key_names_itself(tmp_path: Path, line: str) -> None:
     path = tmp_path / "config.toml"
@@ -617,26 +622,35 @@ def test_the_provider_comes_from_config_unless_given(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config_file.write_text(
-        '[capture]\nprovider = "anthropic"\nmodel = "claude-sonnet-5"\n',
+        '[capture]\nprovider = "openai"\nmodel = "deepseek-chat"\n'
+        'base_url = "https://api.deepseek.com"\napi_key_env = "DEEPSEEK_API_KEY"\n',
         encoding="utf-8",
     )
     write_transcript(transcript, BEAGLE, cwd=workdir)
-    asked: list[tuple[str, str | None]] = []
+    asked: list[tuple[Any, ...]] = []
 
-    def resolve(provider: str, model: str | None) -> ScriptedModel:
-        asked.append((provider, model))
+    def resolve(provider: str, model: str | None, **kw: Any) -> ScriptedModel:
+        asked.append((provider, model, kw["base_url"], kw["api_key_env"]))
         return ScriptedModel([[]])
 
     monkeypatch.setattr(cap, "resolve_model", resolve)
     _cli(["capture", "--transcript", str(transcript)], memory_dir, monkeypatch)
     _cli(
-        ["capture", "--transcript", str(transcript), "--provider", "claude-cli"],
+        [
+            "capture",
+            "--transcript",
+            str(transcript),
+            "--provider",
+            "claude-cli",
+            "--model",
+            "haiku",
+        ],
         memory_dir,
         monkeypatch,
     )
     assert asked == [
-        ("anthropic", "claude-sonnet-5"),
-        ("claude-cli", "claude-sonnet-5"),
+        ("openai", "deepseek-chat", "https://api.deepseek.com", "DEEPSEEK_API_KEY"),
+        ("claude-cli", "haiku", "https://api.deepseek.com", "DEEPSEEK_API_KEY"),
     ]
 
 

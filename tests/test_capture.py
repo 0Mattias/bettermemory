@@ -9,6 +9,7 @@ with each reply, what the watermark and the event log say afterwards.
 from __future__ import annotations
 
 import dataclasses
+import io
 import json
 import os
 import shutil
@@ -822,6 +823,140 @@ def test_claude_cli_timeout_raises() -> None:
     model = cap.ClaudeCliModel(binary="/bin/claude", runner=runner)
     with pytest.raises(cap.CaptureModelError, match="did not complete"):
         model.complete(_messages())
+
+
+class FakeHTTP:
+    """Stands in for `urllib.request.urlopen`: records each request and
+    answers with the next scripted reply (a dict, or an HTTPError)."""
+
+    def __init__(self, *replies: Any) -> None:
+        self.replies = list(replies)
+        self.requests: list[Any] = []
+
+    def __call__(self, request: Any, timeout: float) -> Any:
+        self.requests.append(request)
+        reply = self.replies.pop(0)
+        if isinstance(reply, Exception):
+            raise reply
+        return io.BytesIO(json.dumps(reply).encode())
+
+    def body(self, n: int) -> dict[str, Any]:
+        return json.loads(self.requests[n].data)
+
+
+def _http_error(code: int, text: str) -> Any:
+    import email.message
+    import urllib.error
+
+    return urllib.error.HTTPError(
+        "https://x/chat/completions",
+        code,
+        "err",
+        email.message.Message(),
+        io.BytesIO(text.encode()),
+    )
+
+
+def _completion(content: str, **extra: Any) -> dict[str, Any]:
+    return {
+        "choices": [{"message": {"content": content}, "finish_reason": "stop"}],
+        **extra,
+    }
+
+
+def test_openai_compatible_posts_chat_completions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+    http = FakeHTTP(_completion('{"memories": []}', usage={"cost": 0.002}))
+    model = cap.OpenAICompatibleModel(
+        model="deepseek-chat",
+        base_url="https://api.deepseek.com/",
+        api_key_env="DEEPSEEK_API_KEY",
+        opener=http,
+    )
+    messages = _messages()
+    reply = model.complete(messages)
+    assert reply.text == '{"memories": []}' and reply.cost_usd == 0.002
+    request = http.requests[0]
+    assert request.full_url == "https://api.deepseek.com/chat/completions"
+    assert request.get_header("Authorization") == "Bearer sk-test"
+    body = http.body(0)
+    assert body["model"] == "deepseek-chat"
+    assert body["messages"] == messages
+    assert body["response_format"] == {"type": "json_object"}
+
+
+def test_openai_compatible_sends_no_key_to_a_local_server(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    http = FakeHTTP(_completion("{}"))
+    cap.OpenAICompatibleModel(
+        model="llama3.1", base_url="http://localhost:11434/v1", opener=http
+    ).complete(_messages())
+    assert http.requests[0].get_header("Authorization") is None
+
+
+def test_openai_compatible_retries_once_without_json_mode() -> None:
+    http = FakeHTTP(
+        _http_error(400, "response_format is not supported"), _completion("{}")
+    )
+    model = cap.OpenAICompatibleModel(model="m", base_url="http://h/v1", opener=http)
+    assert model.complete(_messages()).text == "{}"
+    assert "response_format" in http.body(0)
+    assert "response_format" not in http.body(1)
+
+
+@pytest.mark.parametrize(
+    ("reply", "match"),
+    [
+        (_http_error(401, "invalid api key"), "HTTP 401: invalid api key"),
+        (_http_error(400, "model not found"), "HTTP 400: model not found"),
+        (
+            {"choices": [{"message": {"content": "{"}, "finish_reason": "length"}]},
+            "truncated",
+        ),
+        ({"choices": []}, "without choices"),
+        (OSError("connection refused"), "could not be reached"),
+    ],
+)
+def test_openai_compatible_failures_raise(reply: Any, match: str) -> None:
+    model = cap.OpenAICompatibleModel(
+        model="m", base_url="http://h/v1", opener=FakeHTTP(reply)
+    )
+    with pytest.raises(cap.CaptureModelError, match=match):
+        model.complete(_messages())
+
+
+def test_openai_compatible_needs_a_model() -> None:
+    with pytest.raises(cap.CaptureModelError, match="needs a model"):
+        cap.OpenAICompatibleModel(opener=FakeHTTP()).complete(_messages())
+
+
+def test_resolve_model_builds_the_openai_provider() -> None:
+    model = cap.resolve_model(
+        "openai",
+        "deepseek-chat",
+        base_url="https://api.deepseek.com",
+        api_key_env="DEEPSEEK_API_KEY",
+    )
+    assert isinstance(model, cap.OpenAICompatibleModel)
+    assert (model.model, model.base_url, model.api_key_env) == (
+        "deepseek-chat",
+        "https://api.deepseek.com",
+        "DEEPSEEK_API_KEY",
+    )
+    fallback = cap.resolve_model("openai", "gpt-5-mini")
+    assert isinstance(fallback, cap.OpenAICompatibleModel)
+    assert fallback.base_url == "https://api.openai.com/v1"
+    assert fallback.api_key_env == "OPENAI_API_KEY"
+
+
+def test_config_and_pipeline_agree_on_providers() -> None:
+    from bettermemory.config import CAPTURE_PROVIDERS
+
+    assert CAPTURE_PROVIDERS == cap.PROVIDERS
 
 
 def test_resolve_model_prefers_an_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
