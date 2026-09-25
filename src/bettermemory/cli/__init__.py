@@ -47,6 +47,7 @@ from . import (
     rename_scope,
     rollback,
     serve,
+    session_end_cmd,
     session_start_cmd,
     sync,
     tombstones,
@@ -125,6 +126,7 @@ def _build_parser() -> tuple[
         "reindex": reindex.add_subparser(sub),
         "audit-turn": audit_turn_cmd.add_subparser(sub),
         "session-start": session_start_cmd.add_subparser(sub),
+        "session-end": session_end_cmd.add_subparser(sub),
         "prompt-recall": prompt_recall_cmd.add_subparser(sub),
         "consolidate": consolidate.add_subparser(sub),
         "ingest": ingest.add_subparser(sub),
@@ -190,6 +192,9 @@ def main() -> None:
         return
     if cmd == "session-start":
         session_start_cmd.run(args)
+        return
+    if cmd == "session-end":
+        session_end_cmd.run(args)
         return
     if cmd == "prompt-recall":
         prompt_recall_cmd.run(args)

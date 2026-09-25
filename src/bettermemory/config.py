@@ -376,6 +376,36 @@ auto_propose = false
 # stops until you accept or dismiss some — bounds growth and avoids
 # nagging.
 max_pending = 20
+
+[capture]
+# Session capture from the Claude Code hooks. OFF by default. When
+# enabled, a model distils dated memories from each session's transcript
+# and writes them through the same gates as memory_write, tagged
+# `session-capture` (`bettermemory capture` has the details). It runs in
+# a background process, never in the hook itself, at three moments: when
+# a session ends; when a session that is still open has piled up about
+# `checkpoint_tokens` of conversation nobody has captured yet; and when a
+# new session starts, for sessions that went quiet without ending
+# cleanly (a crash, a closed laptop). Every capture is undoable with
+# `bettermemory rollback --by-actor bettermemory-capture`. While it is
+# on, [proposals] auto_propose stands down: both read the same messages.
+enabled = false
+
+# Model backend: "auto" (the Messages API when ANTHROPIC_API_KEY is set,
+# else Claude Code's own login through `claude -p`), "claude-cli" or
+# "anthropic". An empty model means Haiku.
+provider = "auto"
+model = ""
+
+# Capture an open session once this much uncaptured conversation has
+# built up (tokens, estimated at four characters each). The newest
+# stretch is held back for the next capture, so each model call sees a
+# whole segment.
+checkpoint_tokens = 40000
+
+# A session whose transcript has not changed for this long, and still
+# has something uncaptured, is picked up when the next session starts.
+idle_minutes = 30
 """
 
 
@@ -657,6 +687,28 @@ class ProposalsConfig:
     max_pending: int = 20
 
 
+CAPTURE_PROVIDERS = ("auto", "claude-cli", "anthropic")
+
+
+@dataclass
+class CaptureConfig:
+    """Session capture from the Claude Code hooks. See DEFAULT_CONFIG for
+    prose; `capture_hook` reads it.
+
+    Default OFF. `provider` is one of `CAPTURE_PROVIDERS` and `model` an
+    id or alias, empty for the provider's default. `checkpoint_tokens`
+    is the uncaptured backlog that triggers a capture of an open session,
+    and `idle_minutes` how long a transcript must sit unchanged before a
+    new session's start picks it up.
+    """
+
+    enabled: bool = False
+    provider: str = "auto"
+    model: str = ""
+    checkpoint_tokens: int = 40_000
+    idle_minutes: int = 30
+
+
 @dataclass
 class Config:
     storage: StorageConfig = field(default_factory=StorageConfig)
@@ -665,6 +717,7 @@ class Config:
     telemetry: TelemetryConfig = field(default_factory=TelemetryConfig)
     consolidate: ConsolidateConfig = field(default_factory=ConsolidateConfig)
     proposals: ProposalsConfig = field(default_factory=ProposalsConfig)
+    capture: CaptureConfig = field(default_factory=CaptureConfig)
     config_path: Path | None = None
 
     # ---- methods ----------------------------------------------------------
@@ -1192,6 +1245,7 @@ def load_config(path: Path | None = None) -> Config:
     telemetry_raw = data.get("telemetry", {})
     consolidate_raw = data.get("consolidate", {})
     proposals_raw = data.get("proposals", {})
+    capture_raw = data.get("capture", {})
 
     # T9: back-compat for the 3.1.x -> 3.2.0 TOML key rename. Mutates
     # `behavior_raw` so the downstream `behavior_raw.get(...)` lookups
@@ -1354,5 +1408,47 @@ def load_config(path: Path | None = None) -> Config:
                 config_path=config_path,
             ),
         ),
+        capture=_load_capture(capture_raw, config_path),
         config_path=config_path,
+    )
+
+
+def _load_capture(raw: dict[str, object], config_path: Path | None) -> CaptureConfig:
+    provider = raw.get("provider", "auto")
+    if provider not in CAPTURE_PROVIDERS:
+        raise ValueError(
+            _malformed_config_msg(
+                "[capture] provider",
+                provider,
+                config_path,
+                "one of " + ", ".join(CAPTURE_PROVIDERS),
+            )
+        )
+    model = raw.get("model", "")
+    if not isinstance(model, str):
+        raise ValueError(
+            _malformed_config_msg("[capture] model", model, config_path, "a string")
+        )
+    return CaptureConfig(
+        enabled=_coerce_bool(raw.get("enabled"), False),
+        provider=provider,
+        model=model.strip(),
+        checkpoint_tokens=max(
+            _coerce_int(
+                raw.get("checkpoint_tokens"),
+                40_000,
+                label="[capture] checkpoint_tokens",
+                config_path=config_path,
+            ),
+            1,
+        ),
+        idle_minutes=max(
+            _coerce_int(
+                raw.get("idle_minutes"),
+                30,
+                label="[capture] idle_minutes",
+                config_path=config_path,
+            ),
+            0,
+        ),
     )

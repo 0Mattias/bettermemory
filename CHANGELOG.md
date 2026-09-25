@@ -21,8 +21,30 @@ spells out exactly what's stable.
   watermark that makes a re-run write nothing twice. `--dry-run` shows
   what would be saved and writes nothing. The model is `claude -p` on
   Claude Code's own login, or the Messages API when `ANTHROPIC_API_KEY`
-  is set. Nothing calls it automatically yet; the session-end hook is
-  the next step. `docs/api.md` has the full contract.
+  is set. `docs/api.md` has the full contract.
+- **Session capture from the hooks, behind `[capture] enabled` (default
+  off).** A session is captured at three moments, each in a detached
+  background process so no hook waits on a model. When the session
+  ends: the new `bettermemory session-end` command, bound to the
+  plugin's new SessionEnd hook. While it is open: the Stop hook starts a
+  checkpoint capture once the uncaptured conversation passes
+  `[capture] checkpoint_tokens` (40,000), holding the newest segment
+  back, so a session left open for days is captured as it goes rather
+  than never. After it went quiet without ending (a crash, a killed
+  process, a closed laptop): the SessionStart hook starts
+  `bettermemory capture --pending` for registered sessions idle past
+  `[capture] idle_minutes` (30). Only sessions the Stop hook registered
+  are candidates, so turning capture on never reaches back into older
+  sessions. Background output goes to `captures/capture.log`.
+- `bettermemory capture --pending` and `--checkpoint`, what the hooks
+  run; `--provider` and `--model` now default to `[capture] provider`
+  and `[capture] model`.
+- A failed model call is recorded on the session's watermark
+  (`failures`, `last_failure_at`, `last_error`), and the hooks back off
+  (an hour, doubling to a day, giving up after six in a row), so a
+  broken login or an exhausted budget is retried once per backoff, not
+  on every turn. The watermark also records `settled_size`, the
+  transcript's size when a capture last read it to the end.
 - Captured memories carry scope `session-capture`, source `inferred`,
   and an `actor` whose client is `bettermemory-capture`, so
   `bettermemory rollback --by-actor bettermemory-capture` undoes a run
@@ -43,6 +65,14 @@ spells out exactly what's stable.
 
 ### Changed
 
+- While `[capture] enabled` is on, `[proposals] auto_propose` stands
+  down: both read the same user messages, and capture writes what it
+  keeps through the gates instead of queueing it.
+- The `claude -p` child a capture runs gets an environment without the
+  live session's Claude Code variables (`CLAUDECODE`, the session and
+  host ids, the messaging socket and token), so it never takes itself
+  for part of the session a hook started it from. Login and provider
+  variables are kept.
 - `events.AttributedRecorder` and `cli._common.cli_recorder` take a
   `triggered_from` that is stamped on every event, like `attribution`.
   `session_capture` joins `hook._OUT_OF_PROCESS_TRIGGERS` and

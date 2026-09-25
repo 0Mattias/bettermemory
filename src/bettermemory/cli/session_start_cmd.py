@@ -206,6 +206,7 @@ def run(args: argparse.Namespace) -> None:
     # `args` is unused: the subcommand takes no flags. It stays in the
     # signature because `cli/__init__.py`'s dispatch calls every `run`
     # the same way.
+    _start_capture_sweep()
     try:
         block = _build_context_block()
     except Exception as exc:  # noqa: BLE001
@@ -235,6 +236,22 @@ def run(args: argparse.Namespace) -> None:
             _blackhole_stdout()
             raise SystemExit(0) from None
     raise SystemExit(0)
+
+
+def _start_capture_sweep() -> None:
+    """Session capture's sweep (`capture_hook.on_session_start`): start a
+    background capture of the sessions that went quiet uncaptured. It
+    prints nothing, since stdout here is the model's context, and it
+    records nothing, like the rest of this command; the capture it starts
+    records its own events. Guarded on its own so a capture problem never
+    costs the context block."""
+    try:
+        from ..capture_hook import on_session_start
+        from ..config import load_config
+
+        on_session_start(load_config())
+    except Exception as exc:  # noqa: BLE001
+        _note_degraded(f"capture sweep skipped: {exc.__class__.__name__}: {exc}")
 
 
 def _note_degraded(detail: str) -> None:

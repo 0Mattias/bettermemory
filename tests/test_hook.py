@@ -1462,6 +1462,35 @@ def test_run_audit_proposes_writes_when_opted_in(tmp_path: Path) -> None:
     assert "runnable code" in pending[0].body
 
 
+def test_run_audit_proposes_nothing_while_capture_is_on(tmp_path: Path) -> None:
+    """Session capture reads the same user messages and writes what it
+    keeps through the gates, so the write-reflex queue stands down while
+    `[capture] enabled` is on rather than proposing the same statements
+    a second time."""
+    from bettermemory.config import (
+        CaptureConfig,
+        Config,
+        ProposalsConfig,
+        StorageConfig,
+    )
+    from bettermemory.hook import run_audit
+    from bettermemory.proposals import ProposalQueue
+
+    mem_dir = tmp_path / "mem"
+    cfg = Config(
+        storage=StorageConfig(directory=str(mem_dir)),
+        proposals=ProposalsConfig(auto_propose=True),
+        capture=CaptureConfig(enabled=True),
+    )
+    run_audit(
+        user_message="I prefer hands-on tutorials with runnable code, not screenshots.",
+        assistant_response="sure",
+        session_id="sess-capture",
+        config=cfg,
+    )
+    assert ProposalQueue(mem_dir).load() == []
+
+
 def test_run_audit_no_proposals_when_disabled(tmp_path: Path) -> None:
     """Default config (auto_propose off) captures nothing."""
     from bettermemory.config import Config, StorageConfig

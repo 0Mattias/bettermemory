@@ -610,11 +610,16 @@ def test_a_failed_model_call_leaves_the_segment_for_the_next_run(
     assert report.segments[0].status == "failed"
     assert report.segments[0].error == "rate limited"
     mark = cap.capture_dir(store.root, SESSION) / cap.WATERMARK_FILENAME
-    assert not mark.exists()
+    failed = json.loads(mark.read_text())
+    assert failed["offset"] == 0 and failed["segments"] == []
+    assert failed["failures"] == 1 and failed["last_error"] == "rate limited"
+    assert failed["settled_size"] is None
 
     retry = run(store, config, transcript, model)
     assert retry.segments[0].status == "captured"
-    assert json.loads(mark.read_text())["offset"] == transcript.stat().st_size
+    done = json.loads(mark.read_text())
+    assert done["offset"] == transcript.stat().st_size
+    assert done["failures"] == 0 and done["last_error"] is None
 
 
 def test_a_fence_in_the_transcript_refuses_the_segment_for_good(
@@ -794,7 +799,7 @@ def test_claude_cli_reads_structured_output() -> None:
             json.dumps(
                 {"subtype": "success", "is_error": True, "result": "OAuth expired"}
             ),
-            "OAuth expired",
+            r"^claude -p failed: OAuth expired$",
         ),
         (
             json.dumps({"subtype": "error_max_budget_usd", "is_error": False}),

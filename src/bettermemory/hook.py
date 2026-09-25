@@ -735,8 +735,10 @@ def run_audit(
     # who haven't opted in pay nothing per turn; best-effort so it can
     # never block the turn end. No telemetry gate — the proposal queue is
     # its own file and proposals are inert until the model reviews them;
-    # the recorded event is best-effort observability only.
-    if cfg.proposals.auto_propose:
+    # the recorded event is best-effort observability only. Stands down
+    # while session capture is on: capture reads the same messages, and
+    # what it keeps it writes through the gates rather than queueing.
+    if cfg.proposals.auto_propose and not cfg.capture.enabled:
         try:
             from .proposals import propose_from_exchange
 
@@ -1346,6 +1348,20 @@ def _pending_retrievals(
     return retrieved - used
 
 
+def _capture_checkpoint(session_id: object, transcript_path: Path) -> None:
+    """Session capture's turn-end half (`capture_hook.on_stop`): register
+    the session and start a checkpoint capture when one is due. Riding
+    this hook rather than a Stop hook of its own saves a process start on
+    every turn. Isolated, so a capture problem can never cost the audit.
+    Imported lazily: `capture` imports this module."""
+    try:
+        from .capture_hook import on_stop
+
+        on_stop(load_config(None), session_id, transcript_path)
+    except Exception as exc:  # noqa: BLE001 — hook must never block turn end
+        print(f"bettermemory capture: {exc}", file=sys.stderr)
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point wired into `bettermemory audit-turn`.
 
@@ -1429,6 +1445,8 @@ def main(argv: list[str] | None = None) -> int:
         transcript_path = Path(str(transcript_raw)).expanduser().resolve()
         if not transcript_path.is_file():
             return 0
+        if not args.dry_run:
+            _capture_checkpoint(session_id, transcript_path)
         user, assistant, model = _extract_last_exchange(transcript_path)
         if not user:
             return 0

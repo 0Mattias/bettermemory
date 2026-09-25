@@ -6,7 +6,7 @@ layer between an agent and its own past: every retrieved fact carries
 a staleness verdict, every use an attribution, and whether it helped
 is measured rather than assumed.
 
-The plugin bundles five things:
+The plugin bundles six things:
 
 1. **MCP server registration** ([`.mcp.json`](.mcp.json)) — spawns
    `uvx bettermemory` as a stdio MCP server. 18 of the 27 tools
@@ -46,6 +46,15 @@ The plugin bundles five things:
    Claude Code injects into context, and records a `prompt_recall`
    event the audit counts as retrieval. `[behavior]
    prompt_recall = false` disables it. Always exits 0.
+6. **SessionEnd hook** (same file) — runs `uvx bettermemory session-end`
+   when a session ends. With `[capture] enabled = true` (default off)
+   it starts a background capture of the session's transcript: a model
+   distils dated memories from it and writes them through the same
+   gates as `memory_write`, tagged `session-capture`. Two more capture
+   moments ride the hooks above: the Stop hook starts a checkpoint
+   capture of a long open session, and the SessionStart hook starts one
+   for sessions that went quiet without ending (a crash, a closed
+   laptop). With capture off it does nothing. Always exits 0.
 
 ## Install
 

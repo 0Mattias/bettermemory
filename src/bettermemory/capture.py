@@ -72,10 +72,11 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -121,6 +122,31 @@ CAPTURE_CLIENT = "bettermemory-capture"
 # bettermemory process started inside it (a hook, a nested capture)
 # knows it is running on behalf of a capture and does nothing.
 CHILD_ENV = "BETTERMEMORY_CAPTURE_CHILD"
+# Variables Claude Code sets for the processes of one live session: its
+# ids, its entrypoint, the socket and token its host talks to it on. A
+# capture started from a hook inherits them, and a `claude -p` child that
+# saw them would take itself for part of that session (or refuse to run
+# nested in it). They are removed from the child's environment; the ones
+# that choose a login or a provider (`CLAUDE_CODE_OAUTH_TOKEN`,
+# `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CONFIG_DIR`, ...) are kept.
+_SESSION_ENV = frozenset(
+    {
+        "CLAUDECODE",
+        "CLAUDE_PID",
+        "CLAUDE_EFFORT",
+        "CLAUDE_AGENT_SDK_VERSION",
+        "CLAUDE_CODE_ENTRYPOINT",
+        "CLAUDE_CODE_EXECPATH",
+        "CLAUDE_CODE_SESSION_ID",
+        "CLAUDE_CODE_HOST_SESSION_ID",
+        "CLAUDE_CODE_CHILD_SESSION",
+        "CLAUDE_CODE_SESSION_ATTENDED",
+        "CLAUDE_CODE_SSE_PORT",
+        "CLAUDE_CODE_MESSAGING_SOCKET",
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "CLAUDE_CODE_SDK_HAS_HOST_AUTH_REFRESH",
+    }
+)
 
 # About 12k tokens of rendered conversation per model call. A segment
 # closes at a user-turn boundary before it would pass this.
@@ -171,6 +197,11 @@ class CaptureError(RuntimeError):
     """A capture that cannot run at all: a bad session id, an unreadable
     transcript, a transcript that belongs to another session, or another
     capture of the same session holding the lock."""
+
+
+class CaptureBusy(CaptureError):
+    """Another capture of the same session holds its lock, and this one
+    was asked not to wait (`capture_transcript(wait=False)`)."""
 
 
 class CaptureModelError(RuntimeError):
@@ -565,7 +596,7 @@ class ClaudeCliModel:
                 encoding="utf-8",
                 timeout=self.timeout_s,
                 cwd=tempfile.gettempdir(),
-                env={**os.environ, CHILD_ENV: "1"},
+                env=child_env(),
                 check=False,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
@@ -581,8 +612,11 @@ class ClaudeCliModel:
             raise CaptureModelError("claude -p returned JSON that is not an object")
         subtype = result.get("subtype")
         if result.get("is_error") or subtype != "success":
+            # A refused login comes back as subtype "success" with
+            # is_error set; naming that subtype would read as nonsense.
             message = str(result.get("result") or "").strip()[:300]
-            raise CaptureModelError(f"claude -p failed ({subtype}): {message}")
+            kind = f" ({subtype})" if subtype != "success" else ""
+            raise CaptureModelError(f"claude -p failed{kind}: {message}")
         cost = result.get("total_cost_usd")
         structured = result.get("structured_output")
         text = (
@@ -639,6 +673,14 @@ class AnthropicApiModel:
         return ModelReply(text=text)
 
 
+def child_env() -> dict[str, str]:
+    """This process's environment minus the live session's variables
+    (`_SESSION_ENV`), marked as a capture child."""
+    env = {k: v for k, v in os.environ.items() if k not in _SESSION_ENV}
+    env[CHILD_ENV] = "1"
+    return env
+
+
 PROVIDERS = ("auto", "claude-cli", "anthropic")
 
 
@@ -660,6 +702,7 @@ def resolve_model(provider: str = "auto", model: str | None = None) -> CaptureMo
                 "no model to capture with: set ANTHROPIC_API_KEY or put "
                 "Claude Code's `claude` command on PATH"
             )
+    model = model or None
     if provider == "anthropic":
         return AnthropicApiModel(model=model or AnthropicApiModel.model)
     return ClaudeCliModel(model=model or ClaudeCliModel.model)
@@ -672,15 +715,38 @@ def resolve_model(provider: str = "auto", model: str | None = None) -> CaptureMo
 
 @dataclass
 class Watermark:
-    """Per-session capture state, `captures/<session>/watermark.json`."""
+    """Per-session capture state, `captures/<session>/watermark.json`.
+
+    `settled_size` is the transcript's size when a capture last read it
+    to the end, holding nothing back: until the file grows past it there
+    is nothing left for a sweep to do. `failures` counts model calls
+    that failed in a row, `last_failure_at` and `last_error` the latest;
+    the hooks wait out a backoff after each (`retry_after`) so a broken
+    login or an exhausted budget is not retried on every turn. A capture
+    that gets through a segment resets all three."""
 
     session_id: str
     transcript: str | None = None
     offset: int = 0
     segments: list[dict[str, Any]] = field(default_factory=list)
+    settled_size: int | None = None
+    failures: int = 0
+    last_failure_at: str | None = None
+    last_error: str | None = None
 
     def seen(self, sha: str) -> bool:
         return any(s.get("sha") == sha for s in self.segments)
+
+    def retry_after(self) -> datetime | None:
+        """When a hook may next try this session after failures: one hour
+        after the first, doubling to a day. None when nothing failed."""
+        if not self.failures or self.last_failure_at is None:
+            return None
+        failed = parse_event_ts(self.last_failure_at)
+        if failed is None:
+            return None
+        hours = min(2 ** (self.failures - 1), 24)
+        return failed + timedelta(hours=hours)
 
     def to_json(self) -> bytes:
         return (
@@ -691,6 +757,10 @@ class Watermark:
                     "transcript": self.transcript,
                     "offset": self.offset,
                     "segments": self.segments,
+                    "settled_size": self.settled_size,
+                    "failures": self.failures,
+                    "last_failure_at": self.last_failure_at,
+                    "last_error": self.last_error,
                 },
                 indent=2,
             )
@@ -713,6 +783,8 @@ class Watermark:
             return cls(session_id=session_id)
         offset = raw.get("offset")
         segments = raw.get("segments")
+        settled = raw.get("settled_size")
+        failures = raw.get("failures")
         return cls(
             session_id=session_id,
             transcript=raw.get("transcript")
@@ -722,11 +794,74 @@ class Watermark:
             segments=[s for s in segments if isinstance(s, dict)]
             if isinstance(segments, list)
             else [],
+            settled_size=settled if isinstance(settled, int) and settled >= 0 else None,
+            failures=failures if isinstance(failures, int) and failures > 0 else 0,
+            last_failure_at=_opt_str(raw.get("last_failure_at")),
+            last_error=_opt_str(raw.get("last_error")),
         )
+
+
+def _opt_str(value: object) -> str | None:
+    return value if isinstance(value, str) else None
 
 
 def capture_dir(root: Path, session_id: str) -> Path:
     return root / CAPTURES_DIR / session_id
+
+
+def watermark_path(root: Path, session_id: str) -> Path:
+    return capture_dir(root, session_id) / WATERMARK_FILENAME
+
+
+@contextlib.contextmanager
+def _session_lock_nowait(mark_path: Path) -> Iterator[None]:
+    """`flock_excl`'s lock on the watermark (the same sidecar file), taken
+    without waiting: raises `CaptureBusy` while another capture holds it.
+    One attempt on each platform, where `flock_excl` would block (POSIX)
+    or retry for up to 30 s (Windows): a hook asking whether a session is
+    busy must hear back at once."""
+    ensure_owner_only_dir(mark_path.parent, parents=True)
+    lock_path = mark_path.with_suffix(mark_path.suffix + ".lock")
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    busy = CaptureBusy(f"another capture of session {mark_path.parent.name} is running")
+    try:
+        if sys.platform == "win32":  # pragma: no cover - non-unix in CI
+            import msvcrt
+
+            try:
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined,unused-ignore]
+            except OSError as exc:
+                raise busy from exc
+            try:
+                yield
+            finally:
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined,unused-ignore]
+            return
+        import fcntl
+
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise busy from exc
+        try:
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
+def session_busy(root: Path, session_id: str) -> bool:
+    """Whether a capture of `session_id` is running right now."""
+    mark_path = watermark_path(root, session_id)
+    if not mark_path.parent.is_dir():
+        return False
+    try:
+        with _session_lock_nowait(mark_path):
+            return False
+    except CaptureBusy:
+        return True
 
 
 # ---------------------------------------------------------------------------
@@ -1089,6 +1224,8 @@ def capture_transcript(
     session_id: str | None = None,
     dry_run: bool = False,
     max_segments: int = DEFAULT_MAX_SEGMENTS,
+    hold_tail: bool = False,
+    wait: bool = True,
 ) -> CaptureReport:
     """Capture what `transcript` holds past this session's watermark.
 
@@ -1100,6 +1237,13 @@ def capture_transcript(
     A dry run calls the model and runs every gate against the live store,
     so it shows what a real run would write; it writes nothing, bumps no
     corroboration, and leaves the watermark and the segment files alone.
+
+    `hold_tail` leaves the newest segment for a later run: a checkpoint
+    of a session still in progress captures the whole segments behind
+    it, and the conversation still going on joins the next one. `wait`
+    False raises `CaptureBusy` instead of waiting when another capture
+    of the session is running, which is what a hook wants: the run in
+    progress will get to the same lines.
     """
     transcript = transcript.expanduser().resolve()
     _check_regular_file(transcript)
@@ -1119,7 +1263,13 @@ def capture_transcript(
     mark_path = directory / WATERMARK_FILENAME
     if not dry_run:
         ensure_owner_only_dir(directory, parents=True)
-    lock = contextlib.nullcontext() if dry_run else flock_excl(mark_path)
+    lock: contextlib.AbstractContextManager[None] = (
+        contextlib.nullcontext()
+        if dry_run
+        else flock_excl(mark_path)
+        if wait
+        else _session_lock_nowait(mark_path)
+    )
     try:
         with lock:
             return _run(
@@ -1133,6 +1283,7 @@ def capture_transcript(
                 mark_path=mark_path,
                 dry_run=dry_run,
                 max_segments=max_segments,
+                hold_tail=hold_tail,
             )
     except TimeoutError as exc:
         raise CaptureError(
@@ -1152,10 +1303,14 @@ def _run(
     mark_path: Path,
     dry_run: bool,
     max_segments: int,
+    hold_tail: bool,
 ) -> CaptureReport:
     mark = Watermark.load(mark_path, session)
+    size = os.stat(transcript).st_size
     read = read_transcript(transcript, offset=mark.offset)
     segments = build_segments(read, max_chars=SEGMENT_MAX_CHARS)
+    if hold_tail:
+        segments = segments[:-1]
     report = CaptureReport(
         session_id=session,
         transcript=str(transcript),
@@ -1221,7 +1376,13 @@ def _run(
             seg_report.status = "failed"
             seg_report.error = str(exc)
             report.segments.append(seg_report)
+            if not dry_run:
+                mark.failures += 1
+                mark.last_failure_at = utcnow().isoformat()
+                mark.last_error = str(exc)[:500]
+                atomic_write_bytes(mark_path, mark.to_json(), mode_before_rename=0o600)
             break
+        mark.failures, mark.last_failure_at, mark.last_error = 0, None, None
         seg_report.cost_usd = reply.cost_usd
         for item in sc.parse_capture(reply.text, segment.turns):
             seg_report.memories.append(writer.write(item, segment))
@@ -1236,6 +1397,17 @@ def _run(
         report.segments.append(seg_report)
         _advance(mark, segment, seg_report, dry_run, mark_path, transcript)
         report.end_offset = segment.end_offset
+
+    finished = not hold_tail and not report.remaining_segments
+    if finished and not any(s.status == "failed" for s in report.segments):
+        # Read to the end with nothing held back: a sweep has nothing to
+        # do here until the transcript grows. Recorded even when no
+        # segment came of it (a tail of tool calls only), or the sweep
+        # would start a capture for it at every session start.
+        if not dry_run and mark.settled_size != size:
+            mark.settled_size = size
+            if mark_path.exists() or report.segments:
+                atomic_write_bytes(mark_path, mark.to_json(), mode_before_rename=0o600)
 
     if not dry_run and report.segments:
         counts = report.counts()
