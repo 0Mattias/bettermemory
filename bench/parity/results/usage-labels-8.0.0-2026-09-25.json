@@ -1,0 +1,86 @@
+{
+ "kind": "rank-parity/usage-labels",
+ "provenance": {
+  "bettermemory_version": "8.0.0",
+  "commit": "4481aea",
+  "tree_dirty": false,
+  "date": "2026-09-25",
+  "machine": {
+   "os": "Darwin 25.6.0",
+   "machine": "arm64",
+   "python": "3.11.15"
+  }
+ },
+ "store": {
+  "root": "/Users/mattias/.cache/bettermemory-v9/live-copy",
+  "active": 662
+ },
+ "pinned_now": "2026-09-25T00:00:00+00:00",
+ "label_rule": "positive: a served hit the model then opened with memory_show or applied explicitly with a claim excerpt; negative: a served hit marked ignored or contradicted; a hit that is both counts as negative; only active memories count",
+ "searches_with_a_served_result": 612,
+ "labelled_searches": 366,
+ "positives": 617,
+ "positives_by_kind": {
+  "opened": 593,
+  "excerpt": 24
+ },
+ "negatives": 249,
+ "arms": {
+  "default": {
+   "endorsement_boost": false,
+   "outcome_demotion": false,
+   "positives_found": 435,
+   "positives_missing": 182,
+   "positives_at_top1": 101,
+   "positives_in_top3": 246,
+   "positives_mrr": 0.4525,
+   "negatives_found": 93,
+   "negatives_missing": 156,
+   "negatives_at_top1": 8
+  },
+  "endorsement": {
+   "endorsement_boost": true,
+   "outcome_demotion": false,
+   "positives_found": 434,
+   "positives_missing": 183,
+   "positives_at_top1": 102,
+   "positives_in_top3": 246,
+   "positives_mrr": 0.4553,
+   "negatives_found": 93,
+   "negatives_missing": 156,
+   "negatives_at_top1": 8
+  },
+  "demotion": {
+   "endorsement_boost": false,
+   "outcome_demotion": true,
+   "positives_found": 434,
+   "positives_missing": 183,
+   "positives_at_top1": 99,
+   "positives_in_top3": 245,
+   "positives_mrr": 0.4496,
+   "negatives_found": 86,
+   "negatives_missing": 163,
+   "negatives_at_top1": 6
+  },
+  "both": {
+   "endorsement_boost": true,
+   "outcome_demotion": true,
+   "positives_found": 432,
+   "positives_missing": 185,
+   "positives_at_top1": 99,
+   "positives_in_top3": 245,
+   "positives_mrr": 0.4514,
+   "negatives_found": 87,
+   "negatives_missing": 162,
+   "negatives_at_top1": 6
+  }
+ },
+ "pairwise_both_vs_default": {
+  "positives_tie": 499,
+  "negatives_tie": 214,
+  "positives_both_higher": 53,
+  "positives_default_higher": 65,
+  "negatives_default_lower": 13,
+  "negatives_both_lower": 22
+ }
+}
