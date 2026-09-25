@@ -30,7 +30,7 @@ sweeps up the sessions that came before it.
 
 FAILURE. A model call that fails is retried by the next capture of the
 session, but the hooks wait out a backoff first (`Watermark.retry_after`:
-an hour, doubling to a day), and after `MAX_FAILURES` in a row they stop
+an hour, doubling after each failure), and after `MAX_FAILURES` in a row they stop
 trying. A broken login or an exhausted budget costs one call per backoff
 rather than one per turn. `bettermemory capture` run by hand ignores the
 backoff, and a success clears it.
@@ -55,6 +55,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ._fsutil import ensure_owner_only_dir
+from .config import ENV_DIR_OVERRIDE
 from .capture import (
     _SESSION_ID_RE,
     CAPTURES_DIR,
@@ -148,10 +149,12 @@ def checkpoint_due(
     `threshold_chars` and holds more than one segment (a checkpoint
     holds the newest back, so one segment alone would capture nothing).
 
-    Most turns answer this from two `stat`s: rendered text is shorter
-    than the JSON lines it comes from, so while the transcript has grown
-    by less than the threshold since the watermark, nothing is due and
-    nothing is parsed."""
+    Rendered text is shorter than the JSON lines it comes from, so while
+    the transcript has grown by less than the threshold since the
+    watermark, nothing is due and nothing is parsed. Past that, each
+    turn parses the uncaptured part: raw transcripts run hundreds to
+    thousands of times their rendered size (tool results), measured at
+    tens of milliseconds on the largest local transcripts."""
     mark = Watermark.load(watermark_path(root, session_id), session_id)
     if _gave_up_or_waiting(mark, now or utcnow()):
         return False
@@ -245,6 +248,10 @@ def spawn_capture(root: Path, args: Sequence[str]) -> None:
     directory, and a checkout it started in could be deleted under it.
     """
     log_path = root / CAPTURES_DIR / LOG_FILENAME
+    # The store this hook resolved, handed down explicitly: the child runs
+    # from the temp directory, where a project store (`./.claude-memory`)
+    # found through the session's working directory would not be found.
+    env = {**os.environ, ENV_DIR_OVERRIDE: str(root)}
     ensure_owner_only_dir(log_path.parent, parents=True)
     _trim_log(log_path)
     fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
@@ -260,6 +267,7 @@ def spawn_capture(root: Path, args: Sequence[str]) -> None:
                 stderr=fd,
                 cwd=tempfile.gettempdir(),
                 close_fds=True,
+                env=env,
                 creationflags=subprocess.DETACHED_PROCESS
                 | subprocess.CREATE_NEW_PROCESS_GROUP,
             )
@@ -271,6 +279,7 @@ def spawn_capture(root: Path, args: Sequence[str]) -> None:
                 stderr=fd,
                 cwd=tempfile.gettempdir(),
                 close_fds=True,
+                env=env,
                 start_new_session=True,
             )
     finally:

@@ -11,7 +11,6 @@ from __future__ import annotations
 import dataclasses
 import json
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -58,6 +57,7 @@ def assistant(
     text: str | None = None,
     minute: int = 1,
     tools: list[dict[str, Any]] | None = None,
+    message_model: str | None = None,
     **extra: Any,
 ) -> dict[str, Any]:
     blocks: list[dict[str, Any]] = []
@@ -69,7 +69,11 @@ def assistant(
         "type": "assistant",
         "sessionId": SESSION,
         "timestamp": _ts(minute),
-        "message": {"role": "assistant", "content": blocks},
+        "message": {
+            "role": "assistant",
+            "content": blocks,
+            **({"model": message_model} if message_model else {}),
+        },
         **extra,
     }
 
@@ -769,12 +773,15 @@ def test_claude_cli_reads_structured_output() -> None:
             }
         )
     )
-    model = cap.ClaudeCliModel(binary="/bin/claude", runner=runner)
+    model = cap.ClaudeCliModel(
+        model="claude-opus-5-5", binary="/bin/claude", runner=runner
+    )
     reply = model.complete(_messages())
     assert json.loads(reply.text) == payload
     assert reply.cost_usd == pytest.approx(0.0123)
 
     argv = seen["argv"]
+    assert argv[argv.index("--model") + 1] == "claude-opus-5-5"
     for flag in (
         "-p",
         "--no-session-persistence",
@@ -810,7 +817,9 @@ def test_claude_cli_reads_structured_output() -> None:
 )
 def test_claude_cli_failures_raise(stdout: str, match: str) -> None:
     runner, _ = _fake_run(stdout, returncode=1)
-    model = cap.ClaudeCliModel(binary="/bin/claude", runner=runner)
+    model = cap.ClaudeCliModel(
+        model="claude-opus-5-5", binary="/bin/claude", runner=runner
+    )
     with pytest.raises(cap.CaptureModelError, match=match):
         model.complete(_messages())
 
@@ -819,22 +828,87 @@ def test_claude_cli_timeout_raises() -> None:
     def runner(argv: list[str], **kwargs: Any) -> Any:
         raise subprocess.TimeoutExpired(argv, 1)
 
-    model = cap.ClaudeCliModel(binary="/bin/claude", runner=runner)
+    model = cap.ClaudeCliModel(
+        model="claude-opus-5-5", binary="/bin/claude", runner=runner
+    )
     with pytest.raises(cap.CaptureModelError, match="did not complete"):
         model.complete(_messages())
 
 
-def test_resolve_model_prefers_an_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
-    assert isinstance(cap.resolve_model(), cap.AnthropicApiModel)
-    monkeypatch.delenv("ANTHROPIC_API_KEY")
-    monkeypatch.setattr(shutil, "which", lambda name: "/bin/claude")
-    assert isinstance(cap.resolve_model(), cap.ClaudeCliModel)
-    monkeypatch.setattr(shutil, "which", lambda name: None)
-    with pytest.raises(cap.CaptureError, match="no model"):
-        cap.resolve_model()
-    with pytest.raises(cap.CaptureError, match="unknown provider"):
-        cap.resolve_model("ollama")
+def test_capture_uses_the_chat_model_or_nothing() -> None:
+    """The model that writes a session's memories is the one the session
+    was talking to. There is no default, no API key and no fallback."""
+    model = cap.resolve_model("claude-opus-5-5")
+    assert isinstance(model, cap.ClaudeCliModel)
+    assert model.model == "claude-opus-5-5"
+    for missing in (None, ""):
+        with pytest.raises(cap.CaptureError, match="own model or nothing"):
+            cap.resolve_model(missing)
+
+
+def test_the_reader_names_the_chat_model(transcript: Path, workdir: Path) -> None:
+    write_transcript(
+        transcript,
+        [
+            user("hello", 0),
+            assistant("hi", 1, message_model="claude-sonnet-5"),
+            user("and now?", 2),
+            assistant("still here", 3, message_model="claude-opus-5-5"),
+            assistant("API Error", 4, message_model="<synthetic>"),
+        ],
+        cwd=workdir,
+    )
+    assert cap.read_transcript(transcript).model == "claude-opus-5-5"
+
+
+def test_capture_asks_the_session_s_own_model(
+    store: Store,
+    config: Config,
+    transcript: Path,
+    workdir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    write_transcript(
+        transcript,
+        [
+            user("I adopted a beagle named Biscuit yesterday.", 0),
+            assistant(
+                "Congratulations on Biscuit!", 1, message_model="claude-opus-5-5"
+            ),
+        ],
+        cwd=workdir,
+    )
+    asked: list[str | None] = []
+
+    def resolve(chat_model: str | None) -> ScriptedModel:
+        asked.append(chat_model)
+        return ScriptedModel([[]])
+
+    monkeypatch.setattr(cap, "resolve_model", resolve)
+    cap.capture_transcript(
+        store=store,
+        config=config,
+        recorder=recorder_for(store),
+        transcript=transcript,
+    )
+    assert asked == ["claude-opus-5-5"]
+
+
+def test_a_transcript_with_no_chat_model_is_not_captured(
+    store: Store, config: Config, transcript: Path, workdir: Path
+) -> None:
+    write_transcript(transcript, BEAGLE, cwd=workdir)
+    with pytest.raises(cap.CaptureError, match="own model or nothing"):
+        cap.capture_transcript(
+            store=store,
+            config=config,
+            recorder=recorder_for(store),
+            transcript=transcript,
+        )
+    mark = json.loads(
+        (cap.capture_dir(store.root, SESSION) / cap.WATERMARK_FILENAME).read_text()
+    )
+    assert mark["offset"] == 0 and mark["failures"] == 1
 
 
 # ---------------------------------------------------------------------------

@@ -48,7 +48,8 @@ The plugin bundles six things:
    prompt_recall = false` disables it. Always exits 0.
 6. **SessionEnd hook** (same file) — runs `uvx bettermemory session-end`
    when a session ends. With `[capture] enabled = true` (default off)
-   it starts a background capture of the session's transcript: a model
+   it starts a background capture of the session's transcript: the
+   model the session was talking to, on your own Claude Code login,
    distils dated memories from it and writes them through the same
    gates as `memory_write`, tagged `session-capture`. Two more capture
    moments ride the hooks above: the Stop hook starts a checkpoint

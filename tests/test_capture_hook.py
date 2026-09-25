@@ -99,14 +99,11 @@ def test_capture_is_off_by_default_and_reads_its_section(tmp_path: Path) -> None
     path = tmp_path / "config.toml"
     assert load_config(path).capture == CaptureConfig()
     path.write_text(
-        '[capture]\nenabled = true\nprovider = "claude-cli"\nmodel = "sonnet"\n'
-        "checkpoint_tokens = 1000\nidle_minutes = 5\n",
+        "[capture]\nenabled = true\ncheckpoint_tokens = 1000\nidle_minutes = 5\n",
         encoding="utf-8",
     )
     assert load_config(path).capture == CaptureConfig(
         enabled=True,
-        provider="claude-cli",
-        model="sonnet",
         checkpoint_tokens=1000,
         idle_minutes=5,
     )
@@ -114,7 +111,7 @@ def test_capture_is_off_by_default_and_reads_its_section(tmp_path: Path) -> None
 
 @pytest.mark.parametrize(
     "line",
-    ['provider = "openai"', "model = 3", 'checkpoint_tokens = "lots"'],
+    ['checkpoint_tokens = "lots"', 'idle_minutes = "soon"'],
 )
 def test_a_malformed_capture_key_names_itself(tmp_path: Path, line: str) -> None:
     path = tmp_path / "config.toml"
@@ -160,6 +157,49 @@ def test_a_checkpoint_holds_the_newest_segment_back(
     final = run(store, config, transcript, model)
     assert len(final.segments) == 1
     assert mark_of(store)["settled_size"] == transcript.stat().st_size
+
+
+def test_a_failure_after_the_model_call_starts_the_backoff(
+    store: Store,
+    config: Config,
+    transcript: Path,
+    workdir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The call was paid for; a store or disk error after it must count,
+    or the next turn would pay for the same segment again."""
+    write_transcript(transcript, BEAGLE, cwd=workdir)
+
+    def broken(self: Any, item: Any, segment: Any) -> Any:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(cap._Writer, "write", broken)
+    fact = mem("The user adopted a beagle named Biscuit.", "adopted a beagle", [0])
+    with pytest.raises(OSError, match="disk full"):
+        run(store, config, transcript, ScriptedModel([[fact]]))
+    mark = mark_of(store)
+    assert mark["failures"] == 1 and "disk full" in mark["last_error"]
+    assert mark["offset"] == 0 and mark["settled_size"] is None
+
+
+def test_a_read_cut_short_never_settles(
+    store: Store,
+    config: Config,
+    transcript: Path,
+    workdir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    write_transcript(
+        transcript,
+        [*BEAGLE, user("Also, my sister is Ada.", 3), assistant("Noted.", 4)],
+        cwd=workdir,
+    )
+    size = transcript.stat().st_size
+    monkeypatch.setattr(cap, "READ_MAX_BYTES", size // 2)
+    run(store, config, transcript, ScriptedModel([[], []]))
+    mark = cap.Watermark.load(cap.watermark_path(store.root, SESSION), SESSION)
+    assert mark.offset < size
+    assert mark.settled_size is None
 
 
 def test_reading_to_the_end_settles_even_with_nothing_to_capture(
@@ -493,6 +533,9 @@ def test_spawn_detaches_and_logs(store: Store, monkeypatch: pytest.MonkeyPatch) 
     else:
         assert seen["kwargs"]["start_new_session"] is True
     assert seen["kwargs"]["stdin"] is subprocess.DEVNULL
+    # The store the hook resolved goes to the child, which runs from the
+    # temp directory and would not find a project store on its own.
+    assert seen["kwargs"]["env"]["BETTERMEMORY_DIR"] == str(store.root)
     log = store.root / cap.CAPTURES_DIR / ch.LOG_FILENAME
     assert "capture --pending" in log.read_text()
     if sys.platform != "win32":
@@ -609,35 +652,24 @@ def test_a_checkpoint_command_defers_to_a_running_capture(
         )
 
 
-def test_the_provider_comes_from_config_unless_given(
+def test_the_command_has_no_model_to_choose(
     memory_dir: Path,
     transcript: Path,
     workdir: Path,
     config_file: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config_file.write_text(
-        '[capture]\nprovider = "anthropic"\nmodel = "claude-sonnet-5"\n',
-        encoding="utf-8",
-    )
+    """No --model, --provider or key flag exists: the session's own
+    model is the only one capture uses."""
     write_transcript(transcript, BEAGLE, cwd=workdir)
-    asked: list[tuple[str, str | None]] = []
-
-    def resolve(provider: str, model: str | None) -> ScriptedModel:
-        asked.append((provider, model))
-        return ScriptedModel([[]])
-
-    monkeypatch.setattr(cap, "resolve_model", resolve)
-    _cli(["capture", "--transcript", str(transcript)], memory_dir, monkeypatch)
-    _cli(
-        ["capture", "--transcript", str(transcript), "--provider", "claude-cli"],
-        memory_dir,
-        monkeypatch,
-    )
-    assert asked == [
-        ("anthropic", "claude-sonnet-5"),
-        ("claude-cli", "claude-sonnet-5"),
-    ]
+    for flag in ("--model", "--provider", "--base-url", "--api-key-env"):
+        with pytest.raises(SystemExit) as refused:
+            _cli(
+                ["capture", "--transcript", str(transcript), flag, "x"],
+                memory_dir,
+                monkeypatch,
+            )
+        assert refused.value.code == 2
 
 
 def test_session_end_reads_the_payload_and_starts_a_capture(

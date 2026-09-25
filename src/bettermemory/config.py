@@ -389,13 +389,10 @@ max_pending = 20
 # cleanly (a crash, a closed laptop). Every capture is undoable with
 # `bettermemory rollback --by-actor bettermemory-capture`. While it is
 # on, [proposals] auto_propose stands down: both read the same messages.
+# The memories are written by the model the session was talking to, on
+# Claude Code's own login: there is no API key and no model to choose.
 enabled = false
 
-# Model backend: "auto" (the Messages API when ANTHROPIC_API_KEY is set,
-# else Claude Code's own login through `claude -p`), "claude-cli" or
-# "anthropic". An empty model means Haiku.
-provider = "auto"
-model = ""
 
 # Capture an open session once this much uncaptured conversation has
 # built up (tokens, estimated at four characters each). The newest
@@ -687,24 +684,19 @@ class ProposalsConfig:
     max_pending: int = 20
 
 
-CAPTURE_PROVIDERS = ("auto", "claude-cli", "anthropic")
-
-
 @dataclass
 class CaptureConfig:
     """Session capture from the Claude Code hooks. See DEFAULT_CONFIG for
     prose; `capture_hook` reads it.
 
-    Default OFF. `provider` is one of `CAPTURE_PROVIDERS` and `model` an
-    id or alias, empty for the provider's default. `checkpoint_tokens`
+    Default OFF. There is no model setting: capture uses the model the
+    captured session was talking to (`capture.resolve_model`). `checkpoint_tokens`
     is the uncaptured backlog that triggers a capture of an open session,
     and `idle_minutes` how long a transcript must sit unchanged before a
     new session's start picks it up.
     """
 
     enabled: bool = False
-    provider: str = "auto"
-    model: str = ""
     checkpoint_tokens: int = 40_000
     idle_minutes: int = 30
 
@@ -1414,25 +1406,8 @@ def load_config(path: Path | None = None) -> Config:
 
 
 def _load_capture(raw: dict[str, object], config_path: Path | None) -> CaptureConfig:
-    provider = raw.get("provider", "auto")
-    if provider not in CAPTURE_PROVIDERS:
-        raise ValueError(
-            _malformed_config_msg(
-                "[capture] provider",
-                provider,
-                config_path,
-                "one of " + ", ".join(CAPTURE_PROVIDERS),
-            )
-        )
-    model = raw.get("model", "")
-    if not isinstance(model, str):
-        raise ValueError(
-            _malformed_config_msg("[capture] model", model, config_path, "a string")
-        )
     return CaptureConfig(
         enabled=_coerce_bool(raw.get("enabled"), False),
-        provider=provider,
-        model=model.strip(),
         checkpoint_tokens=max(
             _coerce_int(
                 raw.get("checkpoint_tokens"),

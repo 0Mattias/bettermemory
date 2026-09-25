@@ -19,9 +19,12 @@ spells out exactly what's stable.
   whole chain but the pending stage). It keeps each segment the model
   saw in `captures/<session>/`, host-local and never synced, with a
   watermark that makes a re-run write nothing twice. `--dry-run` shows
-  what would be saved and writes nothing. The model is `claude -p` on
-  Claude Code's own login, or the Messages API when `ANTHROPIC_API_KEY`
-  is set. `docs/api.md` has the full contract.
+  what would be saved and writes nothing. The memories are written by
+  the model the captured session was talking to, read off the
+  transcript's assistant rows, through `claude -p` on Claude Code's own
+  login. There is no API key, no model setting and no default model: a
+  transcript that names no model is not captured. `docs/api.md` has the
+  full contract.
 - **Session capture from the hooks, behind `[capture] enabled` (default
   off).** A session is captured at three moments, each in a detached
   background process so no hook waits on a model. When the session
@@ -37,11 +40,11 @@ spells out exactly what's stable.
   are candidates, so turning capture on never reaches back into older
   sessions. Background output goes to `captures/capture.log`.
 - `bettermemory capture --pending` and `--checkpoint`, what the hooks
-  run; `--provider` and `--model` now default to `[capture] provider`
-  and `[capture] model`.
+  run.
 - A failed model call is recorded on the session's watermark
   (`failures`, `last_failure_at`, `last_error`), and the hooks back off
-  (an hour, doubling to a day, giving up after six in a row), so a
+  (an hour, doubling after each failure, giving up after six in a row),
+  counting any failure after a model call, not only the call, so a
   broken login or an exhausted budget is retried once per backoff, not
   on every turn. The watermark also records `settled_size`, the
   transcript's size when a capture last read it to the end.

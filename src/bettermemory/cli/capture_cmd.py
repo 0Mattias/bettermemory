@@ -22,14 +22,16 @@ def add_subparser(
     sub: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> argparse.ArgumentParser:
     """Register the ``capture`` subparser."""
-    from ..capture import DEFAULT_MAX_SEGMENTS, PROVIDERS
+    from ..capture import DEFAULT_MAX_SEGMENTS
 
     help_text = (
         "Distil a Claude Code session transcript into dated memories, "
         "written through the same gates as memory_write and tagged "
         "`session-capture`. Reads from where the last capture of the "
-        "session stopped; --dry-run shows what would be saved. With "
-        "[capture] enabled the hooks run it in the background."
+        "session stopped; --dry-run shows what would be saved. The "
+        "memories are written by the model the session was talking to, "
+        "on Claude Code's own login. With [capture] enabled the hooks run "
+        "it in the background."
     )
     parser = sub.add_parser("capture", help=help_text, description=help_text)
     target = parser.add_mutually_exclusive_group(required=True)
@@ -70,21 +72,6 @@ def add_subparser(
         ),
     )
     parser.add_argument(
-        "--provider",
-        choices=PROVIDERS,
-        default=None,
-        help=(
-            "Model backend. `auto` uses the Messages API when "
-            "ANTHROPIC_API_KEY is set, else Claude Code's own login "
-            "through `claude -p`. Default: [capture] provider, `auto`."
-        ),
-    )
-    parser.add_argument(
-        "--model",
-        default=None,
-        help="Model id or alias. Default: [capture] model, else haiku.",
-    )
-    parser.add_argument(
         "--max-segments",
         type=int,
         default=DEFAULT_MAX_SEGMENTS,
@@ -111,7 +98,6 @@ def run(args: argparse.Namespace) -> None:
         CaptureError,
         capture_transcript,
         render_text,
-        resolve_model,
     )
 
     if os.environ.get(CHILD_ENV):
@@ -129,15 +115,12 @@ def run(args: argparse.Namespace) -> None:
         sys.exit(2)
 
     ctx = cli_context()
-    provider = args.provider or ctx.config.capture.provider
-    model_id = args.model or ctx.config.capture.model or None
     if args.pending:
-        _run_pending(args, ctx, provider, model_id)
+        _run_pending(args, ctx)
         return
     transcript = Path(args.transcript)
     session = args.session_id or transcript.stem
     try:
-        model = resolve_model(provider, model_id)
         recorder = cli_recorder(
             ctx,
             attribution="cli_capture",
@@ -149,7 +132,6 @@ def run(args: argparse.Namespace) -> None:
             config=ctx.config,
             recorder=recorder,
             transcript=transcript,
-            model=model,
             session_id=args.session_id,
             dry_run=args.dry_run,
             max_segments=args.max_segments,
@@ -173,9 +155,7 @@ def run(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
-def _run_pending(
-    args: argparse.Namespace, ctx: CliContext, provider: str, model_id: str | None
-) -> None:
+def _run_pending(args: argparse.Namespace, ctx: CliContext) -> None:
     """`--pending`: capture each session `capture_hook.pending_sessions`
     names, one after another. A session another capture is running, or
     one that cannot be read, is left for the next sweep; the exit status
@@ -186,7 +166,6 @@ def _run_pending(
         CaptureError,
         capture_transcript,
         render_text,
-        resolve_model,
     )
     from ..capture_hook import pending_sessions
 
@@ -199,11 +178,6 @@ def _run_pending(
         else:
             print("[]")
         return
-    try:
-        model = resolve_model(provider, model_id)
-    except CaptureError as exc:
-        print(f"capture: {exc}", file=sys.stderr)
-        sys.exit(1)
     reports = []
     failed = False
     for item in pending:
@@ -219,7 +193,6 @@ def _run_pending(
                 config=ctx.config,
                 recorder=recorder,
                 transcript=item.transcript,
-                model=model,
                 session_id=item.session_id,
                 dry_run=args.dry_run,
                 max_segments=args.max_segments,
@@ -233,7 +206,7 @@ def _run_pending(
         reports.append(report)
         if any(s.status == "failed" for s in report.segments):
             failed = True
-            # The same model would fail the next session too.
+            # The same login would fail the next session too.
             break
     if args.json:
         print(json.dumps([r.to_dict() for r in reports], indent=2))

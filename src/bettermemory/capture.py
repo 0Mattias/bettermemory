@@ -234,6 +234,9 @@ class TranscriptRead:
     start_offset: int
     end_offset: int
     cwd: str | None
+    # The model on the newest assistant row read (`message.model`):
+    # the model this stretch of the session was talking to.
+    model: str | None = None
 
 
 def scrub(text: str) -> str:
@@ -396,11 +399,12 @@ def read_transcript(
         raw = fh.read(max_bytes)
     cut = raw.rfind(b"\n")
     if cut < 0:
-        return TranscriptRead([], offset, offset, None)
+        return TranscriptRead([], offset, offset, None, None)
     raw = raw[: cut + 1]
 
     turns: list[TranscriptTurn] = []
     cwd: str | None = None
+    chat_model: str | None = None
     # Pending assistant turn: prose and digest collected across rows.
     a_texts: list[str] = []
     a_digest: list[tuple[int, str]] = []
@@ -446,6 +450,10 @@ def read_transcript(
             else:
                 turns.append(TranscriptTurn("user", text, _ts_ms(row), position))
         elif kind == "assistant":
+            named = row["message"].get("model")
+            # Claude Code stamps its own error rows "<synthetic>".
+            if isinstance(named, str) and named and not named.startswith("<"):
+                chat_model = named
             texts, digest = _assistant_parts(row)
             if not texts and not digest:
                 continue
@@ -457,7 +465,7 @@ def read_transcript(
             a_digest.extend(digest)
             a_end = position
     flush_assistant()
-    return TranscriptRead(turns, offset, offset + len(raw), cwd)
+    return TranscriptRead(turns, offset, offset + len(raw), cwd, chat_model)
 
 
 # ---------------------------------------------------------------------------
@@ -547,18 +555,22 @@ def _split_messages(messages: list[dict[str, str]]) -> tuple[str, str]:
 
 @dataclass
 class ClaudeCliModel:
-    """Claude Code in print mode, on the user's own login: no API key, no
-    SDK. The child gets the capture prompt as its whole system prompt, no
-    tools, no MCP servers, no hooks and no saved session, and runs in the
-    system temp directory so no project's CLAUDE.md is read. It still
-    reads the user-level CLAUDE.md (only `--bare` skips that, and `--bare`
-    refuses a subscription login); with no tools it can act on none of it.
+    """The chat's own model, through Claude Code in print mode on the
+    user's own login: no API key, no SDK, and no model but the one the
+    captured session was talking to (`resolve_model`). The child gets the
+    capture prompt as its whole system prompt, no tools, no MCP servers,
+    no hooks and no saved session, and runs in the system temp directory
+    so no project's CLAUDE.md is read. It still reads the user-level
+    CLAUDE.md (only `--bare` skips that, and `--bare` refuses a
+    subscription login); with no tools it can act on none of it.
     """
 
+    model: str
     name: str = "claude-cli"
-    model: str = "haiku"
     binary: str | None = None
-    max_budget_usd: float = 0.25
+    # A runaway guard, sized for a frontier model: one ~12k-token segment
+    # plus the prompt and a reply stays well under it.
+    max_budget_usd: float = 1.00
     timeout_s: float = 300.0
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run
 
@@ -629,50 +641,6 @@ class ClaudeCliModel:
         )
 
 
-@dataclass
-class AnthropicApiModel:
-    """The Messages API with `ANTHROPIC_API_KEY`, through the `anthropic`
-    SDK when it is installed. Same bounded-call rules as
-    `llm.AnthropicProvider`: no SDK retries stacking the timeout, and a
-    truncated reply raises rather than parsing as empty."""
-
-    name: str = "anthropic"
-    model: str = "claude-haiku-4-5"
-    api_key: str | None = None
-    max_tokens: int = 4096
-    timeout_s: float = 120.0
-
-    def complete(self, messages: list[dict[str, str]]) -> ModelReply:
-        try:
-            import anthropic  # pyright: ignore[reportMissingImports]
-        except ImportError as exc:
-            raise CaptureModelError(
-                "the anthropic provider needs the `anthropic` SDK installed"
-            ) from exc
-        key = self.api_key or os.environ.get("ANTHROPIC_API_KEY")
-        if not key:
-            raise CaptureModelError("the anthropic provider needs ANTHROPIC_API_KEY")
-        system, user = _split_messages(messages)
-        client = anthropic.Anthropic(api_key=key, max_retries=0)
-        try:
-            msg = client.messages.create(
-                model=self.model,
-                max_tokens=self.max_tokens,
-                temperature=0.0,
-                system=system,
-                messages=[{"role": "user", "content": user}],
-                timeout=self.timeout_s,
-            )
-        except Exception as exc:  # noqa: BLE001 — every SDK failure is one outcome here
-            raise CaptureModelError(f"Messages API call failed: {exc}") from exc
-        if getattr(msg, "stop_reason", None) == "max_tokens":
-            raise CaptureModelError(f"reply truncated at max_tokens={self.max_tokens}")
-        text = "".join(
-            block.text for block in msg.content if getattr(block, "type", "") == "text"
-        )
-        return ModelReply(text=text)
-
-
 def child_env() -> dict[str, str]:
     """This process's environment minus the live session's variables
     (`_SESSION_ENV`), marked as a capture child."""
@@ -681,31 +649,17 @@ def child_env() -> dict[str, str]:
     return env
 
 
-PROVIDERS = ("auto", "claude-cli", "anthropic")
-
-
-def resolve_model(provider: str = "auto", model: str | None = None) -> CaptureModel:
-    """`auto` takes the API when a key is set, else Claude Code's own
-    login when `claude` is on PATH."""
-    if provider not in PROVIDERS:
-        raise CaptureError(f"unknown provider {provider!r}; valid: {PROVIDERS}")
-    if provider == "auto":
-        provider = (
-            "anthropic"
-            if os.environ.get("ANTHROPIC_API_KEY")
-            else "claude-cli"
-            if shutil.which("claude")
-            else ""
+def resolve_model(chat_model: str | None) -> CaptureModel:
+    """The model that writes a session's memories: the one the session
+    itself was talking to, named on the transcript's assistant rows, or
+    none. There is no default, no API key and no other model to fall
+    back to: a session whose model cannot be read is not captured."""
+    if not chat_model:
+        raise CaptureError(
+            "the transcript names no chat model; capture uses the session's "
+            "own model or nothing"
         )
-        if not provider:
-            raise CaptureError(
-                "no model to capture with: set ANTHROPIC_API_KEY or put "
-                "Claude Code's `claude` command on PATH"
-            )
-    model = model or None
-    if provider == "anthropic":
-        return AnthropicApiModel(model=model or AnthropicApiModel.model)
-    return ClaudeCliModel(model=model or ClaudeCliModel.model)
+    return ClaudeCliModel(model=chat_model)
 
 
 # ---------------------------------------------------------------------------
@@ -739,7 +693,9 @@ class Watermark:
 
     def retry_after(self) -> datetime | None:
         """When a hook may next try this session after failures: one hour
-        after the first, doubling to a day. None when nothing failed."""
+        after the first, doubling after each (the hooks give up after
+        `capture_hook.MAX_FAILURES`, at 16 hours). None when nothing
+        failed."""
         if not self.failures or self.last_failure_at is None:
             return None
         failed = parse_event_ts(self.last_failure_at)
@@ -1220,7 +1176,7 @@ def capture_transcript(
     config: Config,
     recorder: Recorder,
     transcript: Path,
-    model: CaptureModel,
+    model: CaptureModel | None = None,
     session_id: str | None = None,
     dry_run: bool = False,
     max_segments: int = DEFAULT_MAX_SEGMENTS,
@@ -1237,6 +1193,10 @@ def capture_transcript(
     A dry run calls the model and runs every gate against the live store,
     so it shows what a real run would write; it writes nothing, bumps no
     corroboration, and leaves the watermark and the segment files alone.
+
+    The memories are written by the model the session was talking to,
+    read off the transcript (`resolve_model`); `model` exists so tests
+    can script the reply.
 
     `hold_tail` leaves the newest segment for a later run: a checkpoint
     of a session still in progress captures the whole segments behind
@@ -1297,7 +1257,7 @@ def _run(
     config: Config,
     recorder: Recorder,
     transcript: Path,
-    model: CaptureModel,
+    model: CaptureModel | None,
     session: str,
     directory: Path,
     mark_path: Path,
@@ -1307,15 +1267,26 @@ def _run(
 ) -> CaptureReport:
     mark = Watermark.load(mark_path, session)
     size = os.stat(transcript).st_size
-    read = read_transcript(transcript, offset=mark.offset)
+    read = read_transcript(transcript, offset=mark.offset, max_bytes=READ_MAX_BYTES)
+    # A read stops at READ_MAX_BYTES; past that the run cannot have
+    # reached the end, whatever its segments say.
+    read_to_end = size - read.start_offset <= READ_MAX_BYTES
     segments = build_segments(read, max_chars=SEGMENT_MAX_CHARS)
     if hold_tail:
         segments = segments[:-1]
+    if model is None and segments:
+        try:
+            model = resolve_model(read.model)
+        except CaptureError as exc:
+            # Counted like a failed call, so the hooks back off instead
+            # of re-reading an unattributable transcript at every start.
+            _record_failure(mark, exc, dry_run, mark_path)
+            raise
     report = CaptureReport(
         session_id=session,
         transcript=str(transcript),
         dry_run=dry_run,
-        model=f"{model.name}:{getattr(model, 'model', '?')}",
+        model=f"{model.name}:{getattr(model, 'model', '?')}" if model else "none",
         start_offset=read.start_offset,
         end_offset=read.start_offset,
     )
@@ -1359,6 +1330,7 @@ def _run(
             report.end_offset = segment.end_offset
             continue
         processed += 1
+        assert model is not None  # resolved above whenever a segment exists
         try:
             messages = sc.build_capture_messages(
                 segment.turns, extra_rules=sc.WORK_SESSION_RULES
@@ -1376,16 +1348,20 @@ def _run(
             seg_report.status = "failed"
             seg_report.error = str(exc)
             report.segments.append(seg_report)
-            if not dry_run:
-                mark.failures += 1
-                mark.last_failure_at = utcnow().isoformat()
-                mark.last_error = str(exc)[:500]
-                atomic_write_bytes(mark_path, mark.to_json(), mode_before_rename=0o600)
+            _record_failure(mark, exc, dry_run, mark_path)
             break
+        try:
+            items = sc.parse_capture(reply.text, segment.turns)
+            for item in items:
+                seg_report.memories.append(writer.write(item, segment))
+        except Exception as exc:
+            # The call was made and paid for; whatever broke after it
+            # (the store, the disk) must start the backoff too, or every
+            # turn end would pay for the same segment again.
+            _record_failure(mark, exc, dry_run, mark_path)
+            raise
         mark.failures, mark.last_failure_at, mark.last_error = 0, None, None
         seg_report.cost_usd = reply.cost_usd
-        for item in sc.parse_capture(reply.text, segment.turns):
-            seg_report.memories.append(writer.write(item, segment))
         if not dry_run:
             name = f"{len(mark.segments) + 1:03d}-{segment.sha[:12]}.md"
             atomic_write_bytes(
@@ -1398,7 +1374,7 @@ def _run(
         _advance(mark, segment, seg_report, dry_run, mark_path, transcript)
         report.end_offset = segment.end_offset
 
-    finished = not hold_tail and not report.remaining_segments
+    finished = not hold_tail and not report.remaining_segments and read_to_end
     if finished and not any(s.status == "failed" for s in report.segments):
         # Read to the end with nothing held back: a sweep has nothing to
         # do here until the transcript grows. Recorded even when no
@@ -1429,6 +1405,20 @@ def _run(
             **({"cost_usd": report.cost_usd} if report.cost_usd is not None else {}),
         )
     return report
+
+
+def _record_failure(
+    mark: Watermark, exc: BaseException, dry_run: bool, mark_path: Path
+) -> None:
+    """Count a failed capture on the watermark, which starts the hooks'
+    backoff (`Watermark.retry_after`)."""
+    if dry_run:
+        return
+    mark.failures += 1
+    mark.last_failure_at = utcnow().isoformat()
+    known = isinstance(exc, CaptureModelError | CaptureError)
+    mark.last_error = (str(exc) if known else f"{type(exc).__name__}: {exc}")[:500]
+    atomic_write_bytes(mark_path, mark.to_json(), mode_before_rename=0o600)
 
 
 def _advance(
