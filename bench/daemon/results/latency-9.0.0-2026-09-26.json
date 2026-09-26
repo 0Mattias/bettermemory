@@ -1,0 +1,77 @@
+{
+  "kind": "daemon-latency",
+  "machine": {
+    "cpu_count": 12,
+    "machine": "arm64",
+    "platform": "macOS-26.6.2-arm64-arm-64bit",
+    "python": "3.11.15"
+  },
+  "method": {
+    "hook_payload": {
+      "cwd": "/Users/mattias/Documents/projects/bettermemory"
+    },
+    "hook_service": "_daemon_client.post to /api/v1/hook/session-start from a warm client",
+    "hook_wall": "subprocess.run of `python -m bettermemory hook session-start`, wall time",
+    "in_process_search": "build_server(...).call_tool memory_search in this process",
+    "n": 50,
+    "queries": "the first 50 `question` fields of bench/retrieval/questions.jsonl",
+    "shim_search": "one stdio shim process, SDK ClientSession.call_tool memory_search",
+    "warm_ups": 3
+  },
+  "results": {
+    "cold_first_list": {
+      "seconds": 0.803
+    },
+    "hook_service": {
+      "max_ms": 69.94,
+      "min_ms": 51.97,
+      "n": 50,
+      "p50_ms": 56.94,
+      "p95_ms": 62.54
+    },
+    "hook_wall": {
+      "max_ms": 156.09,
+      "min_ms": 101.49,
+      "n": 50,
+      "p50_ms": 108.03,
+      "p95_ms": 114.85
+    },
+    "in_process_search": {
+      "max_ms": 414.36,
+      "min_ms": 137.0,
+      "n": 50,
+      "p50_ms": 275.39,
+      "p95_ms": 340.19
+    },
+    "serve_first_search": {
+      "seconds": 0.751
+    },
+    "shim_search": {
+      "max_ms": 413.46,
+      "min_ms": 149.64,
+      "n": 50,
+      "p50_ms": 283.99,
+      "p95_ms": 364.42
+    }
+  },
+  "run_at": "2026-09-26T15:29:43.043850Z",
+  "store": {
+    "events_imported": {
+      "found": 15871,
+      "imported": 0,
+      "malformed": 0,
+      "present": 15871,
+      "redacted": 0,
+      "unstamped": 0
+    },
+    "memories_imported": {
+      "found": 662,
+      "imported": 0,
+      "present": 662,
+      "unparseable": 0
+    },
+    "migration_seconds": 1.98,
+    "source": "/Users/mattias/.cache/bettermemory-v9/live-copy"
+  },
+  "version": "8.0.0"
+}

@@ -1,0 +1,54 @@
+{
+  "protocol": "2025-06-18",
+  "results": [
+    {
+      "label": "bettermemory shim (daemon)",
+      "tool_count": 9,
+      "full_bytes": 8387,
+      "full_chars": 8387,
+      "name_description_bytes": 3023,
+      "name_description_chars": 3023,
+      "input_schema_bytes": 4601,
+      "instructions_bytes": 1000,
+      "instructions_chars": 1000,
+      "session_bytes": 9387,
+      "bytes_per_tool": 932,
+      "tools": [
+        "episode",
+        "memory_admin",
+        "memory_record_use",
+        "memory_remove",
+        "memory_search",
+        "memory_show",
+        "memory_update",
+        "memory_verify",
+        "memory_write"
+      ]
+    },
+    {
+      "label": "bettermemory serve (in-process)",
+      "tool_count": 9,
+      "full_bytes": 8387,
+      "full_chars": 8387,
+      "name_description_bytes": 3023,
+      "name_description_chars": 3023,
+      "input_schema_bytes": 4601,
+      "instructions_bytes": 1000,
+      "instructions_chars": 1000,
+      "session_bytes": 9387,
+      "bytes_per_tool": 932,
+      "tools": [
+        "episode",
+        "memory_admin",
+        "memory_record_use",
+        "memory_remove",
+        "memory_search",
+        "memory_show",
+        "memory_update",
+        "memory_verify",
+        "memory_write"
+      ]
+    }
+  ],
+  "note": "Probed through `python -m bettermemory` (the stdio shim in front of a daemon started for a scratch store) and through `python -m bettermemory serve` (the in-process stdio server); the spec set BETTERMEMORY_DIR, BETTERMEMORY_KEYS_DIR and BETTERMEMORY_STATE_DIR to a scratch directory. Compared against bettermemory-2026-09-26.json (the 9.0.0 surface at 4a1d74f): identical on every field."
+}

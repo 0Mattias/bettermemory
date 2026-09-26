@@ -605,6 +605,56 @@ declaration and the unit record live in the project's memory store
 rather than in this tree; the corpus, the harness, the raw observations
 and the scored results are all committed.
 
+## Daemon latency
+
+`bench/daemon/latency.py`, run 2026-09-26 on the owner's live store
+migrated into a scratch store (662 memories, 15,871 events; the sealed
+copy of 2026-09-25), Apple silicon, Python 3.11.15,
+N = 50 warm calls after three warm-ups, p50 and p95 in
+milliseconds. The artifact is
+`bench/daemon/results/latency-9.0.0-2026-09-26.json`; every number below
+is printed from it.
+
+| measurement | what it times | p50 | p95 |
+|---|---|---|---|
+| `hook_wall` | `bettermemory hook session-start` as the harness runs it: one process per call, spawn to exit | 108.03 | 114.85 |
+| `hook_service` | the same endpoint from a warm client: the daemon's own answer | 56.94 | 62.54 |
+| `shim_search` | `memory_search` through one stdio shim (the SDK client speaking stdio, the shim forwarding to the daemon) | 283.99 | 364.42 |
+| `in_process_search` | the same queries against `build_server(...).call_tool` in one process | 275.39 | 340.19 |
+
+One-off measurements from the same run: a shim spawned with no daemon
+running answers its first `tools/list` in 0.803 s
+(the daemon's start is inside that); `bettermemory serve`, the 8.x shape
+(spawn, import the SDK, open the store), answers initialize plus one
+`memory_search` in 0.751 s.
+
+Reading the table. The daemon costs what it promised to cost and no
+more: the shim adds about 8.6 ms
+to a search, and the hook client adds about
+51.1 ms of
+process start (11.5 ms of interpreter and 26 ms of standard library on
+this machine; the path imports nothing from the SDK, checked by
+`tests/test_hook_client.py`). What the daemon does not remove is the
+engine's own per-call work, which a fresh process paid too and which the
+8.0.0 numbers hid inside a 0.4 s spawn: profiled on the same store,
+`memory_search` spends about 146 ms per call in `git` subprocesses for
+the commit-drift verdicts of the hits, about 55 ms in the origin capture
+(four `git` calls per request) and about 106 ms re-tokenising the
+candidate bodies, and `session-start` spends 61 of its 77 profiled ms in
+the same origin capture. Phase 1's P5 (session-start under 20 ms warm,
+`memory_search` through the shim under 40 ms) is therefore missed at
+9.0.0, and the U5 declaration's restatement of it (hook wall under 60
+ms, service under 5 ms, search under 40 ms) is missed on all three; the
+cold-start bound (under 1.5 s) and the byte-identical surface through
+the shim (`bench/toolcost/results/bettermemory-shim-2026-09-26.json`,
+8,387 bytes of `tools/list` and 1,000 of instructions, equal to the
+2026-09-26 artifact on every field) hold. The warm process is exactly
+where those costs can be cached: an origin per working directory with a
+short lifetime, a commit-drift answer per commit and head, and the
+tokens of a memory row per (id, updated). None of the three is built
+here; each changes what a fresh process could not have known, so each is
+declared before it is built.
+
 ## Reproduce
 
 ```sh
