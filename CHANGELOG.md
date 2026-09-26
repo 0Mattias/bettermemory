@@ -11,6 +11,18 @@ spells out exactly what's stable.
 
 ### Added
 
+- **The bettermemory 9 store and its hash-chained log.** One SQLite
+  file per store, `memory.sqlite`, whose tables are the records and
+  whose FTS5 table and triggers are the v8 index's own, so the candidate
+  query returns the same ids in the same order on the same rows
+  (`bench/parity/sqlite_candidates.py` records the comparison). Every
+  mutation and telemetry event is a row of the `log` table, MAC'd with
+  a key kept outside the store and chained to the row before it, with a
+  head checkpoint beside the key; `bettermemory log verify` reports an
+  edited row, a row inserted without the key, a deleted tail, and a
+  table edit that no log row accounts for. The store is not yet wired
+  into the tool surface: the v8 file store stays the product until the
+  engine port lands on it.
 - **`bettermemory capture`: a Claude Code session in, dated memories
   out.** Step 2 of session capture. The command reads a transcript from
   where the last capture of that session stopped, asks a model for

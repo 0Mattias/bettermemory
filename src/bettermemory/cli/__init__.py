@@ -40,6 +40,7 @@ from . import (
     health_cmd,
     ingest,
     init as init_cmd,
+    log_cmd,
     migrate,
     prompt_recall_cmd,
     proposals,
@@ -124,6 +125,7 @@ def _build_parser() -> tuple[
         "episodes": episodes.add_subparser(sub),
         "sync": sync.add_subparser(sub),
         "reindex": reindex.add_subparser(sub),
+        "log": log_cmd.add_subparser(sub),
         "audit-turn": audit_turn_cmd.add_subparser(sub),
         "session-start": session_start_cmd.add_subparser(sub),
         "session-end": session_end_cmd.add_subparser(sub),
@@ -186,6 +188,9 @@ def main() -> None:
         return
     if cmd == "reindex":
         reindex.run(args, sub_parser=subparsers["reindex"])
+        return
+    if cmd == "log":
+        log_cmd.run(args, sub_parser=subparsers["log"])
         return
     if cmd == "audit-turn":
         audit_turn_cmd.run(args)

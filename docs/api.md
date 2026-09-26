@@ -244,6 +244,12 @@ What declaring buys: the commit-drift leg narrows. For a file named by at least 
 
 Body edits clear claims (with `last_verified_at`); `memory_verify(id, claims=[...])` re-declares. A claim on a file git never tracked reads as phantom — commit drift not-applicable — same as any other phantom anchor.
 
+### `bettermemory log verify [--json]`
+
+The bettermemory 9 store (`src/bettermemory/sqlite_store.py`) keeps its records in one SQLite file, `memory.sqlite` in the store directory, and every mutation and telemetry event as a row of its hash-chained `log` table (`src/bettermemory/log.py`). Each row carries an HMAC-SHA256 over its fields and the MAC of the row before it; the key is 32 random bytes kept outside the store, under the user config directory (`keys/<store_id>.key`), and the store holds only the key's fingerprint. A head checkpoint beside the key (`<store_id>.head`) records the last row.
+
+`log verify` walks the chain and reports one of three statuses. `tampered`: a row fails its MAC, the chain or the seq sequence breaks, the head names a row the log no longer holds, or a table differs from a replay of the log (a row nobody logged is listed as `unaccounted`, a logged row that is gone as `missing`). `unverifiable`: a segment of the chain was signed by a key this machine does not hold, or there is no head checkpoint. `ok` otherwise. The command never writes: a store opened for verification without its key is reported, not rekeyed. Exit status 0 on `ok`, 1 otherwise, 2 when the store directory holds no `memory.sqlite`. `--json` prints the full report (segments, problems by seq, the head, the fold per table).
+
 ## Curation
 
 ### `memory_record_use(memory_ids, outcome, note?, claim_excerpts?)`
