@@ -1581,6 +1581,7 @@ def test_a_permission_change_to_an_attribute_file_is_a_new_key(
         attributes.chmod(0o644)
 
 
+@files_only
 def test_a_repository_config_that_mentions_follow_keeps_the_hit_out_of_the_memo(
     git_config_home: Path,
     memory_dir: Path,
@@ -1721,6 +1722,7 @@ def test_a_governed_path_holding_a_nul_byte_keys_nothing(tmp_path: Path) -> None
         (None, None, None),
     ],
 )
+@files_only
 def test_the_global_attributes_file_is_the_one_git_names(
     xdg: str | None,
     home: str | None,
